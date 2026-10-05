@@ -95,3 +95,45 @@ def test_the_guard_set_is_derived_from_the_naming_rule():
 def test_this_change_justifies_every_guard_it_edits():
     out = gate.problems(gate.dod.base_ref())
     assert not out, "\n".join(f"- {p}" for p in out)
+
+
+UNNAMED = ('import subprocess\nimport sys\n\n\ndef main():\n    out = subprocess.run(["git", "diff"])\n'
+           '    raise SystemExit(1 if out.stdout else 0)\n')
+
+
+def test_identity_signal_sees_a_guard_whatever_it_is_called():
+    assert gate.behaves_as_guard(UNNAMED)
+    assert not gate.is_guard("scripts/check_thing.py")
+    assert not gate.behaves_as_guard("def f():\n    return 1\n")
+    assert not gate.behaves_as_guard("raise SystemExit(1)\n")  # refuses, reads nothing
+
+
+def test_identity_gate_catches_an_unnamed_guard_the_name_rule_missed(tmp_path):
+    repo = _repo(tmp_path)
+    _write(repo, "scripts/check_thing.py", UNNAMED)
+    _commit(repo, "base", "scripts/check_thing.py")
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    _write(repo, "scripts/check_thing.py", UNNAMED.replace("1 if out.stdout else 0", "0"))
+    _commit(repo, "weaken", "scripts/check_thing.py")
+    assert gate.problems(base, repo, enforce_behaviour=False) == []  # old name rule: silent
+    out = gate.problems(base, repo, enforce_behaviour=True)
+    assert out and "scripts/check_thing.py" in out[0]
+    assert gate.unenforced_touched(base, repo) == ["scripts/check_thing.py"]
+
+
+def test_identity_is_judged_on_the_base_so_a_rewrite_cannot_escape(tmp_path):
+    repo = _repo(tmp_path)
+    _write(repo, "scripts/check_thing.py", UNNAMED)
+    _commit(repo, "base", "scripts/check_thing.py")
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    _write(repo, "scripts/check_thing.py", "def main():\n    return 0\n")
+    _commit(repo, "gut it", "scripts/check_thing.py")
+    assert gate.problems(base, repo, enforce_behaviour=True)
+
+
+def test_coverage_is_reported_and_enforcement_state_is_explicit():
+    scripts, real, named = gate.coverage()
+    assert scripts >= real >= named > 0
+    assert gate.ENFORCE_BEHAVIOURAL is False

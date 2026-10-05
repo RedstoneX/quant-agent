@@ -9,12 +9,9 @@ A MIXED module is one whose code (docstrings and comments excluded) holds both:
   py_day   ``et_today()``, ``todays_session_*()``, ``date.today()`` or ``<expr>.date()``
   sql_now  a string constant containing ``'now'``, ``CURRENT_TIMESTAMP`` or ``CURRENT_DATE``
 
-The guard stores nothing. At check time it lists every such site in each mixed
-module of the working tree, lists them again on ``origin/main``, and fails on any
-site identity (path, kind, scope, source text) the tree holds more copies of than
-the trunk. So a module cannot newly become mixed, and an already-mixed module
-cannot gain another site of either kind. If ``origin/main`` cannot be read it
-REFUSES. Run: ``python -m scripts.one_clock_guard``.
+The rule is ABSOLUTE: no trunk comparison, no grandfathered list. Every site in
+a mixed module is a violation, except modules named in ``EXEMPT`` (identity, with
+a reason). Run: ``python -m scripts.one_clock_guard``.
 """
 from __future__ import annotations
 
@@ -22,12 +19,15 @@ import ast
 import re
 import sys
 
-from scripts.guard_reference import (
-    ROOT, ReferenceUnavailable, TRUNK, added_sites, enclosing_scopes,
-    site_identity, trunk_blobs, working_paths,
-)
+from scripts.guard_reference import ROOT, enclosing_scopes, site_identity, working_paths
 
 Site = tuple[str, str, str, str]
+
+#: Modules allowed to hold both, by path. Not a count: a new module is never exempt.
+EXEMPT = {
+    "src/cost_circuit/clock.py": "IS the sanctioned clock: pins SQL 'now' to the caller's "
+                                 "instant and converts a stored UTC stamp to its ET day",
+}
 
 _SQL_NOW = re.compile(r"'now'|CURRENT_TIMESTAMP|CURRENT_DATE", re.IGNORECASE)
 _DAY_READERS = {"et_today", "todays_session_stamp", "todays_session_bar_stamp",
@@ -89,34 +89,16 @@ def working_sites() -> dict[Site, list[int]]:
     return out
 
 
-def trunk_sites(paths: list[str]) -> dict[Site, int]:
-    counts: dict[Site, int] = {}
-    for path, text in trunk_blobs(paths).items():
-        try:
-            found = scan_sites(path, text)
-        except SyntaxError as exc:
-            raise ReferenceUnavailable(f"cannot parse {TRUNK}:{path} ({exc}); refusing.") from exc
-        for kind, _l, scope, src in found:
-            counts[(path, kind, scope, src)] = counts.get((path, kind, scope, src), 0) + 1
-    return counts
-
-
 def violations() -> list[str]:
-    now = working_sites()
-    before = trunk_sites(scanned_paths())
     return [
-        f"{path} [{kind}] in {scope}: `{src}` x{n} vs x{was} on {TRUNK}; lines {sorted(now[(path, kind, scope, src)])}"
-        for (path, kind, scope, src), n, was in added_sites(
-            {s: len(l) for s, l in now.items()}, before)
+        f"{path} [{kind}] in {scope}: `{src}`; lines {sorted(lines)}"
+        for (path, kind, scope, src), lines in sorted(working_sites().items())
+        if path not in EXEMPT
     ]
 
 
 def main() -> int:
-    try:
-        bad = violations()
-    except ReferenceUnavailable as exc:
-        print(f"REFUSING: {exc}", file=sys.stderr)
-        return 2
+    bad = violations()
     if bad:
         print("a module mixes a Python exchange day with SQL 'now' (UTC); use one clock "
              "(bind the day from et_today and compare timestamps against its UTC bounds):\n"

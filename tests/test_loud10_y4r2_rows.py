@@ -28,9 +28,9 @@ def test_prompt_decisions_failures_are_recorded(tmp_path):
     assert pd._build_own_recent_decisions() == ""
     db.get_recent_agent_outputs = real
     assert sorted(_rows(db)) == [
-        "guarded:broker.prompt_facts.own_recent_decisions",
-        "guarded:broker.prompt_facts.pm_recent_decisions",
-        "guarded:broker.prompt_facts.rm_recent_verdicts",
+        "guarded:prompt_facts.own_recent_decisions",
+        "guarded:prompt_facts.pm_recent_decisions",
+        "guarded:prompt_facts.rm_recent_verdicts",
     ]
 
 
@@ -39,7 +39,7 @@ def test_missing_session_check_failure_is_recorded(tmp_path, caplog):
     db.session_prefixes_logged_on = MagicMock(side_effect=RuntimeError("boom"))
     step = ExpectedSessionsMissingSession(db=db)
     assert step.run() == []
-    assert _rows(db) == ["guarded:broker.sessions.missing_session_check"]
+    assert _rows(db) == ["guarded:sessions.missing_session_check"]
     assert any(r.exc_info for r in caplog.records)
 
 
@@ -50,4 +50,4 @@ def test_stop_proximity_failure_is_recorded(tmp_path):
         sweep_symbol=lambda: "", broker=MagicMock(), stop_reader=MagicMock(), db=db)
     pos = MagicMock()
     assert step.run([pos]) == []
-    assert _rows(db) == ["guarded:broker.sessions.evening_stop_proximity"]
+    assert _rows(db) == ["guarded:sessions.evening_stop_proximity"]
