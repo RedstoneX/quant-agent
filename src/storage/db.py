@@ -405,14 +405,11 @@ class Database:
     ) -> int:
         """Record what the mechanical soft-exit heal did. Returns rows written.
 
-        ITEM 78 RECORDING, RECORDING ONLY, and it decides nothing. Read the
-        `soft_exit_heal_restores` note in `_migrate` for why it exists and
-        for the hard limit on its use: nothing may read these rows back
-        into a trading decision, and they may never be swept for a
-        threshold, a rate or a gate.
-
-        Unknown stays NULL throughout — a missing symbol is NULL, not a
-        guess, and `source` is NULL when nothing was restored.
+        ITEM 78 RECORDING, RECORDING ONLY, and it decides nothing: these
+        rows may never be read back into a trading decision nor swept for
+        a threshold. Unknown stays NULL throughout. One row per DISTINCT
+        identity, `occurrences` counting how many times it was seen; see
+        `src/soft_exit_restore_buffer.py`.
         """
         rows = []
         first = True
@@ -433,6 +430,7 @@ class Database:
                 None if healed is None else int(bool(healed)),
                 src if isinstance(src, str) and src.strip() else None,
                 int(dropped) if first else None,
+                max(1, int(obs.get("occurrences") or 1)),
             ))
             first = False
         if not rows:
@@ -442,8 +440,8 @@ class Database:
                 self.conn.executemany(
                     "INSERT INTO soft_exit_heal_restores ("
                     "  timestamp, run_id, session_date, symbol,"
-                    "  blank_found, healed, source, dropped_before"
-                    ") VALUES (?,?,?,?,?,?,?,?)",
+                    "  blank_found, healed, source, dropped_before, occurrences"
+                    ") VALUES (?,?,?,?,?,?,?,?,?)",
                     rows,
                 )
                 self.conn.commit()

@@ -1054,9 +1054,8 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
     `thesis_invalid_if` that a later null-wipe blanked, using the sentence
     the model itself already wrote, and it never invents one. It runs
     inside a Pydantic validator, so it has no run id and no database
-    handle and has never recorded a single thing. Two of item 78's three
-    removal criteria are claims about this heal, so they could not be
-    judged at all.
+    handle. Two of item 78's three removal criteria are claims about
+    this heal, so they could not be judged at all.
 
     RECORDING ONLY. Nothing reads these rows back into a trading
     decision and they may never be swept for a threshold. Never raises.
@@ -1064,7 +1063,7 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
     try:
         from src.seat_heal import drain_restore_observations
 
-        observations, dropped = drain_restore_observations()
+        observations, dropped = drain_restore_observations(getattr(ctx, "run_id", None))
         if not observations:
             return
         db = getattr(pipeline, "db", None)
