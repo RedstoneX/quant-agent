@@ -548,8 +548,25 @@ numbers:
   - id: src.config.NominationConfig.max_per_seat_per_run
     settles_by:
       kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      state: built
+      where: >-
+        src/nominations.py `measure_cap_demand`, emitted by
+        src/nomination_evidence.py `persist_nomination_summary` into the
+        `nomination_summary` evidence row under the key `cap_demand`
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      built_2026_10_05: >-
+        BUILT, not yet collected. The recording that already existed carried
+        `raw_by_seat` offered counts and the surviving symbol list, but the
+        surviving list is taken AFTER the external-admission gate, so a missing
+        name could not be attributed to this cap rather than to that gate.
+        `cap_demand` now records, per seat, offered versus kept with the symbol
+        and conviction of every name the per-seat cap dropped, then the distinct
+        count after the cross-seat merge and the names the run-level cap dropped,
+        with a `bound` flag for each cap. Zero sessions of it exist yet: the desk
+        is off, so this row stays arbitrary until real runs accumulate. Nothing
+        the desk selects changed.
       records: at every run, how many nominations each seat OFFERED before the cap per seat was applied,
         how many were admitted, and which were dropped, so the demand behind the cap becomes a series
         instead of a boolean that it bound
@@ -574,8 +591,25 @@ numbers:
   - id: src.config.NominationConfig.max_total_per_run
     settles_by:
       kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      state: built
+      where: >-
+        src/nominations.py `measure_cap_demand`, emitted by
+        src/nomination_evidence.py `persist_nomination_summary` into the
+        `nomination_summary` evidence row under the key `cap_demand`
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      built_2026_10_05: >-
+        BUILT, not yet collected. The recording that already existed carried
+        `raw_by_seat` offered counts and the surviving symbol list, but the
+        surviving list is taken AFTER the external-admission gate, so a missing
+        name could not be attributed to this cap rather than to that gate.
+        `cap_demand` now records, per seat, offered versus kept with the symbol
+        and conviction of every name the per-seat cap dropped, then the distinct
+        count after the cross-seat merge and the names the run-level cap dropped,
+        with a `bound` flag for each cap. Zero sessions of it exist yet: the desk
+        is off, so this row stays arbitrary until real runs accumulate. Nothing
+        the desk selects changed.
       records: at every run, how many nominations each seat OFFERED before the cap across all seats
         was applied, how many were admitted, and which were dropped, so the demand behind the cap
         becomes a series instead of a boolean that it bound
