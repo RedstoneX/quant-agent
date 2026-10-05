@@ -215,3 +215,35 @@ def test_a_root_module_calling_a_writer_is_a_money_module(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "src/w.py", "main.py"], cwd=tmp_path, check=True)
     assert "main.py" in mm.derive(tmp_path, frozenset({"submit_order"}), None)
+
+
+_ALIAS_SRC = '''
+from {mod} import {orig} as {alias}
+
+def f(x):
+    try:
+        return x.get()
+    except Exception as exc:
+        {alias}("site", exc)
+        return None
+'''
+
+
+def _alias_hits(mod: str, orig: str, alias: str) -> int:
+    return len(g.scan_text("src/x.py", _ALIAS_SRC.format(mod=mod, orig=orig, alias=alias)))
+
+
+def test_aliased_real_recorder_is_recognised_by_identity():
+    assert _alias_hits("src.storage.events", "record_site", "_site") == 0
+
+
+def test_unaliased_recorder_still_passes():
+    assert _alias_hits("src.storage.events", "record_site", "record_site") == 0
+
+
+def test_alias_that_resolves_to_a_non_recorder_still_fails():
+    assert _alias_hits("src.util", "helper", "_site") == 1
+
+
+def test_recorder_lookalike_name_bound_to_stdlib_does_not_satisfy_the_guard():
+    assert _alias_hits("logging", "warning", "record_failure") == 1

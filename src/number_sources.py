@@ -219,7 +219,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 
 #: The modules on the path from a verdict to a broker order; see
 #: src/number_scope.py (data only, re-exported here for every reader).
-from src.number_scope import SCOPED_PATHS  # noqa: E402,F401
+from src.number_scope import SCOPED_PATHS, py_universe  # noqa: E402,F401
 
 
 #: `src/config/__init__.py` holds every seat's settings in one file, most of them
@@ -660,7 +660,7 @@ def collect_unscoped_sites(repo_root: Path | None = None) -> list[NumberSite]:
     in_scope.update(p.resolve() for p in config_modules(root))
 
     sites: list[NumberSite] = []
-    for file_path in sorted((root / "src").rglob("*.py")):
+    for file_path in py_universe(root):
         rel = str(file_path.relative_to(root))
         if file_path.resolve() in in_scope:
             continue

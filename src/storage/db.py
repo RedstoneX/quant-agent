@@ -41,6 +41,9 @@ from src.storage.analytics.calibration import (  # re-export mirror: defined the
     _is_filled_trail_stop,
 )
 from src.util.time import ET, UTC, et_today
+from src.storage.clock_stamp import (  # noqa: F401  (re-exported)
+    sqlite_utc_timestamp, utc_now_stamp, utc_stamp_ago,
+)
 
 logger = logging.getLogger(__name__)
 class Database:
@@ -284,15 +287,8 @@ class Database:
 
     @staticmethod
     def _sqlite_utc_timestamp(when: datetime) -> str:
-        """Format a datetime the same way SQLite stores `datetime('now')`.
-
-        Trades are stored as naive UTC strings. Converting ET day boundaries
-        into this format lets `today_only=True` mean "this ET trading day"
-        regardless of the host timezone.
-        """
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=UTC)
-        return when.astimezone(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        """SQLite's stored format for `when`; the body lives in clock_stamp."""
+        return sqlite_utc_timestamp(when)
 
     @classmethod
     def _et_day_utc_bounds(cls, trading_day: date | None = None) -> tuple[str, str]:
@@ -373,7 +369,7 @@ class Database:
                     "  thesis_ma_kind, not_evaluated_reason"
                     ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        self._sqlite_utc_timestamp(datetime.now(UTC)),
+                        utc_now_stamp(),
                         run_id or None,
                         session_date or str(et_today()),
                         sym,
@@ -425,7 +421,7 @@ class Database:
             healed = obs.get("healed")
             src = obs.get("source")
             rows.append((
-                self._sqlite_utc_timestamp(datetime.now(UTC)),
+                utc_now_stamp(),
                 run_id or None,
                 session_date or str(et_today()),
                 sym,
@@ -1527,8 +1523,8 @@ class Database:
         with self._lock:
             rows = self.conn.execute(
                 "SELECT * FROM intraday_evaluations WHERE symbol=? "
-                "AND timestamp >= datetime('now', ?) ORDER BY timestamp DESC",
-                (symbol.upper(), f"-{float(cooldown_hours):g} hours"),
+                "AND timestamp >= ? ORDER BY timestamp DESC",
+                (symbol.upper(), utc_stamp_ago(hours=float(cooldown_hours))),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1595,7 +1591,7 @@ class Database:
             last_alert_at = row["last_alert_at"] if row else None
             should_alert = misses >= self.INTRADAY_SNAPSHOT_ALERT_THRESHOLD
             if should_alert and last_alert_at:
-                from datetime import datetime, timedelta, timezone
+                from datetime import timezone
                 try:
                     last_dt = datetime.fromisoformat(last_alert_at).replace(tzinfo=timezone.utc)
                     cutoff = datetime.now(timezone.utc) - timedelta(
@@ -1610,8 +1606,9 @@ class Database:
                 "INSERT INTO intraday_symbol_health"
                 "(symbol, consecutive_misses, last_alert_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(symbol) DO UPDATE SET consecutive_misses=excluded.consecutive_misses"
-                + (", last_alert_at=datetime('now')" if should_alert else ""),
-                (symbol, misses, last_alert_at),
+                + (", last_alert_at=?" if should_alert else ""),
+                (symbol, misses, last_alert_at)
+                + ((utc_now_stamp(),) if should_alert else ()),
             )
             self.conn.commit()
             result["consecutive_misses"] = misses
@@ -1703,8 +1700,8 @@ class Database:
             raise ValueError(f"prune_agent_logs: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM agent_logs WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM agent_logs WHERE timestamp < ?",
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1725,8 +1722,8 @@ class Database:
             raise ValueError(f"prune_specialist_evidence: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM specialist_evidence WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM specialist_evidence WHERE timestamp < ?",
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1753,8 +1750,8 @@ class Database:
             raise ValueError(f"prune_notifier_sends: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM notifier_sends WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM notifier_sends WHERE timestamp < ?",
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1948,8 +1945,8 @@ class Database:
                      run_id=excluded.run_id,
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (date, run_id, payload_json, positions_json),
+                     timestamp=?""",
+                (date, run_id, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 
@@ -1980,16 +1977,9 @@ class Database:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().insert_trade(symbol, action, qty, price, reasoning, run_id, stop_loss, take_profit, broker_order_id, fill_status, decision_id, expected_horizon_sessions, setup_type, conviction, requested_risk_pct, allocated_risk_pct, decision_model, thesis_invalid_if, structural_ceiling, entry_atr, stop_basis, stop_level_basis)
 
-    def insert_trade_refusal(
-        self, *, symbol: str, direction: str | None, refusal: str,
-        entry_price: float | None = None, stop_price: float | None = None,
-        level_used: float | None = None, reward_risk: float | None = None,
-        threshold: float | None = None, level_was_measured: bool | None = None,
-        stage: str | None = None, run_id: str | None = None,
-        requested_risk_pct: float | None = None,
-    ) -> int | None:
+    def insert_trade_refusal(self, **kwargs) -> int | None:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_trade_refusal(symbol=symbol, direction=direction, refusal=refusal, entry_price=entry_price, stop_price=stop_price, level_used=level_used, reward_risk=reward_risk, threshold=threshold, level_was_measured=level_was_measured, stage=stage, run_id=run_id, requested_risk_pct=requested_risk_pct)
+        return self._trades().insert_trade_refusal(**kwargs)
 
     def get_trade_refusals(
         self, *, refusal: str | None = None, limit: int = 500,
@@ -2226,8 +2216,8 @@ class Database:
                      run_id=excluded.run_id,
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (date, mode, run_id, payload_json, positions_json),
+                     timestamp=?""",
+                (date, mode, run_id, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 
@@ -2260,8 +2250,8 @@ class Database:
                    ON CONFLICT(run_id) DO UPDATE SET
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (run_id, date, payload_json, positions_json),
+                     timestamp=?""",
+                (run_id, date, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 

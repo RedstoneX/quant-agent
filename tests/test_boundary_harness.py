@@ -19,8 +19,10 @@ from scripts.guard_reference import ReferenceUnavailable, TRUNK, added_sites  # 
 # Removals never fail; the trunk cannot be read -> the check REFUSES, never passes.
 
 
-def _composed_mixin_modules():
-    tree = ast.parse((ROOT / "src/pipeline.py").read_text())
+def _composed_mixin_modules(source: str | None = None):
+    """{mixin class name: module} for every base composed onto `TradingPipeline` in `source`
+    (the working tree's `src/pipeline.py` when None, the trunk's when its text is handed in)."""
+    tree = ast.parse((ROOT / "src/pipeline.py").read_text() if source is None else source)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "TradingPipeline")
     bases = {b.id for b in cls.bases if isinstance(b, ast.Name)}
     mods = {}
@@ -31,6 +33,18 @@ def _composed_mixin_modules():
                     mods[a.name] = n.module
     assert set(mods) == bases, "could not locate every composed mixin"
     return mods
+
+
+def newly_composed_mixins(tree_source: str | None = None, trunk_source: str | None = None) -> set[str]:
+    """Mixins composed onto `TradingPipeline` here that the trunk does not compose, by IDENTITY
+    (class name) -- never a count, so dropping one mixin and composing another cannot net to zero.
+    Raises `ReferenceUnavailable` when the trunk cannot be read."""
+    from scripts.guard_reference import trunk_blobs
+    if trunk_source is None:
+        trunk_source = trunk_blobs(["src/pipeline.py"]).get("src/pipeline.py")
+        if trunk_source is None:
+            raise ReferenceUnavailable(f"{TRUNK} holds no src/pipeline.py")
+    return set(_composed_mixin_modules(tree_source)) - set(_composed_mixin_modules(trunk_source))
 
 
 MIXINS = _composed_mixin_modules()
@@ -55,7 +69,24 @@ def test_harness_fails_every_composed_mixin(name, module):
     assert 2 in v.failures or _shim_only(module), f"{name} keeps bodies yet reads no foreign self attrs"
 
 
-def test_eight_mixins_are_covered(): assert len(MIXINS) == 8  # noqa: E704
+def test_no_new_mixin_is_composed_onto_the_pipeline():
+    """Replaces `assert len(MIXINS) == 8`: a count let a swap (drop one, compose another) pass.
+    The composed set may only shrink; the trunk is the list and an unreadable trunk REFUSES."""
+    try:
+        new = newly_composed_mixins()
+    except ReferenceUnavailable as exc:
+        pytest.fail(f"REFUSING: {exc}")
+    assert not new, f"new mixin(s) composed onto TradingPipeline: {sorted(new)}; hold a part instead"
+
+
+def test_swapping_one_mixin_for_another_is_caught():
+    """Self-proof: a one-for-one swap keeps the count at eight and is still refused by identity."""
+    trunk = (ROOT / "src/pipeline.py").read_text()
+    victim = sorted(MIXINS)[0]
+    swapped = trunk.replace(victim, "FreshlyComposedMixin")
+    assert newly_composed_mixins(swapped, trunk) == {"FreshlyComposedMixin"}
+    assert newly_composed_mixins(trunk, swapped) == {victim}  # the removal side is a different identity
+    assert newly_composed_mixins(trunk, trunk) == set()  # unchanged composition is clean
 
 
 def test_clause_2_catches_foreign_self_reads(tmp_path, monkeypatch):
