@@ -24,7 +24,9 @@ from src.sector_reference import _get_sector
 from src.models import TechnicalIndicators, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_delever import _optional_risk_number
+from src.pipeline_earnings_refusal import refuse_queued_earnings_buys
 from src.risk.rules import HARD_BLOCK_RULES
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -338,7 +340,9 @@ class RiskGate:
                 decision_id=ctx.decision_id,
                 status="hard_risk_block",
             )
+            record_guarded_pass(self, "risk_gate.persist_hard_risk_block", log=logger)
         except Exception as exc:
+            record_guarded_pass(self, "risk_gate.persist_hard_risk_block", exc, log=logger)
             logger.warning(
                 "hard_risk_block: failed to persist forensic record for run %s: %s",
                 ctx.run_id, exc,
@@ -710,7 +714,9 @@ class RiskGate:
             return None
         try:
             atr14 = compute_indicators(original.symbol, bars).atr_14
+            record_guarded_pass(self, "risk_gate.risk_mod_floor_atr", log=logger)
         except Exception as exc:
+            record_guarded_pass(self, "risk_gate.risk_mod_floor_atr", exc, log=logger)
             logger.warning(
                 "Risk mod noise-band check skipped for %s: ATR unavailable (%s)",
                 original.symbol, exc,
@@ -866,7 +872,9 @@ class RiskGate:
             # completed bar and require an actual zero-line crossover.
             try:
                 previous_hist = compute_indicators(symbol, bars[:-1]).macd_hist
-            except Exception:
+                record_guarded_pass(NO_LEDGER, "risk_gate.signal_prefilter_prior_macd", log=logger)
+            except Exception as exc:
+                record_guarded_pass(NO_LEDGER, "risk_gate.signal_prefilter_prior_macd", exc, log=logger)
                 previous_hist = None
             if previous_hist is not None and (
                 (previous_hist < 0 < indicators.macd_hist)
@@ -885,70 +893,4 @@ class RiskGate:
                     return True
         return False
 
-    @staticmethod
-    def _refuse_queued_earnings_buys(
-        decisions: list[TradeDecision],
-        earnings_results: list[dict],
-    ) -> list[TradeDecision]:
-        """REFUSE every BUY on a symbol whose just-filed report reached this
-        session unread. Board item 186, 2026-10-01.
-
-        MISSING EVIDENCE, NOT LOW CONVICTION. `queued=True` is set in one
-        place only (the session-time earnings fetch below): a filing the
-        pre-market preprocess failed to pick up and analyse. It records an
-        operations failure of this desk's own pipeline, not a seat verdict
-        and not a market event, and this gate is argued on exactly those
-        terms — the desk meant to read the report before deciding, it did
-        not, and it declines to buy into the gap. It is NOT the conviction
-        bar and does not touch it: see `risk.rules.unread_filing_block_reason`
-        for why routing it through R7 would be wrong and would also change
-        behaviour on names the desk already holds.
-
-        WHAT THIS REPLACED, AND WHY THE NUMBER IS GONE. Until now this was a
-        clamp: the resulting position weight on such a name was held to 5% of
-        the book. That 5 had no source. It was researched to a definite
-        negative (the closest published quantity, the ~5.07% average
-        one-day absolute earnings-announcement move, measures the size of a
-        MOVE and not a share of a BOOK, and the desk's own per-trade risk
-        envelope runs forward to a weight near 100%, so it cannot be the
-        cap's parent). Under the owner's 2026-09-30 ruling a global constant
-        governing risk is a defect to be removed, not an appetite to be
-        answered, so the condition is REFORMULATED instead of re-derived and
-        no percentage survives. REFUSING rather than sizing down is
-        REASONING, not a quoted rule: the entry bar already refuses a name
-        whose technical read is merely ABSENT, so requiring the filing to
-        have been read before buying is consistent with how this desk
-        already treats evidence it does not have, and the standing doctrine
-        that all five seats must be right to ENTER is what makes an entry
-        the right thing to withhold.
-
-        BUY-ONLY, and silent about everything else. A SELL is untouched, a
-        name whose filing has been read is untouched, and nothing already
-        held is sold or reclassified — refusing to BUY is not a decision to
-        SELL, the same contract `agreement_refuses_trade` carries.
-
-        The refusal is recorded durably per symbol by
-        `pipeline_stages._record_queued_earnings_refusals`, which reads the
-        before/after lists, so a refused BUY can be judged later from the
-        record rather than from argument.
-        """
-        queued_symbols = {
-            (ea.get("symbol") or "").strip().upper()
-            for ea in earnings_results
-            if ea.get("queued") and not ea.get("analysis")
-        }
-        queued_symbols.discard("")
-        if not queued_symbols:
-            return decisions
-
-        from src.risk.rules import unread_filing_block_reason
-        kept: list[TradeDecision] = []
-        for d in decisions:
-            if d.action != "BUY" or d.symbol.upper() not in queued_symbols:
-                kept.append(d)
-                continue
-            logger.warning(
-                "Unread-filing refusal: dropping %s BUY %.2f%% — %s",
-                d.symbol, d.allocation_pct, unread_filing_block_reason(d.symbol),
-            )
-        return kept
+    _refuse_queued_earnings_buys = staticmethod(refuse_queued_earnings_buys)
