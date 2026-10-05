@@ -173,12 +173,15 @@ def _deliver(message: str, config, *, dry_run: bool) -> int:
         return 0
 
     from src.notifier import TelegramNotifier
+    from src.notifier.owner_alert_delivery import deliver_with_retry
 
     notifier = TelegramNotifier()
     notifier.mission_control_url = config.notifications.mission_control_url
     # preserve_structural_markup=True: the shared trader-feed formatters
     # embed literal <b>/<blockquote expandable> tags on purpose.
-    sent = notifier.send(message, preserve_structural_markup=True)
+    sent = deliver_with_retry(
+        notifier, message, preserve_structural_markup=True, kind="desk_status",
+    )
     if not sent:
         print(
             "ERROR: Telegram send failed or the notifier is not configured "

@@ -176,7 +176,7 @@ refuses.
 | ~~`tests/import_cycle_baseline.json`~~ | DONE — deleted with `--shrink-baseline`/`--seed-baseline` and `test_baseline_only_shrinks`; `scripts/import_graph.py --check` now builds the graph from the working tree and again from `origin/main` via `scripts/guard_reference.py` and fails on any cycle edge (importer, imported) that is new — an edge identity, never a count |
 | ~~`tests/import_layers.json`~~ | DONE — deleted; the `broker-seam` rule now lives in code (`LAYER_RULES` in `scripts/import_graph.py`) and the guard fails any importer of `src.execution` that `origin/main` does not already have, by (importer, imported) identity |
 | ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
-| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails) |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails); a handler's durable record is recognised by the IDENTITY the call binds to (`scripts/swallow_resolver.py`: import aliases followed, foreign modules never count, a local def judged by its body, star-imported or undefined names unknown), never by the call's spelling |
 
 `tests/test_baseline_merge_driver.py`, `scripts/resolve_baseline_conflict.py`
 and `scripts/git_merge_driver_baselines.sh` existed ONLY to manage collisions
@@ -196,7 +196,7 @@ Measured 2026-10-04 on `origin/main`: every entry above is struck through. No ch
   scans `src/` in the working tree and on `origin/main` at check time and
   reports the delta. The policy half — the list of module names that mean
   "this can leave the box" — stays in code, where it is reviewed.
-- ~~the unscoped-number ceiling in the number-sources guard~~ DONE — `MAX_UNSCOPED_NUMERIC_SITES` and its pinning test are deleted; `scripts/unscoped_number_guard.py` runs the unscoped scan on the working tree and on `origin/main` at check time and reports the delta
+- ~~the unscoped-number ceiling in the number-sources guard~~ DONE — `MAX_UNSCOPED_NUMERIC_SITES` and its pinning test are deleted; `scripts/unscoped_number_guard.py` runs the unscoped scan on the working tree and on `origin/main` at check time and reports the delta per NUMBER (a site new to the tree is excused only by a lost trunk site with the same value and the same name or module — a move or rename; a delete never pays for an unrelated add)
 
 Not in this class: `config/number_ledger.yaml`. That is real content — the
 desk's justification for numbers that govern money — not a cached measurement.
