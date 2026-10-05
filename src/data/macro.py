@@ -15,6 +15,7 @@ from src.data.macro_coverage_views import STALE_PREFIX, split_failed, stale_prom
 from src.data.macro_cache_serve import serve_from_cache, serve_last_good
 
 logger = logging.getLogger(__name__)
+from src.sentinel.counted import record_swallowed
 
 # --- FRED fetch resilience -------------------------------------------------
 #
@@ -975,9 +976,8 @@ class MacroDataProvider:
                     (day, None if pd.isna(value) else float(value))
                 )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Could not serialise %s for the FRED series cache: %s", series_id, e,
-            )
+            record_swallowed("data.macro.series_cache_serialise", e, log=logger,
+                             series_id=series_id)
             return
         self.series_cache.save(
             series_id=series_id,

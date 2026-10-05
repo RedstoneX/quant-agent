@@ -390,10 +390,8 @@ class MarketData:
             out.sort(key=lambda b: b["timestamp"])
             return out
         except Exception as exc:
-            logger.warning(
-                "broker.get_intraday_chart_bars failed for %s/%s: %s",
-                symbol, timeframe, exc,
-            )
+            record_swallowed("broker.intraday_chart_bars", exc, log=logger,
+                             symbol=symbol, timeframe=str(timeframe))
             return []
 
     def get_latest_price_stamped(self, symbol: str) -> "LivePrice | None":
@@ -584,17 +582,12 @@ class MarketData:
                     or "invalid symbol" in str(exc).lower()
                 )
                 if len(batch) == 1:
-                    logger.warning(
-                        "get_intraday_snapshots: symbol %s unavailable: %s",
-                        batch[0], exc,
-                    )
+                    record_swallowed("broker.intraday_snapshots_single", exc,
+                                     log=logger, symbol=batch[0])
                     return {}
                 if not symbol_error:
-                    logger.warning(
-                        "get_intraday_snapshots: bulk snapshot fetch failed "
-                        "for %d symbols: %s",
-                        len(batch), exc,
-                    )
+                    record_swallowed("broker.intraday_snapshots_bulk", exc,
+                                     log=logger, symbols=len(batch))
                     return {}
                 midpoint = len(batch) // 2
                 logger.warning(
