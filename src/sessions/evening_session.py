@@ -594,7 +594,7 @@ class EveningSession:
         # is skipped), so it can never influence or delay an execution path.
         # Advisory only — nothing in the trading chain reads what it writes.
         try:
-            ledger = self._db.resolve_conviction_ledger()
+            ledger = self._db.conviction.resolve_conviction_ledger()
             if ledger.get("scored_positions"):
                 logger.info(
                     "Conviction ledger: scored %d newly closed position(s) into "

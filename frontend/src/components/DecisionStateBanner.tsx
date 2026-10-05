@@ -1,6 +1,6 @@
 import { Badge, Callout, type Color } from "@tremor/react";
 import { RunFunnelResponse, TradeItem } from "../api/client";
-import { fmtTime } from "../lib/format";
+import { fmtClock, fmtTime } from "../lib/format";
 import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
 
 /* Full-width "why did it trade, or why not" verdict — promoted out of the
@@ -117,7 +117,7 @@ export function DecisionStateBanner({
         {stale && (
           <span className="ml-auto flex items-center gap-1.5 text-[length:var(--fs-micro)] font-semibold text-warn">
             <Badge color="amber" size="xs">stale</Badge>
-            last known{updatedAt ? ` as of ${updatedAt.toLocaleTimeString()}` : ""}
+            last known{updatedAt ? ` as of ${fmtClock(updatedAt)}` : ""}
           </span>
         )}
       </div>
@@ -129,7 +129,7 @@ export function DecisionStateBanner({
       {stale && (
         <div className="mb-1.5 flex items-center gap-2 text-warn text-xs font-semibold">
           <Badge color="amber" size="xs">stale</Badge>
-          Stale — last known data{updatedAt ? ` as of ${updatedAt.toLocaleTimeString()}` : ""}, fresh fetch failed ({error})
+          Stale — last known data{updatedAt ? ` as of ${fmtClock(updatedAt)}` : ""}, fresh fetch failed ({error})
         </div>
       )}
       <span className="font-mono text-xs text-dim">

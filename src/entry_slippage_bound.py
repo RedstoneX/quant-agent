@@ -27,6 +27,7 @@ never affects the order. Read the rows back with
 """
 from __future__ import annotations
 
+from src.recording_accessors import pinned_evidence
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import json
 import logging
@@ -100,7 +101,7 @@ def record_slippage_check(
             "daily_range_pct": latest_daily_range_pct(bars),
         }
         _persist_evidence(
-            pipeline.db, run_id=getattr(ctx, "run_id", None),
+            pipeline.db, run_id=pinned_evidence(ctx, "run_id"),
             agent_name="execution", kind="entry_slippage_check",
             scope="symbol", symbol=symbol,
             decision_id=getattr(ctx, "decision_id", None),

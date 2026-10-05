@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 
+from src.recording_accessors import pinned_evidence
 from src.pipeline_stages import _record_pipeline_event
 from src.sentinel.counted import record_swallowed
 
@@ -166,7 +167,7 @@ def _evidence_gate_skip(
                 "carried seats will report an unknown age", exc,
             )
         stamped = verdict.freshness.stamped(
-            run_id=getattr(ctx, "run_id", None),
+            run_id=pinned_evidence(ctx, "run_id"),
             mode=str(getattr(ctx, "session", "") or "") or None,
             prior_reads=prior,
         )

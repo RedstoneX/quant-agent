@@ -1,5 +1,25 @@
 ## Item 202 — the rehearsal harness reaches the network
 
+**RULING 2026-10-04 — the offline rehearsal rig is FROZEN at what it does
+today.** Do not extend it, do not chase its next blocker, do not record
+further inputs for it. "A full past session replays offline at zero cost" is
+REMOVED as a condition for turning the desk back on. Hand-written hermetic
+end-to-end tests replace it: they run in seconds, cannot rot, and each one
+must be proven able to fail. The owner accepts that some bugs will only be
+found with the desk running.
+
+WHAT DECIDED IT: 45 separate pieces of work since August touch the rig, out
+of 1,897 commits, and it still cannot replay one morning session end to end
+— every one of those fixed a fault in the RIG, not in the desk.
+
+WHAT WAS KNOWINGLY GIVEN UP: replaying a real past day's exact inputs catches
+input-shape surprises nobody thought to write a test for, and nothing else
+gives that. Accepted as the price.
+
+This ruling is what criterion 9 of this item is WITHDRAWN against — neither
+met nor deferred, because the work is ruled not to happen.
+
+
 Found 2026-09-30 while closing a hole in the test suite's outbound-HTTP guard.
 
 `tests/conftest.py` blocked `requests.get` only. A `requests.Session` bypassed

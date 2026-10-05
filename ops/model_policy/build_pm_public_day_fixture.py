@@ -106,11 +106,11 @@ def pm_public_day_tech_symbols_data() -> list[dict]:
 def pm_public_day_earnings_reports(scratch) -> list:
     """Real `EarningsReport`s for every universe symbol with a live-window
     (45-day, src/data/earnings.py:89) 10-Q/10-K filing, rebuilt from the
-    pinned raw filing HTML by today's `EarningsDataProvider._extract_text`.
+    pinned raw filing HTML by today's `extract_text`.
     No XBRL cross-check at this scale (see the fixture's own provenance
     note) -- `xbrl_facts` stays {}, which `EarningsAnalystAgent` treats as
     nothing to cross-check, same as a filer with no XBRL at all."""
-    from src.data.earnings import EarningsDataProvider, EarningsReport
+    from src.data.earnings import EarningsDataProvider, EarningsReport, extract_text
 
     manifest_data = json.loads((fp.FIXTURES_DIR / _PM_EARNINGS_FIXTURE).read_text())
     html_by_key = json.loads(fp.load_blob(_PM_EARNINGS_FIXTURE, _PM_EARNINGS_BLOB))
@@ -119,7 +119,7 @@ def pm_public_day_earnings_reports(scratch) -> list:
     for filing in manifest_data["filings"]:
         html_path = scratch / f"{filing['key']}.html"
         html_path.write_text(html_by_key[filing["key"]], encoding="utf-8")
-        text = provider._extract_text(str(html_path))
+        text = extract_text(str(html_path))
         analysis_dir = scratch / "analyses" / filing["symbol"]
         analysis_dir.mkdir(parents=True, exist_ok=True)
         reports.append(EarningsReport(
