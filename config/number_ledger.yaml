@@ -256,7 +256,7 @@ numbers:
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -265,7 +265,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -274,7 +274,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_symbol_timeout_s
     value: 8
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -283,7 +283,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_cache_ttl_days
     value: 7
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -292,7 +292,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_deadline_s
     value: 15
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -301,7 +301,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_max_retries
     value: 2
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -310,7 +310,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_request_timeout_s
     value: 10
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -8595,40 +8595,84 @@ numbers:
       prices anything from it.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['one']
     value: 1
-    status: instrument
+    status: arbitrary
     site: src/data/event_calendar.py
-    source: 'src/data/event_calendar.py::_FOMC_DURATION_RE (the regex that reads the Fed page wording)'
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the one-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 1 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
     note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 1, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
       English number-word decoding for the Fed's own phrasing
       ("one-day meeting") on the FOMC calendar page. The value is the
       cardinal "one" equals 1; it transcribes what the source document
       says rather than setting a desk policy.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['two']
     value: 2
-    status: instrument
+    status: arbitrary
     site: src/data/event_calendar.py
-    source: 'src/data/event_calendar.py::_FOMC_DURATION_RE (the regex that reads the Fed page wording)'
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the two-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 2 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
     note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 2, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
       English number-word decoding for the Fed's own phrasing
       ("two-day meeting") on the FOMC calendar page. The value is the
       cardinal "two" equals 2; it transcribes what the source document
       says rather than setting a desk policy.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['three']
     value: 3
-    status: instrument
+    status: arbitrary
     site: src/data/event_calendar.py
-    source: 'src/data/event_calendar.py::_FOMC_DURATION_RE (the regex that reads the Fed page wording)'
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the three-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 3 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
     note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 3, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
       English number-word decoding for the Fed's own phrasing
       ("three-day meeting") on the FOMC calendar page. The value is the
       cardinal "three" equals 3; it transcribes what the source document
       says rather than setting a desk policy.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['four']
     value: 4
-    status: instrument
+    status: arbitrary
     site: src/data/event_calendar.py
-    source: 'src/data/event_calendar.py::_FOMC_DURATION_RE (the regex that reads the Fed page wording)'
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the four-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 4 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
     note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 4, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
       English number-word decoding for the Fed's own phrasing
       ("four-day meeting") on the FOMC calendar page. The value is the
       cardinal "four" equals 4; it transcribes what the source document
@@ -8720,7 +8764,7 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
-      `src.config.EventRiskConfig.fomc_cache_ttl_days` (7), the configured value that overrides it
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_cache_ttl_days` (7), the configured value that overrides it
       in production.
   - id: src.data.event_calendar.FOMCCalendarProvider.__init__(max_retries)
     value: 2
@@ -8733,7 +8777,7 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
-      `src.config.EventRiskConfig.fomc_max_retries` (2) and to `src.infra_retry_policy.MAX_RETRIES`
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_max_retries` (2) and to `src.infra_retry_policy.MAX_RETRIES`
       (2), the desk-wide bounded-retry count already in this file.
   - id: src.data.event_calendar.FOMCCalendarProvider.__init__(request_timeout_s)
     value: 10
@@ -8746,7 +8790,7 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
-      `src.config.EventRiskConfig.fomc_request_timeout_s` (10).
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_request_timeout_s` (10).
   - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_base_s)
     value: 2
     status: not-trade-governing
@@ -8796,7 +8840,7 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
-      `src.config.EventRiskConfig.fomc_deadline_s` (15); when it is exceeded the seat is told the
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_deadline_s` (15); when it is exceeded the seat is told the
       FOMC calendar is unavailable rather than shown stale dates.
   - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(breaker_after_failed_releases)
     value: 1
@@ -8889,7 +8933,7 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
-      `src.config.EventRiskConfig.calendar_deadline_s` (20), the configured whole-calendar deadline.
+      `src.config.risk_adjuncts.EventRiskConfig.calendar_deadline_s` (20), the configured whole-calendar deadline.
   - id: src.data.event_calendar.FOMCCalendarProvider.get_meetings(horizon_days)
     value: 10
     status: not-trade-governing
@@ -8923,7 +8967,7 @@ numbers:
       proximity sweep. It decides how long the desk waits on one symbol
       before marking that symbol's earnings status unavailable, never
       whether or how much is traded. Equal to
-      `src.config.EventRiskConfig.earnings_symbol_timeout_s` (8), the
+      `src.config.risk_adjuncts.EventRiskConfig.earnings_symbol_timeout_s` (8), the
       configured value that overrides it in production; same
       classification and same reasoning as the other
       `src.config.EventRiskConfig.*` network rows in this file.
@@ -8936,7 +8980,7 @@ numbers:
       is exceeded the remaining symbols are reported unavailable rather
       than waited on. It decides how long the desk waits, never whether or
       how much is traded. Equal to
-      `src.config.EventRiskConfig.earnings_deadline_s` (20), the configured
+      `src.config.risk_adjuncts.EventRiskConfig.earnings_deadline_s` (20), the configured
       value that overrides it in production.
   - id: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
     value: 570
