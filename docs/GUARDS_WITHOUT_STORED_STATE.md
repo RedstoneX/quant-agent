@@ -66,17 +66,17 @@ kept as history and marked DONE where they describe a stored file that is gone.
     `test_deleting_small_files_cannot_raise_the_line_ceiling`,
     `test_the_ceiling_never_falls_below_the_new_module_floor`,
     `test_it_refuses_rather_than_invent_a_fence_from_nothing`.
-  - OPEN, sized not changed: `MONEY_MODULES` in `scripts/silent_swallow_guard.py`
-    is a hand-maintained list of 23 paths that must be edited every time a body is
-    lifted (its own comments record six such edits). Deriving "money-touching"
-    from source (modules under `src/execution/` and `src/protection/`, plus any
-    module that imports the broker adapter) is a scope change of the guard
-    itself, about half a day with the identity tests; not started.
-  - Hardcoded paths in guards on other in-flight work's ground, not touched:
-    `docs/WORK.md` / `docs/board_notes` in `board_item_guard` and `board_rot_guard`;
-    `config/number_ledger.yaml` in `ledger_prose_guard`, `ledger_substantiation_guard`
-    and `settlement_fill_guard`. Each refuses (does not silently pass) if the
-    file moves, so they are brittle, not blind.
+  - DONE: the money-module list in `scripts/silent_swallow_guard.py` is no longer a hand-kept
+    23-path list. `scripts/money_modules.py` derives it at check time from the installed SDK's
+    exchange-writing methods and the call graph under `src/`; the derived surface is far larger
+    (it caught modules the old list never named) and it refuses if the SDK cannot be read.
+  - DONE: the board is found by shape (`scripts/board_locator.py`) in `board_item_guard` and
+    `board_rot_guard`; the ledger is found by shape (`scripts/ledger_locator.py`: the one YAML
+    with a top-level `numbers:` whose rows carry `site:`) in `ledger_prose_guard`,
+    `ledger_substantiation_guard` and `settlement_fill_guard`. Zero or several matches REFUSE.
+  - NOT converted, still named by path (open): `src/number_sources.load_ledger` (runtime config loader, not
+    a guard), and the board path in `definition_of_done`, `check_board_hygiene`, `board_numbers`
+    and `next_board_number`.
 - Config files checked against the three-way test (kept record of a decision /
   stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
   - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing

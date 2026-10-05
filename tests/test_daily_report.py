@@ -114,7 +114,7 @@ def test_run_daily_sends_and_reports(monkeypatch):
     ]
     monkeypatch.setattr("yfinance.download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
     sent = {}
-    with patch("src.notifier.TelegramNotifier") as TN:
+    with patch("src.notifier.owner_alert_funnel.TelegramNotifier") as TN:
         TN.return_value.send_document = lambda b, f, c="": sent.update(filename=f, n=len(b)) or True
         res = pipe.run_daily()
     assert res["status"] == "sent"
@@ -216,7 +216,7 @@ def test_run_daily_skipped_when_telegram_disabled(monkeypatch):
         ("2026-05-27", 100_000.0), ("2026-05-28", 100_500.0),
     ]
     monkeypatch.setattr("yfinance.download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
-    with patch("src.notifier.TelegramNotifier") as TN:
+    with patch("src.notifier.owner_alert_funnel.TelegramNotifier") as TN:
         TN.return_value.enabled = False
         TN.return_value.send_document.return_value = False
         res = pipe.run_daily()
@@ -229,7 +229,7 @@ def test_run_daily_error_when_delivery_fails(monkeypatch):
     pipe = build_pipeline(broker=MagicMock())
     pipe.broker.get_full_portfolio_history.return_value = [("2026-05-27", 100_000.0)]
     monkeypatch.setattr("yfinance.download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
-    with patch("src.notifier.TelegramNotifier") as TN:
+    with patch("src.notifier.owner_alert_funnel.TelegramNotifier") as TN:
         TN.return_value.enabled = True
         TN.return_value.send_document.return_value = False
         res = pipe.run_daily()

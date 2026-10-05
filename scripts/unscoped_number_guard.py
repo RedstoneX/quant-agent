@@ -28,6 +28,7 @@ from scripts.guard_reference import (
     trunk_paths,
 )
 from src import number_sources
+from src.number_universe import is_production
 
 
 def working_sites() -> list[str]:
@@ -42,7 +43,7 @@ def trunk_sites() -> list[str]:
     working tree's scope rules are applied to it so both sides are measured by
     the same rule. A scoped path the trunk does not have yet is created empty.
     """
-    paths = [p for p in trunk_paths(".py") if p.startswith("src/")]
+    paths = [p for p in trunk_paths(".py") if is_production(p)]
     blobs = trunk_blobs(paths)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -66,6 +67,22 @@ def trunk_sites() -> list[str]:
                 f"cannot measure unscoped numbers on {TRUNK} ({exc}); it refuses "
                 f"rather than pass."
             ) from exc
+
+
+def money_reach_gap() -> tuple[int, int]:
+    """(money modules outside the ledger's scope, numbers a full scan finds in them).
+
+    MEASURED, NOT GATED: the ledger scope is a reviewed list and 135 derived money
+    modules are outside it. Making this absolute would red the trunk until those
+    numbers are registered, so it is reported here and the gate stays the delta.
+    """
+    from scripts.money_modules import derive
+
+    scoped = {p.resolve() for p in number_sources._scoped_files(ROOT)}
+    scoped.update(p.resolve() for p in number_sources.config_modules(ROOT))
+    outside = [m for m in derive(ROOT) if (ROOT / m).resolve() not in scoped]
+    count = sum(len(number_sources._scan_module(ROOT / m, m, None, ROOT)) for m in outside)
+    return len(outside), count
 
 
 def added_sites() -> list[str]:
@@ -95,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if bad:
         print(
-            "a numeric constant was added in a src/ file outside SCOPED_PATHS; if it "
+            "a numeric constant was added in a production file (root, src, ops, scripts) outside SCOPED_PATHS; if it "
             "decides, sizes, prices or exits a trade, bring its module into scope "
             "and ledger it (src/number_sources.py). Delta against %s:\n%s"
             % (TRUNK, "\n".join(bad)),
@@ -103,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     print(f"unscoped-number guard: this tree adds no unscoped numeric constant against {TRUNK}.")
+    modules, numbers = money_reach_gap()
+    print(f"measured, not gated: {modules} money modules outside ledger scope hold {numbers} unledgered numbers.")
     return 0
 
 
