@@ -20,6 +20,7 @@ from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 
 from src.data.filing_text import extract_text
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +320,7 @@ class EarningsDataProvider:
         try:
             data = json.loads(self._sec_get(url))
         except Exception as e:
-            logger.warning("Failed to fetch submissions for %s (CIK %s): %s", ticker, cik, e)
+            record_swallowed("data.earnings.recent_filings", e, log=logger, symbol=ticker)
             return []
 
         recent = data.get("filings", {}).get("recent", {})
@@ -604,7 +605,7 @@ class EarningsDataProvider:
                         filing.filing_date, local_path)
             return str(local_path)
         except Exception as e:
-            logger.warning("Failed to download %s %s: %s", filing.symbol, filing.form_type, e)
+            record_swallowed("data.earnings.download", e, log=logger, symbol=filing.symbol)
             return None
 
     def _get_analysis_path(self, symbol: str, form_type: str, filing_date: str) -> str:
