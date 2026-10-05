@@ -34,13 +34,15 @@ from scripts.guard_reference import (
     trunk_blobs,
     trunk_paths,
 )
-from src import number_sources
+from src import number_callsite_scan, number_sources
 from src.number_universe import is_production
 
 
 def working_number_sites() -> list[number_sources.NumberSite]:
-    """Every unscoped numeric constant in the working tree."""
-    return number_sources.collect_unscoped_sites(ROOT)
+    """Every unscoped numeric constant in the working tree, plus unregistered call-site keyword literals."""
+    return number_sources.collect_unscoped_sites(ROOT) + number_callsite_scan.collect_callsite_sites(
+        ROOT, number_sources.load_ledger()
+    )
 
 
 def working_sites() -> list[str]:
@@ -78,7 +80,9 @@ def trunk_number_sites() -> list[number_sources.NumberSite]:
                 else:
                     target.mkdir(parents=True, exist_ok=True)
         try:
-            return number_sources.collect_unscoped_sites(root)
+            return number_sources.collect_unscoped_sites(root) + number_callsite_scan.collect_callsite_sites(
+                root, number_sources.load_ledger()
+            )
         except (OSError, SyntaxError) as exc:
             raise ReferenceUnavailable(
                 f"cannot measure unscoped numbers on {TRUNK} ({exc}); it refuses "
