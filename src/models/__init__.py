@@ -63,9 +63,10 @@ from src.models.smart_money import (
     SmartMoneySynthesis,
 )
 from src.models.portfolio import (
-    RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT,
     _RISK_PCT_CLAIM_PATTERN,
+    _explicit_risk_pct_claim_texts,
     _explicit_risk_pct_claims,
+    risk_pct_half_ulp,
     TargetPosition,
     CANDIDATE_REJECTION_CODES,
     CandidateRejection,
