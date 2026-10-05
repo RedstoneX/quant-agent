@@ -234,7 +234,7 @@ def test_root_pathspec_adds_only_top_level_files():
 
 
 def test_guard_refuses_a_bypass_planted_at_the_repository_root(monkeypatch):
-    """Plant a root-level direct send that the trunk does not have: refused."""
+    """Plant a root-level direct send: refused, absolutely (no trunk comparison)."""
     monkeypatch.setattr(g, "scanned_paths", lambda: [])
     monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
     monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
@@ -242,6 +242,5 @@ def test_guard_refuses_a_bypass_planted_at_the_repository_root(monkeypatch):
         g, "direct_send_sites",
         lambda paths: {"main.py": ["notifier.send('a brand new root bypass')"]},
     )
-    monkeypatch.setattr(g, "trunk_direct_send_sites", lambda paths: {})
     bad = g.violations()
-    assert any("main.py" in b and "NEW direct notifier send" in b for b in bad)
+    assert any("main.py" in b and "direct notifier send" in b for b in bad)
