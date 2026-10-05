@@ -209,7 +209,9 @@ def send_alert(message: str) -> bool:
             file=sys.stderr,
         )
         return False
-    return bool(notifier.send(message))
+    from src.notifier.owner_alert_delivery import deliver_with_retry
+
+    return bool(deliver_with_retry(notifier, message, kind="refresh_pricing"))
 
 
 def main(argv: list[str] | None = None) -> int:

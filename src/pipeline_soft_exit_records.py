@@ -119,7 +119,7 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
     try:
         from src.seat_heal import drain_restore_observations
 
-        observations, dropped = drain_restore_observations()
+        observations, dropped = drain_restore_observations(getattr(ctx, "run_id", None))
         if not observations:
             return
         db = getattr(pipeline, "db", None)

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import json
 from src.stop_cancel_outcome import handle_add_cancel
+from src.alert_claims import claim_typed_alert
 from src.execution.scale_in_loud import record_scale_in, record_scale_in_fault
 from src.execution.held_qty import (  # noqa: F401 (re-export; patch targets)
     _SESSION_LOCK_DIR, broker_position_qty, cover_qty_for_rearm, held_signed_qty,
@@ -905,7 +906,6 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         order_id=order_id, detail=detail, run_id=run_id,
     )
     try:
-        from src.coverage_watchdog import claim_typed_alert
         if not claim_typed_alert(REARM_FAILURE_ALERT_KIND, [symbol]):
             return
     except Exception as exc:  # noqa: BLE001 — never swallow the page on a
