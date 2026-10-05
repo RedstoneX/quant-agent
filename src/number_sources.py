@@ -295,7 +295,11 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: accepts a positive delta is not a ratchet. The grounds for every past move
 #: remain readable in git at the commit that deleted the file, and each row's
 #: own grounds live in its ledger entry.
-LEDGER_RELATIVE = "config/number_ledger.yaml"
+from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
+    LEDGER_RELATIVE,
+    count_arbitrary,
+    trunk_arbitrary_count,
+)
 
 
 def load_ratchet_history(path: Path) -> list[dict[str, Any]]:
@@ -308,31 +312,6 @@ def load_ratchet_history(path: Path) -> list[dict[str, Any]]:
         loaded = yaml.safe_load(handle) or {}
     return list(loaded.get("changes") or [])
 
-
-def count_arbitrary(text: str) -> int:
-    """`status: arbitrary` rows in a raw ledger document."""
-    raw = yaml.safe_load(text) or {}
-    return sum(
-        1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary"
-    )
-
-
-def trunk_arbitrary_count() -> int:
-    """The `arbitrary` count on the trunk, read fresh at check time.
-
-    Nothing is stored and nothing is cached. If the trunk cannot be read the
-    guard REFUSES (``ReferenceUnavailable``) rather than passing: a ratchet
-    with no reference is decoration.
-    """
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    blobs = trunk_blobs([LEDGER_RELATIVE])
-    if LEDGER_RELATIVE not in blobs:
-        raise ReferenceUnavailable(
-            f"{LEDGER_RELATIVE} is absent from the trunk, so the arbitrary "
-            "count has no reference to be judged against"
-        )
-    return count_arbitrary(blobs[LEDGER_RELATIVE])
 
 #: Item 90's three states. A trade-governing number must sit in exactly one
 #: of them: (1) SOURCED OR MEASURED -- the `sourced`, `derived` and

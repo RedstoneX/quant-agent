@@ -151,7 +151,7 @@ def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
     assert not re.search(r"MAX_ARBITRARY_ENTRIES", text), (
         "a stored ceiling is what open change 1430 raised by +4 to go green"
     )
-    assert "def trunk_arbitrary_count" in text
+    assert "def trunk_arbitrary_count" in (root / "src" / "number_ledger_counts.py").read_text(encoding="utf-8")
 
 
 def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
