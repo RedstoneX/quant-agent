@@ -4,6 +4,11 @@ This module does not construct an Alpaca client and cannot make a network call.
 Callers explicitly wrap an already-constructed TradingClient or
 StockHistoricalDataClient while capturing, then use :class:`ReplayBrokerCassette`
 offline.  The existing synthetic rehearsal clients remain untouched.
+
+All stable provider identifiers are private fixture linkage, including Alpaca's
+integer Trade/Snapshot market-print IDs. They are deterministically tokenized;
+their raw values add no replay behavior and would make public recordings
+persistently linkable to the source account/feed observation.
 """
 
 from __future__ import annotations
@@ -57,11 +62,12 @@ class RecordedBrokerError(BrokerCassetteError):
         error_type: str,
         status_code: Any = None,
         code: Any = None,
+        broker_message: str | None = None,
     ):
         super().__init__(message)
         # Alpaca APIError exposes message/code/status_code while the current
         # broker classifiers also consume str(exc). Preserve both surfaces.
-        self.message = message
+        self.message = broker_message if broker_message is not None else message
         self.error_type = error_type
         self.status_code = status_code
         self.status = status_code
@@ -188,6 +194,15 @@ class _Codec:
                 "type": f"{type(value).__module__}.{type(value).__qualname__}",
                 "value": self.encode(value.value, context=context),
             }
+        # Alpaca Trade.id is an integer market-print identifier. Treat numeric
+        # values in an explicitly identified field exactly like string/UUID
+        # broker IDs; bool is excluded because it is an int subclass.
+        if (
+            category is not None
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        ):
+            return self._tokenizer.token(value, category)
         if isinstance(value, str):
             if _TOKEN_RE.fullmatch(value):
                 self._tokenizer.observe(value)
@@ -311,10 +326,18 @@ class BrokerCassette:
             answer = method(*args, **kwargs)
         except Exception as exc:
             with self._lock:
+                display_text = self._tokenizer.sanitize_text(str(exc), context)
+                parsed_message = _exception_attr(exc, "message")
+                broker_message = (
+                    display_text
+                    if parsed_message is None
+                    else self._tokenizer.sanitize_text(str(parsed_message), context)
+                )
                 entry["error"] = self._codec.encode(
                     {
                         "type": f"{type(exc).__module__}.{type(exc).__qualname__}",
-                        "message": self._tokenizer.sanitize_text(str(exc), context),
+                        "text": display_text,
+                        "message": broker_message,
                         "status_code": _exception_attr(exc, "status_code"),
                         "code": _exception_attr(exc, "code"),
                     },
@@ -415,11 +438,15 @@ class ReplayBrokerCassette:
             self._cursor += 1
             if "error" in expected:
                 error = self._codec.decode(expected["error"])
+                display_text = error.get(
+                    "text", error.get("message", "recorded broker error")
+                )
                 raise RecordedBrokerError(
-                    error.get("message", "recorded broker error"),
+                    display_text,
                     error_type=error.get("type", "broker error"),
                     status_code=error.get("status_code"),
                     code=error.get("code"),
+                    broker_message=error.get("message", display_text),
                 )
             if "answer" not in expected:
                 raise BrokerCassetteError(

@@ -7,8 +7,10 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.data.models import Trade
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest
 
@@ -321,3 +323,76 @@ def test_replayed_errors_preserve_every_current_rest_classifier_surface():
     missing = _round_tripped_error("invalid symbol", 404, 40410000)
     assert _is_terminal_broker_rejection(missing)
     assert "invalid symbol" in str(missing).lower()
+
+
+def test_real_alpaca_trade_numeric_print_id_is_tokenized_and_public_safe():
+    trade = Trade(
+        "SPY",
+        {
+            "t": "2026-10-05T14:30:00Z",
+            "x": "V",
+            "p": 670.25,
+            "s": 10,
+            "i": 987654321012345,
+            "c": ["@"],
+            "z": "C",
+        },
+    )
+    cassette = BrokerCassette()
+    recorder = RecordingBrokerClient(
+        SimpleNamespace(get_stock_latest_trade=lambda _request: {"SPY": trade}),
+        cassette,
+        "stock_historical_data",
+    )
+    recorder.get_stock_latest_trade({"symbol_or_symbols": ["SPY"]})
+    payload = cassette.to_payload()
+
+    assert "987654321012345" not in json.dumps(payload)
+    assert_public_safe(payload)
+    replay = ReplayBrokerCassette(json.loads(json.dumps(payload)))
+    answer = replay.client("stock_historical_data").get_stock_latest_trade(
+        {"symbol_or_symbols": ["SPY"]}
+    )
+    assert answer["SPY"].id == "<QAMC:broker_id:0001>"
+    replay.assert_consumed()
+
+
+def test_real_alpaca_api_error_preserves_display_text_and_parsed_message():
+    original = APIError(
+        json.dumps(
+            {
+                "code": 42210000,
+                "message": "client_order_id must be unique",
+            },
+            separators=(",", ":"),
+        ),
+        SimpleNamespace(
+            response=SimpleNamespace(status_code=422),
+            request=None,
+        ),
+    )
+
+    class FailingClient:
+        def submit_order(self):
+            raise original
+
+    cassette = BrokerCassette()
+    recorder = RecordingBrokerClient(FailingClient(), cassette, "trading")
+    with pytest.raises(APIError):
+        recorder.submit_order()
+    payload = cassette.to_payload()
+    recorded_error = payload["entries"][0]["error"]
+    assert recorded_error["text"] == str(original)
+    assert recorded_error["message"] == original.message
+    assert_public_safe(payload)
+    replay = ReplayBrokerCassette(json.loads(json.dumps(payload)))
+    with pytest.raises(RecordedBrokerError) as error:
+        replay.client("trading").submit_order()
+
+    assert str(error.value) == str(original)
+    assert error.value.message == original.message
+    assert error.value.code == original.code
+    assert error.value.status_code == original.status_code
+    assert error.value.error_type == "alpaca.common.exceptions.APIError"
+    assert _is_duplicate_client_order_id_rejection(error.value)
+    replay.assert_consumed()

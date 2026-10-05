@@ -38,6 +38,7 @@ SAFE_PAYLOAD = {
         {"url": "https://broker.invalid/v2?api_key=credential"},
         {"value": "00000000-0000-0000-0000-000000000000"},
         {"value": "/home/qamc/quant-agent/data/quant_agent.db"},
+        {"id": 987654321012345},
         {"broker_order_id": "raw-broker-identifier"},
         {"broker_execution_id": "raw-broker-execution-identifier"},
     ],
