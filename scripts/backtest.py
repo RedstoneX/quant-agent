@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.backtest import swept_values
 from src.backtest.data import fetch_universe_history
 from src.backtest.engine import BacktestParams, BacktestRunResult, run_backtest
 from src.backtest.metrics import (
@@ -111,6 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", default=None,
                      help="CSV path for the per-trade table (config A; "
                           "config B's table is written alongside with a _b suffix)")
+    ap.add_argument("--sweep", action="append", default=None, metavar="NAME=VALUE",
+                     help="vary a value this engine reads through "
+                          "src/backtest/swept_values.py (repeatable), e.g. "
+                          "--sweep levels.pivot_window=7. Every run prints how "
+                          "many times each such value was actually READ: a "
+                          "sweep reporting 0 reads reached nothing, whatever "
+                          "the numbers look like.")
     return ap
 
 
@@ -149,9 +157,26 @@ def _run_one(
         start=args.start, end=args.end, max_hold_days=args.max_hold_days,
         initial_equity=args.initial_equity, slippage_bps=slippage_bps,
     )
+    # Per-run read counts: a sweep that never reached its value must say so
+    # in this run's own output rather than quietly matching the baseline.
+    swept_values.reset_counts()
     result = run_backtest(config=config, bars_by_symbol=bars_by_symbol, params=params)
+    read_counts = swept_values.format_read_counts(label=f"run from {config_path}")
     metrics = compute_metrics(result.trades, params.initial_equity)
-    return config, result, metrics, slippage_bps, slippage_source
+    return config, result, metrics, slippage_bps, slippage_source, read_counts
+
+
+def _coerce(raw: str) -> float | int | str:
+    """Parse a `--sweep NAME=VALUE` value. An unparseable value is passed
+    through as text: this tool reports, it does not refuse."""
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
 
 
 def _report(label: str, config_path: str, result: BacktestRunResult, metrics: Metrics,
@@ -195,17 +220,27 @@ def main(argv: list[str] | None = None) -> int:
 
     bars_cache: dict[tuple, tuple] = {}
 
-    config_a, result_a, metrics_a, slip_a, slip_src_a = _run_one(args.config, args, bars_cache)
+    for assignment in args.sweep or []:
+        name, _, raw = assignment.partition("=")
+        swept_values.set_override(name.strip(), _coerce(raw.strip()))
+
+    config_a, result_a, metrics_a, slip_a, slip_src_a, reads_a = _run_one(
+        args.config, args, bars_cache)
     print()
     _report("A", args.config, result_a, metrics_a, args, slip_a, slip_src_a)
+    print()
+    print(reads_a)
     if args.out:
         write_trades_csv(result_a.trades, args.out)
         print(f"\nPer-trade table (A) written to {args.out}")
 
     if args.config_b:
-        config_b, result_b, metrics_b, slip_b, slip_src_b = _run_one(args.config_b, args, bars_cache)
+        config_b, result_b, metrics_b, slip_b, slip_src_b, reads_b = _run_one(
+            args.config_b, args, bars_cache)
         print()
         _report("B", args.config_b, result_b, metrics_b, args, slip_b, slip_src_b)
+        print()
+        print(reads_b)
         if args.out:
             out_b = str(Path(args.out).with_suffix("")) + "_b" + (Path(args.out).suffix or ".csv")
             write_trades_csv(result_b.trades, out_b)
