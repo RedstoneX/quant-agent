@@ -18178,3 +18178,13 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 **Proof.** `src/agents/llm_route3_policy.py` with `tests/test_seat_refuses_unmeasured_route.py`.
 
 **Still open.** The substitute was never measured, because the trade seat's model choice is closed on 148 trials and benchmarking it would reopen that ruling. The production rows for the acceptance recording were still empty when this was closed, and nothing reads `llm_route_events` back yet.
+
+## Owner alerts showed a time with no date (item 231, 2026-10-04)
+
+**What was wrong.** The owner reads alerts on a phone hours after they fire, and 24 places showed a bare time that could not be placed once he scrolled back.
+
+**What changed.** One shared date-and-time formatter now serves every owner-facing site, including the health report window, and a test fails if an owner-facing timestamp omits the date. Message text only; Telegram stays muted and no alerts were added.
+
+**Proof.** `src/notifier/sections.py` with `tests/test_owner_timestamps_carry_date.py`, which now really scans the health and in-flight modules it previously missed.
+
+**Still open.** Nothing.

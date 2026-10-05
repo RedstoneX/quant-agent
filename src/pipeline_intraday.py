@@ -37,6 +37,7 @@ from src.intraday_scan_outcome import failed_scan_result
 from src.data.technical import compute_indicators
 from src.pipeline_context import RunContext
 from src.sentinel.guarded_site import record_site as _site
+from src.pipeline_intraday_snapshot_health import SnapshotHealthMixin
 from src.pipeline_stages import _persist_evidence, _record_pipeline_event
 from src.trading_calendar import session_date_key
 
@@ -45,7 +46,7 @@ from src.trading_calendar import session_date_key
 logger = logging.getLogger("src.pipeline")
 
 
-class IntradayMixin:
+class IntradayMixin(SnapshotHealthMixin):
     """Intra-check session (cluster R) and intraday opportunity scan (cluster W)."""
 
     def run_intra_safety(self) -> dict:
@@ -599,50 +600,6 @@ class IntradayMixin:
                     fh.close()   # releases the flock
                 except Exception as exc:  # noqa: BLE001
                     _site(self, "scan_lock_release", exc)
-
-    def _track_intraday_snapshot_ok(self, symbol: str) -> None:
-        """Reset a symbol's consecutive-miss streak. Never raises — a
-        monitoring bug must not be able to break the scan it watches."""
-        try:
-            self.db.record_intraday_symbol_snapshot_result(symbol, ok=True)
-        except Exception:
-            logger.warning(
-                "intraday snapshot health: failed to record OK for %s", symbol,
-                exc_info=True,
-            )
-
-    def _track_intraday_snapshot_miss(self, symbol: str) -> None:
-        """Record a missed snapshot for `symbol` and alert the owner once
-        it has failed 3 consecutive ticks (~90 min) — see
-        `Database.record_intraday_symbol_snapshot_result`'s docstring for
-        the threshold/cooldown reasoning. Never raises."""
-        try:
-            result = self.db.record_intraday_symbol_snapshot_result(symbol, ok=False)
-        except Exception:
-            logger.warning(
-                "intraday snapshot health: failed to record miss for %s", symbol,
-                exc_info=True,
-            )
-            return
-        if not result.get("should_alert"):
-            return
-        try:
-            from src import notifier as _notifier
-
-            misses = result.get("consecutive_misses", 0)
-            _notifier.send_owner_alert(
-                "INTRADAY SNAPSHOT UNAVAILABLE\n"
-                f"{symbol} has failed to return snapshot data for "
-                f"{misses} consecutive scans (~{misses * 30} min). It is being "
-                "silently excluded from intraday move detection until this "
-                "resolves — check whether the ticker is still valid/tradable "
-                "on Alpaca. Will not re-alert on this symbol for 24h.", category=_notifier.CATEGORY_OPERATIONAL,
-            )
-        except Exception:
-            logger.warning(
-                "intraday snapshot health: alert failed for %s", symbol,
-                exc_info=True,
-            )
 
     def _run_intraday_opportunity_scan(self, ctx: RunContext) -> dict:
         """Concurrency-guarded wrapper around the scan body.
