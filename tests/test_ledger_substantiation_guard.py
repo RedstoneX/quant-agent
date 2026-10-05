@@ -112,6 +112,29 @@ def test_every_source_pin_in_the_real_ledger_carries_its_number():
     assert g.source_violations() == []
 
 
+@pytest.mark.parametrize("cite,expected", [
+    ("ops/m.py@`from os import path`", "dead"),
+    ("ops/m.py::__all__", "dead"),
+    ("ops/m.py@`# a comment that says 7 is the ceiling`", "dead"),
+    ("ops/m.py::unrelated", "no_mention"),
+    ("ops/m.py::CEILING", "mentions"),
+    ("ops/missing.py::CEILING", "unresolved"),
+])
+def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
+    """Widening the citation pattern to ops/ must not loosen a single verdict."""
+    ledger = {"src.m.CEILING": {"id": "src.m.CEILING", "value": 7, "source": cite}}
+    got = [p.verdict for p in g.classify(ledger, lambda rel: SRC if rel == "ops/m.py" else None)]
+    assert got == [expected]
+    assert got == _verdicts(cite.replace("ops/", "src/"))
+
+
+def test_a_gzipped_path_is_not_truncated_into_a_different_file():
+    from src.ledger_citations import _CITATION_RE
+    assert _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400") is None
+    assert _CITATION_RE.search("see ops/a/b.json, 400").group(1) == "ops/a/b.json"
+    assert _CITATION_RE.search("see src/x.py.").group(1) == "src/x.py"
+
+
 _CITED = {"id": "a.b", "value": 1, "note": "see src/m.py::CEILING"}
 _BARE = {"id": "a.b", "value": 1, "note": "prose only"}
 
@@ -131,3 +154,24 @@ def test_adding_a_citation_is_green():
 
 def test_real_ledger_uncited_set_does_not_grow_past_trunk():
     assert g.uncited_violations() == []
+
+
+@pytest.mark.parametrize("window,wanted", [
+    ("(-0.3, -0.1)", -0.3),
+    ("THRESHOLD = -5", -5),
+    ("offsets = [1, -2.5]", -2.5),
+])
+def test_a_negative_value_is_seen_when_the_minus_is_a_sign(window, wanted):
+    """A row whose value is negative must be able to reach `mentions`."""
+    assert g.mentions(window, "m.OTHER", wanted)
+
+
+@pytest.mark.parametrize("window", ["x-1", "f(a)-1", "a[0]-1", "x - 1"])
+def test_a_subtraction_is_not_read_as_a_negative_value(window):
+    """The minus is a sign only where it cannot be an operator."""
+    assert not g.mentions(window, "m.OTHER", -1)
+
+
+def test_positive_matching_is_unchanged_by_the_sign_rule():
+    assert g.mentions("CEILING = 7", "m.OTHER", 7)
+    assert not g.mentions("CEILING = 7", "m.OTHER", 8)

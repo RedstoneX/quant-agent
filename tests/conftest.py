@@ -295,6 +295,7 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     alerting = tmp_path / "alerting"
     alerting.mkdir(exist_ok=True)
     import src.coverage_watchdog as _cw
+    import src.drift_state as _ds
 
     heartbeat = alerting / "coverage_heartbeat.json"
     drift = alerting / "deploy_drift.json"
@@ -304,7 +305,7 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     # default path from THAT module's globals; the watchdog only re-exports.
     monkeypatch.setattr(_claims, "STATE_PATH", heartbeat)
     monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
-    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
+    monkeypatch.setattr(_ds, "DEPLOY_DRIFT_STATE_PATH", drift)
 
     # The reading side moves with the writing side, or the isolation itself
     # would break the invariant that pins them together

@@ -12,7 +12,7 @@ def test_swallowed_fault_logs_a_traceback_and_keeps_the_answer(monkeypatch, capl
     def _boom(*a, **k):
         raise RuntimeError("synthetic read failure")
 
-    monkeypatch.setattr("src.coverage_watchdog.load_state", _boom)
+    monkeypatch.setattr("src.drift_state.load_drift_state", _boom)
     with caplog.at_level(logging.ERROR):
         out = drift_state.deploy_drift_state()
     assert out == {"status": "unknown", "reason": "drift state read failed"}
@@ -22,7 +22,7 @@ def test_swallowed_fault_logs_a_traceback_and_keeps_the_answer(monkeypatch, capl
 
 
 def test_clean_pass_logs_nothing(monkeypatch, caplog):
-    monkeypatch.setattr("src.coverage_watchdog.load_state", lambda path: {})
+    monkeypatch.setattr("src.drift_state.load_drift_state", lambda path=None: {})
     with caplog.at_level(logging.ERROR):
         out = drift_state.deploy_drift_state()
     assert out["status"] == "unknown" and out["reason"] == "no drift check recorded"

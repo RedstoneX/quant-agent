@@ -28,21 +28,10 @@ re-derives. The defining modules themselves are not scanned for rule 1 (they
 define the writes and are imported for their read methods); the reads in
 `src/api/` are confined by the name check on `src/api/` itself.
 
-ALLOWLIST: "file::name" pairs reachable today. It may only SHRINK (stale entries
-fail the test, forcing removal). All entries are ONE finding, one closure behind
-`src.coverage_watchdog`, which lazily imports repair/scale-in code from `src/execution/`.
-The dashboard never calls any of it. Re-derived 2026-10-05: no entry is dead, and the
-chain is reached by TWO doors, so cutting either alone removes nothing: (a)
-`src/api/drift_state.py` reads the drift snapshot through `coverage_watchdog.load_state`;
-(b) `src/api/{deps,routes_history}.py` import `src.config`, which reaches
-`src.agents.base` -> `src.refusal_signature` -> `coverage_watchdog.most_recent_trading_day`.
-Both readers live INSIDE coverage_watchdog (not touched here), so the fix is to lift
-`load_state`/path constants and `most_recent_trading_day` into a no-import module.
-
-DOORS: the derived set of edges from a `src/api/` module into the part of the import
-closure that can reach any of the entries above (computed from source each run, see
-`tainted_doors`). A NEW dashboard import that reaches the money path by a route not
-named in DOORS fails; a stale door fails. Both lists only shrink.
+There is no allowlist. The one finding it once recorded (the dashboard's drift
+reader lived in `src.coverage_watchdog`, which lazily imports repair/scale-in
+code) was cut at the cause: the reader now lives in the stdlib-only
+`src.drift_state`. `test_drift_reader_closure_is_read_only` pins that module.
 """
 import ast
 import re
@@ -68,24 +57,9 @@ HTTP_WRITE = {"post", "put", "patch", "delete", "api_route", "route", "websocket
 # Names with a write-looking prefix that are read-only (verified by body inspection).
 # `ensure_diary_dir`-style local helpers are not broker/db methods, so only
 # broker/db names ever enter the derived set.
-ALLOWLIST: set[str] = {  # may only shrink; see module docstring
-    "src/coverage_watchdog.py::insert_specialist_evidence",
-    "src/execution/exit_path_records.py::insert_specialist_evidence",
-    "src/execution/scale_in.py::delete_pending_protection_restore",
-    "src/execution/scale_in.py::insert_pending_protection_restore",
-    "src/execution/scale_in.py::cancel_snapshotted_stops",
-    "src/execution/scale_in.py::cancel_entry_order",
-    "src/execution/scale_in.py::insert_specialist_evidence",
-    "src/execution/stop_records.py::replace_stop_loss",
-}
 
 # Each door is "api file -> first tainted module"; the reason is the one-line why it stays.
-DOORS: dict[str, str] = {
-    "src/api/drift_state.py -> src/coverage_watchdog.py": "reads drift snapshot via load_state",
-    "src/api/deps.py -> src/config/__init__.py": "config load; config -> agents.base -> refusal_signature",
-    "src/api/routes_history.py -> src/config/__init__.py": "AGENT_NAMES; same config chain",
-    "src/api/routes_history.py -> src/trader_feed/__init__.py": "feed reader; trader_feed -> config chain",
-}
+DOORS: dict[str, str] = {}  # every door is cut; may only shrink, so it stays empty
 
 
 def _parse(path: Path) -> ast.Module:
@@ -218,7 +192,7 @@ def _write_hits() -> set[str]:
 
 
 def test_api_cannot_reach_write_capable_names():
-    new = sorted(_write_hits() - ALLOWLIST)
+    new = sorted(_write_hits())
     assert not new, "src/api can reach the money path:\n" + "\n".join(new)
 
 
@@ -234,9 +208,27 @@ def test_api_registers_no_http_write_verb():
     assert not bad, "src/api registers a write route:\n" + "\n".join(bad)
 
 
-def test_allowlist_only_shrinks():
-    stale = sorted(ALLOWLIST - _write_hits())
-    assert not stale, "remove these resolved entries from ALLOWLIST (it may only shrink):\n" + "\n".join(stale)
+def _closure(start: Path) -> set[Path]:
+    seen, queue = {start}, [start]
+    while queue:
+        for mod in _imports(_parse(queue.pop())):
+            f = _module_file(mod)
+            if f and f.resolve() not in seen:
+                seen.add(f.resolve())
+                queue.append(f.resolve())
+    return seen
+
+
+def test_drift_reader_closure_is_read_only():
+    """The modules the dashboard reads drift state and trading days from reach nothing in src/execution."""
+    import src.drift_state as ds
+    import src.trading_day as td
+
+    for mod in (ds, td):
+        seen = _closure(Path(mod.__file__).resolve())
+        bad = sorted(_rel(f) for f in seen if f.is_relative_to(SRC / "execution")
+                     or f.name == "coverage_watchdog.py")
+        assert not bad, f"{mod.__name__} reaches the money path:\n" + "\n".join(bad)
 
 
 def tainted_doors() -> set[str]:
