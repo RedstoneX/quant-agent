@@ -46,7 +46,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.backtest import swept_values
 from src.backtest.data import fetch_universe_history
 from src.backtest.engine import BacktestParams, BacktestRunResult, run_backtest
 from src.backtest.metrics import (
@@ -159,9 +158,12 @@ def _run_one(
     )
     # Per-run read counts: a sweep that never reached its value must say so
     # in this run's own output rather than quietly matching the baseline.
-    swept_values.reset_counts()
+    # The meter lives on this run's params, so nothing carries to the next.
+    for assignment in args.sweep or []:
+        name, _, raw = assignment.partition("=")
+        params.meter.set_override(name.strip(), _coerce(raw.strip()))
     result = run_backtest(config=config, bars_by_symbol=bars_by_symbol, params=params)
-    read_counts = swept_values.format_read_counts(label=f"run from {config_path}")
+    read_counts = params.meter.format_read_counts(label=f"run from {config_path}")
     metrics = compute_metrics(result.trades, params.initial_equity)
     return config, result, metrics, slippage_bps, slippage_source, read_counts
 
@@ -219,10 +221,6 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     bars_cache: dict[tuple, tuple] = {}
-
-    for assignment in args.sweep or []:
-        name, _, raw = assignment.partition("=")
-        swept_values.set_override(name.strip(), _coerce(raw.strip()))
 
     config_a, result_a, metrics_a, slip_a, slip_src_a, reads_a = _run_one(
         args.config, args, bars_cache)

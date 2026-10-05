@@ -133,10 +133,15 @@ consequence is DECLARED and COUNTED instead of disguised.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
 
+from src.backtest.params import (  # noqa: F401
+    DEFAULT_INITIAL_EQUITY, DEFAULT_MAX_HOLD_DAYS, DEFAULT_SLIPPAGE_BPS,
+    MIN_BARS_FOR_SIGNAL, BacktestParams,
+)
 from src.backtest.budget_days import _budget_binds, _tie_break_arbitrated  # noqa: F401
 from src.backtest.exit_rules import (  # noqa: F401
     _check_exit, _existing_risk_pct, _size_position,
@@ -153,34 +158,6 @@ from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.risk.trailing import compute_trailing_stop
-
-#: Trading days of history a symbol needs before this engine will evaluate it
-#: for a signal. 210 = 200 (MA200) + 10 (the slope lookback `compute_market_context`
-#: needs to say whether that average is rising or falling) — below this, both
-#: `find_structural_levels` and `compute_market_context` are working with a
-#: materially incomplete picture, and the live system would be too.
-MIN_BARS_FOR_SIGNAL = 210
-
-DEFAULT_MAX_HOLD_DAYS = 20
-DEFAULT_INITIAL_EQUITY = 100_000.0
-DEFAULT_SLIPPAGE_BPS = 5.0
-
-
-@dataclass(frozen=True)
-class BacktestParams:
-    """Engine-only knobs. None of these has a live-system counterpart to
-    reuse: the live horizon comes from the Tech Analyst's own
-    `expected_horizon_sessions` estimate (an LLM output this engine cannot
-    reproduce), and there is no dedicated backtest slippage field in
-    `Settings` — see `scripts/backtest.py` for how the default is chosen."""
-
-    start: date
-    end: date
-    max_hold_days: int = DEFAULT_MAX_HOLD_DAYS
-    initial_equity: float = DEFAULT_INITIAL_EQUITY
-    slippage_bps: float = DEFAULT_SLIPPAGE_BPS
-    min_bars_for_signal: int = MIN_BARS_FOR_SIGNAL
-
 
 @dataclass(frozen=True)
 class BacktestRunResult:
@@ -312,6 +289,17 @@ def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: 
     )
 
 
+def _with_run_meter(simulate):
+    """Install this run's read counters for the duration of the run and
+    remove them afterwards, so no count or wrapper outlives the run."""
+    @functools.wraps(simulate)
+    def wrapper(*, config, bars_by_symbol, params):
+        with params.meter.counting():
+            return simulate(config=config, bars_by_symbol=bars_by_symbol, params=params)
+    return wrapper
+
+
+@_with_run_meter
 def run_backtest(
     *, config: AppConfig, bars_by_symbol: dict[str, list[OHLCV]], params: BacktestParams,
 ) -> BacktestRunResult:
@@ -469,7 +457,7 @@ def run_backtest(
                 structural_stop, target, computed_levels,
                 computed_level_touches, computed_level_bars,
             ) = _resolve_structural_stop_and_target(
-                bars_through_today, direction, ref_entry,
+                bars_through_today, direction, ref_entry, meter=params.meter,
             )
             signal_bar = bars_through_today[-1]
             stop = _resolve_stop_for_signal(

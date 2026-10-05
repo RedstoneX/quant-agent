@@ -30,89 +30,100 @@ from src.backtest.structural_stops import _resolve_structural_stop_and_target
 from tests.test_backtest import _build_long_win_series, _run
 
 
-@pytest.fixture(autouse=True)
-def _clean_counters():
-    swept_values.clear_overrides()
-    swept_values.reset_counts()
-    yield
-    swept_values.clear_overrides()
-    swept_values.reset_counts()
+def _capture(monkeypatch):
+    import src.backtest.structural_stops as structural_stops
+
+    seen: list[dict] = []
+    real = structural_stops.find_structural_levels
+
+    def capture(bars, **kwargs):
+        seen.append(dict(kwargs))
+        return real(bars, **kwargs)
+
+    monkeypatch.setattr(structural_stops, "find_structural_levels", capture)
+    return seen
 
 
 def test_a_run_reads_every_level_tunable_at_its_use_site():
     """Before this wiring the engine passed none of the three, so a sweep
     over them could only ever return byte-identical results."""
-    _run(_build_long_win_series())
-    counts = swept_values.counts()
+    _, params, _ = _run(_build_long_win_series())
+    counts = params.meter.counts()
     assert counts["levels.pivot_window"] >= 1
     assert counts["levels.cluster_tolerance_pct"] >= 1
     assert counts["levels.min_touches"] >= 1
+
+
+def test_counts_belong_to_their_run_and_do_not_leak():
+    _, first, _ = _run(_build_long_win_series())
+    _, second, _ = _run(_build_long_win_series())
+    assert first.meter is not second.meter
+    assert first.meter.counts() == second.meter.counts()
+
+
+def test_no_wrapper_outlives_the_run():
+    _run(_build_long_win_series())
+    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
+                          swept_values.CountedFloat)
+    assert not isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE,
+                          swept_values.CountedFloat)
 
 
 def test_reassigning_the_defining_module_constant_now_reaches_the_finder(monkeypatch):
     """`find_structural_levels` froze its defaults at definition time, so a
     sweep that reassigned the module constant never arrived. The engine now
     reads it late and passes it explicitly — captured here as it arrives."""
-    import src.backtest.structural_stops as structural_stops
-
-    seen: list[dict] = []
-    real = structural_stops.find_structural_levels
-
-    def capture(bars, **kwargs):
-        seen.append(dict(kwargs))
-        return real(bars, **kwargs)
-
-    monkeypatch.setattr(structural_stops, "find_structural_levels", capture)
+    seen = _capture(monkeypatch)
     monkeypatch.setattr(levels_module, "PIVOT_WINDOW", levels_module.PIVOT_WINDOW + 6)
     monkeypatch.setattr(levels_module, "MIN_TOUCHES", levels_module.MIN_TOUCHES + 1)
-    _resolve_structural_stop_and_target(_build_long_win_series(), "long", 105.0)
+    meter = swept_values.SweepMeter()
+    _resolve_structural_stop_and_target(
+        _build_long_win_series(), "long", 105.0, meter=meter)
 
     assert len(seen) == 1
     assert seen[0]["pivot_window"] == levels_module.PIVOT_WINDOW
     assert seen[0]["min_touches"] == levels_module.MIN_TOUCHES
     assert seen[0]["tolerance_pct"] == levels_module.CLUSTER_TOLERANCE_PCT
-    assert swept_values.counts()["levels.pivot_window"] == 1
+    assert meter.counts()["levels.pivot_window"] == 1
 
 
-def test_a_registry_override_wins_over_the_module_constant(monkeypatch):
-    import src.backtest.structural_stops as structural_stops
-
-    seen: list[dict] = []
-    real = structural_stops.find_structural_levels
-
-    def capture(bars, **kwargs):
-        seen.append(dict(kwargs))
-        return real(bars, **kwargs)
-
-    monkeypatch.setattr(structural_stops, "find_structural_levels", capture)
-    swept_values.set_override("levels.pivot_window", 9)
-    _resolve_structural_stop_and_target(_build_long_win_series(), "long", 105.0)
+def test_a_meter_override_wins_over_the_module_constant(monkeypatch):
+    seen = _capture(monkeypatch)
+    meter = swept_values.SweepMeter()
+    meter.set_override("levels.pivot_window", 9)
+    _resolve_structural_stop_and_target(
+        _build_long_win_series(), "long", 105.0, meter=meter)
     assert seen[0]["pivot_window"] == 9
 
 
-def test_the_trailing_multiples_are_counted_where_they_are_read():
+def test_the_trailing_multiples_are_counted_while_a_run_is_in_progress():
     """`src/risk/trail_evaluate.py` holds the binding the maths uses; the
     defining module `src/risk/trailing.py` does not."""
-    assert isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
-                      swept_values.CountedFloat)
-    assert isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE,
-                      swept_values.CountedFloat)
-    # Numerically identical to the constant as written down: this wiring
-    # changes binding time and nothing else.
-    assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(
-        float(trailing_module.CHANDELIER_ATR_MULTIPLE))
+    meter = swept_values.SweepMeter()
+    with meter.counting():
+        assert isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
+                          swept_values.CountedFloat)
+        assert isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE,
+                          swept_values.CountedFloat)
+        # Numerically identical to the constant as written down.
+        assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(
+            float(trailing_module.CHANDELIER_ATR_MULTIPLE))
+    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
+                          swept_values.CountedFloat)
 
 
 def test_an_override_reaches_the_module_that_actually_reads_it():
-    swept_values.set_override("trailing.chandelier_atr_multiple", 7.5)
-    assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(7.5)
-    swept_values.clear_overrides()
+    meter = swept_values.SweepMeter()
+    meter.set_override("trailing.chandelier_atr_multiple", 7.5)
+    with meter.counting():
+        assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(7.5)
     assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(
         float(trailing_module.CHANDELIER_ATR_MULTIPLE))
 
 
 def test_a_counted_float_is_numerically_transparent():
-    counted = swept_values.CountedFloat(2.5, "levels.pivot_window")
+    counted = swept_values.CountedFloat(
+        2.5, swept_values.SweepMeter(), "levels.pivot_window")
     assert counted == 2.5
     assert counted * 4 == 10.0
     assert 4 * counted == 10.0
@@ -124,32 +135,35 @@ def test_a_counted_float_is_numerically_transparent():
 
 
 def test_a_use_of_a_counted_float_is_counted():
-    counted = swept_values.CountedFloat(2.0, "trailing.chandelier_atr_multiple")
-    before = swept_values.counts()["trailing.chandelier_atr_multiple"]
+    meter = swept_values.SweepMeter()
+    counted = swept_values.CountedFloat(
+        2.0, meter, "trailing.chandelier_atr_multiple")
     _ = counted * 3
     _ = 3 * counted
-    after = swept_values.counts()["trailing.chandelier_atr_multiple"]
-    assert after == before + 2
+    assert meter.counts()["trailing.chandelier_atr_multiple"] == 2
 
 
 def test_an_unread_swept_value_is_reported_as_a_non_result():
     """The whole point: a zero-read sweep must be loud, not silently
     identical to the baseline."""
-    swept_values.set_override("levels.pivot_window", 9)
-    report = swept_values.format_read_counts("unit test")
+    meter = swept_values.SweepMeter()
+    meter.set_override("levels.pivot_window", 9)
+    report = meter.format_read_counts("unit test")
     assert "NEVER READ" in report
     assert "non-result" in report
     assert "levels.pivot_window" in report
 
 
 def test_a_value_with_no_reading_site_is_named_rather_than_ignored():
-    swept_values.set_override("risk.min_stop_atr_multiple", 3.0)
-    assert swept_values.unknown_overrides() == ["risk.min_stop_atr_multiple"]
-    assert "no reading site" in swept_values.format_read_counts()
+    meter = swept_values.SweepMeter()
+    meter.set_override("risk.min_stop_atr_multiple", 3.0)
+    assert meter.unknown_overrides() == ["risk.min_stop_atr_multiple"]
+    assert "no reading site" in meter.format_read_counts()
 
 
 def test_the_diagnostic_never_raises_on_a_nonsense_override():
     """A diagnostic that halts a backtest is worse than the problem."""
-    swept_values.set_override("not.a.value", "banana")
-    swept_values.read("not.a.value", 1.0)
-    assert swept_values.format_read_counts()
+    meter = swept_values.SweepMeter()
+    meter.set_override("not.a.value", "banana")
+    meter.read("not.a.value", 1.0)
+    assert meter.format_read_counts()

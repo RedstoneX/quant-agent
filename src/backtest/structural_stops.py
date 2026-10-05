@@ -6,7 +6,7 @@ label for a signal and the stop/target taken from structural levels.
 """
 from __future__ import annotations
 
-from src.backtest import swept_values
+from src.backtest.swept_values import SweepMeter
 from src.data import levels as levels_module
 from src.data.context import compute_market_context
 from src.data.levels import find_structural_levels, structural_floor
@@ -25,6 +25,7 @@ def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
 
 def _resolve_structural_stop_and_target(
     bars_through_signal: list[OHLCV], direction: str, entry_price: float,
+    meter: SweepMeter | None = None,
 ) -> tuple[
     float | None, float | None, list[float], dict[float, int],
     dict[float, list[tuple[float, float]]],
@@ -72,13 +73,14 @@ def _resolve_structural_stop_and_target(
     # others) was swept past in silence and returned byte-identical
     # results — the exact trap `swept_values` exists to make visible.
     # Same values, same behaviour: only the binding time changes.
+    meter = meter if meter is not None else SweepMeter()
     supports, resistances = find_structural_levels(
         bars_through_signal,
-        pivot_window=swept_values.read(
+        pivot_window=meter.read(
             "levels.pivot_window", levels_module.PIVOT_WINDOW),
-        tolerance_pct=swept_values.read(
+        tolerance_pct=meter.read(
             "levels.cluster_tolerance_pct", levels_module.CLUSTER_TOLERANCE_PCT),
-        min_touches=swept_values.read(
+        min_touches=meter.read(
             "levels.min_touches", levels_module.MIN_TOUCHES),
     )
     all_level_objs = (*supports, *resistances)
