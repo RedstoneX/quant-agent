@@ -134,14 +134,11 @@ consequence is DECLARED and COUNTED instead of disguised.
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from types import SimpleNamespace
 
-from src.backtest.params import (  # noqa: F401
-    DEFAULT_INITIAL_EQUITY, DEFAULT_MAX_HOLD_DAYS, DEFAULT_SLIPPAGE_BPS,
-    MIN_BARS_FOR_SIGNAL, BacktestParams,
-)
+from src.backtest.swept_values import SweepMeter
 from src.backtest.budget_days import _budget_binds, _tie_break_arbitrated  # noqa: F401
 from src.backtest.exit_rules import (  # noqa: F401
     _check_exit, _existing_risk_pct, _size_position,
@@ -152,12 +149,43 @@ from src.data.technical import compute_indicators
 from src.backtest.structural_stops import (  # noqa: F401
     _resolve_structural_stop_and_target, _setup_type_for,
 )
-from src.backtest.records import Trade, _OpenPosition, _fill_price  # noqa: F401
+from src.backtest.records import Trade, _OpenPosition, _close_trade, _fill_price  # noqa: F401
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.risk.trailing import compute_trailing_stop
+
+#: Trading days of history a symbol needs before this engine will evaluate it
+#: for a signal. 210 = 200 (MA200) + 10 (the slope lookback `compute_market_context`
+#: needs to say whether that average is rising or falling) — below this, both
+#: `find_structural_levels` and `compute_market_context` are working with a
+#: materially incomplete picture, and the live system would be too.
+MIN_BARS_FOR_SIGNAL = 210
+
+DEFAULT_MAX_HOLD_DAYS = 20
+DEFAULT_INITIAL_EQUITY = 100_000.0
+DEFAULT_SLIPPAGE_BPS = 5.0
+
+
+@dataclass(frozen=True)
+class BacktestParams:
+    """Engine-only knobs. None of these has a live-system counterpart to
+    reuse: the live horizon comes from the Tech Analyst's own
+    `expected_horizon_sessions` estimate (an LLM output this engine cannot
+    reproduce), and there is no dedicated backtest slippage field in
+    `Settings` — see `scripts/backtest.py` for how the default is chosen."""
+
+    start: date
+    end: date
+    max_hold_days: int = DEFAULT_MAX_HOLD_DAYS
+    initial_equity: float = DEFAULT_INITIAL_EQUITY
+    slippage_bps: float = DEFAULT_SLIPPAGE_BPS
+    min_bars_for_signal: int = MIN_BARS_FOR_SIGNAL
+    #: This run's swept-value overrides and read counts. Built with the
+    #: params, so it is born and discarded with the run it describes.
+    meter: SweepMeter = field(default_factory=SweepMeter, compare=False, repr=False)
+
 
 @dataclass(frozen=True)
 class BacktestRunResult:
@@ -266,27 +294,6 @@ def _resolve_stop_for_signal(
         if stop is None or stop <= 0 or stop <= ref_entry:
             return None
     return stop
-
-
-def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: float,
-                  exit_reason: str, slippage_bps: float) -> Trade:
-    fill = _fill_price(raw_exit, pos.direction, "close", slippage_bps)
-    if pos.direction == "long":
-        pnl = (fill - pos.entry_price) * pos.shares
-    else:
-        pnl = (pos.entry_price - fill) * pos.shares
-    risk_per_share = abs(pos.entry_price - pos.stop_initial)
-    r_multiple = pnl / (pos.shares * risk_per_share) if risk_per_share > 0 else 0.0
-    return Trade(
-        symbol=pos.symbol, direction=pos.direction, signal_date=pos.signal_date,
-        entry_date=pos.entry_date, entry_price=round(pos.entry_price, 4),
-        stop_price=round(pos.stop_initial, 4),
-        target_price=round(pos.target, 4) if pos.target is not None else None,
-        exit_date=exit_date_, exit_price=round(fill, 4), exit_reason=exit_reason,
-        shares=pos.shares, risk_pct=round(pos.risk_pct, 4), setup_type=pos.setup_type,
-        hold_days=exit_idx - pos.entry_index, pnl=round(pnl, 2),
-        r_multiple=round(r_multiple, 4),
-    )
 
 
 def _with_run_meter(simulate):
