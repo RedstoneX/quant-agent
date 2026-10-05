@@ -1477,8 +1477,8 @@ class MorningResearchStage:
                 }
 
         nom_cfg = getattr(self.config, "nominations", None)
-        max_per_seat = getattr(nom_cfg, "max_per_seat_per_run", 3) if nom_cfg else 3
-        max_total = getattr(nom_cfg, "max_total_per_run", 6) if nom_cfg else 6
+        max_per_seat = int(getattr(nom_cfg, "max_per_seat_per_run", 3)) if nom_cfg else 3
+        max_total = int(getattr(nom_cfg, "max_total_per_run", 6)) if nom_cfg else 6
         candidates = select_nominations(
             nominations_by_seat, max_per_seat=max_per_seat, max_total=max_total,
         )
