@@ -1363,13 +1363,13 @@ class PortfolioConstructor:
     def _log_target_divergence(
         self, symbol: str, derivation: TargetDerivation,
     ) -> None:
-        """Delegate to `divergence_counter.log_divergence`, which both logs
-        the comparison and counts it (the counting is new: nothing observed
-        the gap distribution before, so the warn threshold rested on
-        nothing). Moved out whole rather than grown in place."""
+        """Delegate to `divergence_counter.log_divergence`, which logs the
+        comparison and, when a recorder is wired, writes one durable row for
+        it. Nothing is accumulated in memory."""
         log_divergence(
             symbol=symbol, derivation=derivation,
             threshold_pct=self.cfg.target_divergence_warn_pct,
+            recorder=self.refusal_recorder,
         )
 
     @staticmethod
