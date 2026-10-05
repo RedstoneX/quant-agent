@@ -13,14 +13,15 @@ Pile A, ALREADY FIXED, proved in code: four.
 - Midnight clock: no local-day or UTC-day-as-exchange-day use left in `src/` (the only `utcnow` sites subtract two timestamps); the single clock and the test guard exist. The note's single-clock guard test file still does not exist, as already recorded below.
 - Broker read error as "no stop": FIXED only by this change, see WRONG below.
 
-Pile B, STILL LIVE: two.
+Pile B, STILL LIVE: one (the `PromptFactsReviewMixin` line below was re-checked 2026-10-05 against main and is STALE, see WRONG).
 - Owner-alert senders: root cause is that ops scripts build their own `TelegramNotifier()` and send once with no retry; the funnel guard looks for private messengers and `src/` bare sends, not this (about 13 sites, 2026-10-05 count; the guard's reach over `scripts/` was not traced). About 4-6 hours [estimate: one funnel call per site plus a scripts-scope guard]. Not money.
-- `PromptFactsReviewMixin`: root cause is that the pipeline still inherits per-call shims instead of holding the five constructed review parts. About 8-12 hours [estimate: the three finished PM-seat conversions each took one change]. Not money.
+- ~~`PromptFactsReviewMixin`~~ CLOSED on main: no class of that name exists; `hold_prompt_facts_review` installs per-name delegates that build a `PromptFactsReview` per call; the one hole left was a COUNT-keyed guard, closed 2026-10-05 (below).
 
 Pile C, NEEDS A LIVE RUN: zero. Nothing here is unmeasurable offline.
 
 Write-ups found WRONG or stale on 2026-10-05:
 - "Broker read error ... ALREADY FIXED / no caller reads the broker stop outside `read_stop`" was FALSE. `src/execution/pending_stop_drain.py` called the raw read, and an unreadable answer became "nothing resting, placing protection is safe", so the drain applied an owed level over a possibly TIGHTER live stop, moving a protective stop the way that loses more. Its docstring claimed it used the escalating read; the existing test pinned the defect as "behaviour unchanged". Fixed at the cause in this change: the drain now uses `read_stop`, and an unreadable stop keeps the owed row and applies nothing. Witness `tests/test_pending_stop_drain_unreadable.py`; the unreadable case fails on the old code.
+- "Real boundaries still owed" / Pile B's `PromptFactsReviewMixin` line (written the same night) was STALE: all three named pieces are held parts on main with identity guards (`PortfolioConstructor.__bases__ == (object,)`; `PortfolioManagerAgent` MRO is seat, `LiveLimitPrompt`, `BaseAgent`; no `Review` class in `TradingPipeline.__mro__`). The ONE live hole was `tests/test_boundary_harness.py` keying the composed-pipeline-mixin set on a COUNT (`len(MIXINS) == 8`), which let a one-for-one swap compose a NEW mixin onto `TradingPipeline` unnoticed. Closed 2026-10-05: the set is now named by identity and compared against `origin/main` at check time (shrink-only, REFUSES when the trunk is unreadable); `test_swapping_one_mixin_for_another_is_caught` proves the swap is refused.
 - "Owner-alert senders": "no guard forbids it" was stale. `tests/test_owner_alert_funnel_guard.py` and `tests/test_no_side_door_owner_alert_send.py` forbid a new bare send or messenger in `src/`. The six `src/` constructions are a probe default, default arguments, a document upload and the scheduler's routine report, not alert bypasses. The live remainder is the scripts.
 
 ## Owner-alert senders that bypass the retry funnel
@@ -31,7 +32,9 @@ Measured 2026-10-04 on main: six construction sites in `src/` outside the funnel
 
 Fix: route each sender through the funnel (or justify and allow-list it), then add a guard that fails on any new direct construction. Sized at roughly 150-250 lines for the `src/` sites and the guard [estimate: earlier agent sizing, not re-derived]; the scripts would add to it.
 
-## Real boundaries still owed
+## Real boundaries still owed (CLOSED 2026-10-05; the eight pipeline mixins are a separate, un-sized rebuild)
+
+RE-CHECKED 2026-10-05 against main: nothing in this entry is owed. What IS still a mixin is the eight composed onto `TradingPipeline` (risk gate, delever, intraday, prompt facts, research continuity, protection, exits, admission). That is the pipeline rebuild itself, never part of this entry, and is not sized here; the identity guard above means the set can only shrink.
 
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
