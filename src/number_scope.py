@@ -7,7 +7,9 @@ of repository-relative paths, constructible with nothing else imported.
 
 from __future__ import annotations
 
-__all__ = ["SCOPED_PATHS"]
+from src.number_universe import py_universe
+
+__all__ = ["SCOPED_PATHS", "py_universe"]
 
 #: The modules on the path from a verdict to a broker order. See the SCOPE
 #: rule in the module docstring; this list is the rule applied, and
