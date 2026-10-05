@@ -954,6 +954,25 @@ numbers:
   - id: src.config.RiskConfig.max_position_risk_pct
     value: 5
     status: arbitrary
+    backtest_ab_2026_10_04: >-
+      AN UNCONSTRAINED-BUDGET BACKTEST FIGURE IS NEVER A DESK EXPECTATION. Run
+      as the POSITIVE CONTROL for the horizon A/B recorded on
+      src.config.RiskConfig.max_target_horizon_sessions, with the portfolio
+      risk ceiling and cluster share opened to 100 in both arms so the
+      allocator never arbitrated -- 0 of 66 entry days arbitrated in BOTH arms,
+      by the engine's own counter. max_position_risk_pct 5 against 2 over
+      AAPL/MSFT/NVDA/AMZN/GOOGL, 2025-01-01 to 2025-09-30, 85 trades per arm:
+      total return moved +3.91 points and max drawdown fell 23.69 points at the
+      smaller envelope, with win rate and expectancy R identical because the
+      field scales every position together. This row is LIVE on the
+      deterministic path and is the most outcome-moving risk dial measured on
+      it so far, but the status STAYS `arbitrary`: a measurement that shows the
+      number matters is not a criterion that picks its value, and the
+      2026-09-30 ruling withdrew the per-name dollar-loss route this row's
+      older settles_by block depends on. Lower drawdown at 2 is not a
+      recommendation to move it; an unrationed book flatters the smaller
+      envelope. Reproduce with scripts/backtest.py --config-b against a copy
+      differing only in max_position_risk_pct.
     route_audit_2026_10_04: >-
       UNDETERMINED, and not for want of data: NEITHER recorded route can settle
       this row. The row carries two settles_by blocks, and YAML keeps only the
@@ -1043,6 +1062,30 @@ numbers:
         to carry no information about whether a target is reached at all
     value: 60
     status: arbitrary
+    backtest_ab_2026_10_04: >-
+      AN UNCONSTRAINED-BUDGET BACKTEST FIGURE IS NEVER A DESK EXPECTATION. The
+      A/B below was run with the portfolio risk ceiling and the cluster share
+      both opened to 100 in BOTH arms, in throwaway config copies, so the
+      allocator never arbitrated and no alphabetical ticker tie-break could
+      contaminate the comparison; the live desk rations at 25 and 40, and no
+      P&L level from either arm says anything about the rationed book. Only the
+      DIFFERENCE between arms is readable. MEASURED INERT: max_target_horizon_sessions
+      60 against 20 -- a 3x tightening -- over AAPL/MSFT/NVDA/AMZN/GOOGL,
+      2025-01-01 to 2025-09-30, 85 trades per arm, the engine's own counter
+      reporting 0 of 66 entry days arbitrated in BOTH arms. All twelve reported
+      metrics came back byte-identical, total return -4.73% in each. A positive
+      control run in the same condition (max_position_risk_pct 5 against 2)
+      moved total return by +3.91 points, so the harness does register a real
+      difference and this zero is a true null, not broken plumbing. The row
+      therefore STAYS `arbitrary`, and the inertness has a SPECIFIC cause that
+      is not "the value is ignored": this is a CAP, binding only when a caller
+      passes a horizon larger than it, and the horizon is an LLM-produced field
+      the engine's own docstring says it cannot produce. Three live modules do
+      consult it. The knob could not move in this harness, so the null says
+      nothing about the value and must never license deleting the constant.
+      Settling it still needs the sessions-to-traverse distribution the
+      settles_by block already specifies. Reproduce with scripts/backtest.py
+      --config-b against a copy differing only in max_target_horizon_sessions.
     site: src/config/__init__.py
     narrowed: >-
       NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over 1176 fixture windows with only this cap changed [measured]: 60 to 250 changed the output in 11 windows (0.9%), 60 to 20 in 150 (12.8%). The cap is consulted by the level finder, the target derivation, admission and the touch-probability log, so it is a live cap whose UPPER side barely binds on this data; the harness feeds the constant, not a per-analysis stated horizon. Pinned by tests/test_dead_branch_narrowing_levels.py.
