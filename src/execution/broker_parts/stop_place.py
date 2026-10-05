@@ -20,7 +20,7 @@ import time
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
 
-from src.execution.broker_parts.stop_shift import ShiftStopsMixin
+from src.execution.broker_parts.stop_shift import shift_stops_down as _shift_stops_down_via_part
 from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_reason
 from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
@@ -41,39 +41,19 @@ from src.execution import order_idempotency as _idem  # session key read via the
 from src.execution.order_idempotency import (
     _is_dead_stop_result, _submit_stop_request_idempotent,
 )
-
+# No ledger handle on this per-call object: traceback is logged, the counted row is skipped until
+# one is lent (flagged, no new channel).
+from src.sentinel.guarded import record_guarded_pass
+# One durable row per placement, so the stop-LIMIT buffer's own ledger row can
+# ever close; observation only, and it cannot raise into the placement.
+from src.execution.stop_limit_buffer_records import (
+    LEG_FALLBACK, LEG_PRIMARY, LIMIT_FROM_BUFFER, LIMIT_FROM_CALLER,
+    record_leg_for as _record_leg,
+)
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
 
-
-# Spec §11.1, guard 1: "stop placement retries immediately and hard on
-# failure". IMMEDIATELY — at the point of failure, inside the same call,
-# not queued for the next sweep. The position is already open by the time
-# this runs; a retry that waits for the 30-minute reconcile is exactly the
-# indefinite gap the guard exists to prevent.
-#
-# THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
-#
-#   * Three, because a failure worth retrying is transient — a 429 rate
-#     limit, a 5xx, a dropped connection, an eventual-consistency blip
-#     between the fill and the order being placeable — and those clear in
-#     under a second. A REJECTION (a bad price, an unsupported qty, a
-#     closed venue) is not worth retrying at all: the broker's answer is
-#     Alpaca's own `APIError.status_code` 400/404/422, it will not change
-#     between attempt 1 and attempt 3, and burning the burst on a doomed
-#     resubmit just delays the owner alert that is the real remedy.
-#     Board item 129: this ceiling used to be a blind `except Exception`
-#     that retried a 422 exactly like a 429, so a genuine rejection paid
-#     the full three-attempt, ~2-second cost anyway before anyone was
-#     told. `_is_terminal_broker_rejection` now reads the status code that
-#     was always on the exception and short-circuits on it, so only a
-#     failure with no such code (or a 429/5xx) spends the retry burst; a
-#     genuine rejection is reported after its FIRST attempt.
-#   * ~2 seconds, because the owner's own standard for this feature is that
-#     "the gap is brief upon entry". A retry loop long enough to matter
-#     would itself become the exposure it was added to close. Escalating to
-#     a human inside two seconds beats a fourth doomed attempt.
 _STOP_PLACEMENT_MAX_ATTEMPTS = 3
 
 _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
@@ -81,95 +61,21 @@ _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 # Spec §11.1 hybrid fractional stops: the measured broker rule, `_FRACTIONAL_QTY_EPSILON`,
 # `_split_protective_qty` and `_derive_stop_tif` live in src/execution/order_gates.py (re-exported above).
 
-def _is_held_for_orders_error(exc: BaseException) -> bool:
-    """True when the broker refused because shares are reserved by an open order.
-
-    Alpaca surfaces this as `held_for_orders` and/or `insufficient qty
-    available` (2026-04-25 AMZN, 2026-09-16 BRK-B DAY sliver).
-    """
-    text = str(exc).lower()
-    return "held_for_orders" in text or "insufficient qty" in text
+from src.execution.broker_parts.stop_rejections import (  # noqa: F401
+    _is_held_for_orders_error,
+    _is_unsupported_stop_market_rejection,
+    real_broker_order_id,
+)
 
 
-def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
-    """True when the broker refused a stop-MARKET specifically because the
-    order TYPE / TIME-IN-FORCE combination is not supported — the one
-    rejection that must degrade to a stop-LIMIT rather than to no stop.
-
-    Owner ratified 2026-09-25: protective stops are stop-MARKET (a guaranteed
-    exit — an elected stop fills instead of resting unfilled past a limit).
-    Every combo this desk submits (whole-share GTC, fractional DAY) is a
-    plain stop order and should be accepted (STOP/DAY was proven accepted by
-    the 2026-09-01 live probe); this classifier exists ONLY so a position is
-    never left unprotected if some combo turns out refused — a market-stop
-    refusal degrades to a stop-limit, never to no stop.
-
-    Deliberately NARROW so it cannot swallow an unrelated rejection:
-
-      * a held_for_orders / insufficient-qty refusal is NOT this — it is
-        handled by the retry / existing-stop path and must propagate;
-      * a garbage stop price is short-circuited before submit;
-      * only a 400/422 whose message names the order TYPE / CLASS or the
-        TIME-IN-FORCE as the problem qualifies.
-
-    A false positive here is harmless anyway: the stop-limit fallback submit
-    is UNGUARDED, so a rejection that was not really a type/tif problem still
-    surfaces as an exception from that second attempt — never swallowed,
-    only retried once as a stop-limit.
-    """
-    if _is_held_for_orders_error(exc):
-        return False
-    status_code = getattr(exc, "status_code", None)
-    if status_code not in (400, 422):
-        return False
-    text = str(exc).lower()
-    type_terms = (
-        "order type", "order_type", "order class", "order_class",
-        "time_in_force", "time in force",
-        "not supported", "unsupported",
-        "not permitted", "not allowed", "invalid order",
-    )
-    return any(term in text for term in type_terms)
-
-
-def _alpaca_symbol(symbol: str) -> str:
-    """Translate the universe's yfinance class-share spelling at Alpaca's edge.
-
-    BRK-B/BF-B are valid yfinance symbols while Alpaca expects BRK.B/BF.B.
-    Only the terminal one-letter class suffix is translated; ordinary hyphenated
-    symbols are left untouched instead of applying a broad, unsafe replacement.
-    """
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)-([A-Z])$", r"\1.\2", value)
-
-
-def _internal_symbol(symbol: str) -> str:
-    """Map Alpaca class-share spelling back to QAMC/yfinance canonical form."""
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
-
-
+# Spelling translation moved to stop_symbols.py (re-exported; same patch targets).
+from src.execution.broker_parts.stop_symbols import (  # noqa: E402,F401
+    _alpaca_symbol, _internal_symbol,
+)
 # The protective-order status vocabulary lives in src/execution/order_statuses.py (re-exported above).
 
 
-def real_broker_order_id(value: object) -> str:
-    """The broker order id in `value`, or "" when there ISN'T one.
-
-    `_snapshot_stop_order` stamps `"id": str(order.id)`, so an order that
-    reached it without an id carries the four-character string "None" —
-    which is TRUTHY. Every `if spec.get("id")` filter therefore counted a
-    missing id as a present one, and the resulting "id" then matched no
-    open order at the broker, ever. Judge the value, don't test the
-    stringified None for truthiness.
-    """
-    text = str(value or "").strip()
-    if not text or text.lower() in {"none", "null", "nan"}:
-        return ""
-    return text
-
-
-
-class StopPlacer(ShiftStopsMixin):
+class StopPlacer:
     """Place, submit, restore and replace protective stops. Every collaborator is explicit.
 
     The six cluster-internal collaborators default to this object's own bodies;
@@ -227,6 +133,7 @@ class StopPlacer(ShiftStopsMixin):
             self._submit_stop_legs = submit_stop_legs
         if restore_stop_orders is not None:
             self._restore_stop_orders = restore_stop_orders
+    shift_stops_down = _shift_stops_down_via_part  # body: stop_shifter.StopShifter
 
     def _existing_stop_covering_qty(
         self, symbol: str, *, qty: float, side: str, stop_price: float,
@@ -239,7 +146,15 @@ class StopPlacer(ShiftStopsMixin):
         """
         try:
             orders = self._list_open_protective_stop_orders(symbol, side=side)
-        except Exception:  # noqa: BLE001
+            record_guarded_pass(self, "stop_place.existing_stop_covering_qty.list", context={"symbol": symbol})
+        except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(
+                self,
+                "stop_place.existing_stop_covering_qty.list",
+                exc,
+                log=logger,
+                context={**{"symbol": symbol}, "effect": "treated as no matching stop"},
+            )
             return None
         tick = 0.01 if stop_price >= 1.0 else 0.0001
         for order in orders or []:
@@ -569,10 +484,14 @@ class StopPlacer(ShiftStopsMixin):
                         symbol=symbol, qty=qty, stop_price=stop_price,
                         side=side, kill_switch_path=str(self._kill_switch_path),
                     )
+                    record_guarded_pass(self, "stop_place.kill_switch_block_record", context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001 — never trading authority
-                    logger.warning(
-                        "kill-switch block record for %s could not be "
-                        "written: %s", symbol, exc,
+                    record_guarded_pass(
+                        self,
+                        "stop_place.kill_switch_block_record",
+                        exc,
+                        log=logger,
+                        context={**{"symbol": symbol}, "effect": "block record not written"},
                     )
             return {
                 "id": None, "status": "kill_switch_halted", "symbol": symbol,
@@ -614,7 +533,9 @@ class StopPlacer(ShiftStopsMixin):
         # force-de-lever must-fill SELL use.
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
+            limit_source = LIMIT_FROM_CALLER
         else:
+            limit_source = LIMIT_FROM_BUFFER
             buffer_mult = (
                 (1 + self.STOP_LIMIT_BUFFER_PCT) if order_side == OrderSide.BUY
                 else (1 - self.STOP_LIMIT_BUFFER_PCT)
@@ -642,6 +563,7 @@ class StopPlacer(ShiftStopsMixin):
                 session_date=session_date, qty=qty, price=stop_price_q,
                 holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
             )
+            _record_leg(self, LEG_PRIMARY, symbol, qty, side, stop_price_q, limit_price_q, limit_source)
         except Exception as exc:  # noqa: BLE001
             if not _is_unsupported_stop_market_rejection(exc):
                 # NOT a type/tif refusal — held_for_orders, buying-power,
@@ -678,6 +600,7 @@ class StopPlacer(ShiftStopsMixin):
                 session_date=session_date, qty=qty, price=stop_price_q,
                 holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
             )
+            _record_leg(self, LEG_FALLBACK, symbol, qty, side, stop_price_q, limit_price_q, limit_source)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
@@ -748,14 +671,19 @@ class StopPlacer(ShiftStopsMixin):
                 for done in placed:
                     try:
                         self.client.cancel_order_by_id(done.get("id"))
+                        record_guarded_pass(
+                            self,
+                            "stop_place.submit_stop_legs.rollback_cancel",
+                            context={"symbol": symbol, "order": done.get("id")},
+                        )
                     except Exception as cancel_exc:  # noqa: BLE001
-                        logger.error(
-                            "_submit_stop_legs: leg %s failed for %s AND the "
-                            "already-placed leg %s could not be cancelled: %s "
-                            "— the symbol may carry a partial stop the caller "
-                            "does not know about; the coverage sweep will "
-                            "reconcile it.",
-                            leg_qty, symbol, done.get("id"), cancel_exc,
+                        record_guarded_pass(
+                            self,
+                            "stop_place.submit_stop_legs.rollback_cancel",
+                            cancel_exc,
+                            log=logger,
+                            context={**{"symbol": symbol, "order": done.get("id")},
+                            "effect": "partial leg may remain; coverage sweep reconciles"},
                         )
                 raise
         return placed
@@ -813,14 +741,17 @@ class StopPlacer(ShiftStopsMixin):
                     snap = self._snapshot_stop_order(order)
                     if snap is not None:
                         existing_alive.append(snap)
+                record_guarded_pass(self, "stop_place.restore_stop_orders.list_existing", context={"symbol": symbol})
             except Exception as exc:
                 # If we can't see existing stops, fall through to the
                 # non-idempotent behavior — broker's own duplicate
                 # detection is the last line.
-                logger.warning(
-                    "_restore_stop_orders: failed to list existing stops for %s "
-                    "(idempotency check skipped): %s",
-                    symbol, exc,
+                record_guarded_pass(
+                    self,
+                    "stop_place.restore_stop_orders.list_existing",
+                    exc,
+                    log=logger,
+                    context={**{"symbol": symbol}, "effect": "idempotency check skipped"},
                 )
 
         def _spec_matches(spec: dict, alive: dict) -> bool:
@@ -859,10 +790,14 @@ class StopPlacer(ShiftStopsMixin):
                     limit_price=spec.get("limit_price"),
                     side=side,
                 )
+                record_guarded_pass(self, "stop_place.restore_stop_orders.resubmit", context={"symbol": symbol})
             except Exception as exc:
-                logger.error(
-                    "replace_stop_loss: failed to restore prior stop for %s @ $%.2f: %s",
-                    symbol, spec["stop_price"], exc,
+                record_guarded_pass(
+                    self,
+                    "stop_place.restore_stop_orders.resubmit",
+                    exc,
+                    log=logger,
+                    context={**{"symbol": symbol}, "effect": "prior stop not restored"},
                 )
                 failed_specs.append(spec)
                 continue
@@ -1043,11 +978,14 @@ class StopPlacer(ShiftStopsMixin):
                 p for p in self.get_positions()
                 if getattr(p, "symbol", None) == symbol
             ]
+            record_guarded_pass(self, "stop_place.replace_stop_loss.reread_position", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace_stop_loss: could not re-read %s's position before "
-                "the in-place amend (%s) — using the cancel+resubmit path, "
-                "which re-reads and repairs coverage itself.", symbol, exc,
+            record_guarded_pass(
+                self,
+                "stop_place.replace_stop_loss.reread_position",
+                exc,
+                log=logger,
+                context={**{"symbol": symbol}, "effect": "fell to cancel+resubmit path"},
             )
             fresh = []
         amended = (
@@ -1074,8 +1012,17 @@ class StopPlacer(ShiftStopsMixin):
                 self.client.cancel_order_by_id(spec["id"])
                 cancelled_specs.append(spec)
                 window.cancelled(spec["id"])
+                record_guarded_pass(
+                    self, "stop_place.replace_stop_loss.cancel", context={"symbol": symbol, "order": spec["id"]},
+                )
             except Exception as exc:
-                logger.warning("replace_stop_loss: cancel failed for order %s: %s", spec["id"], exc)
+                record_guarded_pass(
+                    self,
+                    "stop_place.replace_stop_loss.cancel",
+                    exc,
+                    log=logger,
+                    context={**{"symbol": symbol, "order": spec["id"]}, "effect": "restore of cancelled stops follows"},
+                )
                 # Always restore whatever we already cancelled. The previous
                 # "if no open stops remain" gate was wrong for partial
                 # failures: with [A, B, C], if A and B cancel cleanly and C
@@ -1128,9 +1075,16 @@ class StopPlacer(ShiftStopsMixin):
                 symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
             window.close("replaced")
+            record_guarded_pass(self, "stop_place.replace_stop_loss.submit_new", context={"symbol": symbol})
             return order
         except Exception as exc:
-            logger.error("replace_stop_loss: failed to submit new stop for %s: %s", symbol, exc)
+            record_guarded_pass(
+                self,
+                "stop_place.replace_stop_loss.submit_new",
+                exc,
+                log=logger,
+                context={**{"symbol": symbol}, "effect": "rollback of cancelled stops follows"},
+            )
             # The Alpaca QueryOrderStatus.OPEN filter INCLUDES transitional
             # statuses (pending_cancel / pending_replace), so the orders we
             # just cancelled can still appear in this list for ~1s after the

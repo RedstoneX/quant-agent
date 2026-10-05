@@ -1098,3 +1098,105 @@ changes:
       `instrument` rather than `arbitrary`. The single cost that defended
       the percentage -- the cancel-then-resubmit window with no protective
       order -- is gone now that the in-place stop amend is on main.
+  - delta: +1
+    date: '2026-10-04'
+    why: >-
+      Board item 70, the second split. One `arbitrary` row,
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, was carrying TWO jobs:
+      the midday gate's entry-anchored band, widened by sqrt(sessions held),
+      and the `check_structural_protection` fallback's flat band anchored on
+      the running extreme since entry. One name, two anchors, two widths for
+      the same holding on the same day. The second job now has its own row,
+      `src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE`, at the SAME
+      value of 1.0 with no behaviour change. The count rises because the
+      ledger was UNDER-counting the unsourced numbers the desk already runs
+      on, not because a new number was invented: nothing was picked, nothing
+      was retuned, and the arithmetic the desk performs is unchanged.
+  - delta: -1
+    date: '2026-10-04'
+    why: >-
+      The short-side gap-risk sizing haircut
+      (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT` = 1.5, status
+      `arbitrary`) is DELETED under the owner ruling of 2026-10-04 -- "a
+      short is not riskier than long, 1.5 is a made up number so throw
+      that out completely... a short should be treated the same as a long,
+      no different math no different behavior" -- and nothing replaces it.
+      This is a pure removal, not a re-homing: the constant, its single
+      application site, both config fields, the settings key and both
+      ledger rows are gone, so a short now runs the long's arithmetic with
+      no direction-dependent factor anywhere. The measurement that was
+      meant to source it found directional overnight-gap asymmetry at a
+      median 1.01 across names, nowhere near 1.5, so the count falls by
+      one with no new unsourced number entering anywhere.
+  - delta: -1
+    date: '2026-10-04'
+    why: >-
+      `src.config.CashReserveConfig.pct` (1) re-filed `arbitrary` to
+      `not-trade-governing`. Measured by grep over src/ and scripts/: its only
+      reader is the /account liquidity view, which renders `reserve_usd` and
+      `cash_above_reserve`; no engine, sizing or gate path reads either, and
+      the engine's deployable cash takes no reserve argument. The evidence is
+      written into the row, with the condition that reverses it.
+  - delta: 0
+    date: '2026-10-04'
+    why: >-
+      No row moves, and the measurement is the point. A deterministic A/B
+      over `src/backtest/engine.py` (`scripts/backtest.py`, `--config`
+      against `--config-b` differing in exactly one field) was run on
+      `src.config.RiskConfig.max_target_reach_atr_multiple`, 1.5 against
+      0.2 -- a 7.5x tightening -- over AAPL/MSFT/NVDA from 2025-01-02 to
+      2025-04-30. Every one of the twelve reported metrics came back
+      BYTE-IDENTICAL, so the parameter is inert in that engine. That is
+      not evidence the number is right: the engine computes its own
+      nearest-level target and never reaches `_derive_target`, which is
+      the path the number governs live, so the row stays `arbitrary` and
+      now records that a backtest cannot close it. The same run reported
+      16 of 26 entry days as binding-budget days, which is written into
+      `max_portfolio_risk_pct` and `max_cluster_risk_share_pct` as the
+      reason the engine cannot settle those either -- it serves equal
+      asks by alphabetical ticker, not by the verdict order production
+      spends down. This is the second parameter measured inert in this
+      engine, after the level-touch count, so the standing order's
+      remaining risk rows are narrower than they look.
+  - delta: 0
+    date: '2026-10-04'
+    why: >-
+      No row moves, and the measurement is the point. AN UNCONSTRAINED-BUDGET
+      BACKTEST FIGURE IS NEVER A DESK EXPECTATION: both A/Bs below were run with
+      `risk.max_portfolio_risk_pct` and `risk.max_cluster_risk_share_pct` opened
+      to 100 in BOTH arms, in throwaway config copies, so the engine's own
+      counter reported 0 of 66 entry days arbitrated in every arm and no
+      alphabetical ticker tie-break could contaminate the comparison. The live
+      desk rations at 25 and 40; only the DIFFERENCE between two arms is
+      readable, never either arm's level. Universe AAPL/MSFT/NVDA/AMZN/GOOGL,
+      2025-01-01 to 2025-09-30, 85 trades per arm.
+      `src.config.RiskConfig.max_target_horizon_sessions`, 60 against 20, came
+      back BYTE-IDENTICAL on all twelve reported metrics -- the third parameter
+      measured inert in this engine, after the target reach multiple and the
+      breakout projection. CORRECTED on review: inert here does NOT mean the
+      path ignores the horizon -- three live modules consult it. It is a CAP
+      that binds only above an LLM-produced horizon the engine cannot produce,
+      so the knob was unreachable in this harness. The row stays
+      `arbitrary` and now records that a backtest cannot close it.
+      `src.config.RiskConfig.max_position_risk_pct`, 5 against 2, was the
+      POSITIVE CONTROL and moved total return by +3.91 points with max drawdown
+      23.69 points lower at the smaller envelope, which is what makes the
+      horizon zero a true null rather than broken plumbing. That row stays
+      `arbitrary` too: showing a number matters is not a criterion for picking
+      its value, and the unrationed budget flatters the smaller envelope.
+  - delta: -2
+    date: '2026-10-04'
+    why: >-
+      A sixth ledger status, `owner-ruled`, now exists for a value the owner
+      decided on a recorded date. Two rows move to it, no value changed:
+      `RiskConfig.min_stop_atr_multiple` (2.5, owner ruling 2026-10-04 in
+      docs/OUTCOME.md) and `ConstructorConfig.max_position_pct` (65, owner
+      override 2026-09-11 in docs/INCIDENT_HISTORY.md). Their measurement
+      routes are kept in the row but parked, since a ruled value owes no route.
+      Five rows the first draft also flipped stay `arbitrary` on purpose: the
+      cluster share, the portfolio ceiling and the target horizon were
+      delegated to the adversary and never ruled by the owner; the 5% per-name
+      envelope was ratified 2026-08-27 but the owner's 2026-09-30 ruling that
+      per-name risk is read off the name supersedes it, as the row's own
+      ruling_check records; the 0.5% floor's standing under that same ruling
+      is undetermined, so it is left as found rather than promoted.

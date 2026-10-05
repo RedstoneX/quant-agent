@@ -4,7 +4,101 @@ Owner mandate, 2026-10-02: "Yes, rip it all out. Rip all out the stored
 bookkeeping. And rebuild it properly so it's not a ticking time bomb." This is
 the specification. Nothing else is started until it is built and proven.
 
-## Why, measured
+## Status, re-measured 2026-10-04 on `origin/main`
+
+The mandate is built for every guard this document names; sections below are
+kept as history and marked DONE where they describe a stored file that is gone.
+
+- Stored baselines: none. No baseline, snapshot or known-offender file exists
+  under `scripts/` or `tests/`; the only JSON/TXT there are test fixtures.
+- Computed at check time against the trunk: 15 comparison guards
+  (`file_size_guard`, `import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
+  `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
+  `unscoped_number_guard`, `board_rot_guard`, `board_item_guard`,
+  `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
+  boundary harness, the patch-target audit) each reference `guard_reference` or
+  `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
+- Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
+  `test_undefined_names_guard`, `test_holding_discipline_guard`,
+  `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
+- RESOLVED KEPT RECORD (2026-10-04): `tests/test_one_definition_guard.py`'s
+  registry and its `KNOWN_GOOD` set are reviewed policy -- each entry carries a
+  reason, a test fails when a named site stops existing, and no scan could
+  produce "this duplicate is legitimate". Not a cached measurement; stays.
+- Python-clothed baselines found by a second sweep 2026-10-04 (shapes searched:
+  pinned integers compared against, per-path count tables, hardcoded paths that
+  tell a guard where something lives; method: grep over `scripts/` and `tests/`
+  for `== N`, `MAX_*`, `*_BASELINE`, `*_ON_ARRIVAL`, dict/frozenset literals in
+  guard files, and `"docs/|config/|tests/|src/"` path strings in `scripts/*guard*.py`):
+  - ~~48 per-file finding ceilings in `tests/desk_output_guard.py`~~ DONE -- the
+    counts (16 in `ALLOWED`, 32 in the benchmark-results table) are deleted; the
+    reasons stay as policy. The audit scans each allow-listed file as it stands
+    on `origin/main` via `scripts/guard_reference.trunk_blobs` and fails on any
+    finding identity (signal + offending line) the working copy holds more of,
+    so a swap of one real order id for another now fails where a count passed.
+    One ceiling had drifted loose (12 recorded against 9 present: three real
+    values could have been added unseen). Refuses when the trunk is unreadable.
+  - ~~`SELF` in `scripts/local_day_guard.py`~~ DONE -- a hardcoded path excusing
+    the guard's own test file, which produces zero offences when scanned
+    (measured 2026-10-04), so the exemption excused nothing and is deleted.
+  - OPEN, sized not changed: `CEILING = 2561` and `WIDTH = 120` in
+    `scripts/file_size_guard.py` are statistical fences measured once (2026-10-01
+    and 2026-10-04) and written down. Re-derived on today's `origin/main`
+    [measured 2026-10-04: 1,101 tracked `.py` files, Q1 95, Q3 417.5, Q3+3*IQR =
+    1,385; 415,755 lines, p99.9 = 120]: the width fence is unchanged, the
+    size fence would TIGHTEN to 1,385. Deriving them at check time is not done
+    here because a fence that moves with the tree can be dragged (deleting many
+    small files raises Q3; padding lines to 119 characters raises p99.9), and
+    the gaming case has to be closed before the rule changes. Decision needed:
+    keep as dated policy figures, or derive with a never-rises clamp.
+  - OPEN, sized not changed: `MONEY_MODULES` in `scripts/silent_swallow_guard.py`
+    is a hand-maintained list of 23 paths that must be edited every time a body is
+    lifted (its own comments record six such edits). Deriving "money-touching"
+    from source (modules under `src/execution/` and `src/protection/`, plus any
+    module that imports the broker adapter) is a scope change of the guard
+    itself, about half a day with the identity tests; not started.
+  - Hardcoded paths in guards on other in-flight work's ground, not touched:
+    `docs/WORK.md` / `docs/board_notes` in `board_item_guard` and `board_rot_guard`;
+    `config/number_ledger.yaml` in `ledger_prose_guard`, `ledger_substantiation_guard`
+    and `settlement_fill_guard`. Each refuses (does not silently pass) if the
+    file moves, so they are brittle, not blind.
+- Config files checked against the three-way test (kept record of a decision /
+  stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
+  - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
+    numbers and their provenance; real content, stays.
+  - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
+    person's attestation of conditions a machine cannot verify; cannot be computed.
+  - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
+    RULED 2026-10-04, KEEP BOTH. The `why` is a kept decision record. Each
+    `delta` is the recorded effect of one change, appended whole under
+    `merge=union`; nothing edits a shared line, so the collision and staleness
+    failures this mandate removes cannot occur. The total is computed, and
+    the test already compares it with the live arbitrary-row count measured
+    from the tree (121 and 0 at this date, both equal), failing on a rise AND
+    a fall. A trunk-identity replacement would pass a fall, so it is looser.
+  - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
+    the figures present in a sheet ARE derivable (the test's shape list finds
+    them), but each row's status and open question is a human judgement that a
+    number is prompt-only and unsettled, which no scan can produce. Staleness is
+    covered both ways by the tests: a new figure with no row fails, and a row
+    whose figure left the sheet fails. REAL GAP, not a tidy close: nothing
+    detects a number that stops being prompt-only while its prose stays (for
+    example it becomes code-computed or ledgered), and a `sourced` status is
+    never checked against anything. The shape list is also a known-string
+    scan, so a reworded figure is missed (the test file says so).
+- Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
+  text heuristic (AST/getsource use, or file reads combined with a source-path or
+  git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
+  [measured: grep over `git archive origin/main tests`, top-level `test_*.py`].
+  The count cannot cleanly separate reading source from running code: the broad
+  figure errs HIGH (fixture reads, patch-target strings containing `src/`), and
+  both miss tests that call a guard script which does the scanning. The 154-of-384
+  figure below used a different method on a smaller tree and is not comparable.
+- Acceptance 1-4: the size ratchet's own tests exist; the other guards were not
+  each re-proven against all four criteria in this pass, so that is unverified
+  here rather than assumed.
+
+## Why, measured (2026-10-02, original table, kept as history)
 
 A read-only sweep of all 19 then-open changes, 2026-10-02:
 
@@ -15,10 +109,10 @@ A read-only sweep of all 19 then-open changes, 2026-10-02:
 | That day's commits touching the one shared 293-entry baseline | 48% |
 | Test files reading source TEXT/AST/paths rather than running code | 154 of 384 (40%) |
 
-`test_baseline_is_tight` makes leftover headroom a FAILURE, so headroom is
-illegal by construction. Adding one line anywhere in the tree therefore forces
+(Historical, 2026-10-02; the baseline file and the test no longer exist.) `test_baseline_is_tight` made leftover headroom a FAILURE, so headroom was
+illegal by construction. Adding one line anywhere in the tree therefore forced
 an edit to a single shared file that every other open change is also editing.
-That is not bad luck; it is arithmetic, and it is why changes jam all day.
+That was not bad luck; it was arithmetic, and it is why changes jammed all day.
 
 Branch staleness was investigated and is NOT causal: merging main into a red
 change did not make it green.
@@ -141,7 +235,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 
 1. **Two unrelated changes at the same time never collide.** Branch twice off
    main, add a line to a different file in each, and merge both. This must
-   succeed with no conflict. Today it cannot, because both edit the baseline.
+   succeed with no conflict. (2026-10-02: it could not, because both edited the baseline.)
    This is the test the owner was promised.
 2. **Each converted guard still catches what it caught.** Before deleting a
    baseline, record what its guard currently flags; after conversion, the same
@@ -152,7 +246,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 4. **No tracked file sits at exactly its cap afterwards, because no cap is
    recorded.** The 291-of-292 number should become meaningless.
 
-## Order
+## Order (DONE for the size ratchet; the rest followed, see Status)
 
 Convert ONE guard end to end first — the size ratchet, which causes most of the
 pain — and prove all four acceptance criteria on it before touching the others.
@@ -166,6 +260,10 @@ Also done (2026-10-02, Python-clothed baselines): ~~`TRADING_PIPELINE_TEST_FILE_
 
 `tests/test_guard_weakening_gate.py` (logic in `scripts/guard_weakening_gate.py`) fails any change that edits or deletes an existing guard file without a one-line `Guard-rule-change:` of 25+ words in a commit message. Guard files are derived by naming rule (`scripts/*guard*.py`, `tests/test_*guard*.py`, `tests/test_*ratchet*.py`), never listed. Tightening cannot be told from loosening, so every behavioural edit is asked; only new guard files and docstring/comment/format-only edits (identical AST) are exempt. An unreadable base is a failure.
 
+Also done (2026-10-04, the settlement-recording class): `scripts/settlement_fill_guard.py` refuses a NEW site that hands a `built` settlement route's field to the writer through a three-argument `getattr` or a literal `None`. It stores no list of known offenders -- it names each offending (file, enclosing scope, field, shape) in the working tree, names them again on `origin/main`, and fails only on an identity the tree holds that the trunk does not; it refuses outright when the trunk cannot be read. This is the layer ABOVE the one `tests/test_settlement_recording_writes.py` checks: that test reads the storage layer's AST and asks whether anything writes the column, and it answered YES, correctly, for all four recordings that nonetheless recorded nothing. The defect was always the caller's expression, and a defaulted `getattr` is the one expression that cannot fail. What this guard deliberately does NOT decide is whether a write is CENSORED by the branch it sits on (the noise band, PR #1177, wrote only where the band blocked an exit); that is a question about the meaning of a condition, not its shape, and what settles it is a production measurement that the accrued sample holds observations on both sides of the threshold.
+
 ## Compressing is the same offence as growing
 
 `tests/test_statement_cram_ratchet.py` (logic in `scripts/statement_cram_guard.py`) closes the route a change took on 2026-10-04 to satisfy the size ratchet without splitting anything: it joined statements onto shared lines (`from A import x; from B import y`, `if cond: return x`) and only the line counter moved. The guard PARSES every tracked `.py` file (the size ratchet's own scope, `working_paths("*.py")`, no second list) and names each line on which more than one statement starts, or whose block body sits on its header's line (`if`/`elif`/`except`/`else`/`finally`/`case` headers alike); semicolons inside strings, docstrings and comments are invisible to it. There is no threshold -- the measure is statements per line -- and no stored list: identities (`path`, enclosing scope, the line's text) are collected on the working tree and on `origin/main` at check time and only a NEW or more-frequent identity fails. A one-line stub body (`class Boom(Exception): pass`, `def f(self) -> int: ...`) is not cramming and is exempt. It refuses without `origin/main`; removals never fail; the ~116 pre-existing crammed lines on the trunk pass (measured 2026-10-04).
+
+**Lines are not size (2026-10-04, second route).** The same day, two changes added error logging to dozens of money-path sites, reported their files SHRANK in lines, and between them added 33 lines over 140 characters with none removed (measured from the two diffs); the project has no line-width lint, so the line ratchet was satisfied by widening. `scripts/file_size_guard.py` now ratchets two further measures of the same files, same rule, same scope, still storing nothing: (1) non-whitespace characters -- invariant under wrapping, joining and re-indenting, so no re-layout can move it; a file over the 400-line floor may not gain any against `origin/main`; (2) lines wider than `WIDTH` = 120 characters -- a file may not gain one by identity (path + the line's text), so a widened line fails and passes once wrapped, while the trunk's ~416 pre-existing wide lines pass (120 is the 99.9th percentile of the 410,999 lines in 1,022 tracked `.py` files on `origin/main`, measured 2026-10-04; p99 = 90). Run against the two changes it was built for, it names 25 and 30 new wide lines and +2,367 / +2,320 / +1,378 non-whitespace characters in files that "shrank". Tests: `test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped`, `test_more_ink_in_fewer_lines_is_still_growth`, `test_a_pre_existing_wide_line_is_not_reported`.

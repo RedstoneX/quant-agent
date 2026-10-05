@@ -21,8 +21,8 @@ writers (``insert_*`` / ``save_*`` / ``upsert_*`` / ``write_back_*`` /
 (``record_*`` / ``_record_*``) and raw ``execute`` / ``commit`` on a connection.
 A handler that re-raises is never a swallow. Logging never counts.
 
-Scope: the money-touching modules only (``MONEY_MODULES``). A guard over all
-949 handlers would be noise and would be deleted within a week.
+Scope: the money-touching modules only, derived from source at check time by
+``scripts/money_modules.py`` -- never a pinned list of paths.
 
 This guard stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). The old
 tests/silent_swallow_baseline.json was one shared shrink-only file that every
@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import sys
 
+from scripts.money_modules import derive as derive_money_modules
 from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
@@ -51,34 +52,16 @@ from scripts.guard_reference import (
     trunk_blobs,
 )
 
-#: Money-touching modules: anything that places, amends, cancels or sizes an
-#: order, or decides whether a position keeps its protection. Order of
-#: priority: the broker adapter, then the stages that act on its answers.
-MONEY_MODULES: tuple[str, ...] = (
-    "src/execution/broker.py",            # every broker call
-    "src/sector_reference.py",            # sector lookup lifted from broker.py (PR 1008)
-    "src/execution/broker_parts/stop_amend.py",  # lifted from broker.py (instalment 1)
-    "src/execution/broker_parts/stop_place.py",  # lifted from broker.py (instalment 2)
-    "src/execution/broker_parts/order_desk.py",  # lifted from broker.py (instalment 3)
-    "src/execution/broker_parts/account_reads.py",  # lifted from broker.py (instalment 3)
-    "src/execution/stop_repair.py",       # re-places missing stops
-    "src/execution/stop_records.py",      # what the desk believes its stops are
-    "src/execution/scale_in.py",          # adds to positions
-    "src/execution/cash_sweep.py",        # moves cash
-    "src/execution/exit_path_records.py", # the record an exit leaves behind
-    "src/pipeline_protection.py",         # protective stops
-    "src/protection/owner_alerts.py",         # protective stops (lifted 2026-10-02)
-    "src/protection/sell_finalization.py",    # protective stops (lifted 2026-10-02)
-    "src/protection/fill_reconciler.py",      # protective stops (lifted 2026-10-02)
-    "src/protection/repeg_drain.py",          # protective stops (lifted 2026-10-02)
-    "src/protection/coverage_election.py",    # protective stops (lifted 2026-10-02)
-    "src/pipeline_exits.py",              # sells
-    "src/pipeline_entry_orders.py",       # buys
-    "src/pipeline_delever.py",            # forced reductions
-    "src/pipeline_rotation_exec.py",      # prune-and-replace
-    "src/pipeline_sizing.py",             # how much
-    "src/pipeline_stages.py",             # the execution stage itself
-)
+#: Money-touching modules are DERIVED at check time (scripts/money_modules.py):
+#: every module holding a function from which an exchange write is reachable,
+#: plus every module such a function calls into. The hand-edited tuple that
+#: stood here was stored bookkeeping; measured 2026-10-04 it had drifted from
+#: the code (protected_sell, stage_execution, order_idempotency, pending_stop_drain
+#: all unnamed) and it named pipeline_stages as "the execution stage itself"
+#: after that body had moved to stage_execution.
+def money_modules() -> tuple[str, ...]:
+    return derive_money_modules()
+
 
 BROAD_NAMES = {"Exception", "BaseException"}
 
@@ -178,6 +161,10 @@ class _Finder(ast.NodeVisitor):
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if is_broad(node) and _swallows_and_returns_empty(node):
             scope, src = site_identity(node, self.scopes)
+            # Name the def, not the class that happens to hold it: a body
+            # moved to a constructed part keeps its identity, while a second
+            # copy anywhere still raises the occurrence count and is reported.
+            scope = scope.rsplit(".", 1)[-1]
             self.hits.append(((self.rel, scope, src), node.lineno))
         self.generic_visit(node)
 
@@ -198,21 +185,23 @@ def scan(rel: str) -> list[tuple[Site, int]]:
     return scan_text(rel, path.read_text())
 
 
-def violations(modules: tuple[str, ...] = MONEY_MODULES) -> list[tuple[Site, int]]:
+def violations(modules: tuple[str, ...] | None = None) -> list[tuple[Site, int]]:
     """Silent swallows in the WORKING TREE: every occurrence, with its line."""
+    modules = money_modules() if modules is None else modules
     out: list[tuple[Site, int]] = []
     for rel in modules:
         out.extend(scan(rel))
     return out
 
 
-def trunk_violations(modules: tuple[str, ...] = MONEY_MODULES) -> list[Site]:
+def trunk_violations(modules: tuple[str, ...] | None = None) -> list[Site]:
     """Silent swallows on ``origin/main``, one identity per occurrence.
 
     Raises ``ReferenceUnavailable`` when the trunk cannot be read: this guard
     compares and stores nothing, so an unreadable reference is a refusal, never
     a pass. A module absent from the trunk is simply new, not an error.
     """
+    modules = money_modules() if modules is None else modules
     sites: list[Site] = []
     for rel, text in trunk_blobs(list(modules)).items():
         try:
@@ -224,12 +213,13 @@ def trunk_violations(modules: tuple[str, ...] = MONEY_MODULES) -> list[Site]:
     return sites
 
 
-def added(modules: tuple[str, ...] = MONEY_MODULES) -> list[tuple[Site, int, int, int]]:
+def added(modules: tuple[str, ...] | None = None) -> list[tuple[Site, int, int, int]]:
     """Silent swallows this working tree holds MORE copies of than ``origin/main``.
 
     Returns ``(site, line, copies_now, copies_on_trunk)``. Identity comparison
     via ``guard_reference.added_sites``: removals never offset an addition.
     """
+    modules = money_modules() if modules is None else modules
     now = violations(modules)
     lines: dict[Site, int] = {}
     for site, line in now:

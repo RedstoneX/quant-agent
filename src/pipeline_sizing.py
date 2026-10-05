@@ -21,11 +21,10 @@ from __future__ import annotations
 import logging
 import math
 
-from src.risk.constants import gap_adjusted_risk_per_share
-
 #: The moved code logged under `src.pipeline_stages` before the move and
 #: still does; binding the name rather than `__name__` keeps log records
 #: byte-identical.
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline_stages")
 
 
@@ -55,11 +54,10 @@ def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool
         if not bool(getattr(execution_cfg, "fractional_enabled", False)):
             return False
         info = pipeline.broker.get_fractionability(symbol)
+        record_guarded_pass(pipeline, "sizing.fractional_allowed")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "fractional eligibility check failed for %s (%s) — sizing in "
-            "WHOLE shares (fail closed)", symbol, exc,
-        )
+        record_guarded_pass(pipeline, "sizing.fractional_allowed", exc, log=logger,
+                       context={"effect": "whole shares (fail closed)"})
         return False
     if not isinstance(info, dict) or not info.get("fractionable"):
         reason = (
@@ -106,17 +104,7 @@ def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
     return math.floor(value * scale) / scale
 
 
-def _fmt_shares(qty: float) -> str:
-    """Render a share count for a human without a spurious `.0` on a whole
-    number or a wall of trailing zeros on a fractional one."""
-    try:
-        value = float(qty)
-    except (TypeError, ValueError):
-        return str(qty)
-    if value.is_integer():
-        return str(int(value))
-    return f"{value:.9f}".rstrip("0").rstrip(".")
-
+from src.sizing_fmt_shares import _fmt_shares  # noqa: E402,F401
 
 # Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
 # entry may put at risk between its fill and its stop.
@@ -139,8 +127,7 @@ _DEFAULT_RISK_BUDGET_PCT = 5.0
 def _risk_budget_pct(pipeline) -> float:
     """The configured §11.1 risk-budget percentage, or the ratified default.
 
-    Same Mock-safety posture as the `short_gap_risk_multiple` read just below
-    in this function, and as `TradingPipeline.__init__`'s `_risk_setting`:
+    Same Mock-safety posture as `TradingPipeline.__init__`'s `_risk_setting`:
     a MagicMock config (common in tests) auto-creates a child attribute that
     is neither the default nor a real number, so it must be checked rather
     than trusted from a bare `getattr`.
@@ -193,21 +180,9 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     # D4: unsigned everywhere.
     risk_per_share = abs(sizing_price - stop_price)
-    # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement (the
-    # stop is untouched). This execution-time belt must be at least as
-    # conservative for a short as the constructor's own primary sizing, so
-    # both legs call the SAME application site (board item 216): execution
-    # ships `min(qty_by_alloc, qty_by_risk)`, and while these were two
-    # separate multiplies a change to one of them was silently a half-change
-    # to the quantity that actually reached the market.
-    risk_per_share = gap_adjusted_risk_per_share(
-        risk_per_share,
-        is_short=is_short,
-        multiple=getattr(
-            getattr(pipeline.config, "risk", None),
-            "short_gap_risk_multiple", None,
-        ),
-    )
+    # Owner ruling 2026-10-04: no short-side haircut. `is_short` above is
+    # used only to validate stop geometry; the risk arithmetic that follows
+    # is identical for both directions.
     if risk_per_share <= 0:
         return None
     risk_dollars = total_value * _risk_budget_pct(pipeline) / 100

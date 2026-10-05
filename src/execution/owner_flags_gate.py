@@ -18,6 +18,7 @@ out, never an exemption from management.
 `install` REFUSES TO LOAD if a write-capable method has no entry in `_REFUSALS`,
 so a new broker verb cannot silently bypass the flag.
 """
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
 
@@ -51,8 +52,22 @@ _REFUSALS = {
 
 
 def configure(db_path) -> None:
+    """Aim the door at this session's intent record; `release` ends that aim.
+
+    The pointer is process-wide, so its lifetime must be the SESSION that set
+    it, not the process. `main.main` pairs this with `release` in its finally
+    block: without that pairing the pointer outlives the database it names
+    (one session per process in production hides it; a test run does not),
+    and every later read escalates to UNKNOWN against a database that is gone.
+    """
     global _db_path
     _db_path = db_path
+
+
+def release() -> None:
+    """End the aim set by `configure`; an unaimed door reads no flags."""
+    global _db_path
+    _db_path = None
 
 
 #: Called with a reason string whenever the desk acts on an UNKNOWN flag set.
@@ -72,8 +87,8 @@ def _verdict(name):
         if unknown_state_recorder is not None:
             try:
                 unknown_state_recorder(f"{name}: {why}")
-            except Exception:  # noqa: BLE001 - recording never decides
-                pass
+            except Exception as exc:  # noqa: BLE001 - recording never decides
+                record_guarded_pass(NO_LEDGER, "owner_flags_gate.unknown_state_recorder", exc)
         return why if name in UNKNOWN_BLOCKS else None
     if flags.paused and name in PAUSE_BLOCKS:
         return "desk is paused by the owner"

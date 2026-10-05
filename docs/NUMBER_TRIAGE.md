@@ -51,7 +51,7 @@ Measured 2026-10-01, `absolute_min_stop_atr_multiple` = 1 (the hard floor): on t
 
 Measured 2026-10-01, `max_position_risk_pct` = 5: a 2.5-ATR stop placed at the prior close is gapped through at the next open on 0.17% of bar-days (87 of 49,983) [measured]; when it is, the realised loss is a median 1.3x the planned risk, p90 2.0x, p99 2.75x, worst 2.92x [measured]. So the survivability half is settled: one name can lose up to ~2.9x its planned risk on daily bars, i.e. ~14.6% of the account at 5% planned risk. Whether 14.6% is tolerable is the owner's envelope, as the row already says. On the desk's record 0 of 41 entries requested or were allocated 5%; the maximum was 3.0% [measured], so the 5 has never bound. Survives as a ceiling that nothing has reached; its value stays unsettled until the owner states the whole-book envelope.
 
-Measured 2026-10-01, `max_position_pct` = 65: pooled overnight gaps on the universe (49,881 gaps): worst 1-in-100 is -4.8%, 1-in-1,000 is -11.6%, 1-in-10,000 is -20.1%, worst single gap -41.1%; 75 gaps worse than -10%, 6 worse than -20% [measured]. A 65%-notional name at those gaps costs the account 3.1% / 7.6% / 13.0% / 26.7% [measured arithmetic]. The desk's largest live name is 19.9% of the book, average 9.1% (11 positions) [measured], so 65 has never bound. The measurement half is done; the ceiling closes only when the owner names the single-name no-fill loss he will accept (board item 186) and picks the percentile.
+Measured 2026-10-01, `max_position_pct` = 65: pooled overnight gaps on the universe (49,881 gaps): worst 1-in-100 is -4.8%, 1-in-1,000 is -11.6%, 1-in-10,000 is -20.1%, worst single gap -41.1%; 75 gaps worse than -10%, 6 worse than -20% [measured]. A 65%-notional name at those gaps costs the account 3.1% / 7.6% / 13.0% / 26.7% [measured arithmetic]. The desk's largest live holding is 19.9% of the book, average 9.1% (11 positions) [measured], so 65 has never bound as a holding; it did bind 4 of 38 constructor entry orders, all at stops tighter than the 7.69%-of-entry crossover with the 5% risk envelope. The owner-tolerance half is WITHDRAWN (ruled 2026-10-04, board item 186): a stop cannot trigger while the exchange is shut, so an overnight gap is not a loss he can choose to accept and nobody is to ask him for one. The ceiling is sourced to the owner's dated appetite ruling (config/settings.yaml clause (c), 2026-09-11), made with the cost at five real gap disasters spelled out; it is closed as sourced and not reopened by measurement.
 
 **Tier 1 sizes positions or prices/places live orders.** Target-reach cap in ATR; settled by realised travel over each holding length on public bars.
 
@@ -108,7 +108,7 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 - `risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE` = 1
 - `risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R` = 2
 - `risk.trailing.RANGE_SECOND_RATCHET_LOCK_R` = 1
-- `pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)` = 4
+- `exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)` = 4
 
 **Tier 2 gates entries/exits or shapes stops after entry.** Rotation margin and seat weights; settled by measured ranking-score noise and each seat's forward discriminating power on public data.
 
@@ -155,9 +155,7 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 - `execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT` = 0.03
 - `stage_execution.ExecutionStage._run_session:factor[0]` = 0.995
 
-**Tier 2 gates entries/exits or shapes stops after entry.** Minimum ratchet step and short-side gap multiple: should be tick/ATR-relative and the name's own gap distribution.
-
-- `risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT` = 1.5
+**Tier 2 gates entries/exits or shapes stops after entry.** Minimum ratchet step: should be tick-relative. (The short-side gap multiple that sat here was DELETED 2026-10-04 by owner ruling — a short runs the same math as a long.)
 - `risk.trailing.MIN_RATCHET_TICKS` = 1 (RESOLVED 2026-10-02: the 2% floor is retired; the minimum ratchet step is now one venue tick, read off the instrument)
 
 **Tier 2 gates entries/exits or shapes stops after entry.** Stop buffer, level-cluster tolerance and level-strength distance: percent constants that should be the name's own ATR or tick.
@@ -238,3 +236,73 @@ Warn-only flag, deadline, fetch/text caps, ordinal sort-key ranks, JSON-candidat
 - `pipeline_prompt_facts.PromptFactsMixin._build_recent_missed_lessons(lookback_days)` = 14
 - `pipeline_prompt_facts.PromptFactsMixin._build_rm_recent_verdicts(limit)` = 5
 - `pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)` = 8
+
+## The 158 sites the unscoped-number guard grandfathers (measured 2026-10-05)
+
+The guard (`scripts/unscoped_number_guard.py`) reports a DELTA against `origin/main`, so it refuses only a NEW
+unscoped constant. Running its own scanner (`src.number_sources.collect_unscoped_sites`) with the trunk subtraction
+removed returns **158 sites** [measured 2026-10-05 on `origin/main` @8a097ad3].
+
+**Zero of the 158 have a ledger row, and that is structural, not neglect.** The ledger covers only the 61 entries in
+`SCOPED_PATHS`; these 158 are by definition outside them, so the two sets cannot overlap. The campaign's ~122
+`arbitrary` ledger rows and these 158 sites are DISJOINT backlogs over different modules. Nobody had compared them
+before; this is the comparison.
+
+Every one of the 158 is ALREADY A NAMED CONSTANT -- the scanner flags module-level numeric definitions outside scope,
+not bare literals. So "give it a name" is a no-op remedy here; the only real remedies are bringing the module into
+`SCOPED_PATHS` (which then demands a ledger row for EVERY site in it) or leaving it out with a written reason.
+
+| Bucket | Sites | What it is |
+|---|---|---|
+| Not a magic number | 82 | Published vendor prices, exchange clock minutes, month/word->number maps, fund leverage facts, schema versions, the scanner's own band. |
+| Governs money or risk | 38 | Thresholds, weights, windows and limits that shape a signal, a backtest result or a risk display. |
+| Neither | 38 | Timeouts, retry delays, cache TTLs, character caps, row limits, display widths, token budgets. |
+
+### Governs money or risk -- the real backlog, none of it ledgered
+
+- `src.api.drift_state._DRIFT_SNAPSHOT_MAX_AGE_H`
+- `src.api.routes_scorecard.RISK_DOLLARS_PER_CALL`
+- `src.backtest.engine.DEFAULT_INITIAL_EQUITY`
+- `src.backtest.engine.DEFAULT_MAX_HOLD_DAYS`
+- `src.backtest.engine.DEFAULT_SLIPPAGE_BPS`
+- `src.backtest.engine.MIN_BARS_FOR_SIGNAL`
+- `src.data.congressional_trading._MAX_PLAUSIBLE_AGE_YEARS`
+- `src.data.context._CONSOLIDATION_WINDOW`
+- `src.data.context._MAX_GAPS_REPORTED`
+- `src.data.context._SLOPE_LOOKBACK`
+- `src.data.event_calendar.EARNINGS_EVENT_WINDOW_SESSIONS`
+- `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS`
+- `src.data.insider_signal._BAND_HIGH`
+- `src.data.insider_signal._BAND_LOW`
+- `src.data.insider_signal._WEIGHTS[?]`
+- `src.data.insider_signal._WEIGHTS[?]`
+- `src.data.news_dedup.SIMILARITY_THRESHOLD`
+- `src.data.news_dedup.TITLE_ONLY_THRESHOLD`
+- `src.data.news_dedup._BODY_WEIGHT`
+- `src.data.news_dedup._TITLE_WEIGHT`
+- `src.data.news_store.ACTIVE_STATE_CHANGE_WINDOW_DAYS`
+- `src.data.smart_money._DEFAULT_HISTORY_RETENTION_DAYS`
+- `src.decision_checkpoint.MAX_AGE_MINUTES`
+- `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS`
+- `src.margin_interest.MAX_LOOKBACK_MONTHS`
+- `src.models.analysis.RATING_MAGNITUDE['buy']`
+- `src.models.analysis.RATING_MAGNITUDE['sell']`
+- `src.models.analysis.RATING_MAGNITUDE['strong_buy']`
+- `src.models.analysis.RATING_MAGNITUDE['strong_sell']`
+- `src.models.news._MAX_NEWS_EVIDENCE_ITEMS`
+- `src.models.news._NEWS_CONVICTION_RANK['high']`
+- `src.models.news._NEWS_CONVICTION_RANK['medium']`
+- `src.models.portfolio.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT`
+- `src.quantities.AVG_DOLLAR_VOLUME_WINDOW`
+- `src.retired_mechanisms.MIN_NEEDLE`
+- `src.silence_watchdog.DEFAULT_SILENT_WINDOW_THRESHOLD`
+- `src.silence_watchdog.LOOKBACK_DAYS`
+- `src.storage.analytics.calibration._CONVICTION_OUTCOME_MIN_N`
+
+No ledger rows were added for these. An id outside `SCOPED_PATHS` cannot be ledgered on its own: the module must enter
+scope first, and that makes the gate demand a justified row for every other site in the same module at the same time.
+That is a per-module change, not a per-number one, and it is the next pass's unit of work.
+
+Nothing in the other two buckets was exempted either: adding an exemption is loosening the guard, and the guard has not
+been tightened, so no exemption is needed to keep trunk green. All 158 remain.
+

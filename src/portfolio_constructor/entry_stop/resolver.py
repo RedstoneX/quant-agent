@@ -8,6 +8,7 @@ import re
 from src.data.levels import FAULT_NO_ENTRY, FAULT_NO_PRICE, derive_structural_target, touch_probability
 from src.models import TargetPosition, TechAnalysisResult, TradeDecision
 from src.risk.constants import REWARD_RISK_PARITY, reward_risk_floor_applies
+import src.portfolio_constructor.absolute_floor_record as absolute_floor_record
 from src.portfolio_constructor.config import logger
 from src.portfolio_constructor.config import STOP_RULE_LEVEL_HONOURED, STOP_RULE_ABSOLUTE_FLOOR, STOP_RULE_ATR_BAND, STOP_RULE_OUTSIDE_BAND, STOP_REFUSAL_WRONG_SIDE, STOP_RULE_SIGNAL_BAR, STOP_REFUSAL_STOP_NOT_FINITE, STOP_REFUSAL_ENTRY_NOT_FINITE, STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY, STOP_REFUSAL_NO_VALID_STOP, STOP_REFUSAL_NO_STRUCTURAL_TARGET, STOP_REFUSAL_REWARD_BELOW_RISK
 
@@ -900,39 +901,14 @@ class EntryStopResolver:
                             else stop_loss > hard_floor
                         )
                     )
-                    if inside_hard_floor:
-                        # Real structure, still too close to survive one
-                        # ordinary session. Pushed out to the 1x floor and
-                        # NOT to the full band — the band is what §12.1
-                        # removed. See the docstring for why this floor
-                        # lives in code rather than in a prompt.
-                        honoured, rule = hard_floor, STOP_RULE_ABSOLUTE_FLOOR
-                        logger.info(
-                            "Constructor: %s %s stop $%.2f → $%.2f [%s] — it "
-                            "sits at the computed structural level $%.2f, "
-                            "which is real, but only %.2f ATRs from the "
-                            "$%.2f entry. A stop inside one ordinary day's "
-                            "range is a coin flip, so it is moved out to the "
-                            "%.2f x ATR floor — not to the %.2f x ATR noise "
-                            "band, which the level exempts it from.",
-                            side_label, symbol, stop_loss, honoured,
-                            STOP_RULE_ABSOLUTE_FLOOR, level,
-                            abs(entry_price - stop_loss) / atr, entry_price,
-                            floor_multiple, multiple,
-                        )
-                    else:
-                        logger.info(
-                            "Constructor: %s %s stop $%.2f kept [%s] — it "
-                            "sits at the computed structural level $%.2f "
-                            "(%.2f ATRs %s the $%.2f entry). The %.2f x ATR "
-                            "noise band would have moved it to $%.2f, which "
-                            "is not a level anyone is defending, so the band "
-                            "does not apply.",
-                            side_label, symbol, stop_loss,
-                            STOP_RULE_LEVEL_HONOURED, level,
-                            abs(entry_price - stop_loss) / atr, side_word,
-                            entry_price, multiple, band_edge,
-                        )
+                    honoured, rule = absolute_floor_record.noted(
+                        inside_hard_floor=inside_hard_floor,
+                        symbol=symbol, side_label=side_label,
+                        side_word=side_word, entry_price=entry_price,
+                        stop_loss=stop_loss, atr=atr, level=level,
+                        hard_floor=hard_floor, floor_multiple=floor_multiple,
+                        multiple=multiple, band_edge=band_edge,
+                    )
                 else:
                     # Nothing computed backs this stop — widen it to the
                     # instrument's own fallback: the band, exactly as

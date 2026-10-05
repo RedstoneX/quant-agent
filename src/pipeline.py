@@ -11,7 +11,6 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
-from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
 from src.cash_park import CashPark
 from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
@@ -125,7 +124,9 @@ from src.pipeline_stages import (
 # `self._x(...)` caller and `patch.object(TradingPipeline, "_x")` is untouched.
 from src import pipeline_cost_gate as _cost_gate
 from src import pipeline_halt_gates as _halt_gates
+from src.portfolio_constructor.refusal_recorder import TradeRefusalRecorder
 from src.portfolio_constructor import PortfolioConstructor
+from src.cash_park_retired import release_retired_cash_park, retired_cash_park_symbol
 from src.sessions.evening_session import EveningSession
 from src.sessions.position_review_session import PositionReviewSession
 from src.sessions.expected_sessions_session import ExpectedSessionsMissingSession
@@ -688,9 +689,7 @@ class TradingPipeline(
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
-            # Board item 218: the parity refusal is a TRIAL and must leave a
-            # durable, numeric, per-symbol record or it cannot be judged.
-            db=self._collab("db"),
+            recorder=TradeRefusalRecorder(self._collab("db")),
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
@@ -744,45 +743,25 @@ class TradingPipeline(
         from src.execution.cash_sweep import sweeper_or_none
         return sweeper_or_none(getattr(self, "cash_sweeper", None))
 
-    def _retired_cash_park_symbol(self) -> str | None:
-        """The configured sweep vehicle when the sweep is DISABLED, else None.
+    def _typed_cash_sweeper(self):
+        """The owned CashSweeper, or None when absent or not a real one.
 
-        Owner mandate 2026-09-17 turned the sweep off. A vehicle bought
-        before that is still a deliberately stopless holding until
-        `_release_retired_cash_park` sells it, so the stop-coverage audit
-        must keep exempting it rather than raising a naked-position banner
-        (its opening row is SWEEP_BUY, so the repair could not rebuild a
-        stop anyway).
+        The type gate for the retired-cash-park code in
+        `src.cash_park_retired`, which may not import the broker seam
+        itself. Read on every call, never captured: tests assign
+        `cash_sweeper` after `__new__`, and a snapshot would freeze it.
         """
         from src.execution.cash_sweep import CashSweeper
         sweeper = getattr(self, "cash_sweeper", None)
-        if not isinstance(sweeper, CashSweeper):
-            return None
-        try:
-            if sweeper.enabled():
-                return None
-            sym = sweeper.symbol
-        except Exception:  # noqa: BLE001
-            return None
-        return sym if isinstance(sym, str) and sym.strip() else None
+        return sweeper if isinstance(sweeper, CashSweeper) else None
+
+    def _retired_cash_park_symbol(self) -> str | None:
+        """Thin shim: body moved to src/cash_park_retired.py."""
+        return retired_cash_park_symbol(self._typed_cash_sweeper)
 
     def _release_retired_cash_park(self, run_id: str | None) -> None:
-        """Sell any sweep vehicle still held after the sweep was disabled.
-
-        Called at the start of every market-hours session (morning, midday/
-        close review, intra_check), right after the stop-coverage audit and
-        before any seat reads the book, so the release lands in cash the
-        same session. Non-fatal by design; see
-        `CashSweeper.release_retired_vehicle`.
-        """
-        from src.execution.cash_sweep import CashSweeper
-        sweeper = getattr(self, "cash_sweeper", None)
-        if not isinstance(sweeper, CashSweeper):
-            return
-        try:
-            sweeper.release_retired_vehicle(run_id=run_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("cash sweep retired: release failed (non-fatal): %s", exc)
+        """Thin shim: body moved to src/cash_park_retired.py."""
+        release_retired_cash_park(self._typed_cash_sweeper, run_id)
 
     def _news_held_symbols(self, positions) -> list[str]:
         """Thin shim: body moved to src/cash_park.py."""

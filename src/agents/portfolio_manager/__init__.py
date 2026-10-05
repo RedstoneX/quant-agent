@@ -64,6 +64,10 @@ from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
 from src.agents.portfolio_manager.ranking import hold_candidate_ranking
 from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
+from src.agents.portfolio_manager.registry_notes import (
+    broadcast_registry_note, omitted_rows_line, stale_registry_note,
+)
+
 class PortfolioManagerAgent(
     LiveLimitPrompt,
     BaseAgent,
@@ -153,39 +157,13 @@ class PortfolioManagerAgent(
             evidence_registry, sort_keys=True, indent=2,
         )
         if stale_sources:
-            # The registry values themselves stay undecorated — the PM must
-            # copy the stance string EXACTLY for `validate_grounding`, so the
-            # staleness is carried alongside rather than inside them.
-            stale_registry_note = (
-                "\n\nSTALE (still real coverage, still citable as provenance, "
-                "but NOT counted toward the agreement score below — the "
-                f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(stale_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += stale_registry_note(
+                stale_sources, evidence_registry,
             )
-            if not stale_registry_note.rstrip().endswith(":"):
-                evidence_registry_text += stale_registry_note
         if non_corroborating_sources:
-            # A DIFFERENT fact with a different consequence, so it gets its
-            # own note rather than an "or" the reader cannot resolve: this
-            # stance is current and real, it simply is not about this name.
-            broadcast_note = (
-                "\n\nMARKET-WIDE, NOT ABOUT THIS NAME (still real coverage, "
-                "still citable as provenance, and still counted AGAINST a "
-                "trade it opposes — but it can never count FOR one: this "
-                "macro stance is the broad equity outlook, applied to a name "
-                "whose sector the macro read did not mention):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(non_corroborating_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += broadcast_registry_note(
+                non_corroborating_sources, evidence_registry,
             )
-            if not broadcast_note.rstrip().endswith(":"):
-                evidence_registry_text += broadcast_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -202,7 +180,12 @@ class PortfolioManagerAgent(
         # a broad contested one. Showing the net is not optional — a ceiling
         # the PM cannot predict is the 2026-08-20 incident class, where the
         # constructor silently sized against the PM's own stated reasoning.
-        def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
+        # Why all-zero rows are omitted: see registry_notes.omitted_rows_line.
+        omitted_broadcast: list[str] = []
+        omitted_stale: list[str] = []
+        omitted_plain: list[str] = []
+
+        def _agreement_line(symbol: str, sources: dict[str, str]) -> str | None:
             ignored = stale_sources.get(symbol)
             broadcast = non_corroborating_sources.get(symbol)
             # Each caveat states its OWN reason. A merged "A or B" line let a
@@ -245,6 +228,14 @@ class PortfolioManagerAgent(
                 symbol, sources, "short", ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
+            if not any((long_for, long_against, short_for, short_against)):
+                if broadcast_here:
+                    omitted_broadcast.append(symbol)
+                elif stale_here:
+                    omitted_stale.append(symbol)
+                else:
+                    omitted_plain.append(symbol)
+                return None
             return (
                 f"- {symbol}: {long_for} aligned / {long_against} opposed = "
                 f"net {long_net:+d} if long, "
@@ -253,10 +244,18 @@ class PortfolioManagerAgent(
                 f"(of {len(sources)} source(s) with current coverage{stale_note})"
             )
 
-        agreement_lines = [
+        rendered_agreement = [
             _agreement_line(symbol, sources)
             for symbol, sources in sorted(evidence_registry.items())
         ]
+        agreement_lines = [line for line in rendered_agreement if line is not None]
+        omitted_agreement_rows = sum(
+            1 for line in rendered_agreement if line is None
+        )
+        if omitted_agreement_rows:
+            agreement_lines.append(omitted_rows_line(
+                omitted_agreement_rows, len(omitted_broadcast), len(omitted_stale),
+            ))
         agreement_text = (
             "\n".join(agreement_lines) if agreement_lines
             else "No symbols with current coverage."
@@ -1667,6 +1666,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
             merge_retry_falsifiers,
         )
+        from src.soft_exit_never_blank import (
+            apply_mechanical_heal, soft_exit_fill_coda, soft_exit_retry_targets,
+        )
 
         if decision is None:
             return decision, result
@@ -1685,6 +1687,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 ),
             )
         ]
+        if not missing:
+            return decision, result
+
+        # Mechanical heal of last resort, before any spend (board item 78).
+        missing = apply_mechanical_heal(
+            decision, result, missing, self._record_soft_exit_heal, logger,
+        )
         if not missing:
             return decision, result
         if retry_already_used:
@@ -1708,21 +1717,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             )
             return decision, result
         self._soft_exit_retry_used = True
-        coda = (
-            "\n\n## SOFT-EXIT COMPLETION REQUIRED — NOT A RE-DECISION\n"
-            "These open/increase targets are missing a real thesis_invalid_if "
-            "(I'll sell if). Fill ONLY that field on the named symbols with "
-            "one concrete observable. Do NOT invent a catalyst unless you are "
-            "citing a dated Active News State Change for the unmeasurable-"
-            "range exception. Do NOT change symbol, direction, conviction, "
-            "thesis, risk_allocation_pct, target_weight_pct, or "
-            "suggested_stop_price. Do NOT add or remove targets. If you "
-            "cannot state a real falsifier, leave that name's "
-            "thesis_invalid_if empty — Python will refuse that name; do not "
-            "invent text.\n"
-            f"Symbols: {', '.join(missing)}\n"
-            "Respond ONLY with the complete JSON object.\n"
-        )
+        coda = soft_exit_fill_coda(missing)
         try:
             retried = self._execute(
                 str(user_message) + coda, retry_kind="soft_exit_fill",
@@ -1749,10 +1744,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 f"({type(exc).__name__}: {exc})",
             )
             return decision, result
-        reparsed = retried.parse_json() if retried is not None else None
-        retry_targets = []
-        if isinstance(reparsed, dict) and isinstance(reparsed.get("targets"), list):
-            retry_targets = reparsed["targets"]
+        retry_targets = soft_exit_retry_targets(retried)
         merged, filled = merge_retry_falsifiers(
             list(decision.targets), retry_targets,
         )

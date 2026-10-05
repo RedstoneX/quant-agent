@@ -37,6 +37,7 @@ import math
 from datetime import datetime, timedelta
 
 from src.models import ReasoningChain, TradeDecision
+from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -44,334 +45,32 @@ from src.trading_calendar import et_today
 logger = logging.getLogger("src.pipeline")
 
 
-# The canonical names of the sanctioned exit triggers, so the phrase gate
-# below cannot name a different set of triggers from `ExitTrigger` itself.
-# `src.risk.exit_trigger` imports only the stdlib, so this cannot cycle.
-from src.risk.exit_trigger import (  # noqa: E402
-    CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
-)
-from src.risk.exit_trigger import (  # noqa: E402
-    VERIFIED_ON_CHART as _VERIFIED_ON_CHART,
-    canonical_prose_names as _canonical_prose_names,
-)
-
-#: Canonical prose spellings of the triggers whose truth is decided by
-#: READING THE CHART. Never hard-trigger keywords — see the note below.
-_CHART_VERIFIED_TRIGGER_NAMES: frozenset[str] = frozenset(
-    n for t in _VERIFIED_ON_CHART for n in _canonical_prose_names(t)
-) | {"trend alignment over", "alignment exit"}
-
-
-# Named exit triggers — the vocabulary of NEW INFORMATION.
-#
-# Spec Phase 3.8: the reviewer retains full authority to exit on new
-# information — adverse news, an earnings miss, a macro regime shift, a sector
-# shock, a thesis invalidation. Price movement alone is
-# not new information. This tuple is that list, expressed as prose the LLM
-# actually emits. (Spec 3.8 also listed "a correlation breach"; that one was
-# removed 2026-09-13 — see the note inside the tuple.)
-#
-# Soft signals — "TARGET_BREACH", "stretched", "extended", "macro noise",
-# "taking profits", "de-risking" — are deliberately ABSENT and must stay
-# absent. They are recurring flags, not events, and mechanically
-# re-applying them is what produced the repeated same-day double-trims.
-#
-# Phase 3.3 (2026-08-27) widened where this gate applies. It used to guard
-# only the SECOND sell-side action on a symbol in one day, so a position's
-# FIRST sale — which is almost every sale — executed on soft reasoning
-# entirely unchecked. It now guards every exit. Two categories were added at
-# the same time, because gating every exit on a list that did not cover the
-# whole of 3.8 would have blocked legitimate exits: macro regime shifts and
-# sector shocks are sanctioned by 3.8 but were unrepresented here.
-#
-# Concentration and drift were considered for inclusion and deliberately
-# REJECTED. "Concentration drift; valuation stretched" is the verbatim shape
-# of the reason behind the 2026-05-04 AMZN double-trim, and drift trims belong
-# to the Portfolio Manager (its rule-priority rows 4 and 5), not to this seat.
-# A Tech-rating downgrade alone is likewise excluded: the Risk Manager prompt
-# already states it is not sufficient grounds for an exit.
-_HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
-    # Thesis invalidation
-    "thesis_invalid",
-    "thesis invalid",
-    "invalidation triggered",
-    "broken thesis",
-    "thesis broken",
-    # Adverse company/sector news and state changes
-    "high bearish",
-    "high-conviction bearish",
-    "high conviction bearish",
-    "adverse news",
-    "material news",
-    "sector shock",
-    # Earnings and filings
-    "bearish earnings",
-    "bearish filing",
-    "earnings missed",
-    "earnings miss",
-    "guidance cut",
-    # Macro regime — sanctioned by spec 3.8, previously unrepresented
-    "regime shift",
-    "regime flip",
-    "regime flipped",
-    "risk-off",
-    "risk off",
-    # "daily loss" / "daily-loss" / "circuit breaker" were REMOVED
-    # 2026-09-20 (WORK.md item 32), for the same reason and by the same
-    # precedent as the correlation phrases below: the owner deleted the
-    # entire account-level loss alarm, so no part of the desk computes a
-    # daily-loss or circuit-breaker EVENT any more and the claim is not
-    # checkable against anything. Leaving them accepted would have been
-    # strictly worse than never having had them: `cites_external_information`
-    # waves a SELL/REDUCE/COVER past the noise-band and ratchet clamps when
-    # the reason cites one, so a seat writing "circuit breaker" would have
-    # bought itself a clamp bypass with an unverifiable phrase. There is no
-    # exchange-halt (LULD) detection in this codebase either, so the
-    # generous reading of "circuit breaker" has nothing behind it.
-    # "correlation breach" / "correlation cluster breach" were REMOVED
-    # 2026-09-13 (WORK.md item 44). They were the only accepted triggers with
-    # nothing behind them: no part of the desk computes a correlation-breach
-    # EVENT, `holding_discipline_claim_check` has no branch for the claim (it
-    # returns "ok" — not even the log-only "unverifiable"), and a published
-    # operational definition with a stated window and threshold was searched
-    # for and not found (see docs/INCIDENT_HISTORY.md). Every other keyword
-    # here names something the desk records: a news row, an earnings row, a
-    # macro regime read, a broker fill. (This sentence used to end "a
-    # deterministic circuit breaker" — that one went the same way on
-    # 2026-09-20, see above.) The correlation phrase named nothing, so it
-    # passed on the wording alone. Do NOT
-    # re-add it without a verifier that can answer "did that happen today?".
-    # Protection already fired
-    "stop hit",
-    "stopped out",
+from src.pipeline_exit_vocabulary import (  # noqa: F401  (re-exported)
+    _CANONICAL_TRIGGER_NAMES,
+    _VERIFIED_ON_CHART,
+    _canonical_prose_names,
+    _CHART_VERIFIED_TRIGGER_NAMES,
+    _HARD_TRIGGER_KEYWORDS,
+    _reason_cites_hard_trigger,
+    _actions_with_scan_fallback,
+    _reason_claims_alignment_exit,
+    _collab_of,
 )
 
-# THE ENUM IS THE SINGLE SOURCE OF TRUTH FOR WHICH TRIGGERS EXIST
-# (2026-09-30, live defect on META).
-#
-# On 2026-09-25 17:06:23 the position reviewer emitted a REDUCE on META whose
-# reason began, verbatim, "bearish_state_change: [HIGH] U.S. 10-year Treasury
-# yield crosses 5% ...". `src/risk/exit_trigger.py` DECLARES
-# `ExitTrigger.BEARISH_STATE_CHANGE` as a sanctioned trigger and
-# `src/risk/exit_guard.py::claims_bearish_state_change` accepts the phrase,
-# but the tuple above only ever carried the WORDINGS "high bearish" /
-# "high(-)conviction bearish" — so the seat naming a sanctioned trigger by its
-# own canonical name was refused with `exit_blocked_no_named_trigger` for
-# "naming no recognised trigger". Two modules disagreed about whether the same
-# sanctioned trigger existed.
-#
-# The fix is structural rather than another hand-maintained phrase: the
-# canonical `ExitTrigger` values are appended here, derived from the enum, so
-# the two vocabularies cannot diverge again without the enum itself changing.
-#
-# WHAT THIS DOES AND DOES NOT CLAIM ABOUT THE BAR ABOVE. Every name added
-# here is a trigger this tuple already accepted under another wording, with
-# ONE exception, and the bar the comment above sets — "names something the
-# desk records" — is met by THREE of the six, not by all of them. Measured
-# member by member 2026-09-30, and kept true mechanically by
-# `exit_trigger.EVENT_TRIGGERS` / `exit_trigger.NO_VERIFIER_EXISTS`, which
-# `tests/test_exit_trigger_canonical_names.py` requires every enum member to
-# appear in exactly one of:
-#
-#   VERIFIER EXISTS — some branch of `holding_discipline_claim_check` is
-#   reached for the claim and can CONTRADICT it:
-#     bearish_state_change - the same-day `state_change` rows for the symbol.
-#     adverse_news         - routed into that same branch deliberately.
-#     regime_shift         - the day's macro regime read, when trusted.
-#
-#   NO VERIFIER — accepted on its wording alone. Recorded, not excused:
-#     thesis_invalid - `check_structural_protection` is CONSULTED, with
-#                      `advisory_only=True, persist=False`, and its own
-#                      comment says it cannot change which exits execute.
-#                      Consulted is not judged.
-#     sector_shock   - the desk records no sector-scope row;
-#                      `holding_discipline_claim_check` says so where it
-#                      declines to route it.
-#     stop_fired     - nothing asks the broker whether a stop filled. This is
-#                      also the one genuinely NEW spelling here rather than a
-#                      re-spelling of a phrase already accepted above.
-#
-# `earnings` is deliberately NOT added to the prose vocabulary: its canonical
-# spelling is a bare common word that occurs in prose naming no event, and
-# admitting it would be the widening this comment block forbids. It has no
-# verifier either, and it stays reachable through the structured field.
-# `cannot_substantiate` is not a trigger and is never accepted. Both prose
-# exclusions are the named constant
-# `exit_trigger.CANONICAL_NAME_NOT_MATCHED_IN_PROSE`, pinned by
-# `tests/test_exit_trigger_canonical_names.py`.
-#
-# An earlier draft of this comment asserted a verifier for all six. That was
-# untrue of four of them, in the one comment block whose entire job is to
-# record that bar. Overstating a finding is the same failure as understating
-# one, so the claim now lives in a constant a test checks.
-#
-# CHART-VERIFIED TRIGGERS ARE EXCLUDED, AND THIS IS LOAD-BEARING. A name in
-# this tuple is a BYPASS: `_reason_cites_hard_trigger` waves the reason past
-# the SELL/REDUCE noise band AND past the TRAIL_STOP ratchet cooldown and the
-# 1.25xATR trail clamp, on the strength of prose alone. The alignment exit is
-# the one trigger whose whole point is that prose is NOT enough — it is
-# granted its bypass by `_alignment_exit_for_holding` reading the chart, and
-# by nothing else. Letting its canonical name in here would hand a model a
-# second, unverified way to buy the same bypass on the trail path, which runs
-# no chart check at all.
-_HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
-    name for name in _CANONICAL_TRIGGER_NAMES
-    if name not in _HARD_TRIGGER_KEYWORDS
-    and name not in _CHART_VERIFIED_TRIGGER_NAMES
-)
-
-
-def _reason_cites_hard_trigger(reason: str) -> bool:
-    """True when the reason NAMES a recognised new-information trigger.
-
-    Substring match, case-insensitive — the LLM emits prose, so variation is
-    tolerated. The point is not to be clever about language; it is to force
-    the reason to make a CLAIM ("X happened") rather than express a feeling
-    ("it looks tired"). A claim is auditable, gradeable by the evening review,
-    and cross-checkable against the reviewer's own metrics by
-    `src/risk/exit_guard.py`. A feeling is none of those things.
-
-    A False return on a string is a completed content judgment, not
-    uncertainty: the deterministic owner refuses (see
-    `src/risk/exit_refusal.py`). Callers that need to distinguish "the
-    matcher could not run" from "the matcher ran and found nothing" must
-    use `classify_trigger_reason`, not this boolean.
-    """
-    if not reason:
-        return False
-    lower = reason.lower()
-    return any(kw in lower for kw in _HARD_TRIGGER_KEYWORDS)
-
-
-def _actions_with_scan_fallback(items, displaced: dict, orders: list):
-    """The midday action queue, with the SAFETY FALLBACK for scan-raised
-    sales.
-
-    A sale the alignment scan raised REPLACED whatever the review proposed
-    for that symbol. Every layer below may refuse it — an unnamed trigger,
-    the metric-contradiction veto, the AI Risk seat, the qty-sign gate, the
-    confirmer's own verdict. If that happens the symbol must not be left
-    with nothing: the action the scan displaced (in practice a TRAIL_STOP,
-    the only thing besides HOLD it may overwrite) goes back on the queue and
-    is executed normally, so a REFUSED scan sale leaves the position exactly
-    as well protected as the scan found it — never worse.
-
-    "Refused" is read off the only durable evidence available at this level:
-    the sale appended no order to `orders`. A submitted sale always appends
-    one; were it somehow not to, the fallback re-protects a position that is
-    closing, which is the harmless direction to be wrong in.
-
-    A generator so the executor loop is unchanged: it resumes here after the
-    body has run, whichever `continue` the body took to get out.
-    """
-    queue = list(items)
-    while queue:
-        item = queue.pop(0)
-        orders_before = len(orders)
-        yield item
-        if not item.get("_alignment_scan_raised"):
-            continue
-        if len(orders) > orders_before:
-            continue
-        fallback = displaced.pop((item.get("symbol") or "").strip().upper(), None)
-        if fallback is None:
-            continue
-        logger.warning(
-            "Alignment scan: the %s it raised for %s was refused downstream "
-            "— restoring the %s the review asked for, so the position is not "
-            "left unprotected",
-            item.get("action"), item.get("symbol"), fallback.get("action"),
-        )
-        queue.append(fallback)
-
-
-def _reason_claims_alignment_exit(reason: str, exit_trigger: object = None) -> bool:
-    """Does this sale claim the TREND IS OVER (the alignment exit)?
-
-    Read from the STRUCTURED trigger first and the prose only as a
-    fallback, same precedence the holding-discipline fact-check uses.
-    """
-    from src.risk.exit_trigger import ExitTrigger
-    t = getattr(exit_trigger, "value", exit_trigger)
-    if isinstance(t, str) and t.strip().lower() == ExitTrigger.TREND_ALIGNMENT_OVER.value:
-        return True
-    low = (reason or "").lower()
-    return "trend alignment over" in low or "alignment exit" in low
-
-
-def _collab_of(obj, name: str):
-    """A collaborator for a lifted exit object: `obj._collab(name)` when the host
-    offers the deferred-error stand-in (TradingPipeline does), else the attribute."""
-    collab = getattr(obj, "_collab", None)
-    if collab is not None:
-        return collab(name)
-    return getattr(obj, name)
 
 
 class ExitEngineMixin:
     """Cluster K + L of `docs/PIPELINE_SPLIT_PLAN.md`: the sell-side engine."""
 
-    def _symbols_already_trimmed_today(self) -> set[str]:
-        """Symbols that received a sell-side action earlier today (ET).
-
-        Used by position_reviewer's same-day-trim discipline at midday/close:
-        if midday already trimmed AMZN at +12% on TARGET_BREACH, close should
-        not trim it AGAIN at +13% on the same flag — that loop produced a
-        73% one-day cut on a still-working position (2026-05-04 AMZN 41 →
-        21 → 11 shares).
-
-        Sell-side = REDUCE / SELL / TAKE_PROFIT (historical rows only — the
-        auto trim was deleted 2026-09-12) / PARTIAL_SELL(...) /
-        EMERGENCY_SELL / FORCE_DELEVER, and its short-side mirror COVER /
-        EMERGENCY_COVER / PARTIAL_COVER(...) (Stage 3 — a short trimmed at
-        midday must be exempt from a second same-flag COVER at close for
-        the exact reason a long is). TRAIL_STOP and HOLD do NOT count
-        (TRAIL_STOP is stop adjustment, HOLD is no-op).
-
-        Filters out canceled / rejected / expired orders that filled ZERO
-        shares — if a SELL was submitted earlier and the broker rejected it,
-        the symbol is fair game for re-trying. A PARTIAL fill still blocks:
-        those shares left the book, so a second trim today would be the
-        double-application this guard exists to prevent. Pending (`submitted`)
-        and `filled` rows both block, so we never double-submit on the same
-        symbol within one day.
-        """
-        try:
-            rows = self.db.get_trades(today_only=True, limit=200)
-        except Exception as exc:
-            logger.warning(
-                "_symbols_already_trimmed_today: query failed: %s", exc,
-            )
-            return set()
-        sell_actions = {
-            "REDUCE", "SELL", "TAKE_PROFIT",
-            "EMERGENCY_SELL", "FORCE_DELEVER",
-            "COVER", "EMERGENCY_COVER",
-        }
-        out: set[str] = set()
-        for r in rows:
-            action = (r.get("action") or "").upper()
-            # Normalise PARTIAL_SELL(15%) → PARTIAL_SELL, PARTIAL_COVER(50%)
-            # → PARTIAL_COVER.
-            base_action = action.split("(", 1)[0].strip()
-            if (base_action not in sell_actions
-                    and base_action not in ("PARTIAL_SELL", "PARTIAL_COVER")):
-                continue
-            # A terminal-fail status that nevertheless moved shares IS a trim.
-            # Filtering on fill_status alone (2026-07-16 audit) let a
-            # partially-filled-then-canceled REDUCE fall through: the shares
-            # left the book at midday, but close saw a clean slate and was free
-            # to trim the same name again on the same soft flag — the exact
-            # 2026-05-04 AMZN 41→21→11 double-trim this guard exists to stop.
-            # `_trade_executed_or_pending` is the codebase's existing contract
-            # for this (NULL/submitted/filled → yes; canceled/rejected/expired
-            # → only when fill_qty > 0), and matches db._executed_trade_predicate.
-            if not self._trade_executed_or_pending(r):
-                continue
-            sym = r.get("symbol")
-            if sym:
-                out.add(sym)
-        return out
+    def _symbols_already_trimmed_today(self, *args, **kwargs):
+        """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
+        from src.exits.exit_records import ExitRecords
+        return ExitRecords(
+            trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
+            record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
+            db=_collab_of(self, "db"),
+            market=_collab_of(self, "market"),
+        )._symbols_already_trimmed_today(*args, **kwargs)
 
     # --- lifted to src/exits/target_revision.py (TargetRevision); thin shims follow ---
     def _adjudicate_target_revision_flags(self, *args, **kwargs):
@@ -386,55 +85,15 @@ class ExitEngineMixin:
             risk_engine=getattr(self, "risk_engine", None),
         )._adjudicate_target_revision_flags(*args, **kwargs)
 
-    def _file_target_revision(
-        self, *, run_id: str, symbol: str, seat: str, evidence: str,
-        code: str, applied: bool, trigger: str = "",
-        prior_price: float | None = None, new_price: float | None = None,
-        basis: str = "", level_used: float | None = None, detail: str = "",
-        prior_code: str | None = None,
-    ) -> dict:
-        """Write one adjudicated flag and return its payload.
-
-        Persistence failure degrades to the in-memory payload (which still
-        reaches the session result and the cockpit) rather than losing the
-        outcome or raising — but it is logged as an error, because an
-        unrecorded refusal is the blank this whole path exists to avoid.
-        """
-        payload = {
-            "symbol": symbol, "code": code, "trigger": trigger, "seat": seat,
-            "evidence": evidence, "detail": detail, "basis": basis,
-            "prior_price": prior_price, "new_price": new_price,
-            "level_used": level_used, "applied": bool(applied),
-        }
-        # FAULT 6 (item 194): an unapplied outcome identical to this
-        # symbol's last one is recomputable state, and the sweep would
-        # otherwise re-file it for every held name every session forever.
-        # Same rule the trail's `record_trail_state_if_changed` applies:
-        # the row marks a CHANGE. An applied revision is always written.
-        if not applied and prior_code is not None and prior_code == code:
-            payload["evidence_id"] = None
-            payload["unchanged_since_last_session"] = True
-            return payload
-
-        evidence_id = None
-        try:
-            evidence_id = self.db.record_target_revision(
-                run_id=run_id, symbol=symbol, code=code, seat=seat,
-                evidence=evidence, detail=detail, trigger=trigger,
-                prior_price=prior_price, new_price=new_price, basis=basis,
-                level_used=level_used, applied=applied,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "target revision: failed to record %s outcome %s (%s)",
-                symbol, code, exc,
-            )
-        payload["evidence_id"] = evidence_id
-        if not applied:
-            logger.info(
-                "Target revision refused for %s: %s — %s", symbol, code, detail,
-            )
-        return payload
+    def _file_target_revision(self, *args, **kwargs):
+        """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
+        from src.exits.exit_records import ExitRecords
+        return ExitRecords(
+            trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
+            record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
+            db=_collab_of(self, "db"),
+            market=_collab_of(self, "market"),
+        )._file_target_revision(*args, **kwargs)
 
     # --- lifted to src/exits/structural_protection.py (StructuralProtection); thin shims follow ---
     def _structural_protection_for_holding(self, *args, **kwargs):
@@ -499,10 +158,15 @@ class ExitEngineMixin:
                 }),
             )
             any_surface_ok = True
+            record_exit_guard(self, "structural.board_reason_write")
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "structural protection: board reason write failed for %s "
-                "(%s) — Telegram send still attempted", symbol_u, e,
+            record_exit_guard(
+                self,
+                "structural.board_reason_write",
+                e,
+                logger,
+                symbol=symbol_u,
+                effect="Telegram send still attempted",
             )
 
         # Telegram: the same standalone owner-alert path the holding-discipline
@@ -514,10 +178,15 @@ class ExitEngineMixin:
 
             ok = _notifier.send_owner_alert(message, symbols=[symbol_u])
             any_surface_ok |= bool(ok)
+            record_exit_guard(self, "structural.owner_alert_send")
         except Exception as e:  # noqa: BLE001
-            logger.error(
-                "structural protection: owner alert send failed for %s (%s)",
-                symbol_u, e,
+            record_exit_guard(
+                self,
+                "structural.owner_alert_send",
+                e,
+                logger,
+                symbol=symbol_u,
+                effect="owner not told; dedup slot stays free",
             )
 
         # Consume the dedup slot only if the why reached at least one surface;
@@ -548,52 +217,15 @@ class ExitEngineMixin:
             db=_collab_of(self, "db"),
         )._holding_discipline_check_for_exit(*args, **kwargs)
 
-    def _trail_tightened_recently(self, symbol: str, calendar_days: int = 4) -> bool:
-        """True when a non-canceled TRAIL_STOP for `symbol` landed within the
-        last `calendar_days` days (a 4-calendar-day window is ~2-4 trading
-        sessions depending on weekday: ~2 late in the week, ~4 from a
-        Monday).
-
-        RC1 forensics (2026-07-16): the reviewer's ≥1.02×old_stop min-bump
-        rule means every ACCEPTED trail tightens ≥2%; per-session trailing
-        marched stops into the daily-noise band in 3-4 sessions (GE was
-        ratcheted 325→350 in 8 sessions on one flag). A cooldown makes
-        tightening a considered, at-most-every-other-day act.
-        """
-        try:
-            rows = self.db.get_trades(symbol=symbol, limit=10)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("trail cooldown query failed for %s: %s", symbol, e)
-            return False
-        from datetime import datetime as _dt, timedelta, timezone
-        cutoff = _dt.now(timezone.utc) - timedelta(days=calendar_days)
-        for row in rows:
-            if (row.get("action") or "").upper() != "TRAIL_STOP":
-                continue
-            # NOTE (audit round 2): no fill_status filter here. A TRAIL_STOP
-            # row is only written AFTER the broker accepted the replace, so
-            # fill_status='canceled' means accepted-then-superseded (a later
-            # trail replaced this stop) — the tighten still happened and is
-            # still cooldown evidence. Skipping canceled rows silently
-            # disabled the cooldown for exactly the ratchet chains it exists
-            # to stop.
-            # Ex-div adjustments also write TRAIL_STOP rows, but they LOWER
-            # the stop (dividend-drop compensation) — counting them as a
-            # "tighten" would hand every dividend payer a spurious cooldown.
-            # Same idiom as the ex-div idempotence check.
-            if "ex-div" in (row.get("reasoning") or "").lower():
-                continue
-            ts = row.get("timestamp") or ""
-            try:
-                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
-                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            except (TypeError, ValueError):
-                continue
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if dt >= cutoff:
-                return True
-        return False
+    def _trail_tightened_recently(self, *args, **kwargs):
+        """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
+        from src.exits.exit_records import ExitRecords
+        return ExitRecords(
+            trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
+            record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
+            db=_collab_of(self, "db"),
+            market=_collab_of(self, "market"),
+        )._trail_tightened_recently(*args, **kwargs)
 
     def _apply_deterministic_trails(self, positions, *, run_id: str) -> list[dict]:
         """Raise stops arithmetically, before the LLM is asked anything — 3.7.
@@ -643,7 +275,11 @@ class ExitEngineMixin:
         try:
             from src.execution.scale_in import pending_protection_symbols
             pending_syms = pending_protection_symbols(self.db)
-        except Exception:  # noqa: BLE001
+            record_exit_guard(self, "trail.pending_protection_symbols")
+        except Exception as exc:  # noqa: BLE001
+            record_exit_guard(
+                self, "trail.pending_protection_symbols", exc, logger, effect="treated as no in-flight restore rows",
+            )
             pending_syms = set()
         for position in positions:
             symbol = position.symbol
@@ -658,8 +294,11 @@ class ExitEngineMixin:
                 continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
+                record_exit_guard(self, "trail.last_buy_lookup")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                record_exit_guard(
+                    self, "trail.last_buy_lookup", e, logger, symbol=symbol, effect="symbol skipped this pass",
+                )
                 _note(symbol, "opening_row_lookup_failed", str(e))
                 continue
             if not buy:
@@ -683,11 +322,10 @@ class ExitEngineMixin:
                 # uses: anything that is not a real row leaves `buy` alone.
                 if isinstance(_open_row, dict):
                     buy = _open_row
+                record_exit_guard(self, "trail.position_open_row")
             except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "trail: position-open row lookup failed for %s (%s) — "
-                    "falling back to the last opening row",
-                    symbol, e,
+                record_exit_guard(
+                    self, "trail.position_open_row", e, logger, symbol=symbol, effect="falls back to last opening row",
                 )
             from src.execution.stop_read import read_stop, repair_for
             _stop_read = read_stop(self.broker, symbol, db=self.db,
@@ -742,11 +380,15 @@ class ExitEngineMixin:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
                 try:
                     opened_ts = self.db.get_position_open_timestamp(buy)
+                    record_exit_guard(self, "trail.position_open_timestamp")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "trail: position-open lookup failed for %s (%s) — "
-                        "falling back to the last opening row's date",
-                        symbol, e,
+                    record_exit_guard(
+                        self,
+                        "trail.position_open_timestamp",
+                        e,
+                        logger,
+                        symbol=symbol,
+                        effect="falls back to opening row date",
                     )
                     opened_ts = None
                 if not isinstance(opened_ts, str):
@@ -757,8 +399,11 @@ class ExitEngineMixin:
                     b for b in all_bars
                     if not entry_day or str(getattr(b, "date", ""))[:10] >= entry_day
                 ]
+                record_exit_guard(self, "trail.bar_fetch")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
+                record_exit_guard(
+                    self, "trail.bar_fetch", e, logger, symbol=symbol, effect="trail evaluated without bars",
+                )
 
             # Item 82: the MEASURED half of the breakout verdict, pinned at
             # entry alongside `setup_type` (stored 0/1/NULL). Present → this
@@ -849,10 +494,10 @@ class ExitEngineMixin:
                 order = replace_stop_and_record(
                     self.broker, self.db, symbol, proposal.new_stop,
                 )
+                record_exit_guard(self, "trail.replace_stop")
             except Exception as e:  # noqa: BLE001
-                logger.error(
-                    "trail: replace_stop_loss failed for %s (%s) — the OLD "
-                    "stop remains in force", symbol, e,
+                record_exit_guard(
+                    self, "trail.replace_stop", e, logger, symbol=symbol, effect="old stop remains in force",
                 )
                 _note(
                     symbol, "replace_raised", str(e),
@@ -892,8 +537,16 @@ class ExitEngineMixin:
                                 symbol, _astatus, len(_ok), len(_legs)),
                             symbols=[symbol],
                         )
+                        record_exit_guard(self, "trail.owner_alert")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("trail: owner alert failed for %s: %s", symbol, e)
+                        record_exit_guard(
+                            self,
+                            "trail.owner_alert",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="owner not told of incomplete stop shift",
+                        )
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
@@ -936,62 +589,26 @@ class ExitEngineMixin:
                     run_id=run_id,
                     stop_loss=proposal.new_stop,
                 )
+                record_exit_guard(self, "trail.trade_row_write")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: trade row write failed for %s: %s", symbol, e)
+                record_exit_guard(
+                    self, "trail.trade_row_write", e, logger, symbol=symbol, effect="trail not recorded in trade rows",
+                )
 
         record_trail_code_census(
             self.db, run_id=run_id, counts=dict(code_census),
         )
         return orders
 
-    def _exit_event_risk_block(self, symbols: list[str]) -> str:
-        """The fetched Event Risk section for an EXIT review.
-
-        `RiskVerdict.reasoning_chain.event_risk` is a mandatory output field.
-        The morning path fetches its answer (`RiskStage._build_event_risk_block`);
-        this path passed nothing at all, so the renderer's NOT FETCHED fallback
-        fired on all three sub-blocks and a mandatory question had no input.
-
-        Earnings proximity IS fetchable here — `self.market` exists on the
-        midday/close loop and the sweep is bounded per-symbol and in aggregate
-        by the same `config.event_risk` timeouts the morning path uses. The
-        macro-release and FOMC calendars are NOT: they are fetched by the
-        morning research stage and no equivalent runs on this loop, so they
-        render as the labelled NOT FETCHED form, which is the honest answer.
-
-        Never raises. Any failure degrades to the fully-NOT-FETCHED block —
-        an absent section reads as a calm calendar, which is the failure the
-        block exists to prevent.
-        """
-        from src.data.event_calendar import (
-            fetch_earnings_proximity, format_event_risk_block,
-        )
-
-        event_cfg = getattr(getattr(self, "config", None), "event_risk", None)
-        horizon_days = getattr(event_cfg, "horizon_days", 10)
-        earnings = None
-        try:
-            if symbols and getattr(self, "market", None) is not None:
-                earnings = fetch_earnings_proximity(
-                    self.market, symbols,
-                    per_symbol_timeout_s=getattr(
-                        event_cfg, "earnings_symbol_timeout_s", 8.0,
-                    ),
-                    total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Exit review: earnings proximity sweep failed: %s", e)
-            earnings = None
-        try:
-            return format_event_risk_block(
-                earnings=earnings, events=None, coverage=None,
-                horizon_days=horizon_days,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Exit review: event-risk block render failed: %s", e)
-            return format_event_risk_block(
-                earnings=None, events=None, coverage=None, horizon_days=0,
-            )
+    def _exit_event_risk_block(self, *args, **kwargs):
+        """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
+        from src.exits.exit_records import ExitRecords
+        return ExitRecords(
+            trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
+            record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
+            db=_collab_of(self, "db"),
+            market=_collab_of(self, "market"),
+        )._exit_event_risk_block(*args, **kwargs)
 
 
     #: Per-run memo for the alignment verdict, keyed
@@ -1298,10 +915,10 @@ class ExitEngineMixin:
         # kind of silent gap this fix exists to remove.
         try:
             exit_position_history = self._build_position_history(positions)
+            record_exit_guard(self, "exit_review.position_history")
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Exit review: position history rebuild failed — the seat sees "
-                "holding ages as unknown: %s", e,
+            record_exit_guard(
+                self, "exit_review.position_history", e, logger, effect="seat sees holding ages as unknown",
             )
             exit_position_history = {}
 
@@ -1331,13 +948,9 @@ class ExitEngineMixin:
                 # two audit steps were skipped that do not exist here.
                 review_mode=risk_review_mode.EXIT_REVIEW,
             )
+            record_exit_guard(self, "exit_review.risk_review")
         except Exception as e:  # noqa: BLE001
-            logger.error(
-                "AI Risk exit review RAISED (%s) — failing OPEN: %d exit(s) "
-                "proceed unreviewed. Named-trigger exits already passed the "
-                "deterministic owner; unnamed exits were not sent here.",
-                e, len(decisions),
-            )
+            record_exit_guard(self, "exit_review.risk_review", e, logger, effect="fails OPEN: exits proceed unreviewed")
             for d in decisions:
                 self._record_exit_refusal(
                     symbol=d.symbol, run_id=run_id,
@@ -1362,8 +975,9 @@ class ExitEngineMixin:
                 cost_usd=rm_result.cost_usd,
                 status="agent_failure" if verdict is None else "ok",
             )
+            record_exit_guard(self, "exit_review.agent_log_write")
         except Exception as e:  # noqa: BLE001
-            logger.warning("AI Risk exit review: agent log write failed: %s", e)
+            record_exit_guard(self, "exit_review.agent_log_write", e, logger, effect="agent log row not written")
 
         if verdict is None:
             logger.error(
@@ -1418,8 +1032,11 @@ class ExitEngineMixin:
                     status="exit_vetoed_by_ai_risk",
                     detail=(veto_reasons[symbol] or "")[:400],
                 )
+                record_exit_guard(self, "exit_review.veto_audit_write")
             except Exception as e:  # noqa: BLE001
-                logger.warning("AI Risk exit review: audit write failed: %s", e)
+                record_exit_guard(
+                    self, "exit_review.veto_audit_write", e, logger, symbol=symbol, effect="veto audit row not written",
+                )
             self._record_exit_refusal(
                 symbol=symbol, run_id=run_id,
                 action=original_action_by_symbol.get(symbol, "SELL"),
@@ -1434,43 +1051,15 @@ class ExitEngineMixin:
         )
         return vetoed, verdict
 
-    def _record_exit_review_approvals(
-        self, decisions, vetoed: set, verdict, *, run_id: str,
-        original_action_by_symbol: dict,
-    ) -> None:
-        """One durable per-symbol row for every exit the AI Risk seat
-        APPROVED on the exit-review path. Never raises.
-
-        Board item 164 (2026-09-19). A veto here was already durable
-        (`intraday_evaluations` plus an `exit_refusal` row), but an approval
-        reached `agent_logs` only — one raw model response per run, with no
-        per-symbol row saying "this exit was reviewed and let through, and
-        why". Written to the exit path's own per-symbol record
-        (`src/risk/exit_refusal.py`), which already carries non-drop
-        outcomes (`dropped=False`, the fail-open codes) — NOT to the
-        `pipeline_event` stream, because `src/refusal_signature.py` counts
-        any surviving `pipeline_event` as the session having taken an idea,
-        and an exit is not one. `ExitRiskVerdict` has no per-symbol approval
-        reason, so the detail is the seat's own run-level reasoning, marked
-        as such. Recording only: the returned veto set is unchanged.
-        """
-        from src.risk.exit_refusal import CODE_AI_RISK_APPROVED
-
-        category = getattr(verdict, "reason_category", None)
-        for d in decisions:
-            if d.symbol in vetoed:
-                continue
-            self._record_exit_refusal(
-                symbol=d.symbol, run_id=run_id,
-                action=original_action_by_symbol.get(d.symbol, d.action),
-                code=CODE_AI_RISK_APPROVED, dropped=False,
-                detail=(
-                    f"approved by the risk seat (category {category!r}; no "
-                    f"per-symbol reason in the verdict, run-level reasoning "
-                    f"follows): {verdict.reasoning or ''}"
-                ),
-                layer="ai_risk",
-            )
+    def _record_exit_review_approvals(self, *args, **kwargs):
+        """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
+        from src.exits.exit_records import ExitRecords
+        return ExitRecords(
+            trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
+            record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
+            db=_collab_of(self, "db"),
+            market=_collab_of(self, "market"),
+        )._record_exit_review_approvals(*args, **kwargs)
 
     def _midday_execute_llm_actions(
         self, positions, review, run_id: str,
@@ -1570,10 +1159,10 @@ class ExitEngineMixin:
             acted_today = keep_executed_acted_triggers(
                 acted_today, executed_order_ids=_executed_order_ids,
             )
+            record_exit_guard(self, "spent_trigger.acted_today_read")
         except Exception as _e:  # noqa: BLE001 — a failed read is uncertainty
-            logger.warning(
-                "spent trigger: today's acted-trigger record could not be "
-                "read (%s) — this layer fails OPEN for this pass", _e,
+            record_exit_guard(
+                self, "spent_trigger.acted_today_read", _e, logger, effect="layer fails OPEN for this pass",
             )
             acted_today = None
         # Entry context (thesis_invalid_if / entry price / entry stop) for the
@@ -1624,8 +1213,16 @@ class ExitEngineMixin:
                                 status="exit_vetoed_contradicts_own_metrics",
                                 detail=veto[:500],
                             )
+                            record_exit_guard(self, "exit_guard.metric_audit_write")
                         except Exception as e:  # noqa: BLE001
-                            logger.warning("exit guard: audit write failed: %s", e)
+                            record_exit_guard(
+                                self,
+                                "exit_guard.metric_audit_write",
+                                e,
+                                logger,
+                                symbol=symbol,
+                                effect="audit row not written",
+                            )
                         from src.risk.exit_refusal import CODE_CONTRADICTS_METRICS
                         self._record_exit_refusal(
                             symbol=symbol, run_id=run_id, action=act,
@@ -1768,8 +1365,16 @@ class ExitEngineMixin:
                             status=f"alignment_exit_{verdict.status.lower()}",
                             detail=det[:400],
                         )
+                        record_exit_guard(self, "alignment_exit.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("alignment exit: audit write failed: %s", e)
+                        record_exit_guard(
+                            self,
+                            "alignment_exit.audit_write",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="audit row not written",
+                        )
                     logger.info(
                         "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
                         verdict.status, alignment_claimed, verdict.reason,
@@ -1864,8 +1469,11 @@ class ExitEngineMixin:
                             ),
                             detail=band_detail,
                         )
+                        record_exit_guard(self, "noise_band.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("noise band: audit write failed: %s", e)
+                        record_exit_guard(
+                            self, "noise_band.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                        )
                     if _band_blocks:
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
@@ -1917,8 +1525,11 @@ class ExitEngineMixin:
                             status="exit_blocked_no_named_trigger",
                             detail=f"{act}: {str(reason_text)[:400]}",
                         )
+                        record_exit_guard(self, "exit_gate.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("exit gate: audit write failed: %s", e)
+                        record_exit_guard(
+                            self, "exit_gate.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                        )
                     self._record_exit_refusal(
                         symbol=symbol, run_id=run_id, action=act,
                         code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
@@ -1971,10 +1582,15 @@ class ExitEngineMixin:
                 if hd_position_history is None:
                     try:
                         hd_position_history = self._build_position_history(positions)
+                        record_exit_guard(self, "holding_discipline.position_history")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: entry-context lookup failed "
-                            "(%s) — protection is read without it this run", e,
+                        record_exit_guard(
+                            self,
+                            "holding_discipline.position_history",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="protection read without entry context",
                         )
                         hd_position_history = {}
                 try:
@@ -1989,11 +1605,15 @@ class ExitEngineMixin:
                         # adjudicable at all.
                         exit_trigger=action_item.get("exit_trigger"),
                     )
+                    record_exit_guard(self, "holding_discipline.check")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "holding discipline: check failed for %s %s (%s) — "
-                        "the claim goes unverified rather than blocking the "
-                        "exit", act, symbol, e,
+                    record_exit_guard(
+                        self,
+                        "holding_discipline.check",
+                        e,
+                        logger,
+                        symbol=symbol,
+                        effect="claim goes unverified rather than blocking",
                     )
                     hd_check = None
                 if hd_check is not None and hd_check.blocks:
@@ -2008,9 +1628,15 @@ class ExitEngineMixin:
                             status="exit_blocked_holding_discipline_claim_false",
                             detail=(hd_check.finding or "")[:500],
                         )
+                        record_exit_guard(self, "holding_discipline.audit_write_blocked")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: audit write failed: %s", e,
+                        record_exit_guard(
+                            self,
+                            "holding_discipline.audit_write_blocked",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="audit row not written",
                         )
                     from src.risk.exit_refusal import CODE_HOLDING_DISCIPLINE_FALSE
                     self._record_exit_refusal(
@@ -2029,9 +1655,15 @@ class ExitEngineMixin:
                             status="holding_discipline_claim_unverified",
                             detail=(hd_check.finding or "")[:500],
                         )
+                        record_exit_guard(self, "holding_discipline.audit_write_unverified")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: audit write failed: %s", e,
+                        record_exit_guard(
+                            self,
+                            "holding_discipline.audit_write_unverified",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="audit row not written",
                         )
 
             # The same-day-trim gate that used to sit here is GONE, not
@@ -2083,8 +1715,11 @@ class ExitEngineMixin:
                         status="exit_blocked_trigger_already_spent",
                         detail=spent.detail[:500],
                     )
+                    record_exit_guard(self, "spent_trigger.audit_write")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("spent trigger: audit write failed: %s", e)
+                    record_exit_guard(
+                        self, "spent_trigger.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                    )
                 self._record_exit_refusal(
                     symbol=symbol, run_id=run_id, action=act,
                     code=spent.code, dropped=True,
@@ -2138,8 +1773,16 @@ class ExitEngineMixin:
                                 symbol,
                             )
                             continue
-                    except Exception:  # noqa: BLE001
-                        pass
+                        record_exit_guard(self, "midday_trail.pending_protection_check")
+                    except Exception as exc:  # noqa: BLE001
+                        record_exit_guard(
+                            self,
+                            "midday_trail.pending_protection_check",
+                            exc,
+                            logger,
+                            symbol=symbol,
+                            effect="restore-in-flight check skipped",
+                        )
                     try:
                         new_stop = float(action_item.get("new_stop_price") or 0)
                     except (TypeError, ValueError):
@@ -2415,12 +2058,15 @@ class ExitEngineMixin:
                             run_id=run_id, payload_json=_acted.to_json(),
                             symbol=_acted.symbol,
                         )
+                        record_exit_guard(self, "spent_trigger.record_acted")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "spent trigger: could not record the acted "
-                            "trigger for %s (%s) — a second cut on this "
-                            "same record today would not be caught",
-                            symbol, e,
+                        record_exit_guard(
+                            self,
+                            "spent_trigger.record_acted",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="a second cut today would not be caught",
                         )
                     if acted_today is not None:
                         acted_today.append(_acted)
@@ -2429,8 +2075,11 @@ class ExitEngineMixin:
                     act, self._format_qty(qty),
                     symbol, action_item.get("reason"),
                 )
+                record_exit_guard(self, "midday.order")
             except Exception as e:
-                logger.error("Midday order failed for %s: %s", symbol, e)
+                record_exit_guard(
+                    self, "midday.order", e, logger, symbol=symbol, effect="order failed; exit not placed",
+                )
             # Rebuild THIS symbol's stop coverage on its actual fill before
             # the loop cancels the next symbol's stops — the same per-name
             # discipline the de-lever loops got (docs/WORK.md item 111).
