@@ -69,10 +69,13 @@ kept as history and marked DONE where they describe a stored file that is gone.
   - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
     person's attestation of conditions a machine cannot verify; cannot be computed.
   - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
-    AMBIGUOUS. Each entry's `why` is a kept decision record, but the file also
-    makes a stored count (sum of deltas) that a test checks equals the live
-    count of arbitrary rows, which the tree could give directly. Whether the
-    count half is bookkeeping to remove is an open call; not changed here.
+    RULED 2026-10-04, KEEP BOTH. The `why` is a kept decision record. Each
+    `delta` is the recorded effect of one change, appended whole under
+    `merge=union`; nothing edits a shared line, so the collision and staleness
+    failures this mandate removes cannot occur. The total is computed, and
+    the test already compares it with the live arbitrary-row count measured
+    from the tree (121 and 0 at this date, both equal), failing on a rise AND
+    a fall. A trunk-identity replacement would pass a fall, so it is looser.
   - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
     the figures present in a sheet ARE derivable (the test's shape list finds
     them), but each row's status and open question is a human judgement that a
