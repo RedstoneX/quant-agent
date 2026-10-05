@@ -227,15 +227,15 @@ pip install -e ".[dev]"
 
 **Merge-driver registration is automatic.** `.gitattributes` alone does not enable the `docsmerge` driver; every pytest run registers it for the clone (and its worktrees) via `tests/conftest.py`, and `python scripts/check_merge_drivers.py` fails if any `merge=<driver>` in `.gitattributes` is unregistered (`--install` fixes it).
 
-**The number-ledger ratchet needs no setup.** The fourth file every parallel
-branch used to collide on was `src/number_sources.py`: its
-`MAX_ARBITRARY_ENTRIES` was one hand-edited line carrying both the count and
-the whole narrative of every past move, so two branches retiring different
-numbers always conflicted. The count is now computed as the sum of the deltas
-in `config/number_ledger_history.yaml`, one appended entry per change, and
-that file is registered `merge=union` — a git built-in, so unlike `docsmerge`
-it works in every clone with no `git config`. To move the count, APPEND an
-entry there; never edit an existing one, and never write the literal back.
+**The number-ledger ratchet needs no setup and stores nothing.** It was a
+hand-edited literal, then the sum of deltas in an append-only history file;
+both were storage, and the sum was raised by appending a positive delta to
+make a change green (2026-10-05). The ratchet is now DOWN-ONLY and computed:
+the count of `status: arbitrary` rows in your `config/number_ledger.yaml`,
+compared against the same count on `origin/main` at check time. It may fall
+and may stay level; it may not rise, and there is no file to append to. Two
+branches that each retire a different number collide nowhere, because neither
+writes a count down.
 
 **Register the board-document merge driver (one-time, per clone — not automatic).**
 `docs/WORK.md`, `docs/board_notes/` and `docs/INCIDENT_HISTORY.md` are the
