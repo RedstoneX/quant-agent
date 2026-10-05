@@ -359,8 +359,5 @@ detail: docs/board_notes/item-232.md
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
 
-**231. Every owner-facing timestamp shows a time but no date — DONE, filed 2026-10-02 by the owner.** He reads the alerts on a phone hours after they fire, and a bare time cannot be placed once he scrolls back. [measured 2026-10-02, grep of `src/`] 24 call sites format a bare 12-hour time; exactly one — the notifier session header — prepends the date. Fix at the source: one shared formatter emitting date + time, used by every site that currently emits time alone, so a newly written alert cannot omit the date. Keep the existing 12-hour, no-leading-zero behaviour and the glibc caveat already documented in the sections module. This changes message TEXT only; Telegram stays muted and no new alerts are added.
-DONE WHEN:
-- [x] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (`fmt_time_12h` serves trader_feed, notifier and now the health report window, which used to say "5:00am to 9:00am today"; `inflight.py` already shows the full date; the log_health state-file stamp is machine-read, not owner-facing.)
-- [x] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` now actually scans `log_health.py` and `inflight.py`; before, it looked for directories of those names, found none, and silently covered nothing.)
 - retired queue: 188
+- retired queue: 231
