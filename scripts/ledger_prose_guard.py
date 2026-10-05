@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import guard_reference  # noqa: E402
+from scripts.ledger_locator import is_ledger_path, working_ledger  # noqa: E402
 from src.number_sources import load_ledger  # noqa: E402
 
 ROOT = guard_reference.ROOT
@@ -41,7 +42,6 @@ _ANCHOR = re.compile(
 _WORD = re.compile(r"[A-Za-z_]\w*")
 _SOURCE_SUFFIXES = (".py", ".sql", ".yaml", ".yml", ".json", ".toml", ".ts", ".tsx")
 _SOURCE_ROOTS = ("src/", "scripts/", "config/", "frontend/src/")
-_LEDGER_FILES = ("config/number_ledger",)
 
 
 def _code_shaped(name: str) -> bool:
@@ -62,11 +62,12 @@ def _strings(value) -> list[str]:
 
 def _source_files(root: Path) -> list[str]:
     paths = guard_reference.working_paths("*")
+    ledger = working_ledger()  # found by shape; refuses if not exactly one
     return [
         p for p in paths
         if p.endswith(_SOURCE_SUFFIXES)
         and p.startswith(_SOURCE_ROOTS)
-        and not p.startswith(_LEDGER_FILES)
+        and not is_ledger_path(p, ledger)
     ]
 
 

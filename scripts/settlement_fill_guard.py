@@ -68,8 +68,7 @@ from scripts.guard_reference import (
     trunk_blobs,
     trunk_paths,
 )
-
-LEDGER = "config/number_ledger.yaml"
+from scripts.ledger_locator import trunk_ledger, working_ledger
 
 #: The storage layer is where the INSERT lives; the defect is in its CALLERS,
 #: and `src/storage/db.py` legitimately uses defaulted reads on payload dicts.
@@ -172,14 +171,16 @@ def _working_subject_paths() -> list[str]:
 def main() -> int:
     try:
         paths = [p for p in trunk_paths(".py") if _is_subject(p)]
-        trunk_source = trunk_blobs(paths + [LEDGER])
+        trunk_rel = trunk_ledger()
+        ledger_rel = working_ledger()
+        trunk_source = trunk_blobs(paths + [trunk_rel])
     except ReferenceUnavailable as exc:
         print(f"REFUSED: cannot read {TRUNK}: {exc}", file=sys.stderr)
         return 2
 
-    ledger_now = (Path(ROOT) / LEDGER).read_text(encoding="utf-8")
+    ledger_now = (Path(ROOT) / ledger_rel).read_text(encoding="utf-8")
     fields_now = built_route_fields(ledger_now)
-    fields_trunk = built_route_fields(trunk_source.get(LEDGER, "numbers: []"))
+    fields_trunk = built_route_fields(trunk_source.get(trunk_rel, "numbers: []"))
     if not fields_now:
         print(
             "REFUSED: no settlement route is in state `built`; moving every "
@@ -191,7 +192,7 @@ def main() -> int:
     working_paths = sorted(set(paths) | set(_working_subject_paths()))
     now = scan(_working_blobs(working_paths), fields_now)
     before = scan(
-        {p: t for p, t in trunk_source.items() if p != LEDGER}, fields_trunk,
+        {p: t for p, t in trunk_source.items() if p != trunk_rel}, fields_trunk,
     )
     added = added_sites(now, before)
     if not added:
