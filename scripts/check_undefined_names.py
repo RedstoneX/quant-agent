@@ -17,9 +17,11 @@ import argparse
 import ast
 import builtins
 import symtable
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.undefined_names_exclusions import drop_frozen_fixtures, tracked_production_files  # noqa: E402
 
 _BUILTINS = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__spec__",
                                   "__loader__", "__package__", "__path__",
@@ -55,27 +57,10 @@ def check_source(source: str, filename: str = "<src>"):
     return sorted(out), False
 
 
-def tracked_production_files() -> list[Path]:
-    """Every ``.py`` git tracks outside ``tests/`` -- root ``main.py`` and ``ops/`` included.
-
-    Derived from git, never a written-down directory list: the old default named
-    ``src``/``scripts``/``main.py`` and silently never read ``ops/``. ``tests/`` is
-    excluded only because it holds 16 known undefined names in fixture bodies.
-    """
-    root = Path(__file__).resolve().parent.parent
-    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"],
-                         capture_output=True, text=True)
-    if out.returncode:
-        print(f"git ls-files failed ({out.stderr.strip()}); refusing to read nothing as clean")
-        return []
-    return [root / p for p in sorted(out.stdout.splitlines())
-            if p.endswith(".py") and p.split("/", 1)[0] != "tests"]
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("roots", nargs="*", default=None,
-                    help="default: every tracked .py outside tests/, derived from git")
+                    help="default: every tracked .py, derived from git")
     args = ap.parse_args(argv)
     files = []
     if not args.roots:
@@ -86,6 +71,7 @@ def main(argv=None) -> int:
             print(f"{p}: root does not exist; refusing to read an unreadable tree as clean")
             return 1
         files += sorted(p.rglob("*.py")) if p.is_dir() else [p]
+    files = drop_frozen_fixtures(files)
     if not files:
         print("scanned no modules; refusing to read an empty tree as clean")
         return 1
