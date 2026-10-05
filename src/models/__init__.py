@@ -62,11 +62,13 @@ from src.models.smart_money import (
     SmartMoneyFinding,
     SmartMoneySynthesis,
 )
-from src.models.portfolio import (
+from src.models.risk_narrative_claims import (
     _RISK_PCT_CLAIM_PATTERN,
     _explicit_risk_pct_claim_texts,
     _explicit_risk_pct_claims,
     risk_pct_half_ulp,
+)
+from src.models.portfolio import (
     TargetPosition,
     CANDIDATE_REJECTION_CODES,
     CandidateRejection,
