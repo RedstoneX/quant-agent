@@ -38,6 +38,14 @@ from src.sector_vocab import (
     _SECTOR_ALIASES,
     normalize_sector_stance,
 )
+from src.soft_exit_restore_buffer import (
+    _note_restore_observation,
+    _RESTORE_OBSERVATION_CAP,
+    abandoned_restore_observations,
+    drain_restore_observations,
+    open_restore_run,
+    restore_run_id,
+)
 from src.soft_exit_vocab import stated_soft_exit
 
 logger = logging.getLogger(__name__)
@@ -104,45 +112,13 @@ class HealResult:
 
 
 #: ITEM 78 RECORDING, RECORDING ONLY. Every call of
-#: `restore_stated_soft_exits` appends one observation here; the pipeline
-#: drains it once per run and writes the rows to
+#: `restore_stated_soft_exits` parks one observation in the run-scoped
+#: buffer; the pipeline drains it once per run and writes the rows to
 #: `soft_exit_heal_restores`. Nothing reads this buffer back into a
-#: trading decision and it may never be swept for a threshold.
-#:
-#: WHY IT IS A BUFFER: the mechanical restore runs inside a Pydantic
-#: `model_validator`, which has no run id, no session and no database
-#: handle. Passing one in would make a validator depend on storage, so the
-#: observation is parked here and written where that context exists.
-_RESTORE_OBSERVATION_CAP = 5000
-_restore_observations: list[dict] = []
-_restore_observations_dropped = 0
-
-
-def _note_restore_observation(obs: dict) -> None:
-    """Park one mechanical-restore observation. Never raises."""
-    global _restore_observations_dropped
-    try:
-        if len(_restore_observations) >= _RESTORE_OBSERVATION_CAP:
-            _restore_observations_dropped += 1
-            return
-        _restore_observations.append(obs)
-    except Exception:  # noqa: BLE001 — a recording never blocks a trade
-        pass
-
-
-def drain_restore_observations() -> tuple[list[dict], int]:
-    """Take and clear the parked observations plus the dropped count.
-
-    Returns `(observations, dropped_since_last_drain)`. The dropped count
-    is reported rather than silently lost, so a reader of the rows knows
-    its own denominator is short.
-    """
-    global _restore_observations_dropped
-    out = list(_restore_observations)
-    dropped = _restore_observations_dropped
-    _restore_observations.clear()
-    _restore_observations_dropped = 0
-    return out, dropped
+#: trading decision and it may never be swept for a threshold. The
+#: buffer itself lives in `src/soft_exit_restore_buffer.py` (why it is a
+#: buffer, how repeats are counted instead of appended, and why it is
+#: opened per run) and is re-exported here for its existing callers.
 
 
 def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, list[str]]:

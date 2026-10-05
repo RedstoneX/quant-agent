@@ -140,3 +140,23 @@ def test_the_observer_never_breaks_the_order_desk(tmp_path, caplog):
     )
     with caplog.at_level(logging.ERROR):
         assert desk.get_order_fill_info("ORD-1") is None      # must not raise
+
+
+def test_a_broker_refusal_on_submit_writes_a_row_and_still_returns_rejected(tmp_path, caplog, monkeypatch):
+    from src.execution.broker_parts import order_desk as od
+
+    class _Refused(Exception):
+        status_code = 422
+
+    def _refuse(*a, **k):
+        raise _Refused("refused")
+
+    monkeypatch.setattr(od, "_submit_entry_request_idempotent", _refuse)
+    desk, db = _desk(tmp_path, lambda order_id: None)
+    assert _status(db, "submit_order_rejected") == NOT_RUN
+    with caplog.at_level(logging.ERROR):
+        result = desk.submit_order("AAPL", 1, "buy", limit_price=10.0)
+    assert result["status"] == "rejected_by_broker" and result["id"] is None
+    assert _status(db, "submit_order_rejected") == DISAGREED
+    assert "refused" in _detail(db, "submit_order_rejected")
+    assert any(r.exc_info for r in caplog.records)
