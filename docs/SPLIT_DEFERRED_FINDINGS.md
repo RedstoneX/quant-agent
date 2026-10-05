@@ -5,6 +5,8 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
+### Owner-alert senders that bypass the retry funnel (CLOSED 2026-10-04)
+## Owner-alert senders that bypass the retry funnel
 ## TRIAGE 2026-10-05 (every entry re-checked against main, not against its heading)
 
 Pile A, ALREADY FIXED, proved in code: four.
@@ -30,9 +32,20 @@ Write-ups found WRONG or stale on 2026-10-05:
 
 CLOSED 2026-10-05 (second pass). REPRODUCED first: the funnel guard passed on trunk (rc 0) while NINE bare `notifier.send(...)` calls stood under `scripts/` -- the eight below plus `check_item_deployment.py`, which the count missed; all nine grandfathered by rule 3's trunk delta. Root cause: each script sent once through `TelegramNotifier.send`, which has no retry and records no counted undelivered row. Rebuilt: every script send is `deliver_with_retry(notifier, text, kind=<script name>)` (same backoff policy and `owner_alert_undelivered` row as `send_owner_alert`; no P&L header, which belongs on money alerts only; category left unclassified exactly as before, so nothing is newly filtered). Guarded ABSOLUTELY by `tests/test_scripts_send_through_funnel.py`: under `scripts/` the only direct `.send(` is the manual probe, by identity, with no trunk read to go stale. Rule 3 of the funnel guard stays a delta for `src/`, `ops/` and the root; the three routine-report sends in `main.py` and the scheduler are unchanged.
 
+The retry-and-record discipline was opt-in: it lived in `send_owner_alert`, so any code that built its own `TelegramNotifier` and called `send` got one attempt and left no trace of the loss.
+
+NOTE ON THE TWO SIDES (reconciled by reading the code, 2026-10-05): the paragraph below was measured on trunk BEFORE this change and is true of trunk: there `TelegramNotifier.send` is one attempt. This change makes `send` itself the funnel (`src/notifier/send_funnel.py`, absent on trunk), so once merged the eight `scripts/` direct sends listed below get the retry and the counted undelivered row, and are no longer bypasses.
 COUNT BY SEND, NEVER BY CONSTRUCTION, AND NEVER FROM A GREP OF MENTIONS: earlier counts (6, 16, 3, 5) were mentions. Read on 3a08c4d1: `src/` has zero alert bypasses (below, true). `scripts/` has 8 real `notifier.send(...)` calls on alert or report text with no retry (`TelegramNotifier.send` has no retry; the funnel `send_owner_alert` does): `check_stored_targets`, `check_unit_drift`, `check_board_hygiene`, `check_deploy_drift`, `refresh_pricing`, `desk_status`, `log_health_report`, and the failure alert in `alert_heartbeat` (the same file's other sends do use the funnel). `telegram_test.py` is a manual probe, not counted. The funnel guard passes because its direct-send rule is a delta against trunk, so these are grandfathered. Not money or live risk (ops monitors; a lost send is silent, not a trade effect). Size 4-6 hours [estimate: one funnel call per site, plus a scripts-scope absolute rule]; left, not fixed here.
 
-Earlier text, kept for history:
+REPRODUCED 2026-10-04 on main before changing anything: of the six `TelegramNotifier()` constructions in `src/`, the two cost-circuit ones and the ledger one already route through `deliver_with_outcome` (`src/cost_circuit/alert_outcome.py`), the watchdog one is a probe and the pipeline one is a CSV `send_document` -- but `src/scheduler.py` and `main.py` send the session summary and the startup message through a bare `send`, which retried nothing and recorded no undelivered row. The earlier sizing counted constructions; the bypass is the bare `send`, and the `scripts/` constructions share it.
+
+CLOSED at the cause, not detected: `send` IS the funnel. One attempt is `TelegramNotifier.send_once` and the public `send` runs it through `deliver_with_outcome` (retry, then one counted `owner_alert_undelivered` row), so there is nothing left to bypass -- a caller cannot skip a method by calling that same method, wherever it built the notifier, `scripts/` included. No guard is needed and none was added. Both live in `src/notifier/send_funnel.py` (the body moved out of `transport.py`, which was at its size ceiling) and are bound onto the class.
+
+A rehearsal drop now returns `SUPPRESSED` rather than `False`: settled, never retried, never recorded as an undelivered alert -- the same state a `TELEGRAM_DISABLED` drop has always had. `SuppressedSend` is falsy, so a caller testing the result is unaffected; two tests asserting `is False` were updated to say suppressed.
+
+PROVEN TO BITE: `tests/test_send_is_the_funnel.py` builds a notifier directly and fails on main (one attempt, no durable row) and passes here (three attempts, one counted undelivered row), with a delivered send still attempted once and a deliberate suppression settled without retry.
+
+NOT COVERED, deliberately: `send_document` (the P&L CSV export) and `probe` keep their single attempt -- neither carries an owner alert, and a retried file upload is a different question.
 
 CORRECTED. This entry counted CONSTRUCTIONS of a `TelegramNotifier`, which is not the defect; the defect is SENDING around the funnel, and the two measurements differ. It also said "no guard forbids it", which was false: `scripts/owner_alert_funnel_guard.py` has existed and refuses three shapes of bypass — a file that builds the Bot API URL itself, a class outside `src/notifier/` exposing its own `send`, and a direct `notifier.send(...)` call the trunk does not already have.
 
