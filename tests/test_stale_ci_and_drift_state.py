@@ -190,7 +190,7 @@ def _drift_file(monkeypatch, tmp_path, payload):
 
     path = tmp_path / "deploy_drift.json"
     path.write_text(json.dumps({"deploy_drift": payload}))
-    monkeypatch.setattr(cw, "DEPLOY_DRIFT_STATE_PATH", path)
+    monkeypatch.setattr("src.coverage_watchdog_state.DEPLOY_DRIFT_STATE_PATH", path)
     return path
 
 
@@ -198,7 +198,7 @@ def test_health_reports_unknown_when_never_checked(monkeypatch, tmp_path):
     import src.api.routes_live as live
     import src.coverage_watchdog as cw
 
-    monkeypatch.setattr(cw, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr("src.coverage_watchdog_state.DEPLOY_DRIFT_STATE_PATH", tmp_path / "missing.json")
     assert live._deploy_drift_state()["status"] == "unknown"
 
 

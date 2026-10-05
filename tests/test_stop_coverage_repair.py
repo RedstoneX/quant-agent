@@ -501,10 +501,8 @@ def _fractional_pipeline(symbol, held, covered, price, *, buy_stop=1.0):
 @pytest.fixture
 def shared_marker(tmp_path, monkeypatch):
     """Point the once-a-day placement-failure marker at a scratch file."""
-    from src import coverage_watchdog
-
     path = tmp_path / "coverage_heartbeat.json"
-    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
+    monkeypatch.setattr("src.coverage_watchdog_state.STATE_PATH", path)
     return path
 
 

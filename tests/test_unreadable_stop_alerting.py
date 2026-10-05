@@ -52,10 +52,10 @@ _NOW = datetime(2026, 9, 23, 14, 30, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def state_path(tmp_path, monkeypatch):
-    path = tmp_path / "alerting" / "coverage_heartbeat.json"
-    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
-    return path
+def state_path():
+    # The autouse redirect in conftest already points this at tmp_path.
+    from src.coverage_watchdog_state import STATE_PATH
+    return STATE_PATH
 
 
 def _pipe(positions, snapshot, *, market_open=False):

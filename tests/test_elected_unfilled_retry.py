@@ -9,7 +9,7 @@ from src import coverage_watchdog, notifier
 @pytest.fixture
 def state_path(tmp_path, monkeypatch):
     path = tmp_path / "alerting" / "coverage_heartbeat.json"
-    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
+    monkeypatch.setattr("src.coverage_watchdog_state.STATE_PATH", path)
     return path
 
 

@@ -161,7 +161,7 @@ def state_path(tmp_path, monkeypatch):
     from src import coverage_watchdog
 
     path = tmp_path / "coverage_heartbeat.json"
-    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
+    monkeypatch.setattr("src.coverage_watchdog_state.STATE_PATH", path)
     return path
 
 

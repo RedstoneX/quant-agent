@@ -67,7 +67,6 @@ from src.execution.scale_in_readers import (  # noqa: F401 (re-export)
     WAL_SCALE_IN_SENTINEL, pending_scale_in_rows_from_path, pending_scale_in_symbols_from_path,
 )
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -905,7 +904,7 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         order_id=order_id, detail=detail, run_id=run_id,
     )
     try:
-        from src.coverage_watchdog import claim_typed_alert
+        from src.coverage_watchdog_state import claim_typed_alert
         if not claim_typed_alert(REARM_FAILURE_ALERT_KIND, [symbol]):
             return
     except Exception as exc:  # noqa: BLE001 — never swallow the page on a

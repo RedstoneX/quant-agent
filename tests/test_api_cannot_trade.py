@@ -29,15 +29,15 @@ define the writes and are imported for their read methods); the reads in
 `src/api/` are confined by the name check on `src/api/` itself.
 
 ALLOWLIST: "file::name" pairs reachable today. It may only SHRINK (stale entries
-fail the test, forcing removal). All entries are ONE finding, one closure behind
-`src.coverage_watchdog`, which lazily imports repair/scale-in code from `src/execution/`.
-The dashboard never calls any of it. Re-derived 2026-10-05: no entry is dead, and the
-chain is reached by TWO doors, so cutting either alone removes nothing: (a)
-`src/api/drift_state.py` reads the drift snapshot through `coverage_watchdog.load_state`;
-(b) `src/api/{deps,routes_history}.py` import `src.config`, which reaches
-`src.agents.base` -> `src.refusal_signature` -> `coverage_watchdog.most_recent_trading_day`.
-Both readers live INSIDE coverage_watchdog (not touched here), so the fix is to lift
-`load_state`/path constants and `most_recent_trading_day` into a no-import module.
+fail the test, forcing removal). It is EMPTY since the watchdog's read-only core
+(`load_state`, the state-path constants, `most_recent_trading_day`, the typed-alert
+claim) was lifted into `src/coverage_watchdog_state.py`, which imports nothing that
+can trade. Before that, all eight entries were ONE finding reached by TWO doors:
+`src/api/drift_state.py` -> `coverage_watchdog.load_state`, and `src.config` ->
+`src.agents.base` -> `src.refusal_signature` -> `coverage_watchdog.most_recent_trading_day`,
+and `coverage_watchdog` lazily imports repair/scale-in code from `src/execution/`.
+Both readers now import the lifted module, so nothing under `src/api/` reaches
+`coverage_watchdog` at all. A new entry here is a NEW door and must not be added.
 
 DOORS: the derived set of edges from a `src/api/` module into the part of the import
 closure that can reach any of the entries above (computed from source each run, see
@@ -68,24 +68,10 @@ HTTP_WRITE = {"post", "put", "patch", "delete", "api_route", "route", "websocket
 # Names with a write-looking prefix that are read-only (verified by body inspection).
 # `ensure_diary_dir`-style local helpers are not broker/db methods, so only
 # broker/db names ever enter the derived set.
-ALLOWLIST: set[str] = {  # may only shrink; see module docstring
-    "src/coverage_watchdog.py::insert_specialist_evidence",
-    "src/execution/exit_path_records.py::insert_specialist_evidence",
-    "src/execution/scale_in.py::delete_pending_protection_restore",
-    "src/execution/scale_in.py::insert_pending_protection_restore",
-    "src/execution/scale_in.py::cancel_snapshotted_stops",
-    "src/execution/scale_in.py::cancel_entry_order",
-    "src/execution/scale_in.py::insert_specialist_evidence",
-    "src/execution/stop_records.py::replace_stop_loss",
-}
+ALLOWLIST: set[str] = set()  # may only shrink; see module docstring
 
 # Each door is "api file -> first tainted module"; the reason is the one-line why it stays.
-DOORS: dict[str, str] = {
-    "src/api/drift_state.py -> src/coverage_watchdog.py": "reads drift snapshot via load_state",
-    "src/api/deps.py -> src/config/__init__.py": "config load; config -> agents.base -> refusal_signature",
-    "src/api/routes_history.py -> src/config/__init__.py": "AGENT_NAMES; same config chain",
-    "src/api/routes_history.py -> src/trader_feed/__init__.py": "feed reader; trader_feed -> config chain",
-}
+DOORS: dict[str, str] = {}
 
 
 def _parse(path: Path) -> ast.Module:

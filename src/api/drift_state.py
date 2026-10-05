@@ -19,7 +19,7 @@ def deploy_drift_state() -> dict:
     run on this box yet, which is `unknown`, not healthy.
     """
     try:
-        from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
+        from src.coverage_watchdog_state import DEPLOY_DRIFT_STATE_PATH, load_state
 
         record = (load_state(DEPLOY_DRIFT_STATE_PATH) or {}).get("deploy_drift")
         if not isinstance(record, dict) or not record.get("status"):
