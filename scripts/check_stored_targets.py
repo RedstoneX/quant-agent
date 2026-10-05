@@ -386,17 +386,9 @@ def main(argv=None) -> int:
     message = format_message(results)
     if message and not args.no_telegram:
         print(message)
-        from src.notifier import TelegramNotifier
+        from scripts.ops_alert import push_ops_alert
 
-        notifier = TelegramNotifier()
-        if notifier.enabled:
-            notifier.send(message)
-        else:
-            print(
-                "check_stored_targets: Telegram not configured; message "
-                "printed above only",
-                file=sys.stderr,
-            )
+        push_ops_alert(message, kind="check_stored_targets", note="message printed above only")
 
     return 1 if bad else 0
 

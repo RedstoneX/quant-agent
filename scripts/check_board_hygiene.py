@@ -46,14 +46,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.board_locator import tree_board
+from scripts.guard_reference import ReferenceUnavailable
+
 DEFAULT_REPO_PATH = "/home/qamc/quant-agent"
-WORK_MD_RELPATH = "docs/WORK.md"
 CAP_TEST_RELPATH = "tests/test_status_board.py"
 #: The exact test function that owns the cap. Scoping the regex search to
 #: this function's own body (rather than the whole test file) stops an
 #: unrelated `assert size <= ...` elsewhere in the file from being read as
 #: the board's cap.
 CAP_TEST_FUNCTION = "test_work_md_stays_under_a_hundred_thousand_bytes"
+
+
+def _find_work_md_path(repo_dir: Path) -> str:
+    """The board inside ``repo_dir`` via board_locator, or raise ReferenceUnavailable."""
+    return str(repo_dir / tree_board(repo_dir)[0])
 _CAP_ASSERT_RE = re.compile(r"assert\s+size\s*<=\s*([\d_]+)")
 
 #: PROVISIONAL — not sourced from any owner ruling or repo doctrine, because
@@ -140,9 +147,11 @@ def find_parked_finished_items(repo_path: Path) -> tuple[list[str], str | None]:
     check = _finished_item_check_override or _load_finished_item_check()
     if check is None:
         return [], "could not import the finished-item check"
-    work_md = repo_path / WORK_MD_RELPATH
     try:
-        return check(work_md), None
+        work_md_path = _find_work_md_path(repo_path)
+        return check(Path(work_md_path)), None
+    except ReferenceUnavailable as exc:
+        return [], str(exc)
     except Exception as exc:  # noqa: BLE001 — must not crash a nightly read-only check
         return [], f"the finished-item check raised: {exc!r}"
 
@@ -163,17 +172,23 @@ def item_numbers(parked_items: list[str]) -> list[str]:
 
 def build_report(repo_path: str = DEFAULT_REPO_PATH) -> BoardHygieneReport:
     repo_dir = Path(repo_path).expanduser()
-    report = BoardHygieneReport(work_md_path=str(repo_dir / WORK_MD_RELPATH))
+    try:
+        work_md_path = _find_work_md_path(repo_dir)
+        report = BoardHygieneReport(work_md_path=work_md_path)
+    except ReferenceUnavailable as exc:
+        report = BoardHygieneReport(work_md_path="<board not found>")
+        report.cap_error = str(exc)
+        return report
 
     cap, cap_error = read_cap_bytes(repo_dir)
     report.cap_error = cap_error
     if cap is not None:
         report.cap_bytes = cap
-        work_md = repo_dir / WORK_MD_RELPATH
+        work_md = Path(work_md_path)
         if work_md.is_file():
             report.size_bytes = work_md.stat().st_size
         else:
-            report.cap_error = f"{WORK_MD_RELPATH} not found"
+            report.cap_error = f"{work_md_path} not found"
 
     parked, parked_error = find_parked_finished_items(repo_dir)
     report.parked_items = parked
@@ -242,17 +257,9 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
 
     if not args.no_telegram:
-        from src.notifier import TelegramNotifier
+        from scripts.ops_alert import push_ops_alert
 
-        notifier = TelegramNotifier()
-        if notifier.enabled:
-            notifier.send(message)
-        else:
-            print(
-                "check_board_hygiene: Telegram not configured; message "
-                "printed above only",
-                file=sys.stderr,
-            )
+        push_ops_alert(message, kind="check_board_hygiene", note="message printed above only")
 
     return 0
 
