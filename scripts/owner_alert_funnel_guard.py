@@ -99,10 +99,6 @@ TELEGRAM_URL_MARKER = "api.telegram.org/bot"
 #: Files allowed a bare notifier send, by exact path, each with its reason.
 #: An entry that stops matching a call is itself a failure.
 EXEMPT_DIRECT_SEND_SITES = {
-    "scripts/alert_heartbeat.py": (
-        "DELIBERATE: a daily probe of the raw send path; retrying or recording "
-        "through the funnel would hide the very failure it exists to detect."
-    ),
     "scripts/telegram_test.py": (
         "DELIBERATE: the operator's manual raw-path check; it must report the "
         "unretried truth of one send."
