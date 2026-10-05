@@ -241,10 +241,10 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
-  - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
+  - id: src.coverage_watchdog_state._SUPPRESSION_LOG_LIMIT
     value: 50
     status: not-trade-governing
-    site: src/coverage_watchdog.py
+    site: src/coverage_watchdog_state.py
     note: >-
       How many per-event suppression records to retain per alert type in the
       watchdog's own state file. It bounds a durable log so the file cannot
@@ -5473,10 +5473,10 @@ numbers:
       produces identical behaviour — a precision guard, not a policy
       choice. It decides nothing about whether or how much to trade: a real
       nonzero delta of any size, however small, is now attempted.
-  - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
+  - id: src.coverage_watchdog_state.MAX_WEEKDAYS_BACK
     value: 5
     status: not-trade-governing
-    site: src/coverage_watchdog.py
+    site: src/coverage_watchdog_state.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap.
       Bounds how many weekdays the watchdog's diagnostic sweep searches
