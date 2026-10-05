@@ -48,7 +48,10 @@ from src import evidence_gate
 from src.soft_exit_never_blank import (
     record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
 )
-from src.pipeline_stage_helpers import _live_stops_from_heat, _macro_regime, record_stage  # noqa: F401
+from src.pipeline_stage_helpers import (  # noqa: F401
+    _live_stops_from_heat, _macro_regime, _persist_evidence, record_stage,
+)
+from src.pipeline_candidate_records import _record_pipeline_event  # noqa: F401
 from src.sentinel.order_attempts import record_order_attempt_from_event
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -372,22 +375,6 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
 # Neither exists today. Left as a follow-up.
 
 
-def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
-                       scope: str, evidence_json: str, symbol: str | None = None,
-                       decision_id: str | None = None) -> None:
-    """Best-effort Stage 4 structured-evidence write — NEVER raises.
-
-    Conversion step 6: a compatibility shim over the `EventJournal` port
-    (`src.ports.event_journal`); the body lives in
-    `src.storage.event_journal.DatabaseEventJournal.persist_evidence`. Kept
-    so the existing call sites work unchanged until each service takes a
-    `journal: EventJournal` in its constructor.
-    """
-    DatabaseEventJournal(db).persist_evidence(
-        run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
-        evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
-    )
-
 
 def _check_levels_coverage(db: "Database", ctx: RunContext,
                             analyses: list["TechAnalysisResult"]) -> None:
@@ -675,10 +662,6 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
     Nothing is emitted when no cancel happened: a naked add has no window.
     """
     from src.execution.scale_in import unprotected_window_seconds
-    # The recorder moved to src/pipeline_candidate_records.py; a module-level
-    # __getattr__ does not serve a bare global read inside a function, so bind
-    # the name here (patches on this module are mirrored onto that one).
-    from src.pipeline_candidate_records import _record_pipeline_event
     seconds = unprotected_window_seconds(spec.get("cancel_confirmed_at"))
     if seconds is None:
         return

@@ -14,9 +14,9 @@ its one lazy re-export table, so each original import path and each test
 patch target is unchanged; the write-through mirror on that module keeps a
 patched name the same object on both sides.
 
-The shared names below are imported FROM `src.pipeline_stages` as the stage
-modules do; `src.pipeline_stages` imports this module only lazily, by name,
-so the graph stays acyclic. Not in `src.number_sources.SCOPED_PATHS`: the
+This module sits BELOW `src.pipeline_stages`: it imports its shared helpers
+from their own homes, never from the stage module, and the stage module
+imports it, so the graph stays acyclic. Not in `src.number_sources.SCOPED_PATHS`: the
 block carries no ledgered number site. This module must not import
 `src.pipeline` and never reaches the broker seam. `_record_scale_in_window_closed`
 stays behind in `src.pipeline_stages` on purpose: its body imports the broker
@@ -24,15 +24,14 @@ seam, which the import-layering guard refuses in a part.
 """
 from __future__ import annotations
 
-from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
-    _persist_evidence,
-    agent_log_kwargs,
-    logger,
-    pipeline_event_fields,
-    record_order_attempt_from_event,
-    record_stage,
-    seat_acceptance_kwargs,
-)
+import logging
+
+from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
+from src.pipeline_stage_helpers import _persist_evidence, record_stage
+from src.sentinel.order_attempts import record_order_attempt_from_event
+from src.storage.event_journal import pipeline_event_fields
+
+logger = logging.getLogger(__name__)
 
 
 def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
