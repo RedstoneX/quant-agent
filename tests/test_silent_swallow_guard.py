@@ -9,6 +9,7 @@ on the DELTA by site IDENTITY (never a total). When the trunk cannot be read it 
 from __future__ import annotations
 
 import ast
+import subprocess
 
 import pytest
 
@@ -101,6 +102,8 @@ def test_quiet_when_handler_records_durably():
         "conn.execute('insert into failures values (?)', (s,))",
     ):
         src = (
+            "from src.alerts import send_owner_alert\n"
+            "from src.storage.heal import record_stop_repair_refusal\n\n"
             "def f(b, s):\n    try:\n        return b.stop(s)\n"
             f"    except Exception as exc:\n        {rec}\n        return None\n"
         )
@@ -196,3 +199,93 @@ def test_generic_names_do_not_leak_money_status(tmp_path):
              "src/other.py": "def run():\n    return 1\n",
              "src/driver.py": "def go(x):\n    return x.run()\n"}
     assert _tree(tmp_path, files) == ("src/exec/desk.py",)
+
+
+def test_money_modules_are_derived_from_every_tracked_production_file(monkeypatch):
+    from pathlib import Path
+    from scripts.guard_reference import ROOT
+    paths = {p.relative_to(ROOT).as_posix() for p in mm._source_paths(Path(ROOT), None)}
+    assert "main.py" in paths and any(p.startswith("ops/") for p in paths)
+    assert not any(p.startswith("tests/") for p in paths)
+    assert mm._source_paths(Path(ROOT), "src") == sorted((Path(ROOT) / "src").rglob("*.py"))
+
+
+def test_a_root_module_calling_a_writer_is_a_money_module(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "w.py").write_text(WRITER)
+    (tmp_path / "main.py").write_text("from src.w import place\n\ndef run(c):\n    return place(c, 1)\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "src/w.py", "main.py"], cwd=tmp_path, check=True)
+    assert "main.py" in mm.derive(tmp_path, frozenset({"submit_order"}), None)
+
+
+_ALIAS_SRC = '''
+from {mod} import {orig} as {alias}
+
+def f(x):
+    try:
+        return x.get()
+    except Exception as exc:
+        {alias}("site", exc)
+        return None
+'''
+
+
+def _alias_hits(mod: str, orig: str, alias: str) -> int:
+    return len(g.scan_text("src/x.py", _ALIAS_SRC.format(mod=mod, orig=orig, alias=alias)))
+
+
+def test_aliased_real_recorder_is_recognised_by_identity():
+    assert _alias_hits("src.storage.events", "record_site", "_site") == 0
+
+
+def test_unaliased_recorder_still_passes():
+    assert _alias_hits("src.storage.events", "record_site", "record_site") == 0
+
+
+def test_alias_that_resolves_to_a_non_recorder_still_fails():
+    assert _alias_hits("src.util", "helper", "_site") == 1
+
+
+def test_recorder_lookalike_name_bound_to_stdlib_does_not_satisfy_the_guard():
+    assert _alias_hits("logging", "warning", "record_failure") == 1
+
+
+# -- identity, not spelling: the three evasions a name match lets through ----
+
+_HANDLER = (
+    "def f(x):\n    try:\n        return x.get()\n"
+    "    except Exception as exc:\n        {call}\n        return None\n"
+)
+
+
+def _evasion_hits(prelude: str, call: str) -> int:
+    return len(g.scan_text("src/x.py", prelude + "\n" + _HANDLER.format(call=call)))
+
+
+def test_module_alias_to_a_foreign_module_is_not_a_recorder():
+    # ``import os as rec`` then ``rec.write(...)``: the attribute is spelled
+    # like a durable write but binds to the stdlib, which records nothing.
+    assert _evasion_hits("import os as rec", "rec.write(1, b'')") == 1
+    assert _evasion_hits("import logging as record_site", "record_site.warning('x')") == 1
+    # The same shape bound to a repo module is the real thing.
+    assert _evasion_hits("import src.storage.events as ev", "ev.record_site('s', exc)") == 0
+    assert _evasion_hits("import src.storage.events", "src.storage.events.record_site('s', exc)") == 0
+
+
+def test_local_def_of_a_recorder_name_is_judged_by_its_body_not_its_name():
+    shadow = "def record_site(site, exc):\n    return None\n"
+    assert _evasion_hits(shadow, "record_site('s', exc)") == 1
+    wrapper = (
+        "from src.storage.events import record_site as _rs\n\n"
+        "def record_site(site, exc):\n    _rs(site, exc)\n"
+    )
+    assert _evasion_hits(wrapper, "record_site('s', exc)") == 0
+    # A local wrapper that only logs is a shadow however it is spelled.
+    logs = "import logging\n\ndef record_site(site, exc):\n    logging.warning('x')\n"
+    assert _evasion_hits(logs, "record_site('s', exc)") == 1
+
+
+def test_star_imported_recorder_name_has_unknown_origin_and_does_not_count():
+    assert _evasion_hits("from src.storage.events import *", "record_site('s', exc)") == 1
+    assert _evasion_hits("", "record_site('s', exc)") == 1  # undefined: no origin at all
