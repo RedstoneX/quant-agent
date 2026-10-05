@@ -135,15 +135,14 @@ SEVEN THINGS THE LEDGER IS CHECKED FOR:
      held when the derivation was written. If the base later moves, the two
      disagree and the build fails. This is the *sourced once, unsourced
      later* class.
-  5. RATCHET — the `arbitrary` count must EQUAL `MAX_ARBITRARY_ENTRIES`, not
-     merely stay under it. A ceiling was gameable: move a trade constant into
-     an unscoped file, delete its ledger row, and the build went green while
-     the headline arbitrary count FELL and the number became less visible
-     than before the gate existed. Equality means a row can only leave the
-     ledger alongside a declared edit to the count. `MAX_ARBITRARY_ENTRIES`
-     is not written by hand: it is the sum of the deltas in
-     `config/number_ledger_history.yaml`, one appended entry per change,
-     each stating why.
+  5. RATCHET, DOWN-ONLY — the `arbitrary` count may fall and may stay level;
+     it may not RISE. The reference is the same count on `origin/main`,
+     computed from the trunk's own ledger every time the guard runs, so the
+     guard stores nothing and there is no ceiling anybody can raise. It was
+     an equality against a stored sum until 2026-10-05, and that sum was
+     moved UP by appending a positive delta to make a change green. Moving a
+     constant into an unscoped file to drop its row is rule 6's job, not
+     this one's.
   6. UNSCOPED SENTINEL — `scripts/unscoped_number_guard.py`, above.
   7. CITATIONS RESOLVE — every `path:line` an entry cites must exist and
      the line must be inside the file. It cannot check that a citation
@@ -289,34 +288,51 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: carrying the reason that change was made -- so the number cannot drift
 #: from its own record, and the record cannot be skipped.
 #:
-#: The narrative that used to sit on this line, and its mirror in the
-#: assertion message in tests/test_number_sources.py, were moved there
-#: VERBATIM. Both were single physical lines (this one ran to 11,853
-#: characters) that every branch retiring a number had to rewrite, so any two
-#: such branches conflicted and the conflict was resolved by hand every time.
-#:
-#: LOWER the count by appending a negative delta in the same commit that
-#: sources the number. Raising it is an owner decision, not a build fix.
-RATCHET_HISTORY_PATH = REPO_ROOT / "config" / "number_ledger_history.yaml"
+#: There is no stored count and no history file. Both were deleted: a summed
+#: append-only record is stored bookkeeping, and the sum could be moved UP by
+#: appending a positive delta, which is what open change 1430 did on
+#: 2026-10-05 when it hit 131 against 127 and appended +4. A ratchet that
+#: accepts a positive delta is not a ratchet. The grounds for every past move
+#: remain readable in git at the commit that deleted the file, and each row's
+#: own grounds live in its ledger entry.
+LEDGER_RELATIVE = "config/number_ledger.yaml"
 
 
-def load_ratchet_history(path: Path | None = None) -> list[dict[str, Any]]:
-    """The append-only record of every move in the arbitrary-number count.
+def load_ratchet_history(path: Path) -> list[dict[str, Any]]:
+    """The append-only record behind the SETTLEMENT-ROUTE ratchet.
 
-    Oldest first. The first entry is the genesis count the ratchet started
-    from; each later entry is one change, its delta, and why it was made.
+    Oldest first. The arbitrary-count ratchet no longer has one: it is
+    measured against the trunk at check time and stores nothing.
     """
-    with open(path or RATCHET_HISTORY_PATH, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
     return list(loaded.get("changes") or [])
 
 
-def arbitrary_ratchet(path: Path | None = None) -> int:
-    """`MAX_ARBITRARY_ENTRIES`, computed. Never hand-maintained."""
-    return sum(int(change["delta"]) for change in load_ratchet_history(path))
+def count_arbitrary(text: str) -> int:
+    """`status: arbitrary` rows in a raw ledger document."""
+    raw = yaml.safe_load(text) or {}
+    return sum(
+        1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary"
+    )
 
 
-MAX_ARBITRARY_ENTRIES = arbitrary_ratchet()
+def trunk_arbitrary_count() -> int:
+    """The `arbitrary` count on the trunk, read fresh at check time.
+
+    Nothing is stored and nothing is cached. If the trunk cannot be read the
+    guard REFUSES (``ReferenceUnavailable``) rather than passing: a ratchet
+    with no reference is decoration.
+    """
+    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
+
+    blobs = trunk_blobs([LEDGER_RELATIVE])
+    if LEDGER_RELATIVE not in blobs:
+        raise ReferenceUnavailable(
+            f"{LEDGER_RELATIVE} is absent from the trunk, so the arbitrary "
+            "count has no reference to be judged against"
+        )
+    return count_arbitrary(blobs[LEDGER_RELATIVE])
 
 #: Item 90's three states. A trade-governing number must sit in exactly one
 #: of them: (1) SOURCED OR MEASURED -- the `sourced`, `derived` and
@@ -365,7 +381,7 @@ def routeless_ratchet(path: Path | None = None) -> int:
     )
 
 
-#: Ratchet, checked for EQUALITY, exactly like `MAX_ARBITRARY_ENTRIES`: the
+#: Ratchet, checked for EQUALITY: the
 #: number of `arbitrary` rows that are in NONE of item 90's three states.
 MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 
@@ -940,24 +956,27 @@ def audit(
     if ledger_path is not None and ledger_path != LEDGER_PATH:
         return sorted(problems, key=lambda p: (p.kind, p.site_id))
 
-    # 5. RATCHET, checked for EQUALITY. As a ceiling it rewarded deletion:
-    #    move a trade constant into an unscoped file, drop its row, and the
-    #    build went green with a LOWER arbitrary count than before.
+    # 5. RATCHET, DOWN-ONLY, measured against the trunk at check time. The
+    #    count may fall and may stay level; it may not rise. Deletion-gaming
+    #    (move a constant into an unscoped file, drop its row) is rule 6's
+    #    job -- scripts/unscoped_number_guard.py ratchets the unscoped side --
+    #    so this rule no longer needs an equality to cover it, and an
+    #    equality is what made the ceiling movable upward by hand.
     arbitrary = [i for i, e in ledger.items() if e.get("status") == "arbitrary"]
-    if len(arbitrary) != MAX_ARBITRARY_ENTRIES:
-        direction = "rises to" if len(arbitrary) > MAX_ARBITRARY_ENTRIES else "falls to"
+    trunk_count = trunk_arbitrary_count()
+    if len(arbitrary) > trunk_count:
         problems.append(
             LedgerProblem(
                 "ratchet",
                 "<ledger>",
-                f"the `arbitrary` count {direction} {len(arbitrary)} but "
-                f"MAX_ARBITRARY_ENTRIES is {MAX_ARBITRARY_ENTRIES}. This is an "
-                f"equality, not a ceiling. The count is not editable by hand: "
-                f"APPEND one entry to config/number_ledger_history.yaml with "
-                f"the delta your change makes and a `why` that says what "
-                f"moved and on what grounds, in the same commit. A row cannot "
-                f"leave the ledger without saying so. Adding an unsourced "
-                f"trade-governing number is an owner decision "
+                f"the `arbitrary` count RISES to {len(arbitrary)}; the trunk "
+                f"holds {trunk_count}. This ratchet is down-only and there is "
+                f"no ceiling to raise: the reference is the trunk's own "
+                f"config/number_ledger.yaml, read at check time, so there is "
+                f"nothing to append to and nothing to edit. Source, measure "
+                f"or reformulate the number away, or revert whatever "
+                f"reclassified an existing row to `arbitrary`. Adding an "
+                f"unsourced trade-governing number is an owner decision "
                 f"(docs/OUTCOME.md).",
             )
         )

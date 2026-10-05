@@ -83,14 +83,20 @@ kept as history and marked DONE where they describe a stored file that is gone.
     numbers and their provenance; real content, stays.
   - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
     person's attestation of conditions a machine cannot verify; cannot be computed.
-  - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
-    RULED 2026-10-04, KEEP BOTH. The `why` is a kept decision record. Each
-    `delta` is the recorded effect of one change, appended whole under
-    `merge=union`; nothing edits a shared line, so the collision and staleness
-    failures this mandate removes cannot occur. The total is computed, and
-    the test already compares it with the live arbitrary-row count measured
-    from the tree (121 and 0 at this date, both equal), failing on a rise AND
-    a fall. A trunk-identity replacement would pass a fall, so it is looser.
+  - `config/number_ledger_history.yaml`: OVERTURNED 2026-10-05, DELETED. The
+    2026-10-04 ruling kept it on the grounds that failing a FALL as well as a
+    rise made it stricter than a trunk comparison. That reading missed the
+    direction that matters: summing deltas means the total accepts a POSITIVE
+    one, so the reference could be raised by the very change it was refusing,
+    and on 2026-10-05 open change 1430 did exactly that — it hit 131 against
+    127 and appended `+4`. Failing a fall is not strictness either; the
+    standing order is to drive the arbitrary count to ZERO, so a fall is the
+    goal. The arbitrary-number ratchet now counts `status: arbitrary` rows in
+    the trunk's own `config/number_ledger.yaml` at check time and refuses only
+    a RISE. Deletion-gaming stays covered by `scripts/unscoped_number_guard.py`.
+  - `config/number_ledger_route_history.yaml`: KEEP (unchanged, 2026-10-04).
+    The settlement-route ratchet still sums deltas; it carries the same defect
+    in principle and has not yet been converted.
   - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
     the figures present in a sheet ARE derivable (the test's shape list finds
     them), but each row's status and open question is a human judgement that a
