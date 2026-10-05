@@ -51,11 +51,11 @@ def _desk(tmp_path, get_order_by_id):
 
 
 def _status(db, where: str) -> str:
-    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:broker.order_desk.{where}")
+    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:execution.broker_parts.order_desk.{where}")
 
 
 def _detail(db, where: str) -> str:
-    row = ReconciliationLog(conn=db.conn).latest(kind=f"guarded:broker.order_desk.{where}")
+    row = ReconciliationLog(conn=db.conn).latest(kind=f"guarded:execution.broker_parts.order_desk.{where}")
     return "" if row is None else row["detail"]
 
 
