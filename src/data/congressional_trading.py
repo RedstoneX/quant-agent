@@ -1078,7 +1078,7 @@ def _form4_drain_summary(results) -> dict:
     # the coverage question not at all be carried by one that did — the
     # same read-one-fact-in-two-directions defect this change fixed one
     # layer up, in `_alert_form4_backlog_before_open`.
-    from src.data.smart_money import blank_edgar_coverage
+    from src.data.smart_money_edgar_coverage import blank_edgar_coverage
 
     edgars = [
         r.get("edgar_coverage") if isinstance(r.get("edgar_coverage"), dict)
@@ -1324,7 +1324,7 @@ class CombinedSmartMoneyProvider:
         Unknown unless at least one sub-provider recorded coverage; with
         several, the result is only as complete as the least complete.
         """
-        from src.data.smart_money import blank_edgar_coverage
+        from src.data.smart_money_edgar_coverage import blank_edgar_coverage
 
         blank_edgar = blank_edgar_coverage()
         merged = {"known": False, "as_of": "", "watched": 0,
