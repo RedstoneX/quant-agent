@@ -8779,3 +8779,63 @@ numbers:
       readers are the quarterly meta-reflector's last-trading-day-of-quarter
       test (src/execution/broker_parts/account_reads.py) and the quarterly
       digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.backtest.engine.MIN_BARS_FOR_SIGNAL
+    value: 210
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Derived, not chosen: 200 bars for the 200-day moving average plus 10 for the slope lookback the market-context step needs (the comment at the definition). Only the offline backtest harness imports this module; no live module imports it (grep over src/ finds only src/backtest/* and comments naming it), so it sizes, prices, places and refuses nothing live. It does decide which historic days an A/B run may use, so a sweep inherits it."
+  - id: src.backtest.engine.DEFAULT_MAX_HOLD_DAYS
+    value: 20
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "A time-stop for the OFFLINE backtest harness only; no live module imports the engine. UNSETTLED as a modelling assumption: 20 sessions is a round number with no derivation, and every backtest result inherits it. It would be settled by the desk's own recorded holding periods once enough closed trades exist; until then read any A/B result as conditional on it."
+  - id: src.backtest.engine.DEFAULT_INITIAL_EQUITY
+    value: 100000.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Starting equity of the offline backtest. Sizing is a ratio of equity, so the figure scales dollars and not the percentages the harness reports. No live module imports the engine."
+  - id: src.backtest.engine.DEFAULT_SLIPPAGE_BPS
+    value: 5.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Assumed fill slippage in the OFFLINE backtest; no live order reads it. UNSETTLED as an assumption: 5 bps is unmeasured. It would be settled by comparing recorded fills with the decision-time quote once the desk has traded again; every backtest cost figure inherits it until then."
+  - id: src.data.news_dedup.SIMILARITY_THRESHOLD
+    value: 0.47
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Headline-merge bar when summaries exist. Consumer: src/data/news.py clusters articles, and src/agents/news_analyst.py prints the survivor plus a text note of how many outlets carried it. It changes the text one seat reads and gates no order, size, stop or refusal. The source comment claims calibration on cached headlines (worst false pair 0.429); that claim was NOT reproduced here, so it is unverified. A wrong value mis-merges or fails to merge headlines."
+  - id: src.data.news_dedup.TITLE_ONLY_THRESHOLD
+    value: 0.55
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Stricter merge bar when neither article has a summary. Same single consumer as SIMILARITY_THRESHOLD: news text for the news seat, no order path. The cited worst false pair (0.503) is a source-comment claim, not reproduced here."
+  - id: src.data.news_dedup._TITLE_WEIGHT
+    value: 0.7
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Weight of title similarity in the merged score; text-only consumer as for SIMILARITY_THRESHOLD. A round split with no derivation, harmless to money only because it reaches no gate; if anything downstream ever reads the cluster count as a number, revisit."
+  - id: src.data.news_dedup._BODY_WEIGHT
+    value: 0.30000000000000004
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Derived as 1 - _TITLE_WEIGHT (the float rounding is why the value reads 0.3000...04). Same text-only consumer."
+  - id: src.token_budget.DEFAULT_TOKENS_PER_BYTE
+    value: 1.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback bytes-to-tokens ratio when logged history cannot answer; deliberately pessimistic (denser than real content) so an unmeasured agent gets smaller requests. Sole live consumer src/agents/tech_analyst.py via pack_to_budget, which splits symbols into LLM calls and is checked to lose or duplicate none (the ValueError 'packing lost or duplicated symbols'). It changes request count, not what the seat sees."
+  - id: src.token_budget.DEFAULT_FIXED_TOKENS
+    value: 6000
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback fixed prompt overhead used only before enough history exists; request packing only, same consumer and lossless-packing check as DEFAULT_TOKENS_PER_BYTE. A wrong value changes how many calls are made, not which symbols are analysed."
+  - id: src.token_budget.MIN_SAMPLES
+    value: 8
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fewest logged calls before a least-squares size fit is trusted over the fallback; request packing only. A statistical-hygiene minimum with no derivation; below it the pessimistic fallback applies, so the wrong-way error is more calls, not a wrong trade."
+  - id: src.token_budget._CACHE_TTL_S
+    value: 900.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "How long a fitted size model is reused before re-reading agent_logs. Pure performance cache; the fit changes across releases, not minutes, per the comment at the definition. Reaches no trade decision."
