@@ -35,4 +35,4 @@ def test_still_uncovered_reread_failure_is_loud_and_counted(caplog):
         assert OwnerAlerts._still_uncovered(_alerts(_Broker(conn)), {"symbol": "AAA", "held_qty": 1}) is True
     assert any(r.exc_info for r in caplog.records)
     rows = conn.execute("SELECT kind, agreed FROM reconciliation_runs").fetchall()
-    assert rows == [("guarded:broker.owner_alerts.still_uncovered_reread", 0)]
+    assert rows == [("guarded:protection.owner_alerts.still_uncovered_reread", 0)]
