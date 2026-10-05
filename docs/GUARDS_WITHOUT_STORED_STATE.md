@@ -19,7 +19,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
   boundary harness, the patch-target audit) each reference `guard_reference` or
   `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
 - Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
-  `test_undefined_name_guard`, `test_holding_discipline_guard`,
+  `test_undefined_names_guard`, `test_holding_discipline_guard`,
   `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
 - RESOLVED KEPT RECORD (2026-10-04): `tests/test_one_definition_guard.py`'s
   registry and its `KNOWN_GOOD` set are reviewed policy -- each entry carries a
