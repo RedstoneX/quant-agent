@@ -3146,9 +3146,9 @@ def test_rehearsal_sends_no_resume_alert_to_the_owner(tmp_path, monkeypatch, cap
         ).fetchone())
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="src.notifier"):
-        assert telegram.send(
+        assert not telegram.send(
             LLMCostCircuitBreaker.format_auto_reset_alert(event)
-        ) is False
+        )
     assert any(
         "REHEARSAL: suppressed operator alert" in r.getMessage()
         for r in caplog.records
