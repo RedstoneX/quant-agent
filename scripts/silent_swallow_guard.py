@@ -42,6 +42,7 @@ import ast
 import sys
 
 from scripts.money_modules import derive as derive_money_modules
+from scripts.swallow_resolver import Resolver, import_bindings  # noqa: F401 -- re-exported
 from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
@@ -75,44 +76,15 @@ DURABLE_ANYWHERE = {"alert", "notify", "journal", "record"}
 EMPTY_CALLS = {"list", "dict", "set", "tuple", "str", "int", "float"}
 
 
-def import_bindings(tree: ast.AST) -> dict[str, tuple[str, str]]:
-    """Map each name an import binds to (module, original name).
+def _callee_name(call: ast.Call, resolver: Resolver | None = None) -> str:
+    """The recorder name a call binds to, or "" when it binds to none.
 
-    ``from a.b import record_site as _site`` binds ``_site`` to
-    ``("a.b", "record_site")``. A call is judged by what it binds to, never by
-    the spelling at the call site.
+    Without a resolver there is no module to resolve against, so nothing can
+    be identified as a recorder; a name match alone is never enough.
     """
-    out: dict[str, tuple[str, str]] = {}
-    for n in ast.walk(tree):
-        if isinstance(n, ast.ImportFrom):
-            mod = "." * n.level + (n.module or "")
-            for a in n.names:
-                out[a.asname or a.name] = (mod, a.name)
-    return out
-
-
-def _is_foreign(module: str) -> bool:
-    """True for a stdlib or third-party module: it can never be the recorder."""
-    if module.startswith("."):
-        return False
-    root = module.split(".")[0]
-    return root not in {"src", "scripts", "tests"} and (
-        root in sys.stdlib_module_names or root in {"yfinance", "requests", "alpaca"}
-    )
-
-
-def _callee_name(call: ast.Call, binds: dict[str, tuple[str, str]] | None = None) -> str:
-    f = call.func
-    if isinstance(f, ast.Attribute):
-        return f.attr
-    if isinstance(f, ast.Name):
-        hit = (binds or {}).get(f.id)
-        if hit is not None:
-            if _is_foreign(hit[0]):
-                return ""  # e.g. ``from logging import warning as record_x``
-            return hit[1]  # resolved to the real name: ``_site`` -> ``record_site``
-        return f.id
-    return ""
+    if resolver is None:
+        resolver = Resolver(ast.Module(body=[], type_ignores=[]), is_durable_call)
+    return resolver.callee_name(call)
 
 
 def is_durable_call(name: str) -> bool:
@@ -134,7 +106,9 @@ def is_empty_value(node: ast.AST | None) -> bool:
     if isinstance(node, ast.Dict):
         return not node.keys
     if isinstance(node, ast.Call) and not node.args and not node.keywords:
-        return _callee_name(node) in EMPTY_CALLS
+        # Builtin constructors are judged by spelling: ``list()`` is empty
+        # whatever a module imports; only recorders need identity.
+        return isinstance(node.func, ast.Name) and node.func.id in EMPTY_CALLS
     return False
 
 
@@ -163,13 +137,13 @@ def _handler_body_nodes(handler: ast.ExceptHandler):
 
 
 def _swallows_and_returns_empty(
-    handler: ast.ExceptHandler, binds: dict[str, tuple[str, str]] | None = None
+    handler: ast.ExceptHandler, resolver: Resolver | None = None
 ) -> bool:
     returns_empty = False
     for n in _handler_body_nodes(handler):
         if isinstance(n, ast.Raise):
             return False
-        if isinstance(n, ast.Call) and is_durable_call(_callee_name(n, binds)):
+        if isinstance(n, ast.Call) and is_durable_call(_callee_name(n, resolver)):
             return False
         if isinstance(n, ast.Return) and is_empty_value(n.value):
             returns_empty = True
@@ -189,12 +163,12 @@ class _Finder(ast.NodeVisitor):
     """
 
     def __init__(
-        self, rel: str, scopes: dict[int, str], binds: dict[str, tuple[str, str]] | None = None
+        self, rel: str, scopes: dict[int, str], resolver: Resolver | None = None
     ) -> None:
-        self.rel, self.scopes, self.hits, self.binds = rel, scopes, [], binds or {}
+        self.rel, self.scopes, self.hits, self.resolver = rel, scopes, [], resolver
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        if is_broad(node) and _swallows_and_returns_empty(node, self.binds):
+        if is_broad(node) and _swallows_and_returns_empty(node, self.resolver):
             scope, src = site_identity(node, self.scopes)
             # Name the def, not the class that happens to hold it: a body
             # moved to a constructed part keeps its identity, while a second
@@ -207,7 +181,7 @@ class _Finder(ast.NodeVisitor):
 def scan_text(rel: str, text: str) -> list[tuple[Site, int]]:
     """Return (site identity, line) for each violation in one module's source text."""
     tree = ast.parse(text, filename=rel)
-    f = _Finder(rel, enclosing_scopes(tree), import_bindings(tree))
+    f = _Finder(rel, enclosing_scopes(tree), Resolver(tree, is_durable_call))
     f.visit(tree)
     return f.hits
 
