@@ -4,9 +4,9 @@ Each moved settings section is a real boundary: its module imports no other
 config module (it cannot secretly depend on the whole), and its classes are
 constructed and exercised here from plain dicts, without AppConfig or
 settings.yaml. The package root keeps exactly three bodies, each for a
-measured reason: AlpacaConfig/ApiKeysConfig (src.live_capital_preflight
-imports AlpacaConfig back from src.config lazily, so moving it would add an
-import cycle), RiskConfig (one 516-line class, above the 400-line floor for
+measured reason: AlpacaConfig/ApiKeysConfig (the paper lock point, where the
+live-capital pre-flight gate is called; the gate no longer imports config
+back, the audit check's probe is injected), RiskConfig (one 516-line class, above the 400-line floor for
 a new file), and AppConfig with its loaders (needs both).
 """
 from __future__ import annotations
