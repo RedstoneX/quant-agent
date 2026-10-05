@@ -1,13 +1,19 @@
-"""The three 1.0 ATR multiples must stay three SEPARATE, honestly-marked numbers.
+"""The four 1.0 ATR multiples must stay four SEPARATE, honestly-marked numbers.
 
 Board item 70 was opened because one `1.0` literal did two different jobs in the
 exit path. The split is built: the adverse-move noise band, the break-confirmation
-margin and the absolute minimum stop multiple are three distinct names. Item 213
-carries the leftover — none of them is sourced yet.
+margin, the last-resort fallback protection margin and the absolute minimum stop
+multiple are four distinct names. Item 213 carries the leftover — none of them is
+sourced yet.
 
-This test pins BEHAVIOUR IS UNCHANGED (all three still read 1.0) and pins the
-SEPARATION (they are three names, not one shared constant), so a future sourcing
+This test pins BEHAVIOUR IS UNCHANGED (all four still read 1.0) and pins the
+SEPARATION (they are four names, not one shared constant), so a future sourcing
 pass cannot silently re-collapse them or retune one by moving another.
+
+`FALLBACK_PROTECTION_ATR_MULTIPLE` is the newest and least-guarded of the four
+(split out of the noise band on 2026-10-04) and its ledger row was covered by
+nothing here, so the one layer at which a re-collapse has actually happened
+before — ledger prose and `derived_from` — was unguarded for it.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from src.config import RiskConfig
 from src.portfolio_constructor import ConstructorConfig
 from src.risk.exit_guard import (
     BREAK_CONFIRMATION_ATR_MULTIPLE,
+    FALLBACK_PROTECTION_ATR_MULTIPLE,
     NOISE_BAND_ATR_MULTIPLE,
 )
 
@@ -29,6 +36,7 @@ LEDGER = _REPO_ROOT / "config" / "number_ledger.yaml"
 _EXIT_GUARD_IDS = (
     "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE",
     "src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE",
+    "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE",
 )
 _MIN_STOP_ID = "src.config.RiskConfig.absolute_min_stop_atr_multiple"
 _MIN_STOP_MIRROR_ID = (
@@ -57,9 +65,10 @@ def _ledger_entries() -> dict[str, dict]:
 
 
 def test_values_unchanged() -> None:
-    """No behaviour change: every one of the three still reads exactly 1.0."""
+    """No behaviour change: every one of the four still reads exactly 1.0."""
     assert NOISE_BAND_ATR_MULTIPLE == 1.0
     assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
+    assert FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0
     assert RiskConfig.model_fields["absolute_min_stop_atr_multiple"].default == 1.0
     assert ConstructorConfig().absolute_min_stop_atr_multiple == 1.0
 
@@ -68,7 +77,11 @@ def test_three_distinct_names_not_one_shared_constant() -> None:
     """The jobs must stay separately named so one cannot be retuned via another."""
     import src.risk.exit_guard as exit_guard
 
-    for name in ("NOISE_BAND_ATR_MULTIPLE", "BREAK_CONFIRMATION_ATR_MULTIPLE"):
+    for name in (
+        "NOISE_BAND_ATR_MULTIPLE",
+        "BREAK_CONFIRMATION_ATR_MULTIPLE",
+        "FALLBACK_PROTECTION_ATR_MULTIPLE",
+    ):
         assert name in exit_guard.__all__, f"{name} is no longer exported"
 
     # The minimum stop multiple is a THIRD, config-borne number: it must not be
@@ -79,6 +92,7 @@ def test_three_distinct_names_not_one_shared_constant() -> None:
     assert "absolute_min_stop_atr_multiple" in source
     assert "NOISE_BAND_ATR_MULTIPLE" not in source
     assert "BREAK_CONFIRMATION_ATR_MULTIPLE" not in source
+    assert "FALLBACK_PROTECTION_ATR_MULTIPLE" not in source
 
 
 def test_ledger_marks_each_job_separately_and_honestly() -> None:
@@ -154,3 +168,24 @@ def test_noise_band_widening_is_uncapped_and_its_null_is_recorded() -> None:
     findings = (Path(__file__).resolve().parents[1] / "docs/RESEARCH_FINDINGS.md").read_text()
     assert "Does the band's sqrt(sessions_held) widening match the tape?" in findings
     assert "No value in `exit_guard.py` is changed by this work." in findings
+
+
+def test_no_exit_guard_multiple_is_derived_from_another() -> None:
+    """A `derived_from` between the exit-path bands IS the collapse, one layer up.
+
+    Separation survives a shared literal being deleted only if the ledger also
+    refuses to re-tie the jobs together. If any of these rows ever declared
+    itself derived from another of them, deriving one would silently move the
+    other — exactly the defect board item 70 exists to end — while every value
+    assertion above still passed.
+    """
+    entries = _ledger_entries()
+    offenders: list[str] = []
+    for ident in _EXIT_GUARD_IDS:
+        parent = entries[ident].get("derived_from")
+        if isinstance(parent, str) and parent in _EXIT_GUARD_IDS:
+            offenders.append(f"{ident} declares derived_from {parent}")
+    assert not offenders, (
+        "exit-path ATR multiples re-tied to each other in the ledger: "
+        + "; ".join(offenders)
+    )

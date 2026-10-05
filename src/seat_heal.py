@@ -31,13 +31,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from src.models.base import (
+from src.sector_vocab import (
     SECTOR_DIRECTIONS,
-    SECTOR_STANCE_TO_DIRECTION,
     _ALLOWED_SECTORS,
+    _DIRECTION_TO_STANCE,
     _SECTOR_ALIASES,
     normalize_sector_stance,
 )
+from src.soft_exit_vocab import stated_soft_exit
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +59,6 @@ HEAL_DAY_CAP = "day_cap"
 #: empty after heal and one paid retry" is UNTRUE when the retry was never
 #: attempted, so the three cases must be nameable apart.
 HEAL_NOT_ATTEMPTED = "not_attempted"
-
-# Reverse of SECTOR_STANCE_TO_DIRECTION for restoring the live model shape
-# from MacroStore's {sector: bullish|neutral|bearish} snapshot. Not an
-# invented stance — it is the same map, run backwards.
-_DIRECTION_TO_STANCE: dict[str, str] = {
-    "bullish": "overweight",
-    "bearish": "underweight",
-    "neutral": "neutral",
-}
-for _stance, _direction in SECTOR_STANCE_TO_DIRECTION.items():
-    _DIRECTION_TO_STANCE.setdefault(_direction, _stance)
 
 
 @dataclass
@@ -222,8 +212,6 @@ def merge_retry_falsifiers(original_targets: list, retry_targets: list) -> tuple
     unmeasurable-range exception already gated in Python. Returns
     (targets, symbols filled).
     """
-    from src.models.base import stated_soft_exit
-
     if not original_targets:
         return original_targets, []
     retry_by_symbol: dict[str, object] = {}
