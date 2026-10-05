@@ -22,12 +22,19 @@ class NameCoverageRecordSession:
         The counting half of docs/WORK.md item 20. It is a RECORD, not a
         bar: no ratio, no minimum, nothing refused here. Both attempts at
         deriving a coverage bar failed and the reasons are written down in
-        `src/evidence_gate.py` beside `name_coverage`; this is the
+        `src/evidence_name_coverage.py`; this is the
         instrument that would let one be measured from the desk's own data
         instead of picked. Fail-soft — a forensic record must never be able
         to break the trading path it reports on.
         """
-        from src import evidence_gate
+        from src.evidence_gate import BLOCKING_SEATS
+        from src.evidence_name_coverage import build_name_coverage_recorder
+
+        # The recorder is built HERE, from values this call site owns: the
+        # owner's blocking-seat mandate set comes from the gate, the seat
+        # lists from the record module's own defaults. The record module
+        # reaches back into nothing.
+        recorder = build_name_coverage_recorder(blocking_seats=BLOCKING_SEATS)
 
         try:
             seat_symbols: dict[str, set] = {}
@@ -86,7 +93,7 @@ class NameCoverageRecordSession:
             except Exception:  # noqa: BLE001 — config shape is not this record's job
                 pass
 
-            coverage_by_name = evidence_gate.name_coverage(
+            coverage_by_name = recorder.coverage(
                 universe, seat_symbols,
                 unreadable_by_seat=unreadable_by_seat,
                 asked_no_answer_by_seat=asked_no_answer_by_seat,
@@ -112,7 +119,7 @@ class NameCoverageRecordSession:
             # exist (`risk.rules.own_bar_block_reason` for entry, rotation's
             # `ineligible_hold` tier for the held side) and both already
             # treat "no technical read this review" as blocking.
-            gaps = evidence_gate.names_missing_blocking_seat(coverage_by_name)
+            gaps = recorder.names_missing_blocking_seat(coverage_by_name)
             ctx.name_coverage_blocking_gaps = dict(gaps)
             if gaps:
                 logger.warning(

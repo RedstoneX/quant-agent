@@ -11,7 +11,9 @@ CONVERTED = {
     "src/data/market.py": {"_try_fallback", "get_company_profile", "_fetch",
                            "get_next_earnings_date", "get_sector_performance"},
     "src/data/earnings.py": {"_get_recent_filings", "_download_filing"},
-    "src/evidence_gate.py": {"names_missing_blocking_seat", "name_coverage"},
+    "src/evidence_name_coverage.py": {
+        "names_missing_blocking_seat", "coverage"
+    },
     "src/prompt_facts/missed_ops_signals.py": {
         "_missed_ops_tech_signal", "_missed_ops_macro_sector_map",
         "_thesis_tech_trajectory_map"},
@@ -39,7 +41,7 @@ def test_sector_performance_failure_is_counted_with_a_traceback(monkeypatch):
 
 
 def test_evidence_gate_blocking_gap_failure_is_counted(monkeypatch):
-    import src.evidence_gate as g
+    import src.evidence_name_coverage as g
     seen = []
     monkeypatch.setattr(g, "record_swallowed",
                         lambda where, exc, **kw: seen.append(where))
