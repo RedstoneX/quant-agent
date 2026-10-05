@@ -176,8 +176,10 @@ from src.prompt_facts.review.held import HOST_COLLABORATORS, PromptFactsReview  
 
 def test_review_seat_is_constructible_alone_and_passes_the_boundary_check():
     part = PromptFactsReview(host=SimpleNamespace())
-    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in inspect.signature(PromptFactsReview).parameters.values())
-    assert all(getattr(part, name) is None for name in HOST_COLLABORATORS)  # a bare host: every read is None, nothing raises
+    params = inspect.signature(PromptFactsReview).parameters.values()
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params)
+    # a bare host: every read is None, nothing raises
+    assert all(getattr(part, name) is None for name in HOST_COLLABORATORS)
     verdict = check_boundary("src.prompt_facts.review.held")
     assert verdict.passed, verdict.failures
 
