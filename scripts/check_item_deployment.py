@@ -77,10 +77,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.definition_of_done import (  # noqa: E402
-    WORK_MD,
-    retired_numbers,
-)
+from scripts.board_locator import board_path_in  # noqa: E402
+from scripts.definition_of_done import retired_numbers  # noqa: E402
 
 DEFAULT_DEPLOYED_PATH = "/home/qamc/quant-agent"
 
@@ -104,16 +102,19 @@ def retiring_commits(repo: Path, ref: str = "origin/main",
     re-added after a revert resolves to the re-add, which is the deploy
     that matters.
     """
+    work_md = board_path_in(repo)
+    if work_md is None:
+        return {}
     log = _git(repo, "log", "--format=%H", f"-n{max_commits}", ref,
-               "--", WORK_MD)
+               "--", work_md)
     if log.returncode != 0:
         return {}
     found: dict[str, str] = {}
     for sha in [l for l in log.stdout.split("\n") if l]:
-        after = _git(repo, "show", f"{sha}:{WORK_MD}")
+        after = _git(repo, "show", f"{sha}:{work_md}")
         if after.returncode != 0:
             continue
-        before = _git(repo, "show", f"{sha}^:{WORK_MD}")
+        before = _git(repo, "show", f"{sha}^:{work_md}")
         added = retired_numbers(after.stdout) - (
             retired_numbers(before.stdout) if before.returncode == 0 else set())
         for number in added:

@@ -241,10 +241,10 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
-  - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
+  - id: src.alert_claims._SUPPRESSION_LOG_LIMIT
     value: 50
     status: not-trade-governing
-    site: src/coverage_watchdog.py
+    site: src/alert_claims.py
     note: >-
       How many per-event suppression records to retain per alert type in the
       watchdog's own state file. It bounds a durable log so the file cannot
