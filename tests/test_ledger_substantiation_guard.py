@@ -128,7 +128,8 @@ def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
     assert got == _verdicts(cite.replace("ops/", "src/"))
 
 
-def test_a_gzipped_path_is_read_whole_not_truncated_at_its_inner_extension():
+def test_a_gzipped_path_is_not_truncated_into_a_different_file():
     from src.ledger_citations import _CITATION_RE
-    m = _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400 sessions")
-    assert m and m.group(1) == "ops/rehearsal/recordings/market_bars.json.gz"
+    assert _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400") is None
+    assert _CITATION_RE.search("see ops/a/b.json, 400").group(1) == "ops/a/b.json"
+    assert _CITATION_RE.search("see src/x.py.").group(1) == "src/x.py"
