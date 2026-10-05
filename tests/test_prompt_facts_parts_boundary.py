@@ -165,3 +165,49 @@ def test_decisions_part_runs_against_a_stub_db():
     part = _build(PromptDecisions, db=db)
     assert isinstance(part._build_rm_recent_verdicts(), str)
     assert db.method_calls, "the body never read the db collaborator"
+
+
+# --- The trade-review SEAT (src/prompt_facts/review/held.py): built alone from its collaborators
+# ONLY -- no host object exists anywhere in these tests. The pipeline holds one, rebuilt per call
+# from its own collaborators by `review_of`, and inherits nothing.
+
+from src.prompt_facts.review.held import COLLABORATORS, PromptFactsReview  # noqa: E402
+
+
+def test_review_seat_is_constructible_with_no_host_at_all_and_passes_the_boundary_check():
+    """Built from NOTHING: no host, no namespace standing in for one, no keyword named host."""
+    part = PromptFactsReview()
+    params = list(inspect.signature(PromptFactsReview).parameters.values())
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params)
+    assert tuple(p.name for p in params) == COLLABORATORS and len(COLLABORATORS) == 7
+    assert "host" not in COLLABORATORS and not hasattr(part, "_host")
+    assert all(getattr(part, name) is None for name in COLLABORATORS)  # bare: nothing raises
+    source = inspect.getsource(PromptFactsReview)  # the class body never names a host or reaches one
+    assert "_host" not in source and "host=" not in source and "getattr(" not in source
+    verdict = check_boundary("src.prompt_facts.review.held")
+    assert verdict.passed, verdict.failures
+
+
+def test_review_seat_runs_a_body_from_an_explicit_db_collaborator_and_nothing_else():
+    """Exercised, not just built; the db it was handed is the one that runs, and only that one."""
+    db = MagicMock(name="db")
+    db.get_daily_pnl.return_value = []
+    part = PromptFactsReview(db=db)
+    assert isinstance(part._compute_recent_performance(current_equity=100_000.0), dict)
+    db.get_daily_pnl.assert_called_once()
+    assert part._review_calibration().db is db and part._review_blocked().db is db
+
+
+def test_review_seat_hands_each_family_part_exactly_the_collaborator_it_was_built_with():
+    """`build_post_exit_reality` reaches the grading part, `sweeper` and `exit_audit_actions` the
+    exits part, the operator logger the calibration part -- as passed, with no host in between."""
+    marks = {name: object() for name in COLLABORATORS}
+    marks["build_post_exit_reality"] = lambda *a, **k: "FROM THE COLLABORATOR"
+    marks["sweeper"] = lambda: "SWEPT"
+    part = PromptFactsReview(**marks)
+    assert part._review_grading()._build_post_exit_reality() == "FROM THE COLLABORATOR"
+    assert part._review_grading().broker is marks["broker"] and part._review_grading().market is marks["market"]
+    assert part._review_exits()._sweeper() == "SWEPT"
+    assert part._review_exits()._EXIT_AUDIT_ACTIONS is marks["exit_audit_actions"]
+    logger = marks["log_conviction_outcome_for_operator"]
+    assert part._review_calibration()._log_conviction_outcome_for_operator is logger

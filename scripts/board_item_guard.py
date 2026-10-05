@@ -39,6 +39,7 @@ import re
 import sys
 from pathlib import Path
 
+from scripts.board_locator import trunk_board, working_board
 from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
@@ -48,8 +49,6 @@ from scripts.guard_reference import (
     trunk_paths,
 )
 
-WORK_MD = "docs/WORK.md"
-NOTES_DIR = "docs/board_notes"
 
 #: THIS IS A CHOSEN WORKING FIGURE, NOT A MEASURED ONE. It is not derived from
 #: anything and nothing measures it; 25 items were open when the per-item
@@ -67,7 +66,7 @@ RETIRED_PARA = "**Retired item numbers"
 
 #: How the board spells a pointer: `detail: docs/board_notes/item-177.md`.
 #: Zero-padded to three digits, which is why the number is compared as an int.
-NOTE_POINTER_RE = re.compile(r"docs/board_notes/item-(\d+)\.md")
+NOTE_POINTER_RE = re.compile(r"board_notes/item-(\d+)\.md")
 NOTE_FILE_RE = re.compile(r"item-(\d+)\.md")
 
 #: One offending item: (item number as written, rule).
@@ -103,7 +102,7 @@ def notes_in(paths: list[str]) -> set[int]:
     for p in paths:
         head, _, name = p.rpartition("/")
         m = NOTE_FILE_RE.fullmatch(name)
-        if head == NOTES_DIR and m:
+        if head.rpartition("/")[2] == "board_notes" and m:
             out.add(int(m.group(1)))
     return out
 
@@ -127,32 +126,27 @@ def working_notes(root: Path = ROOT) -> set[int]:
     """Note files the working tree's ``docs/board_notes/`` actually holds --
     the same directory listing ``scripts.status_board.load_board_notes`` uses,
     so a pointer resolves here exactly as it resolves there."""
-    directory = root / NOTES_DIR
+    notes_dir = working_board()[1]
+    directory = root / notes_dir
     if not directory.is_dir():
         return set()
-    return notes_in(sorted(f"{NOTES_DIR}/{p.name}" for p in directory.glob("item-*.md")))
+    return notes_in(sorted(f"{notes_dir}/{p.name}" for p in directory.glob("item-*.md")))
 
 
 def working_offences(root: Path = ROOT) -> dict[Site, int]:
-    work_md = root / WORK_MD
-    if not work_md.exists():
-        return {}
+    work_md = root / working_board()[0]
     return offences(work_md.read_text(encoding="utf-8"), item_budget_bytes(root), working_notes(root))
 
 
 def trunk_offences(budget: int) -> dict[Site, int]:
     """Every offending item on ``origin/main``'s board, held to the SAME budget."""
-    blobs = trunk_blobs([WORK_MD])
-    if WORK_MD not in blobs:
-        raise ReferenceUnavailable(
-            f"{TRUNK}:{WORK_MD} is missing, so this guard cannot measure what the "
-            f"board already contained; it refuses rather than pass."
-        )
-    return offences(blobs[WORK_MD], budget, notes_in(trunk_paths(".md")))
+    work = trunk_board()[0]
+    return offences(trunk_blobs([work])[work], budget, notes_in(trunk_paths(".md")))
 
 
 def violations() -> list[str]:
     """Every (item, rule) offence this working tree holds that ``origin/main`` does not."""
+    work_md_path, notes_dir = working_board()
     budget = item_budget_bytes()
     now = working_offences()
     before = trunk_offences(budget)
@@ -167,7 +161,7 @@ def violations() -> list[str]:
                 f"cap divided by {MAX_OPEN_ITEMS}, a CHOSEN allowance for open items, not a "
                 "measured one -- it bounds a documentation file and nothing that trades. "
                 "TO FIX, and do NOT delete anything: move the item's prose into "
-                f"`{NOTES_DIR}/item-NNN.md` under its `## item N` heading -- create that file "
+                f"`{notes_dir}/item-NNN.md` under its `## item N` heading -- create that file "
                 "if it is not there -- and leave behind only the bold title line, the DONE "
                 "WHEN checkboxes in short form, and the `detail: docs/board_notes/item-NNN.md` "
                 "pointer. Never raise this number to make room, never shorten somebody else's "
@@ -176,7 +170,7 @@ def violations() -> list[str]:
         else:
             bad.append(
                 f"item {n} does not resolve to a note of its own, and was not pointerless on {TRUNK}. Add a "
-                f"`detail: {NOTES_DIR}/item-NNN.md` line to the block and put the prose in "
+                f"`detail: {notes_dir}/item-NNN.md` line to the block and put the prose in "
                 "that file under a `## item N` heading."
             )
     return bad
@@ -189,7 +183,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSING: {exc}", file=sys.stderr)
         return 2
     if bad:
-        print(f"{WORK_MD} item(s) newly offending against {TRUNK}:\n" + "\n".join(bad), file=sys.stderr)
+        work_md_path = working_board()[0]
+        print(f"{work_md_path} item(s) newly offending against {TRUNK}:\n" + "\n".join(bad), file=sys.stderr)
         return 1
     print(f"board-item guard: this tree adds no over-budget or pointerless item against {TRUNK}.")
     return 0

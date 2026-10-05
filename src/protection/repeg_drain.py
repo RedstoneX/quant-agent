@@ -11,6 +11,7 @@ import logging
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline")
 
 
@@ -46,8 +47,9 @@ class RepegDrain:
         """
         try:
             rows = self.db.get_pending_repegs()
+            record_guarded_pass(self.db, "repeg_drain.get_pending_repegs")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("drain_pending_repegs: DB read failed: %s", exc)
+            record_guarded_pass(self.db, "repeg_drain.get_pending_repegs", exc, log=logger)
             return 0
         if not rows:
             return 0
@@ -97,6 +99,8 @@ class RepegDrain:
                         "drain_pending_repegs: could not record %s on row %d: "
                         "%s", new_id, row_id, exc,
                     )
+                    record_guarded_pass(self.db, "repeg_drain.resolve_row", exc, log=logger,
+                                        context={"row": row_id})
 
             trade_row_id = row.get("trade_row_id")
             if not trade_row_id:
@@ -115,6 +119,8 @@ class RepegDrain:
                     "drain_pending_repegs: repoint of trades row %s failed: "
                     "%s — leaving row %d", trade_row_id, exc, row_id,
                 )
+                record_guarded_pass(self.db, "repeg_drain.repoint_trade", exc, log=logger,
+                                    context={"row": row_id})
                 continue
             if updated:
                 logger.warning(
@@ -143,3 +149,5 @@ class RepegDrain:
             logger.warning(
                 "drain_pending_repegs: could not delete row %d: %s", row_id, exc,
             )
+            record_guarded_pass(self.db, "repeg_drain.delete_row", exc, log=logger,
+                                context={"row": row_id})

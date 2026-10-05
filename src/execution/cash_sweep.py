@@ -45,6 +45,7 @@ costs basis points; an over-swept dollar can reject a real trade.
 import logging
 import math
 import time
+from src.sentinel.guarded import record_guarded_pass
 
 from src.storage.event_journal import DatabaseEventJournal
 
@@ -199,7 +200,10 @@ class CashSweeper:
                 run_id=run_id, broker_order_id=order.get("id"),
                 fill_status="submitted",
             )
+            record_guarded_pass((pipeline, pipeline.broker), "cash_sweep.sweep_sell_insert", context={"symbol": sym})
         except Exception as e:  # noqa: BLE001 — ledger failure must not strand finalize
+            record_guarded_pass((pipeline, pipeline.broker), "cash_sweep.sweep_sell_insert", e,
+                                context={"symbol": sym})
             logger.warning("cash sweep retired: insert_trade failed for SWEEP_SELL: %s", e)
         pipeline._finalize_pending_protections([prot], context="CASH SWEEP RETIRED")
         logger.info("cash sweep retired: submitted full release of %s (%s sh @ ~$%.2f)",

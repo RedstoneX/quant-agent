@@ -63,10 +63,6 @@ Site = tuple[str, str, str, str]
 
 SCAN_DIRS = ("src", "tests")
 
-# The guard's own test states the forbidden shapes in prose and in a synthetic
-# fixture; scanning it would measure the guard, not the code.
-SELF = "tests/test_no_local_day_as_exchange_day.py"
-
 _CLOCK_READERS = {"et_today", "et_now", "todays_session_stamp",
                   "todays_session_bar_stamp", "todays_session_snapshot_stamps"}
 
@@ -142,7 +138,7 @@ def scanned_paths() -> list[str]:
     paths: set[str] = set()
     for d in SCAN_DIRS:
         paths.update(working_paths(f"{d}/*.py"))
-    return sorted(p for p in paths if p != SELF)
+    return sorted(paths)
 
 
 def working_offences() -> dict[Site, list[int]]:
