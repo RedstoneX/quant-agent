@@ -328,3 +328,10 @@ def _the_suite_is_not_the_production_desk(request, monkeypatch):
     module = getattr(request.module, "__name__", "")
     desk = module.endswith("test_credentials") or module.endswith("test_session_identity")
     monkeypatch.setenv("QAMC_SESSION_IDENTITY", "desk" if desk else "pytest")
+    # CI exports dummy broker keys for the whole job. Test brokers carry their
+    # own fake keys, so the real REST-versus-socket comparison would read that
+    # job-level pair as "REST" and refuse every test socket. The suite is not
+    # a session with delivered credentials; tests that exercise the comparison
+    # set both sides themselves.
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)

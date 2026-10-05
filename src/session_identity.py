@@ -186,23 +186,6 @@ def assert_identity_whole(
     )
 
 
-def checked_socket_identity(broker: object) -> str:
-    """Refuse, at the moment of opening, a socket that is not this session's.
-
-    The one call site is the `trade_updates` stream's `start`. It is on the
-    open path itself rather than in a wrapper or a sandbox-only arm, so there
-    is nothing for a future caller to forget: the socket cannot be opened
-    without passing through it.
-    """
-    from src.credentials import session_broker_credentials
-
-    rest_key, rest_secret = session_broker_credentials()
-    return assert_identity_whole(
-        rest_key=rest_key,
-        rest_secret=rest_secret,
-        socket_key=getattr(broker, "api_key", None),
-        socket_secret=getattr(broker, "secret_key", None),
-    )
 def _credential_fingerprint(credential: str | None) -> str:
     """Length + first two characters of a key. NEVER the value, never a secret.
 

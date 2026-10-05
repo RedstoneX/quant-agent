@@ -32,6 +32,7 @@ except ImportError:  # pragma: no cover - optional dependency surface
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
+from src.execution.broker_parts.trade_stream_identity import checked_socket_identity
 from src.session_identity import _credential_fingerprint  # noqa: F401 re-export
 logger = logging.getLogger("src.execution.broker")
 
@@ -325,7 +326,6 @@ class _TradeUpdatesHub:
             self._gate.notify_all()
 
     def start(self) -> None:
-        from src.session_identity import checked_socket_identity
         logger.info("trade_updates identity: %s", checked_socket_identity(self._broker))
         stream = TradingStream(self._broker.api_key, self._broker.secret_key,
                                paper=self._broker._paper)
