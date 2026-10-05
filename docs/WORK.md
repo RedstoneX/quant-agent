@@ -86,7 +86,7 @@ DONE WHEN:
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/board_notes/item-063.md
 
-**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [4 of 14 ticked; 92, 93 buildable; 103 blocked (desk OFF).]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
+**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [6 of 16 ticked; the 10 open boxes are not code-buildable (they need derivations or production data); the "92, 93 buildable; 103 blocked" annotation named items that are not on this board.]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
 
 DONE WHEN:
   - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or a named derivation, recorded in `config/number_ledger.yaml` with that source
@@ -107,7 +107,7 @@ DONE WHEN:
   - [ ] STILL OPEN and NOT this item's to close: the absolute minimum stop multiple named in the second criterion above is the same number item 90 owns (min-stop ATR re-derivation), which is in flight elsewhere; it was deliberately not touched here to avoid two agents moving one live-money constant.
 detail: docs/board_notes/item-070.md
 
-**75. Profit-taking: whole position answered by the alignment exit; residue is the partial trim and the target's one live effect — OPEN, filed 2026-09-14. [3 of 6 ticked; rest production-blocked (desk OFF, 117) or constraints.]**
+**75. Profit-taking: whole position answered by the alignment exit; residue is the partial trim and the target's one live effect — OPEN, filed 2026-09-14. [4 of 6 ticked; rest production-blocked (desk OFF, 117) or constraints.]**
 
 (prose moved: docs/board_notes/item-075.md)
 
@@ -131,7 +131,7 @@ DONE WHEN:
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; Detail in the note.
 detail: docs/board_notes/item-078.md
 
-**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, PARTIALLY built 2026-09-18, item stays OPEN. [BOARD STATE: 0 of 11 ticked; the routeless-rows box is DONE (0 routeless, re-measured 2026-10-04), the remaining boxes are the arbitrary rows themselves, 134 and 142 are PRODUCTION-BLOCKED while the desk is OFF (settling recording fills only from live closed trades), the rest are status narrative.]** Detail in the note. Half one (the gate) landed 2026-09-18; half two is untouched and NONE of the DONE WHEN boxes below is ticked.
+**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, PARTIALLY built 2026-09-18, item stays OPEN. [BOARD STATE: 1 of 11 ticked; the routeless-rows box is DONE (0 routeless, re-measured 2026-10-04), the remaining boxes are the arbitrary rows themselves, 134 and 142 are PRODUCTION-BLOCKED while the desk is OFF (settling recording fills only from live closed trades), the rest are status narrative.]** Detail in the note. Half one (the gate) landed 2026-09-18; half two is untouched and NONE of the DONE WHEN boxes below is ticked.
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
   - [ ] 2026-09-30, second pass: the floor's VALUE is untouched and the evidence to judge it is now recorded per closed trade (entry price, entry ATR, the entry stop and its basis, and the maximum ADVERSE and FAVOURABLE excursions, alongside the realised outcome and stop-hit category already stored; the ATR multiple is recomputed from those, not stored again), and the pipeline's stale 1.5 fallback is closed at source by reading the declared default instead of a copied literal; the record is for FALSIFICATION only (was the floor ever violated in practice) and may NOT be optimised against, so the next pass reads it rather than re-deriving a multiple. Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
@@ -158,7 +158,7 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. …(rest: docs/board_notes/item-177.md)
 detail: docs/board_notes/item-177.md
 
-**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; both open boxes BLOCKED on evidence the desk does not record: the short-side haircut needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one), `short_gap_risk_multiple` needs stored daily bars]**
+**186. Risk ceilings are made-up — filed 2026-09-25. [8 of 9 ticked; the one open box (the short-side haircut) is BLOCKED on evidence the desk does not record: it needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one); the `short_gap_risk_multiple` box is ticked, the constant was deleted]**
 
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined
@@ -245,7 +245,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-224.md
 
-**228. The owner cannot see which holdings are drifting toward the chopping block -- OPEN, filed 2026-10-02; the panel is built, the live confirmation is not.** OWNER RULING 2026-10-02 (verbatim, on the rule beating any exemption): "I think the rule should win. Otherwise, things become inconsistent. But will I be able to know every day looking at the chart or some indicator that it's going on the chopping block soon? That should be for all stuff. A heads up would be nice. Uh, nothing more than that, because I still want to keep the rule of autonomy. For the desk." The margin recorder writes a run-scoped `rotation`/`margins` row each session that nothing in the trading path reads. Built beside item 219's Pruning Pass panel: `GET /chopping-block` (`src/api/routes_chopping_block.py`, read-only) lists EVERY holding the latest pass examined, healthy ones included, with whether it clears the desk's own entry bar, which way it has been moving, and the real rule it fails on. VISIBILITY ONLY: nothing in the trading path reads it, it delays and vetoes nothing, Telegram stays muted. No threshold, danger band or day-count was chosen: standing is categorical and direction is "since when, and what it was before".
+**228. The owner cannot see which holdings are drifting toward the chopping block -- OPEN, filed 2026-10-02; the panel is built, the live confirmation is not. [6 of 7 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF.]** OWNER RULING 2026-10-02 (verbatim, on the rule beating any exemption): "I think the rule should win. Otherwise, things become inconsistent. But will I be able to know every day looking at the chart or some indicator that it's going on the chopping block soon? That should be for all stuff. A heads up would be nice. Uh, nothing more than that, because I still want to keep the rule of autonomy. For the desk." The margin recorder writes a run-scoped `rotation`/`margins` row each session that nothing in the trading path reads. Built beside item 219's Pruning Pass panel: `GET /chopping-block` (`src/api/routes_chopping_block.py`, read-only) lists EVERY holding the latest pass examined, healthy ones included, with whether it clears the desk's own entry bar, which way it has been moving, and the real rule it fails on. VISIBILITY ONLY: nothing in the trading path reads it, it delays and vetoes nothing, Telegram stays muted. No threshold, danger band or day-count was chosen: standing is categorical and direction is "since when, and what it was before".
 DONE WHEN:
   - [x] every holding the latest pass examined is listed, healthy or below the bar, from the durable `rotation`/`precheck` rows
   - [x] each below-bar name carries the entry rules it fails on in plain words, or says the record does not hold them -- never a bare name
@@ -276,7 +276,7 @@ DONE WHEN:
 - [ ] one production session observed where an out-of-credit refusal produces exactly one attempt per seat and the out-of-credit wording reaches Telegram -- fixed-but-unobserved until then
 detail: docs/board_notes/item-226.md
 
-**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210). [BOARD STATE: 0 of 3 ticked; box 1 is NOT BUILDABLE (36 open pull requests remain); boxes 2 and 3 are BUILDABLE after box 1 completes.]** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210). [BOARD STATE: 0 of 3 ticked; box 1 is NOT BUILDABLE (27 open pull requests remain, measured with gh 2026-10-05); boxes 2 and 3 are BUILDABLE after box 1 completes.]** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
 
 DONE WHEN:
   - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
@@ -297,7 +297,7 @@ DONE WHEN:
 detail: docs/board_notes/item-219.md
 
 
-**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 1 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
+**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 3 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
 
 DONE WHEN:
 - [x] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04 (corrected 2026-10-04 on branch fix/item-232-citations-point-right, plus 16 more wrong rows found outward; see note)
