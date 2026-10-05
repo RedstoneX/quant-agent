@@ -9481,6 +9481,582 @@ numbers:
       readers are the quarterly meta-reflector's last-trading-day-of-quarter
       test (src/execution/broker_parts/account_reads.py) and the quarterly
       digest's period label; neither sizes, prices, places or exits anything.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-haiku-4-5']['input']"
+    value: 1.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-haiku-4-5']['output']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-opus-4-7']['input']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-opus-4-7']['output']"
+    value: 25.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-opus-4-8']['input']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-opus-4-8']['output']"
+    value: 25.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-sonnet-4-6']['input']"
+    value: 3.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-sonnet-4-6']['output']"
+    value: 15.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-sonnet-4-7']['input']"
+    value: 3.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['claude-sonnet-4-7']['output']"
+    value: 15.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.2']['input']"
+    value: 1.75
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.2']['output']"
+    value: 14.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.4']['input']"
+    value: 2.5
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.4']['output']"
+    value: 15.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.5']['input']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['gpt-5.5']['output']"
+    value: 30.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['o4-mini']['input']"
+    value: 1.1
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_FALLBACK['o4-mini']['output']"
+    value: 4.4
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json (the URL src/cost_table.py fetches), snapshot manually synced 2026-05-13; the table and its sync date are at src/cost_table.py@`_PRICING_FALLBACK: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: the hand-curated offline
+      baseline read only when the pricing cache file is missing AND the
+      network fetch fails. Source cited at the definition site:
+      LiteLLM's model_prices_and_context_window.json, manually synced
+      2026-05-13 (gpt-5.5 and claude-opus-4-8 re-verified 2026-06-05).
+      LiteLLM is a third-party aggregator of the vendor's DIRECT API
+      price, so this is a dated snapshot of an aggregator, not a vendor
+      quote; in normal operation the live cache (priority 1) overwrites
+      it.
+  - id: "src.cost_table._PRICING_OPENROUTER['anthropic/claude-haiku-4.5']['input']"
+    value: 1.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['anthropic/claude-haiku-4.5']['output']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['google/gemini-2.5-flash-lite']['input']"
+    value: 0.1
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['google/gemini-2.5-flash-lite']['output']"
+    value: 0.4
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['google/gemini-3.5-flash-lite']['input']"
+    value: 0.3
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['google/gemini-3.5-flash-lite']['output']"
+    value: 2.5
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['openai/gpt-5.5']['input']"
+    value: 5.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['openai/gpt-5.5']['output']"
+    value: 30.0
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['qwen/qwen3-235b-a22b-2507']['input']"
+    value: 0.09
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_OPENROUTER['qwen/qwen3-235b-a22b-2507']['output']"
+    value: 0.55
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://openrouter.ai/api/v1/models -- OpenRouter's own published per-million rates, the endpoint src/cost_table.py reads; the reason OpenRouter and not LiteLLM is at src/cost_table.py::_PRICING_OPENROUTER
+    note: >-
+      LLM list price, not a trading decision: OpenRouter's own published
+      per-million rate for a model config/settings.yaml routes through
+      OpenRouter. Source cited at the definition site: OpenRouter's
+      published model rates at https://openrouter.ai/api/v1/models. This
+      is what the desk actually pays for routed traffic; LiteLLM prices
+      the vendor's direct API and does not carry vendor/model ids.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-chat']['input']"
+    value: 0.14
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-chat']['output']"
+    value: 0.28
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-reasoner']['input']"
+    value: 0.14
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-reasoner']['output']"
+    value: 0.28
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-v4-flash']['input']"
+    value: 0.14
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-v4-flash']['output']"
+    value: 0.28
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-v4-pro']['input']"
+    value: 0.435
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._PRICING_PINNED['deepseek-v4-pro']['output']"
+    value: 0.87
+    status: sourced
+    site: src/cost_table.py
+    source: >-
+      https://api-docs.deepseek.com/quick_start/pricing -- DeepSeek's official pricing page, read 2026-06-05; the derivation and the cache-MISS caveat are at src/cost_table.py@`_PRICING_PINNED: dict[str, dict[str, float]]`
+    note: >-
+      LLM list price, not a trading decision: a pinned override that
+      must beat LiteLLM, whose DeepSeek rows are a stale pre-V4
+      snapshot. Source cited at the definition site: DeepSeek's official
+      pricing page, api-docs.deepseek.com, read 2026-06-05, cache-MISS
+      input rate. The table has no cache-tier column, so it
+      OVER-estimates on cache-heavy runs; conservative on purpose.
+  - id: "src.cost_table._CACHE_MAX_AGE_SECONDS"
+    value: 86400.0
+    status: not-trade-governing
+    site: src/cost_table.py
+    note: >-
+      NOT A TRADING DECISION, with the honest caveat stated: 24 hours is the freshness window
+      for the LiteLLM pricing cache; nobody measured 24 against any
+      alternative and no record of the choice exists. It is not inert:
+      the module docstring states the spending breaker fails closed once
+      the OpenRouter cache ages past this window plus
+      llm_cost_circuit.openrouter_pricing_grace_period_hours, so it
+      governs whether paid calls are suspended. In practice the
+      quant-agent-pricing-refresh.timer fires twice a day, so the cache
+      is refreshed at roughly half this age. Not changed here.
+  - id: "src.cost_table.OPENROUTER_CACHE_FRESH_HOURS"
+    value: 24.0
+    status: derived
+    site: src/cost_table.py
+    derived_from: src.cost_table._CACHE_MAX_AGE_SECONDS
+    base_value: 86400.0
+    note: >-
+      DERIVED, not chosen: the source line is
+      OPENROUTER_CACHE_FRESH_HOURS = _CACHE_MAX_AGE_SECONDS / 3600.0,
+      the same window expressed in hours for callers that report in
+      hours. It carries no independent choice; whatever settles
+      _CACHE_MAX_AGE_SECONDS settles this.
+  - id: "src.cost_table._FETCH_TIMEOUT_S"
+    value: 10.0
+    status: not-trade-governing
+    site: src/cost_table.py
+    note: >-
+      Network deadline on the HTTP fetch of the LiteLLM pricing JSON,
+      not a trading decision. A timeout here loses a cache refresh; it
+      cannot size, enter or exit a position.
+  - id: "src.cost_table.openrouter_pricing_reservation_multiplier(max_stale_multiplier)"
+    value: 1.0
+    status: not-trade-governing
+    site: src/cost_table.py
+    note: >-
+      Not a trading decision, and the identity besides, not chosen: 1.0 equals base_multiplier,
+      and the function returns base_multiplier unchanged when
+      max_stale_multiplier <= base_multiplier. The default therefore
+      means NO inflation of the cost reservation as the pricing cache
+      ages; any real relaxation is passed in explicitly by the caller.
+  - id: "src.cost_table.refresh_openrouter_pricing(max_stale_multiplier)"
+    value: 1.0
+    status: not-trade-governing
+    site: src/cost_table.py
+    note: >-
+      Not a trading decision, and the identity besides, not chosen: 1.0 equals base_multiplier,
+      and the function returns base_multiplier unchanged when
+      max_stale_multiplier <= base_multiplier. The default therefore
+      means NO inflation of the cost reservation as the pricing cache
+      ages; any real relaxation is passed in explicitly by the caller.
   - id: src.backtest.engine.MIN_BARS_FOR_SIGNAL
     value: 210
     status: not-trade-governing
