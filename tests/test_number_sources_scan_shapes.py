@@ -68,7 +68,7 @@ def test_destructured_module_constants_keep_distinct_number_identities() -> None
     a single Name on the left-hand side of a module assignment.
     """
     sites = {site.site_id: site.value for site in collect_sites()}
-    assert sites["src.data.context._W_1W"] == 5
+    assert "src.data.context._W_1W" not in sites  # calendar boundary, no fixed count
     assert sites["src.data.context._W_1M"] == 21
     assert sites["src.data.context._W_3M"] == 63
     assert sites["src.data.context._W_6M"] == 126

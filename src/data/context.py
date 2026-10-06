@@ -29,6 +29,7 @@ side effects.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 import numpy as np
 
@@ -36,10 +37,10 @@ from src.data.technical import ATR_PERIOD, atr_series
 from src.models import OHLCV
 from src.quantities import avg_dollar_volume
 
-# Completed-session approximations for calendar horizons. Holidays and month
+# Completed-session approximations for month horizons. Holidays and month
 # lengths vary, so item 90 routes these to real calendar boundaries without
 # choosing counts from later returns.
-_W_1W, _W_1M, _W_3M, _W_6M, _W_12M = 5, 21, 63, 126, 252
+_W_1M, _W_3M, _W_6M, _W_12M = 21, 63, 126, 252
 
 # Sessions used to measure whether a moving average is rising or falling.
 _SLOPE_LOOKBACK = 10
@@ -93,6 +94,8 @@ class MarketContext:
 
     # Momentum across horizons, in percent.
     return_1w: float | None = None
+    return_1w_base_date: date | None = None
+    return_1w_elapsed_days: int | None = None
     return_1m: float | None = None
     return_3m: float | None = None
     return_6m: float | None = None
@@ -150,6 +153,21 @@ def _pct_change(series: np.ndarray, window: int) -> float | None:
     if past <= 0:
         return None
     return round((float(series[-1]) - past) / past * 100.0, 2)
+
+
+def _one_week_return(bars: list[OHLCV]) -> tuple[float | None, date | None, int | None]:
+    """Read the last completed bar at or before the calendar boundary."""
+    boundary = bars[-1].date - timedelta(weeks=1)
+    for prior in reversed(bars[:-1]):
+        if prior.date <= boundary:
+            if prior.close <= 0:
+                return None, prior.date, (bars[-1].date - prior.date).days
+            return (
+                round((bars[-1].close - prior.close) / prior.close * 100.0, 2),
+                prior.date,
+                (bars[-1].date - prior.date).days,
+            )
+    return None, None, None
 
 
 def _ma_slope(closes: np.ndarray, period: int, lookback: int) -> float | None:
@@ -285,7 +303,8 @@ def compute_market_context(
     if last_close <= 0:
         return None
 
-    returns = {w: _pct_change(closes, w) for w in (_W_1W, _W_1M, _W_3M, _W_6M, _W_12M)}
+    return_1w, return_1w_base_date, return_1w_elapsed_days = _one_week_return(bars)
+    returns = {w: _pct_change(closes, w) for w in (_W_1M, _W_3M, _W_6M, _W_12M)}
 
     rel_1m = rel_3m = None
     if benchmark_bars and len(benchmark_bars) >= 2:
@@ -423,7 +442,9 @@ def compute_market_context(
 
     return MarketContext(
         last_close=round(last_close, 2),
-        return_1w=returns[_W_1W],
+        return_1w=return_1w,
+        return_1w_base_date=return_1w_base_date,
+        return_1w_elapsed_days=return_1w_elapsed_days,
         return_1m=returns[_W_1M],
         return_3m=returns[_W_3M],
         return_6m=returns[_W_6M],
@@ -468,6 +489,11 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         f"  Returns: 1w {pct(ctx.return_1w)} · 1m {pct(ctx.return_1m)} · "
         f"3m {pct(ctx.return_3m)} · 6m {pct(ctx.return_6m)} · 12m {pct(ctx.return_12m)}"
     )
+    if ctx.return_1w_base_date is not None:
+        lines.append(
+            f"  One-week return baseline: {ctx.return_1w_base_date.isoformat()} "
+            f"({ctx.return_1w_elapsed_days} calendar days ago)"
+        )
 
     if ctx.rel_strength_1m is not None or ctx.rel_strength_3m is not None:
         bench = ctx.benchmark_symbol or "benchmark"

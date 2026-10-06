@@ -27,7 +27,6 @@ EXPECTED_STATUS = {
     "src.data.insider_signal.InsiderSignalThresholds.cadence_min_mean_gap_days": "derived",
     "src.data.insider_signal.InsiderSignalThresholds.calendar_routine_years": "derived",
     "src.data.insider_signal.InsiderSignalThresholds.min_cadence_trades": "derived",
-    "src.data.context._W_1W": "arbitrary",
     "src.data.context._W_1M": "arbitrary",
     "src.data.context._W_3M": "arbitrary",
     "src.data.context._W_6M": "arbitrary",
@@ -57,7 +56,7 @@ def test_every_new_arbitrary_row_has_an_actionable_route_not_a_fourth_state() ->
         if status == "arbitrary"
     }
 
-    assert len(arbitrary) == 13
+    assert len(arbitrary) == 12
     for site_id, entry in arbitrary.items():
         assert "unsettled" not in entry, site_id
         assert settlement_route_problem(entry) is None, site_id

@@ -45,6 +45,27 @@ def _ramp(n: int, start: float, end: float) -> list[float]:
 
 
 class TestReturns:
+    def test_one_week_uses_calendar_boundary_across_holiday(self):
+        dates_and_closes = [
+            (date(2026, 9, 4), 100.0),  # Friday before Labor Day
+            (date(2026, 9, 8), 150.0),
+            (date(2026, 9, 9), 160.0),
+            (date(2026, 9, 10), 170.0),
+            (date(2026, 9, 11), 180.0),
+            (date(2026, 9, 14), 200.0),
+        ]
+        bars = [
+            OHLCV(date=day, open=close, high=close, low=close, close=close, volume=1_000_000)
+            for day, close in dates_and_closes
+        ]
+
+        ctx = compute_market_context(bars)
+        assert ctx is not None
+        assert ctx.return_1w == 100.0  # September 7 was closed; use September 4.
+        assert ctx.return_1w_base_date == date(2026, 9, 4)
+        assert ctx.return_1w_elapsed_days == 10
+        assert "One-week return baseline: 2026-09-04 (10 calendar days ago)" in format_context_block(ctx)
+
     def test_returns_measured_over_session_windows(self):
         ctx = compute_market_context(_bars(_ramp(300, 100.0, 200.0)))
         assert ctx is not None
