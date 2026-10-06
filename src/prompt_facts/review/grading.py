@@ -247,6 +247,8 @@ class ReviewGrading:
             # The deterministic post-exit block must ride along even when
             # nightly grades are absent/corrupt — it's tape-derived, not
             # grade-derived, and it's the part the grader can't sugar-coat.
+            # `max_symbols` and `min_age_days` are deliberately omitted here:
+            # their live defaults remain 12 symbols and 2 days, respectively.
             try:
                 base["post_exit_reality"] = self._build_post_exit_reality(
                     lookback_days=max(lookback_days, 14),
