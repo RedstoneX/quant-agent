@@ -26,6 +26,13 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # Rating magnitudes feed verdict ranking, insider weights order the
+    # smart-money evidence, and market-context windows shape evidence shown to
+    # the Technical seat. Their numeric definitions therefore sit on the same
+    # verdict-to-order path as the consumers already in scope.
+    "src/models/analysis.py",
+    "src/data/insider_signal.py",
+    "src/data/context.py",
     # 2026-10-05: the session-window table and the regular-session bounds gate
     # WHEN an order may be placed and when a bar is treated as complete; a
     # stop cannot cover a closed market, so these minutes are on the path

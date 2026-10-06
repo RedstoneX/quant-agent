@@ -109,13 +109,37 @@ def _module_constants(tree: ast.Module) -> dict[str, float]:
             continue
         if node.value is None:
             continue
-        value = _numeric(node.value, out)
-        if value is None:
-            continue
         for target in targets:
-            if isinstance(target, ast.Name):
-                out[target.id] = value
+            for name, value_node in _bound_name_values(target, node.value):
+                value = _numeric(value_node, out)
+                if value is not None:
+                    out[name.id] = value
     return out
+
+
+def _bound_name_values(
+    target: ast.AST, value: ast.AST
+) -> list[tuple[ast.Name, ast.AST]]:
+    """Names bound directly to numeric-shaped values by one assignment.
+
+    Python permits constants to be destructured in one statement, for example
+    ``_WEEK, _MONTH = 5, 21``.  Treating the entire target as non-name made
+    every such value invisible both to the module-constant resolver and to
+    rule (a)'s source scan.  Pair only equal-length tuple/list shapes; starred
+    or dynamically sized unpacking is intentionally not evaluated.
+    """
+    if isinstance(target, ast.Name):
+        return [(target, value)]
+    if isinstance(target, (ast.Tuple, ast.List)) and isinstance(
+        value, (ast.Tuple, ast.List)
+    ):
+        if len(target.elts) != len(value.elts):
+            return []
+        pairs: list[tuple[ast.Name, ast.AST]] = []
+        for child_target, child_value in zip(target.elts, value.elts):
+            pairs.extend(_bound_name_values(child_target, child_value))
+        return pairs
+    return []
 
 
 def _imported_constants(tree: ast.Module, root: Path) -> dict[str, float]:
@@ -154,9 +178,11 @@ def _leaves(
     """Every numeric leaf under `node`, with a stable path-qualified id.
 
     A bare literal yields one leaf. A tuple, list or dict literal yields one
-    leaf per numeric element, keyed by index or by its literal key, so
-    `stop_atr_setup_scale`'s `("range", 0.90)` is addressable as
-    `...stop_atr_setup_scale[1][1]` and moves only if the structure moves.
+    leaf per numeric element, keyed by index, by its literal key, or by the
+    explicit name used as its key, so `stop_atr_setup_scale`'s
+    `("range", 0.90)` is addressable as `...stop_atr_setup_scale[1][1]` and
+    `_WEIGHTS[INDETERMINATE]` does not collide with the other named keys in
+    the same mapping.
 
     `local` names the constants defined in this same file. A leaf that is
     just one of those names is NOT a second site — it is one number with two
@@ -179,6 +205,8 @@ def _leaves(
         for key, element in zip(node.keys, node.values):
             if isinstance(key, ast.Constant):
                 label = f"[{key.value!r}]"
+            elif isinstance(key, ast.Name):
+                label = f"[{key.id}]"
             else:
                 label = "[?]"
             out.extend(_leaves(element, f"{prefix}{label}", names, local))

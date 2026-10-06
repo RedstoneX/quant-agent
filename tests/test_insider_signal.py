@@ -1,12 +1,12 @@
 """Routine/opportunistic Form 4 classification.
 
 Evidence basis is ``docs/RESEARCH_FINDINGS.md`` section 1. The tests below
-pin the rules that document actually supports — including the two places it
-contradicts the folk version of this filter: a 10b5-1 flag is not a noise
-marker, and trade size relative to the insider's own holding is *reported*
-rather than turned into a cutoff, because the source behind it (Scott & Xu,
-FAJ 2004) measures the small-fraction band as significantly positive rather
-than as noise. See that module's docstring, departure #3.
+pin the rules that document actually supports — including that a 10b5-1 flag
+is not a noise marker and that trade size relative to the insider's own
+holding is reported rather than turned into a cutoff. A single Form 4 row is
+not the aggregate unit in Scott & Xu, so its ratio remains descriptive and
+must not inherit that study's return claims. See the module docstring,
+departure #3.
 """
 import json
 from datetime import date, datetime, timedelta
@@ -190,15 +190,9 @@ def test_lumpy_discretionary_history_is_not_a_cadence():
 
 def test_a_small_proportional_sale_is_not_discarded_as_routine():
     """The defect this replaced: a sub-10% sale was labelled ROUTINE at
-    weight 0.0 and dropped out of the seat's ranking entirely — while the
-    detail text it carried said the source finds that band mildly bullish.
-
-    Scott & Xu (FAJ 2004): "Small sales that represented small percentages of
-    shares owned not only did not predict poor performance but were
-    associated with significantly positive abnormal returns." ROUTINE means
-    "no predictive power" (Cohen/Malloy/Pomorski), so it is the wrong label
-    for a row the source measures as significant. The ratio is reported and
-    the seat weighs it; nothing is discarded."""
+    weight 0.0 and dropped out of the seat's ranking entirely. Transaction
+    size does not establish whether a sale follows the insider's routine; the
+    ratio is reported as descriptive context and nothing is discarded."""
     verdict = classify_transaction(
         _row(direction="sell", shares=1_000.0, post_shares=99_000.0),
         InsiderHistory(),
@@ -208,8 +202,6 @@ def test_a_small_proportional_sale_is_not_discarded_as_routine():
     assert verdict.reason == "discretionary_sale"
     assert verdict.weight == 1.0
     assert "1.0%" in verdict.detail
-    # The seat is handed the SIGN, not just the ratio.
-    assert "mildly BULLISH" in verdict.detail
 
 
 def test_a_small_planned_sale_is_no_longer_demoted_by_the_10b5_1_flag():
@@ -321,20 +313,6 @@ def test_no_sell_fraction_anywhere_changes_the_label():
     assert tiny.reason == huge.reason == "discretionary_sale"
     assert tiny.weight == huge.weight == 1.0
     assert tiny.detail != huge.detail
-
-
-def test_each_sell_band_carries_the_sign_the_paper_measured():
-    """The bands are reporting, so what they must carry is the direction of
-    the evidence. Scott & Xu Table 6 (size- and B/P-adjusted): only the
-    over-50% band predicts negative returns."""
-    def detail_for(shares, post):
-        return classify_transaction(
-            _row(direction="sell", shares=shares, post_shares=post), InsiderHistory(),
-        ).detail
-
-    assert "mildly BULLISH" in detail_for(9_999.0, 90_001.0)
-    assert "+0.44%" in detail_for(30_000.0, 70_000.0)
-    assert "only band that predicts negative returns" in detail_for(60_000.0, 40_000.0)
 
 
 def test_missing_post_transaction_holding_is_indeterminate_not_routine():
@@ -635,8 +613,9 @@ def test_a_proportionally_tiny_sale_survives_the_provider_end_to_end(tmp_path):
 # stores it. These tests pin the ratio that fact makes computable — reported
 # for both directions, and never used as an admission cutoff.
 #
-# Bands are Scott & Xu's own (FAJ 2004): under 10%, 10-50%, over 50% of
-# shares owned. See `src/data/insider_signal.py` module docstring.
+# The legacy endpoints remain under 10%, 10-50%, and over 50%. These tests pin
+# runtime stability only; item 90 records that applying the borrowed endpoints
+# to one filing's ratio is unsupported.
 
 def test_sell_fraction_is_measured_against_the_pre_transaction_holding():
     """Sold 25,000 of a 100,000-share holding is 25%, not 33% of what is left."""
@@ -659,8 +638,8 @@ def test_buy_fraction_is_measured_against_what_the_insider_already_held():
 
 
 def test_purchase_by_an_insider_holding_nothing_is_a_distinct_band_not_a_gap():
-    """Scott & Xu report initial purchases separately (no ratio exists), so
-    an insider who held none beforehand must not read as missing data."""
+    """An insider who held none beforehand has no denominator; that distinct
+    fact must not be reported as missing filing data."""
     fraction, band = holdings_fraction(
         _row(direction="buy", shares=5_000.0, post_shares=5_000.0)
     )
@@ -678,9 +657,9 @@ def test_missing_post_transaction_shares_reports_no_band_at_all():
     assert band == ""
 
 
-def test_bands_follow_the_papers_own_boundaries():
-    """Under 10% / 10-50% / over 50%, inclusive at the upper edge of the
-    middle band, exactly as the paper's columns are cut."""
+def test_legacy_band_endpoints_remain_stable_while_routed():
+    """Preserve the legacy under-10 / 10-50 / over-50 runtime endpoints while
+    their unsupported per-filing application remains routed under item 90."""
     def band_for(shares, post):
         return holdings_fraction(
             _row(direction="sell", shares=shares, post_shares=post)

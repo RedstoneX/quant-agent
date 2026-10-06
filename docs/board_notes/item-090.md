@@ -420,3 +420,60 @@ behaviour — that is an owner decision, and this is the evidence for it.
 - [ ] state 3 (a named recording) holds 121 rows re-read from `classification()` on 2026-10-04, among them `src.config.RiskConfig.min_stop_atr_multiple` (2.5) and the four ceiling rows item 186 routed; the unclassified remainder is 0, superseding both the "FIVE rows" and the 131/134 readings this line used to carry. No value moved in either pass and the floor's recording remains FALSIFICATION-only.
 - [ ] THE SETTLING RECORDING IS HALF FILLING, re-measured against the production database on 2026-10-04: `entry_atr` is now non-null on the 3 entries taken after the `d9a853e7` correction (3 of 84 `trades` rows), `max_adverse_excursion` has begun accruing on 1, and `stop_basis` is non-null on 0 of 84 -- including those same three rows, whose `setup_type`, `conviction`, `requested_risk_pct` and `stop_level_basis` all filled from the SAME call. So the entry-side half is POPULATING and the stop-basis half was a SECOND silent accessor the `entry_atr` fix left behind; both reads are now loud (`src/recording_accessors.py`), so a renamed or absent field raises instead of recording NULL forever. This criterion ticks when at least one entry taken after 2026-10-04 carries a non-null `stop_basis` alongside its `entry_atr`, which is a live-session observation nobody can schedule.
 - [ ] HALF TWO IS SPLIT INTO TRANCHES, EACH WITH ITS OWN CRITERIA: items 182 (de-lever ladder and alert), 183 (order-placement gates and dead cash-sweep config), 185 (trailing-stop numbers and the volatility-eligibility question) and 186 (portfolio/cluster ceilings and three owner-appetite answers) are NOT pointers — each carries DONE WHEN criteria this item does not repeat. Item 90 ticks when all four are fully ticked and no `status: arbitrary` row remains; do not re-derive a constant here that belongs to one of them. (Corrected 2026-09-30: this line used to say the four carry one word-for-word criterion, which was false.)
+
+## item 90 — 2026-10-05 context-and-ranking coverage repair
+
+This pass found twelve numbers that the earlier scanner could not see or had
+described too generously. No numeric value or deterministic gate changed. One
+unsupported study-return claim was removed from the analyst's per-filing
+context because the study measured a different unit. The settlement routes
+below deliberately do not ask which choice would have made the desk more
+money; that would fit the desk to its own record, which is barred.
+
+Five return horizons were written as one tuple and therefore invisible to the
+scanner. They approximate one week and one, three, six and twelve months with
+fixed counts of completed sessions. Holidays and month lengths make those
+labels inexact. The route is to use the last completed session at or before
+each real calendar boundary. That reads the interval from the calendar and the
+instrument now, and removes all five fixed counts without looking at what
+happened after a trade.
+
+The two positive chart-rating weights are not measurements. They turn two
+ordered labels — chart strength and confidence — into one scalar, so changing
+the arbitrary spacing can change which candidate sorts first. The permitted
+test is structural: enumerate every rating-and-confidence pair and repeat the
+ordering under every monotone relabelling of either scale. If an order changes,
+the scalar has no invariant meaning and must be removed while the two original
+facts remain visible. No forward return is part of that test.
+
+An unclassifiable insider transaction currently receives a midpoint weight.
+Unknown is not evidence for halfway between routine and opportunistic. The
+recording must retain why classification failed and the unweighted transaction
+value before any evidence cap. It closes only when the producing step can
+supply the required class, or when unknown remains an explicit category rather
+than an invented numeric interpolation. Past returns may not select a weight.
+
+The two insider-holdings band edges were copied from a published paper, but the
+paper computes net stock-wide trades and holdings across insiders over six
+months. This code applies the digits to one insider's one filing. Those are
+different quantities, so the paper is not a source for the live use. Both edges
+are now recorded as arbitrary. The paper's band-return claims have been removed
+from the per-filing analyst context; the exact row-level ratio remains visible
+as uncited descriptive context, and the deterministic admission and sizing
+paths remain unchanged. The route records that exact ratio and every prompt
+consumer, then removes the buckets while retaining the exact ratio. Forward
+returns and this desk's trade outcomes may not choose an edge.
+
+The minimum duration for a price base happened to reuse the volatility
+estimator's fourteen-session period. Those are different market quantities,
+and equality is not a derivation. The route is to read the start of the current
+base from present price structure and containment, then remove the fixed
+duration. It may not be tuned to later trade results.
+
+The three-gap display cap also lacked a defensible route. A controlled replay
+can hold the cached market context and prompt constant, render the complete gap
+list and each successive truncation, and compare extracted facts and the
+verdict while recording token cost. It closes only if the full list fits an
+explicit prompt budget, the cap is arithmetically derived from that budget, or
+the truncated form is invariant in that controlled comparison. Trading
+outcomes are excluded.

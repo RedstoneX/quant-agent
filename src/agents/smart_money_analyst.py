@@ -334,8 +334,8 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 "disclosure_date_estimated": row.disclosure_date_estimated,
                 "transaction_value_usd": row.transaction_value_usd,
                 "post_transaction_shares": row.post_transaction_shares,
-                # Size relative to the insider's own holding. Reported, not
-                # gated: the seat weighs it, nothing filters on it.
+                # Exact insider-holding ratio: uncited descriptive context,
+                # never a gate; item 90 owns the legacy bucket edges.
                 "holdings_fraction": row.holdings_fraction,
                 "holdings_fraction_band": row.holdings_fraction_band,
                 "ownership_nature": row.ownership_nature,
