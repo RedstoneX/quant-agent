@@ -20,6 +20,8 @@ Use two active accounts until QAMC is stable. `ubuntu` is engineering/operator: 
 
 This fast lane does not authorize live capital, paid dependencies, secrets/credential redesign, destructive infrastructure replacement, or material architecture outside current authority.
 
+**Current owner hold (2026-10-06): do not restart the Paper desk.** Engineering and read-only audit may continue, but do not enable trading timers or launch a trading session until the owner explicitly authorizes it after reviewing the structural, defect and number backlogs. Paper-beta autonomy does not override this hold. A separate capture/replay rig is not a prerequisite to Paper beta and must not be expanded without a concrete defect and renewed owner approval.
+
 ## Parallelism — systemwide engineering policy
 
 Use parallel workers/subagents proactively when independent work can safely run at the same time and doing so shortens the critical path.
