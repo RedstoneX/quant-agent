@@ -689,7 +689,9 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
             "ON realised_sector_weights (session_date)"
         )
-        from src.storage.schema.realised_sector_weights_migration import ensure_not_null; ensure_not_null(self.conn)
+        from src.storage.schema.realised_sector_weights_migration import ensure_not_null
+
+        ensure_not_null(self.conn)
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
