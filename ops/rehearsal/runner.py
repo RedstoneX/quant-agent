@@ -246,6 +246,7 @@ def run_rehearsal(
     pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS,
     provider_faults=None,
     market_recording=None,
+    broker_cassette=None,
     allow_degraded: bool = False,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
@@ -267,18 +268,19 @@ def run_rehearsal(
     silently continues past a missing recorded input produces a confident
     answer built on a gap. It never relaxes the network wall — an outbound
     attempt voids the run whatever this is set to (board item 202).
+
+    `broker_cassette` selects strict, public-safe SDK-call replay; unrecorded
+    trade_updates are refused and synthetic fixtures do not complete item 233.
     """
     _ensure_import_path()
 
     from ops.rehearsal.broker import (
-        BrokerSnapshot, blocked_market_data, install_rehearsal_broker,
-        recorded_sector_lookup,
+        BrokerSnapshot, blocked_market_data, recorded_sector_lookup,
     )
+    from ops.rehearsal.broker_cassette import install_rehearsal_broker_transport
     from ops.rehearsal.clock import frozen_clock
-    from ops.rehearsal.stand_in import assert_stand_in_answered
     from ops.rehearsal.isolation import (
-        ProductionWitness, assert_broker_is_stubbed, assert_hermetic,
-        assert_isolated, no_network,
+        ProductionWitness, assert_hermetic, assert_isolated, no_network,
     )
     from ops.rehearsal.faults import ProviderFaultInjector
     from ops.rehearsal.replay import (
@@ -401,8 +403,9 @@ def run_rehearsal(
         from src.pipeline import TradingPipeline
 
         pipeline = TradingPipeline(config)
-        trading_stub = install_rehearsal_broker(
+        broker_transport = install_rehearsal_broker_transport(
             pipeline.broker, snapshot, now=now_et, fill_model=fill_model,
+            payload=broker_cassette,
         )
         from ops.rehearsal.market_recording import load as _load_recording
         from ops.rehearsal.market_recording import recorded_market_data
@@ -479,7 +482,7 @@ def run_rehearsal(
                 "(board item 202)"
             )
         checks.append(stack.enter_context(recorded_feeds(unavailable, _feeds)))
-        checks.append(assert_broker_is_stubbed(pipeline.broker))
+        checks.append(broker_transport.assert_installed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
             "the session"
@@ -500,18 +503,13 @@ def run_rehearsal(
     duration = time.monotonic() - started
     checks.append(witness.assert_untouched(sudo_user=sudo_user))
 
-    for symbol in getattr(pipeline.broker._data_client, "missing_price_symbols", []):
-        unavailable.append(f"a current price for {symbol}")
+    broker_transport.record_missing_prices(pipeline.broker, unavailable)
 
-    # Hermeticity AND stand-in verdicts, taken AFTER the session: HTTP clients
-    # swallow a blocked call and the desk swallows an unanswered broker call on
-    # its money paths, so only the journals survive (board item 202). The
-    # report is still built (the operator sees WHAT ran), then raised with it.
     hermetic_breach = None
     try:
         checks.append(assert_hermetic(network_attempts, unavailable,
                                       allow_degraded=allow_degraded))
-        checks.append(assert_stand_in_answered(trading_stub))
+        checks.append(broker_transport.assert_complete())
     except Exception as exc:
         hermetic_breach = exc
         checks.append(f"NOT HERMETIC: {exc}")
@@ -524,12 +522,12 @@ def run_rehearsal(
         result=result,
         db_path=str(sandbox.db_path),
         library=library,
-        trading_stub=trading_stub,
+        trading_stub=broker_transport.trading_stub,
         isolation_checks=checks,
         unavailable=unavailable,
         network_attempts=network_attempts,
-        notes=notes,
-        fill_model=fill_model,
+        notes=notes + broker_transport.notes,
+        fill_model=broker_transport.fill_model,
         duration_s=duration,
         error=error,
     )

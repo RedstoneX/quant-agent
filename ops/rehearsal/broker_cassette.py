@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import threading
+from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Mapping
 
@@ -23,6 +24,8 @@ from ops.rehearsal.broker_cassette_codec import (
     IdentifierTokenizer as _IdentifierTokenizer,
     SCHEMA,
 )
+from ops.rehearsal.isolation import SENTINEL_KEY
+from ops.rehearsal.public_bundle import assert_public_safe
 
 
 class BrokerCassetteError(RuntimeError):
@@ -39,6 +42,10 @@ class MissingRecordedBrokerCall(BrokerCassetteError):
 
 class UnusedRecordedBrokerCalls(BrokerCassetteError):
     """Replay finished before every recorded call was consumed."""
+
+
+class BrokerReplayViolation(BrokerCassetteError):
+    """A strict replay failure occurred, even if application code caught it."""
 
 
 class RecordedBrokerError(BrokerCassetteError):
@@ -172,6 +179,7 @@ class ReplayBrokerCassette:
             raise BrokerCassetteError("broker cassette entries must be a list")
         self._entries = copy.deepcopy(entries)
         self._cursor = 0
+        self._violations: list[str] = []
         self._lock = threading.Lock()
         self._tokenizer = _IdentifierTokenizer()
         self._codec = _Codec(self._tokenizer)
@@ -191,18 +199,22 @@ class ReplayBrokerCassette:
                 ),
             }
             if self._cursor >= len(self._entries):
-                raise MissingRecordedBrokerCall(
+                exc = MissingRecordedBrokerCall(
                     f"unrecorded broker call at index {self._cursor}: "
                     f"{client_name}.{method_name}"
                 )
+                self._violations.append(str(exc))
+                raise exc
             expected = self._entries[self._cursor]
             expected_call = {
                 key: expected.get(key) for key in ("client", "method", "args", "kwargs")
             }
             if actual != expected_call:
-                raise CassetteMismatch(
+                exc = CassetteMismatch(
                     f"broker call {self._cursor} did not match the recorded call"
                 )
+                self._violations.append(str(exc))
+                raise exc
             self._cursor += 1
             if "error" in expected:
                 error = self._codec.decode(expected["error"])
@@ -221,6 +233,10 @@ class ReplayBrokerCassette:
             return self._codec.decode(expected["answer"])
 
     def assert_consumed(self) -> None:
+        if self._violations:
+            raise BrokerReplayViolation(
+                "broker replay violated its recording: " + self._violations[0]
+            )
         remaining = len(self._entries) - self._cursor
         if remaining:
             raise UnusedRecordedBrokerCalls(
@@ -238,3 +254,109 @@ class _ReplayBrokerClient:
             return self._cassette.invoke(self._client_name, name, args, kwargs)
 
         return replayed
+
+
+def install_replay_broker_cassette(broker, payload: Mapping[str, Any]):
+    """Install strict offline SDK clients into an existing ``AlpacaBroker``.
+
+    Both clients are installed before the session can ask ``AlpacaBroker`` to
+    lazily construct its normal SDK data client.  The trade-updates stream is
+    deliberately unsupported: the current cassette records method calls, not
+    websocket events, so enabling it would either escape the socket wall or
+    require invented fills.  Refuse that configuration instead.
+    """
+    assert_public_safe(payload)
+    if broker.fill_stream_enabled():
+        raise BrokerCassetteError(
+            "cassette replay cannot run with execution.fill_stream_enabled=true: "
+            "trade_updates are not recorded"
+        )
+
+    replay = ReplayBrokerCassette(payload)
+    trading_client = replay.client("trading")
+    data_client = replay.client("stock_historical_data")
+    broker.client = trading_client
+    broker._data_client = data_client
+    broker.api_key = SENTINEL_KEY
+    broker.secret_key = SENTINEL_KEY
+    broker._trading_day_cache = {}
+    broker._session_open_cache = {}
+    return replay
+
+
+def assert_broker_uses_replay(broker, replay: ReplayBrokerCassette) -> str:
+    """Prove the constructed broker holds only this cassette's clients."""
+    clients = (getattr(broker, "client", None), getattr(broker, "_data_client", None))
+    expected_names = ("trading", "stock_historical_data")
+    for client, name in zip(clients, expected_names):
+        if not isinstance(client, _ReplayBrokerClient):
+            raise BrokerCassetteError(f"broker {name} client is not a replay client")
+        if client._cassette is not replay or client._client_name != name:
+            raise BrokerCassetteError(f"broker {name} client belongs to another replay")
+    if (
+        getattr(broker, "api_key", None) != SENTINEL_KEY
+        or getattr(broker, "secret_key", None) != SENTINEL_KEY
+    ):
+        raise BrokerCassetteError("broker is holding non-sentinel credentials")
+    if broker.fill_stream_enabled():
+        raise BrokerCassetteError("broker trade_updates stream is enabled during replay")
+    return (
+        "both Alpaca SDK clients are strict cassette replays holding sentinel "
+        "credentials; trade_updates is disabled"
+    )
+
+
+@dataclass
+class RehearsalBrokerTransport:
+    """One installed synthetic or strict-cassette rehearsal transport."""
+
+    trading_stub: Any = None
+    replay: ReplayBrokerCassette | None = None
+    fill_model: str = "immediate"
+    notes: list[str] = field(default_factory=list)
+
+    def assert_installed(self, broker) -> str:
+        if self.replay is not None:
+            return assert_broker_uses_replay(broker, self.replay)
+        from ops.rehearsal.isolation import assert_broker_is_stubbed
+
+        return assert_broker_is_stubbed(broker)
+
+    def record_missing_prices(self, broker, unavailable: list[str]) -> None:
+        if self.replay is not None:
+            return
+        for symbol in getattr(broker._data_client, "missing_price_symbols", []):
+            unavailable.append(f"a current price for {symbol}")
+
+    def assert_complete(self) -> str:
+        if self.replay is not None:
+            self.replay.assert_consumed()
+            return "every recorded broker call was consumed exactly once"
+        from ops.rehearsal.stand_in import assert_stand_in_answered
+
+        return assert_stand_in_answered(self.trading_stub)
+
+
+def install_rehearsal_broker_transport(
+    broker, snapshot, *, now, fill_model: str, payload=None
+) -> RehearsalBrokerTransport:
+    """Select the old synthetic broker unless strict replay is explicit."""
+    if payload is None:
+        from ops.rehearsal.broker import install_rehearsal_broker
+
+        trading_stub = install_rehearsal_broker(
+            broker, snapshot, now=now, fill_model=fill_model
+        )
+        return RehearsalBrokerTransport(
+            trading_stub=trading_stub, fill_model=fill_model
+        )
+    replay = install_replay_broker_cassette(broker, payload)
+    return RehearsalBrokerTransport(
+        replay=replay,
+        fill_model="cassette",
+        notes=[
+            "broker SDK calls came from an explicit strict cassette replay; "
+            "a synthetic cassette proves this wiring only and does not "
+            "complete item 233"
+        ],
+    )

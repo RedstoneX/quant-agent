@@ -86,6 +86,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--broker-cassette", default=None, metavar="PUBLIC_JSON",
+        help=(
+            "explicitly replay strict broker SDK calls from a public-safe "
+            "cassette instead of using the synthetic broker; trade_updates "
+            "must be disabled and missing, mismatched, or unused calls void "
+            "the rehearsal"
+        ),
+    )
+    parser.add_argument(
         "--set", dest="overrides", action="append", default=[], metavar="KEY=VALUE",
         help=(
             "override a config value, dotted "
@@ -190,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     from ops.rehearsal.runner import run_rehearsal
     from ops.rehearsal.stand_in import StandInGap
+    from ops.rehearsal.broker_cassette import BrokerCassetteError
 
     sandbox_root = Path(args.sandbox) if args.sandbox else Path(
         tempfile.mkdtemp(prefix="qamc-rehearsal-")
@@ -201,6 +211,9 @@ def main(argv: list[str] | None = None) -> int:
             source_data_dir=args.source_data,
             sudo_user=args.sudo_user,
         )
+        broker_cassette = None
+        if args.broker_cassette:
+            broker_cassette = json.loads(Path(args.broker_cassette).read_text())
         report = run_rehearsal(
             sandbox,
             session=args.session,
@@ -214,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.pricing_cache_age_hours
             ),
             provider_faults=args.provider_faults,
+            broker_cassette=broker_cassette,
             allow_degraded=args.allow_degraded,
         )
         print(report.render())
@@ -224,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         # it" (2) without parsing prose. 2 is not a softer 1 — it means no
         # judgement was reached and the run has to be repeated properly.
         return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}.get(report.verdict, 1)
-    except (HermeticBreach, MissingRecordedInput, StandInGap) as exc:
+    except (HermeticBreach, MissingRecordedInput, StandInGap, BrokerCassetteError) as exc:
         # The replay is void, not merely degraded: it either left the box,
         # was asked for something the recording does not hold, or asked the
         # broker stand-in for a call it does not implement. Print the

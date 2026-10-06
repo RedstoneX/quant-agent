@@ -756,8 +756,8 @@ class RehearsalReport:
             )
         else:
             limits.append(
-                "Whether those orders would have filled. This rehearsal "
-                "deliberately assumed none of them did."
+                "Whether those orders would fill now. This rehearsal either "
+                "assumed none did or replayed historical broker answers."
             )
         limits.append(
             "Whether the broker would have accepted them. Buying power, "
