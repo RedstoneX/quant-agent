@@ -88,11 +88,12 @@ def export_model_responses(before_db: Path, after_db: Path, run_id: str,
         raise ModelResponseCaptureError("pre-session agent_logs is not the captured prefix")
     added = observed[len(original):]
     run_index = columns.index("run_id")
+    prompt_index = columns.index("input_message")
     response_index = columns.index("full_response")
     if not added or any(row[run_index] != run_id for row in added):
         raise ModelResponseCaptureError("missing or ambiguous captured morning run")
-    if any(row[response_index] is None for row in added):
-        raise ModelResponseCaptureError("captured run has a missing model response")
+    if any(not row[prompt_index] or row[response_index] is None for row in added):
+        raise ModelResponseCaptureError("captured run has an unreplayable model row")
     payload = {"schema": 1, "run_id": run_id, "columns": columns,
                "before_path": str(before.resolve()),
                "before_digest": _digest(original),
@@ -140,10 +141,12 @@ def import_model_responses(bundle_path: Path, replay_db: Path) -> int:
                     _digest(_rows(connection, columns)) != payload.get("before_digest"):
                 raise ModelResponseCaptureError("replay database differs from pre-session snapshot")
             run_index = columns.index("run_id")
+            prompt_index = columns.index("input_message")
             response_index = columns.index("full_response")
             if any(not isinstance(row, list) or len(row) != len(columns) or
-                   row[run_index] != run_id or row[response_index] is None for row in rows):
-                raise ModelResponseCaptureError("private model bundle has missing or mixed run rows")
+                   row[run_index] != run_id or not row[prompt_index] or
+                   row[response_index] is None for row in rows):
+                raise ModelResponseCaptureError("private model bundle has unreplayable or mixed run rows")
             names = ", ".join('"' + column + '"' for column in columns)
             marks = ", ".join("?" for _ in columns)
             connection.executemany(
