@@ -15,12 +15,12 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
-from src.trading_calendar import ET, SESSION_WINDOWS
+from src.trading_calendar import ET, SESSION_WINDOWS, et_today
 from src.credential_placeholder import looks_like_placeholder
 from src.credentials import load_systemd_credentials
 from src.session_identity import credentials_directory_var, session_identity
@@ -77,7 +77,7 @@ def hold_capture_session_lock(lock: Path):
         raise SecondaryPreflightError("a production trading session lock exists") from None
     owner = lock / "owner"
     token = (
-        f"secondary_capture {datetime.now(timezone.utc).date().isoformat()} "
+        f"secondary_capture {et_today().isoformat()} "
         f"{int(time.time())} {os.getpid()} {uuid.uuid4().hex}\n"
     )
     try:
