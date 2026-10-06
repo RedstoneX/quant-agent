@@ -103,7 +103,6 @@ total: replay must not invent spend, over- or under-count it, only place it.
 from __future__ import annotations
 
 import logging
-import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -112,21 +111,11 @@ from dataclasses import dataclass, field
 from ops.rehearsal.recorded_calls import (
     _split_labelled_sections, _unmerge_chunked_call, expand_and_audit,
 )
+from ops.rehearsal.response_matching import (
+    MissingRecordedResponse, WORD, match_recorded_call, normalise,
+)
 
 logger = logging.getLogger(__name__)
-
-# Below this Jaccard overlap the replayed answer is reported as answering a
-# materially different question than the one the rehearsed pipeline asked.
-LOW_CONFIDENCE_MATCH = 0.55
-
-_WORD = re.compile(r"[A-Za-z0-9_.$%-]+")
-
-# `agent_logs.agent_name` is written by the call site, which sometimes appends
-# the session (`news_analyst_morning`, `earnings_analyst_preprocess`), while
-# `BaseAgent.name` never does. Recordings are indexed under both forms.
-_SESSION_SUFFIXES = (
-    "_morning", "_midday", "_close", "_evening", "_intra_check", "_preprocess",
-)
 
 # `RunContext.start` (src/pipeline_context.py) mints run ids as
 # "<prefix>-<8 hex>", with the morning session keeping the legacy bare "run"
@@ -165,14 +154,6 @@ REPLAY_RUN_AUTO = "auto"
 REPLAY_RUN_ANY = "any"
 
 
-class MissingRecordedResponse(RuntimeError):
-    """A rehearsed call had no recorded response to replay."""
-
-    # Read by `src.agents.base._is_retryable`: any 4xx other than 429 is
-    # fast-failed rather than retried.
-    status_code = 400
-
-
 @dataclass
 class RecordedCall:
     """One historical provider call, exactly as production logged it."""
@@ -205,7 +186,7 @@ class RecordedCall:
     @property
     def words(self) -> frozenset[str]:
         if self._words is None:
-            self._words = frozenset(_WORD.findall(self.input_message or ""))
+            self._words = frozenset(WORD.findall(self.input_message or ""))
         return self._words
 
     def reported_cost(self) -> float | None:
@@ -221,25 +202,6 @@ class RecordedCall:
         if "openrouter" in provider and self.cost_usd is not None:
             return float(self.cost_usd)
         return None
-
-
-def _normalise(agent_name: str) -> str:
-    name = (agent_name or "").strip().lower()
-    for suffix in _SESSION_SUFFIXES:
-        if name.endswith(suffix):
-            return name[: -len(suffix)]
-    return name
-
-
-def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
-    if not left and not right:
-        return 1.0
-    if not left or not right:
-        return 0.0
-    union = len(left | right)
-    if union == 0:
-        return 0.0
-    return len(left & right) / union
 
 
 # ------------------------------------------------------- choosing the run
@@ -338,7 +300,7 @@ def select_replay_run(
             continue
         started = str(row["started"] or "")
         starts[run] = min(starts[run], started) if run in starts else started
-        agents.setdefault(run, set()).add(_normalise(str(row["agent_name"])))
+        agents.setdefault(run, set()).add(normalise(str(row["agent_name"])))
 
     if not_after_utc:
         starts = {r: t for r, t in starts.items() if t and t <= not_after_utc}
@@ -387,8 +349,10 @@ def select_replay_run(
 class ResponseLibrary:
     """Recorded model responses for one run, matched to live calls."""
 
-    def __init__(self, calls: list[RecordedCall], *, source_run_id: str | None = None):
+    def __init__(self, calls: list[RecordedCall], *, source_run_id: str | None = None,
+                 exact_prompts: bool = False):
         self.source_run_id = source_run_id
+        self.exact_prompts = exact_prompts
         # Un-merge before indexing, not after: a chunked agent's row must
         # become N independently-matchable, independently-consumable
         # RecordedCalls (see `_unmerge_chunked_call`) for `.match()` to ever
@@ -397,7 +361,7 @@ class ResponseLibrary:
         self.matches: list[dict] = []
         self._by_agent: dict[str, list[RecordedCall]] = {}
         for call in sorted(expanded, key=lambda c: c.row_id):
-            self._by_agent.setdefault(_normalise(call.agent_name), []).append(call)
+            self._by_agent.setdefault(normalise(call.agent_name), []).append(call)
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------- loading
@@ -405,6 +369,7 @@ class ResponseLibrary:
     @classmethod
     def from_database(
         cls, db_path: str, *, run_id: str | None = None, agent_names: list[str] | None = None,
+        exact_prompts: bool = False,
     ) -> "ResponseLibrary":
         """Load every replayable call for `run_id` (or all runs when None).
 
@@ -453,7 +418,7 @@ class ResponseLibrary:
             )
             for row in rows
         ]
-        return cls(calls, source_run_id=run_id)
+        return cls(calls, source_run_id=run_id, exact_prompts=exact_prompts)
 
     # ------------------------------------------------------------ matching
 
@@ -465,81 +430,7 @@ class ResponseLibrary:
 
     def match(self, agent_name: str, user_message: str) -> RecordedCall:
         """Pick and consume the recording that best fits this live prompt."""
-        key = _normalise(agent_name)
-        with self._lock:
-            candidates = [c for c in self._by_agent.get(key, []) if not c.consumed]
-            if not candidates:
-                total = len(self._by_agent.get(key, []))
-                detail = (
-                    f"all {total} recorded response(s) were already replayed"
-                    if total else "no recorded response exists"
-                )
-                self._record_finding(
-                    kind="missing_recorded_response",
-                    agent=agent_name,
-                    detail=detail,
-                    prompt_bytes=len((user_message or "").encode("utf-8")),
-                )
-                raise MissingRecordedResponse(
-                    f"no recorded response for agent '{agent_name}' "
-                    f"(run {self.source_run_id or 'any'}): {detail}"
-                )
-
-            live_words = frozenset(_WORD.findall(user_message or ""))
-            # Rank by index, never by the RecordedCall itself: `_unmerge_chunked_call`
-            # gives every part of one merged row the SAME row_id, so two un-merged
-            # parts of one chunked row can tie exactly on (score, -row_id) whenever
-            # they also tie on Jaccard score against the live prompt (trivially true
-            # when neither shares a word with it — both score 0.0). A plain
-            # `sorted([(score, -row_id, call) ...], reverse=True)` would then need to
-            # compare the `RecordedCall` dataclasses themselves to break the tie, and
-            # they define no ordering, raising `TypeError: '<' not supported between
-            # instances of 'RecordedCall' and 'RecordedCall'`. That crash was
-            # reproduced against live production history during a plain unpinned
-            # `morning` rehearsal (2026-08-29): it took down the rest of the session
-            # by exhausting tech_analyst's retry/failover budget and tripping the
-            # cost circuit's provider-attempt limit. Comparing indices instead of
-            # objects keeps the same documented tie-break ("lowest agent_logs row
-            # id"), extended deterministically to prefer the earliest part when two
-            # candidates share a row_id, without ever needing the objects to be
-            # orderable.
-            keys = [
-                (_jaccard(live_words, c.words), -c.row_id, -i)
-                for i, c in enumerate(candidates)
-            ]
-            best_index = max(range(len(candidates)), key=lambda i: keys[i])
-            chosen = candidates[best_index]
-            score = keys[best_index][0]
-            chosen.consumed = True
-
-            self.matches.append({
-                "agent": agent_name,
-                "recorded_as": chosen.agent_name,
-                "row_id": chosen.row_id,
-                "part_label": chosen.part_label,
-                "run_id": chosen.run_id,
-                "recorded_at": chosen.timestamp,
-                "similarity": round(score, 4),
-                "candidates": len(candidates),
-            })
-            if score < LOW_CONFIDENCE_MATCH:
-                where = (
-                    f"agent_logs row {chosen.row_id} {chosen.part_label}"
-                    if chosen.part_label else f"agent_logs row {chosen.row_id}"
-                )
-                self._record_finding(
-                    kind="low_confidence_match",
-                    agent=agent_name,
-                    detail=(
-                        f"the prompt this rehearsal assembled overlaps only "
-                        f"{score * 100:.0f}% with the prompt that produced the "
-                        f"recorded answer ({where}, recorded {chosen.timestamp}). "
-                        f"The replayed answer is being applied to a materially "
-                        f"different question"
-                    ),
-                    similarity=round(score, 4),
-                )
-        return chosen
+        return match_recorded_call(self, agent_name, user_message)
 
     def _record_finding(self, *, kind: str, agent: str, detail: str, **extra) -> None:
         self.findings.append({"kind": kind, "agent": agent, "detail": detail, **extra})

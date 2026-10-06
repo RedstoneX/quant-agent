@@ -249,6 +249,7 @@ def run_rehearsal(
     broker_cassette=None,
     session_input_payload=None,
     model_response_db: str | Path | None = None,
+    session_result_out: dict | None = None,
     allow_degraded: bool = False,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
@@ -283,9 +284,7 @@ def run_rehearsal(
     """
     _ensure_import_path()
 
-    from ops.rehearsal.broker import (
-        BrokerSnapshot, blocked_market_data, recorded_sector_lookup,
-    )
+    from ops.rehearsal.broker import BrokerSnapshot
     from ops.rehearsal.broker_cassette import install_rehearsal_broker_transport
     from ops.rehearsal.clock import frozen_clock
     from ops.rehearsal.isolation import (
@@ -374,6 +373,7 @@ def run_rehearsal(
 
     library = ResponseLibrary.from_database(
         str(model_response_db or sandbox.db_path), run_id=choice.run_id,
+        exact_prompts=session_input_payload is not None,
     )
     if not library.available():
         notes.append(
@@ -422,91 +422,13 @@ def run_rehearsal(
             pipeline.broker, snapshot, now=now_et, fill_model=fill_model,
             payload=broker_cassette,
         )
-        if session_input_payload is None:
-            from ops.rehearsal.market_recording import load as _load_recording
-            from ops.rehearsal.market_recording import recorded_market_data
+        from ops.rehearsal.provider_wiring import install_provider_inputs
 
-            _recording = _load_recording(market_recording) if market_recording else _load_recording()
-            _live_market = pipeline.market
-            if _recording:
-                _served = recorded_market_data(unavailable, _recording)
-                checks.append(
-                    "market data is served from the recording captured "
-                    f"{_recording.get('captured_utc')} "
-                    f"({len(_recording.get('bars') or {})} symbols), not downloaded"
-                )
-            else:
-                _served = blocked_market_data(unavailable)
-                notes.append(
-                    "no recorded market data on this box, so every technical read is "
-                    "empty — capture one with `python -m ops.rehearsal.market_recording "
-                    "SYM ...` (board item 202)"
-                )
-        # Replacing `pipeline.market` alone was NOT enough, and that is the
-        # second half of board item 202. `TradingPipeline.__init__` hands the
-        # SAME provider object to the stages it builds (`MorningResearchStage`
-        # takes `market=self.market`), so the technical read — the one read a
-        # rehearsal most needs served from the recording — went on holding the
-        # live provider after the swap. Offline that reads as "No data for
-        # SPY, skipping" for every symbol and the session degrades to
-        # `no_data`; online, before the curl_cffi hole was closed, it is what
-        # actually downloaded the bars. Rebind every holder, and say how many.
-        if session_input_payload is None:
-            pipeline.market = _served
-            _rebound = []
-            for _name, _obj in list(vars(pipeline).items()):
-                if _obj is _live_market or not hasattr(_obj, "market"):
-                    continue
-                if getattr(_obj, "market", None) is _live_market:
-                    _obj.market = _served
-                    _rebound.append(_name)
-            _still_live = [
-                _name for _name, _obj in vars(pipeline).items()
-                if _obj is not _live_market and getattr(_obj, "market", None) is _live_market
-            ]
-            if _still_live:
-                raise AssertionError(
-                    "a rehearsal cannot start with the LIVE market-data provider "
-                    f"still reachable through {sorted(_still_live)} — it would "
-                    "fetch prices from the network instead of the recording "
-                    "(board item 202)"
-                )
-            checks.append(
-                "every holder of the market-data provider was rebound to the "
-                f"rehearsal's, not just the pipeline: {sorted(_rebound) or 'none'}"
-            )
-        # Board item 202, criterion 2: `broker._get_sector` builds its own
-        # live yfinance client, so the market-data swap above never reached
-        # it and every sector lookup went to the network (and was retried
-        # per symbol behind the wall, ~188s [measured 2026-10-01]).
-        if session_input_payload is None:
-            from ops.rehearsal.sector_recording import merge_into as _with_sectors
-            checks.append(stack.enter_context(
-                recorded_sector_lookup(unavailable, _with_sectors(_recording))))
-        # Board item 202, the last two unrecorded inputs. The settling run of
-        # 2026-10-01 was voided by 11 blocked attempts and every one of them
-        # was FRED or a news/reference feed. They are now served from their
-        # own recording by the same patch-where-the-client-is-built pattern,
-        # failures included; a gap raises rather than substituting anything.
-        if session_input_payload is None:
-            from ops.rehearsal.macro_recording import load_feeds_with_macro as _load_feeds
-            from ops.rehearsal.macro_recording import recorded_feeds_with_macro as recorded_feeds
-
-            _feeds = _load_feeds()
-            if not _feeds:
-                notes.append(
-                    "no recorded FRED/news feeds on this box, so every macro and "
-                    "news read raises as a missing recorded input — capture one "
-                    "with `python -m ops.rehearsal.feed_recording --series ...` "
-                    "(board item 202)"
-                )
-            checks.append(stack.enter_context(recorded_feeds(unavailable, _feeds)))
-        else:
-            from ops.rehearsal.session_inputs import session_inputs
-
-            captured_inputs = stack.enter_context(
-                session_inputs(pipeline, session_input_payload))
-            checks.append("session providers replay captured call outcomes only")
+        captured_inputs = install_provider_inputs(
+            stack, pipeline, payload=session_input_payload,
+            market_recording=market_recording, unavailable=unavailable,
+            checks=checks, notes=notes,
+        )
         checks.append(broker_transport.assert_installed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
@@ -538,6 +460,13 @@ def run_rehearsal(
         if session_input_payload is not None:
             captured_inputs.assert_consumed()
             checks.append("all captured provider calls were consumed exactly")
+            from ops.rehearsal.session_inputs import SessionInputError
+
+            if library.findings or library.unused():
+                raise SessionInputError(
+                    "exact model replay has missing, incomplete, or unused calls"
+                )
+            checks.append("all captured model prompts matched and responses were consumed exactly")
     except Exception as exc:
         hermetic_breach = exc
         checks.append(f"NOT HERMETIC: {exc}")
@@ -568,6 +497,9 @@ def run_rehearsal(
     if hermetic_breach is not None:
         hermetic_breach.report = report
         raise hermetic_breach
+    if session_result_out is not None:
+        session_result_out.clear()
+        session_result_out.update(result)
     return report
 
 

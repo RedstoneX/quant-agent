@@ -55,6 +55,8 @@ def replay_private_capture(capture_root: Path, *, production_db: Path | None = N
     meta = json.loads((data / "capture_meta.private.json").read_text())
     if meta.get("session") != "morning" or not meta.get("run_id"):
         raise CapturedReplayError("capture metadata does not name a morning run")
+    if meta.get("fill_transport") != "REST polling; production websocket not exercised":
+        raise CapturedReplayError("capture fill-transport limitation is missing")
     _same_code(meta.get("source_sha", ""))
     started_at = datetime.fromisoformat(meta["started_at_et"])
     if started_at.tzinfo is None:
@@ -79,6 +81,7 @@ def replay_private_capture(capture_root: Path, *, production_db: Path | None = N
         broker = json.loads((data / "broker.json").read_text())
         providers = json.loads((data / "providers.json").read_text())
         original = json.loads((data / "result.json").read_text())
+        replayed_result: dict = {}
         report = run_rehearsal(
             sandbox,
             session="morning", now_et=started_at,
@@ -89,15 +92,40 @@ def replay_private_capture(capture_root: Path, *, production_db: Path | None = N
             broker_cassette=broker,
             session_input_payload=providers,
             model_response_db=response_db,
+            session_result_out=replayed_result,
             production_db=production_db,
             sudo_user="qamc" if production_db is not None else None,
         )
-        if report.status != original.get("status"):
-            raise CapturedReplayError("replayed session status differs from capture")
+        _assert_capture_reproduced(report, original, replayed_result, meta["run_id"])
         return {"status": report.status, "model_calls": count,
                 "network_attempts": len(report.network_attempts),
                 "broker_calls": len(broker.get("entries", [])),
-                "provider_calls": len(providers.get("entries", []))}
+                "provider_calls": len(providers.get("entries", [])),
+                "fill_transport": meta["fill_transport"]}
+
+
+def _replace_run_id(value, captured_id: str, replay_id: str):
+    """Normalize only the known synthetic replay identity before comparison."""
+    if isinstance(value, str):
+        return value.replace(captured_id, replay_id)
+    if isinstance(value, list):
+        return [_replace_run_id(item, captured_id, replay_id) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_run_id(item, captured_id, replay_id)
+                for key, item in value.items()}
+    return value
+
+
+def _assert_capture_reproduced(report, original: dict,
+                               replayed_result: dict, captured_id: str) -> None:
+    """A matching status alone is never a successful session replay."""
+    if report.verdict != "PASS":
+        raise CapturedReplayError("rehearsal verdict is not PASS")
+    if report.status != original.get("status"):
+        raise CapturedReplayError("replayed session status differs from capture")
+    normalized_replay = json.loads(json.dumps(replayed_result, default=str))
+    if _replace_run_id(original, captured_id, report.run_id) != normalized_replay:
+        raise CapturedReplayError("replayed session result differs from capture")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -5,6 +5,8 @@ rehearsal credential files.  This command makes ordinary provider calls and
 may place ordinary Paper orders if the unmodified decision/risk chain chooses
 them.  It does not manufacture a candidate or weaken a guard.  Its outputs
 stay private until a separate public-safety promotion and exact replay exist.
+The production fill websocket is NOT exercised: this capture uses the desk's
+supported REST fill polling setting and cannot prove websocket behavior.
 """
 
 from __future__ import annotations
@@ -86,10 +88,13 @@ def _isolate_broker_environment() -> None:
 
     Alpaca's REST SDK uses ``requests.Session`` and honours NO_PROXY.  Only
     Alpaca hosts bypass the inherited proxy; removing HTTPS_PROXY globally
-    would also disconnect model providers that rely on OneCLI.
+    would also disconnect model providers that rely on OneCLI. The OneCLI
+    REQUESTS_CA_BUNDLE is not a public-root bundle, so it must not be used for
+    direct Alpaca TLS. Other provider transports use SSL_CERT_FILE instead.
     """
     for name in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
         os.environ.pop(name, None)
+    os.environ.pop("REQUESTS_CA_BUNDLE", None)
     hosts = {"paper-api.alpaca.markets", "data.alpaca.markets"}
     for name in ("NO_PROXY", "no_proxy"):
         existing = {entry.strip() for entry in os.environ.get(name, "").split(",")
@@ -145,6 +150,22 @@ def _snapshot_input_files(data_dir: Path, destination: Path,
     )
 
 
+def _assert_disk_headroom(code_root: Path, max_capture_bytes: int) -> None:
+    """Refuse a run without room for its several separately bounded outputs.
+
+    This is a precondition, not a hard aggregate quota: other processes can
+    consume disk after it passes. The transient unit also limits each file.
+    """
+    if max_capture_bytes <= 0:
+        raise LiveCaptureError("positive capture byte bound is required")
+    filesystem = os.statvfs(code_root)
+    available = filesystem.f_bavail * filesystem.f_frsize
+    # Distinct large artifact classes: live DB, WAL, before DB, cache copy,
+    # provider ledger, broker cassette, model responses, and private log.
+    if available < 8 * max_capture_bytes:
+        raise LiveCaptureError("insufficient disk headroom for capture artifacts")
+
+
 @contextmanager
 def _scratch_cwd(code_root: Path):
     previous = Path.cwd()
@@ -160,6 +181,7 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
                     max_load_per_cpu: float) -> dict:
     """Capture a natural morning, retaining private evidence for later replay."""
     code_root = assert_disposable_code_root(code_root, PRODUCTION_ROOT)
+    _assert_disk_headroom(code_root, max_capture_bytes)
     source_sha = os.environ.get("QAMC_CAPTURE_SOURCE_SHA", "")
     if len(source_sha) != 40 or any(c not in "0123456789abcdef" for c in source_sha):
         raise LiveCaptureError("verified capture source commit is missing")
@@ -233,6 +255,7 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
             "session": "morning", "started_at_et": started_at_et,
             "run_id": result["run_id"], "model_calls": model_calls,
             "source_sha": source_sha,
+            "fill_transport": "REST polling; production websocket not exercised",
         })
         size = sum(path.stat().st_size for root in
                    (data_dir, code_root / "pre_session_data")

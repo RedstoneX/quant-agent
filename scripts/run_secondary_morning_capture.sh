@@ -60,14 +60,17 @@ UNIT_SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
     --scratch-dir "$SCRATCH"
 
 # 1200s is the normal desk wrapper's own session ceiling. The 30s TERM grace
-# permits its safety finally-blocks to unwind. Resource limits protect the
-# 6-CPU/12-GiB VPS while leaving the owner API responsive.
+# permits its safety finally-blocks to unwind. Memory/CPU limits protect the
+# 6-CPU/12-GiB VPS while leaving the owner API responsive. LimitFSIZE is per
+# file, not an aggregate scratch quota; Python separately requires disk
+# headroom and checks final aggregate size without claiming a hard disk cap.
 "${QAMC_RUN[@]}" systemd-run --user --wait --collect --pipe \
     "--unit=qamc-secondary-capture-${UNIT_SUFFIX}" \
     "--property=WorkingDirectory=${SCRATCH}" \
     "--property=MemoryHigh=4G" \
     "--property=MemoryMax=6G" \
     "--property=CPUQuota=300%" \
+    "--property=LimitFSIZE=536870912" \
     "--property=LoadCredential=alpaca_api_key:${REHEARSAL_KEYS}/alpaca_api_key" \
     "--property=LoadCredential=alpaca_secret_key:${REHEARSAL_KEYS}/alpaca_secret_key" \
     "--property=LoadCredential=primary_account_number:${SCRATCH}/primary_account_number" \
