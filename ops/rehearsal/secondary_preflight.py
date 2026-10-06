@@ -11,7 +11,11 @@ from __future__ import annotations
 import os
 import pwd
 import subprocess
+import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -45,6 +49,43 @@ class CapturePreflight:
     max_capture_bytes: int
     expected_position_count: int = 0
     expected_open_order_count: int = 0
+
+
+@contextmanager
+def hold_capture_session_lock(lock: Path):
+    """Use the desk's existing cross-session lock for the whole capture.
+
+    The normal morning wrapper recognises the same owner-file shape.  Never
+    remove a lock whose ownership changed while this process was running.
+    The separate intra-check lane remains exempt from this lock, so the
+    capture launcher must also require its timer disabled.
+    """
+    lock = Path(lock)
+    if not lock.parent.is_dir():
+        raise SecondaryPreflightError("production session-lock parent is unavailable")
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError:
+        raise SecondaryPreflightError("a production trading session lock exists") from None
+    owner = lock / "owner"
+    token = (
+        f"secondary_capture {datetime.now(timezone.utc).date().isoformat()} "
+        f"{int(time.time())} {os.getpid()} {uuid.uuid4().hex}\n"
+    )
+    try:
+        owner.write_text(token)
+        try:
+            yield
+        finally:
+            if owner.read_text() != token:
+                raise SecondaryPreflightError("capture session lock changed owner")
+            owner.unlink()
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            # Leave a foreign/nonempty lock intact; never delete another run.
+            pass
 
 
 def _under(path: Path, parent: Path) -> bool:
@@ -94,10 +135,16 @@ def _memory_and_load() -> tuple[int, float]:
 def _running_trading_units() -> bool:
     """Inspect current qamc user services; inability to inspect is a refusal."""
     uid = pwd.getpwnam("qamc").pw_uid
+    command = ["systemctl", "--user", "list-units", "--type=service",
+               "--state=running", "--no-legend", "--no-pager",
+               "quant-agent-*.service"]
+    if os.geteuid() == uid:
+        command = ["env", f"XDG_RUNTIME_DIR=/run/user/{uid}", *command]
+    else:
+        command = ["sudo", "-n", "-u", "qamc", "env",
+                   f"XDG_RUNTIME_DIR=/run/user/{uid}", *command]
     result = subprocess.run(
-        ["sudo", "-n", "-u", "qamc", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}",
-         "systemctl", "--user", "list-units", "--type=service", "--state=running",
-         "--no-legend", "--no-pager", "quant-agent-*.service"],
+        command,
         capture_output=True, text=True, timeout=10, check=False,
     )
     if result.returncode:
@@ -131,6 +178,28 @@ def _secondary_credentials(env: dict[str, str]) -> tuple[str, str, str]:
            for value in (key, secret, account_number)):
         raise SecondaryPreflightError("rehearsal credentials are missing or placeholders")
     return key, secret, account_number
+
+
+def load_primary_account_assertion(env: dict[str, str] | None = None) -> str:
+    """Read only the primary account *number* delivered to the capture unit.
+
+    The capture process never receives primary API credentials or contacts the
+    primary broker account.  This independent assertion is used solely to
+    refuse a secondary key that resolves to the primary account.
+    """
+    environment = dict(os.environ if env is None else env)
+    if session_identity(environment) != "rehearsal":
+        raise SecondaryPreflightError("capture session identity is not rehearsal")
+    raw = environment.get(credentials_directory_var("rehearsal"), "").strip()
+    if not raw or raw != environment.get("CREDENTIALS_DIRECTORY", "").strip():
+        raise SecondaryPreflightError("rehearsal systemd credential directory was not delivered")
+    try:
+        value = (Path(raw) / "primary_account_number").read_text().strip()
+    except OSError:
+        raise SecondaryPreflightError("primary account identity assertion is unavailable") from None
+    if not value or looks_like_placeholder(value):
+        raise SecondaryPreflightError("primary account identity assertion is invalid")
+    return value
 
 
 def check_secondary_capture(

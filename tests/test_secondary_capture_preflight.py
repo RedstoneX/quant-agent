@@ -9,6 +9,7 @@ from alpaca.common.enums import BaseURL
 
 from ops.rehearsal.secondary_preflight import (
     CapturePreflight, SecondaryPreflightError, check_secondary_capture,
+    hold_capture_session_lock, load_primary_account_assertion,
 )
 
 
@@ -206,3 +207,48 @@ def test_broker_read_failure_is_redacted(setup):
         run(spec, env, FailingClient())
     assert "secret-key" not in str(error.value)
     assert error.value.__suppress_context__ is True
+
+
+def test_runtime_qamc_checks_its_own_units_without_sudo(monkeypatch):
+    from ops.rehearsal import secondary_preflight as module
+
+    seen = []
+    monkeypatch.setattr(module.os, "geteuid", lambda: 1234)
+    monkeypatch.setattr(module.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1234))
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **_: (
+        seen.append(command) or SimpleNamespace(returncode=0, stdout="")
+    ))
+    assert module._running_trading_units() is False
+    assert seen[0][:2] == ["env", "XDG_RUNTIME_DIR=/run/user/1234"]
+    assert "sudo" not in seen[0]
+
+
+def test_primary_identity_assertion_requires_separate_systemd_file(setup):
+    _, env = setup
+    with pytest.raises(SecondaryPreflightError, match="primary account identity"):
+        load_primary_account_assertion(env)
+    directory = Path(env["CREDENTIALS_DIRECTORY_REHEARSAL"])
+    (directory / "primary_account_number").write_text("primary-test")
+    assert load_primary_account_assertion(env) == "primary-test"
+    env["CREDENTIALS_DIRECTORY"] = "/another/directory"
+    with pytest.raises(SecondaryPreflightError, match="systemd credential directory"):
+        load_primary_account_assertion(env)
+
+
+def test_capture_lease_uses_existing_lock_and_releases_its_own_owner(tmp_path):
+    lock = tmp_path / "active-session.lock"
+    with hold_capture_session_lock(lock):
+        assert lock.is_dir()
+        assert (lock / "owner").read_text().startswith("secondary_capture ")
+        with pytest.raises(SecondaryPreflightError, match="lock exists"):
+            with hold_capture_session_lock(lock):
+                pass
+    assert not lock.exists()
+
+
+def test_capture_lease_never_removes_a_changed_owner(tmp_path):
+    lock = tmp_path / "active-session.lock"
+    with pytest.raises(SecondaryPreflightError, match="changed owner"):
+        with hold_capture_session_lock(lock):
+            (lock / "owner").write_text("another process\n")
+    assert (lock / "owner").read_text() == "another process\n"
