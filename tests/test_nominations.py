@@ -465,7 +465,7 @@ def test_news_nomination_for_unanalyzed_symbol_triggers_responder_call_and_reach
         Nomination(symbol="XYZ", conviction="high", observation="genuine catalyst: $2B contract"),
     ])
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(news, None),
@@ -499,7 +499,7 @@ def test_no_nominations_means_no_second_technical_call():
         AgentResult(raw_text="{}", tokens_used=10, model="test", user_message="x", cost_usd=0.01),
     )
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(_news_report(), None),
@@ -537,7 +537,7 @@ def test_zero_nominations_full_run_produces_byte_identical_pm_inputs():
         AgentResult(raw_text="{}", tokens_used=10, model="test", user_message="x", cost_usd=0.02),
     )
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(_news_report(), None),
@@ -585,7 +585,7 @@ def test_nominated_out_of_universe_symbol_is_gated_before_responder_call(monkeyp
         Nomination(symbol="VST", conviction="high", observation="cluster insider buying + earnings beat"),
     ])
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(news, None),
@@ -614,7 +614,7 @@ def test_nominated_out_of_universe_symbol_rejected_by_gate_never_reaches_respond
         Nomination(symbol="JUNK", conviction="high", observation="thin, illiquid microcap chatter"),
     ])
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(news, None),
@@ -652,7 +652,7 @@ def test_earnings_nomination_aggregated_across_seat_and_reaches_responder():
     ])
     earnings_results = ([], [{"symbol": "AAPL", "analysis": earnings_analysis.model_dump()}])
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             earnings_result=earnings_results,
@@ -687,7 +687,7 @@ def test_symbol_already_analyzed_by_primary_batch_gets_no_responder_call():
         Nomination(symbol="SPY", conviction="medium", observation="index-wide catalyst"),
     ])
 
-    with patch("src.pipeline_stages.compute_indicators", return_value=MagicMock()):
+    with patch("src.stage_morning_research.compute_indicators", return_value=MagicMock()):
         stage = _build_stage(
             config=config, market=market, tech_analyst=tech_analyst,
             news_intel_result=(news, None),

@@ -223,7 +223,7 @@ def mock_config():
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_morning_run_buy(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
@@ -360,7 +360,7 @@ def test_pipeline_morning_run_buy(
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_morning_run_persists_specialist_evidence(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
@@ -545,7 +545,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_market_order_sizes_from_live_market_price(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
@@ -676,7 +676,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_risk_rejected(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
@@ -2447,7 +2447,7 @@ def test_pipeline_evening_skips_non_trading_day():
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,

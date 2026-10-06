@@ -166,7 +166,7 @@ def _mock_config():
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
@@ -308,7 +308,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
 @patch("src.pipeline.RiskManagerAgent")
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
