@@ -40,3 +40,16 @@ def ensure_not_null(conn: sqlite3.Connection) -> None:
         END
         """
     )
+    # The previous initializer backfilled NULL to [] before rebuilding the
+    # table. If that code runs again after a rollback, stop initialization
+    # rather than let it erase the missing-payload evidence.
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS realised_sector_weights_preserve_unknown
+        BEFORE UPDATE OF weights_json ON realised_sector_weights
+        WHEN OLD.weights_json IS NULL
+        BEGIN
+            SELECT RAISE(ABORT, 'historical weights_json is unknown');
+        END
+        """
+    )

@@ -185,6 +185,17 @@ def test_legacy_null_rows_remain_unknown_and_future_nulls_are_refused(tmp_path):
             "UPDATE realised_sector_weights SET weights_json = NULL "
             "WHERE run_id = 'legacy-reductions'"
         )
+    # This is the exact UPDATE the old initializer ran before its table
+    # rebuild. Rolling back must fail closed instead of rewriting history.
+    with pytest.raises(sqlite3.IntegrityError):
+        d.conn.execute(
+            "UPDATE realised_sector_weights SET weights_json = '[]' "
+            "WHERE weights_json IS NULL"
+        )
+    assert d.conn.execute(
+        "SELECT weights_json FROM realised_sector_weights "
+        "WHERE run_id = 'legacy-reductions'"
+    ).fetchone()[0] is None
     assert d.record_realised_sector_weights(
         decisions=[_decision("SELL", "AAA", 2.5)],
         sectors={"AAA": "Energy"}, total_value=10_000,
