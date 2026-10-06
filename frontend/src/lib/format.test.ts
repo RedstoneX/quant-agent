@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { etDateKey } from "./format";
+import { etDateKey, fmtClock } from "./format";
+
+describe("fmtClock", () => {
+  const instant = new Date("2026-10-04T17:05:06Z");
+
+  it("keeps the date, Eastern time and seconds for a live-quote stamp", () => {
+    expect(fmtClock(instant, {
+      locale: "en-US",
+      timeZone: "America/New_York",
+      includeSeconds: true,
+      noLeadingZero: true,
+    })).toBe("Oct 4, 1:05:06 PM");
+  });
+
+  it("keeps the date and no-leading-zero clock for an intraday-bar stamp", () => {
+    expect(fmtClock(instant, {
+      locale: "en-US",
+      timeZone: "America/New_York",
+      noLeadingZero: true,
+    })).toBe("Oct 4, 1:05 PM");
+  });
+});
 
 describe("etDateKey", () => {
   it("converts a UTC evening timestamp to the same ET calendar day", () => {

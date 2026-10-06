@@ -16,6 +16,10 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight", "market_session")
 _CLOCK = re.compile(r"%-?[HIl]|%[pP]|%T|%R|%X|%c")
 _DATE = re.compile(r"%-?[dejmy]|%[YyBbAaDFxc]")
+_BROWSER_CLOCK_CALLS = ("formatEasternTime(", "Intl.DateTimeFormat(", ".toLocaleString(")
+_BROWSER_CLOCK = re.compile(r"\bhour\s*:")
+_BROWSER_DATE = re.compile(r"\b(?:year|month|day)\s*:")
+_AXIS_CLOCK_EXEMPTION = "owner-clock-axis-coordinate"
 
 
 def _bare_clock(fmt: str) -> bool:
@@ -29,6 +33,62 @@ def _py_files(name):
     files = sorted(pkg_dir.rglob("*.py")) if pkg_dir.is_dir() else [one_file]
     assert files and all(f.exists() for f in files), f"owner-facing {name} not found"
     return files
+
+
+def _balanced_call(source: str, start: int) -> str:
+    """Return one JS/TS call, including nested calls and quoted strings."""
+    opening = source.find("(", start)
+    assert opening >= 0
+    depth = 0
+    quote = None
+    escaped = False
+    for pos in range(opening, len(source)):
+        char = source[pos]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ("'", '"', "`"):
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return source[start:pos + 1]
+    return source[start:]
+
+
+def _browser_bare_clock_offenders(source: str, label: str) -> list[str]:
+    """Find browser clock calls whose literal options carry no date.
+
+    Chart-axis coordinates are the one explicit exception: repeating the date
+    on every intraday tick makes the axis unreadable. Prose labels never get
+    that exemption.
+    """
+    offenders = []
+    for marker in _BROWSER_CLOCK_CALLS:
+        offset = 0
+        while (start := source.find(marker, offset)) >= 0:
+            call = _balanced_call(source, start)
+            line_no = source.count("\n", 0, start) + 1
+            lines = source.splitlines()
+            context = "\n".join(lines[max(0, line_no - 2):line_no])
+            if (
+                _BROWSER_CLOCK.search(call)
+                and not _BROWSER_DATE.search(call)
+                and _AXIS_CLOCK_EXEMPTION not in context
+            ):
+                offenders.append(f"{label}:{line_no}")
+            offset = start + len(marker)
+    if "toLocaleTimeString" in source:
+        line_no = source.count("\n", 0, source.index("toLocaleTimeString")) + 1
+        offenders.append(f"{label}:{line_no}")
+    return offenders
 
 
 def test_shared_formatter_emits_date_then_time():
@@ -89,10 +149,23 @@ def test_session_edges_carry_the_date():
 
 def test_dashboard_never_renders_a_bare_clock_time():
     root = SRC.parent / "frontend" / "src"
-    offenders = [
-        str(p.relative_to(root))
-        for p in sorted(root.rglob("*.ts*"))
-        if ".test." not in p.name and "toLocaleTimeString" in p.read_text()
-    ]
-    legacy = (SRC / "api" / "static" / "app.js").read_text()
-    assert offenders == [] and "toLocaleTimeString" not in legacy, offenders
+    offenders = []
+    for path in sorted(root.rglob("*.ts*")):
+        if ".test." not in path.name:
+            offenders.extend(_browser_bare_clock_offenders(
+                path.read_text(), str(path.relative_to(root)),
+            ))
+    legacy_path = SRC / "api" / "static" / "app.js"
+    offenders.extend(_browser_bare_clock_offenders(
+        legacy_path.read_text(), str(legacy_path.relative_to(SRC.parent)),
+    ))
+    assert offenders == [], offenders
+
+
+def test_dashboard_guard_detects_hour_only_intl_formatting_in_prose():
+    direct = "new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })"
+    wrapped = "`as of ${formatEasternTime(now, { hour: 'numeric', minute: '2-digit' })}`"
+    dated = "formatEasternTime(now, { month: 'short', day: 'numeric', hour: 'numeric' })"
+    assert _browser_bare_clock_offenders(direct, "direct.ts") == ["direct.ts:1"]
+    assert _browser_bare_clock_offenders(wrapped, "wrapped.ts") == ["wrapped.ts:1"]
+    assert _browser_bare_clock_offenders(dated, "dated.ts") == []

@@ -18,7 +18,7 @@ import {
   PositionItem, PriceBar, TradeItem,
 } from "../api/client";
 import { Panel } from "./ui/Panel";
-import { isExecutedTrade, etDateKey, fmtMoney, fmtNum } from "../lib/format";
+import { isExecutedTrade, etDateKey, fmtClock, fmtMoney, fmtNum } from "../lib/format";
 import { usePoll } from "../lib/usePoll";
 import {
   findPositionStop, positionTakeProfitLine, positionThesisBreakLine,
@@ -105,9 +105,11 @@ function easternTickMarkFormatter(time: Time, tickMarkType: TickMarkType): strin
     case TickMarkType.DayOfMonth:
       return formatEasternTime(time, { month: "short", day: "numeric" });
     case TickMarkType.TimeWithSeconds:
+      // owner-clock-axis-coordinate — a date on every axis tick is unreadable.
       return formatEasternTime(time, { hour: "numeric", minute: "2-digit", second: "2-digit" });
     case TickMarkType.Time:
     default:
+      // owner-clock-axis-coordinate — a date on every axis tick is unreadable.
       return formatEasternTime(time, { hour: "numeric", minute: "2-digit" });
   }
 }
@@ -1356,9 +1358,11 @@ export function PriceChartPanel({
   );
   const hasFormingCandle = timeframe === "1d" && chartCandles([], quote).length === 1;
   const intradayThrough = timeframe !== "1d" && lastBarTime
-    ? formatEasternTime(
+    ? fmtClock(
         new Date(lastBarTime.endsWith("Z") || lastBarTime.includes("+") ? lastBarTime : `${lastBarTime}Z`),
-        { hour: "2-digit", minute: "2-digit" }
+        {
+          locale: "en-US", timeZone: "America/New_York", noLeadingZero: true,
+        }
       )
     : null;
   // Bottom range-slider geometry — the full loaded series (0..bars.length)
@@ -1395,7 +1399,10 @@ export function PriceChartPanel({
     ? undefined
     : quote?.resolved_price != null
     ? `${quoteError ? "Last live" : "Live"} ${fmtMoney(quote.resolved_price)}${
-        quoteAsOf ? ` · as of ${formatEasternTime(quoteAsOf, { hour: "numeric", minute: "2-digit", second: "2-digit" })}` : ""
+        quoteAsOf ? ` · as of ${fmtClock(quoteAsOf, {
+          locale: "en-US", timeZone: "America/New_York", includeSeconds: true,
+          noLeadingZero: true,
+        })}` : ""
       }${quoteError ? ` · stale (refresh failed: ${quoteError})` : ""}${
         hasFormingCandle ? " · today’s forming candle" : " · live price line"
       }${barsRunBehindToday ? ` · completed history through ${lastBarTime}` : ""}${

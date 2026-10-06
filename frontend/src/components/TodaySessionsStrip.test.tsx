@@ -120,12 +120,9 @@ describe("TodaySessionsStrip selected-session executions", () => {
     );
 
     // 2 sessions, 1 of them no-trade (midday's no_proposal), 1 real fill
-    // (MRVL) recorded across the day. The clock portion is left as a
-    // wildcard: it follows the runner's locale/timezone, same as every
-    // other toLocaleTimeString call in this codebase (lib/format.ts's
-    // fmtTime, the chart's quoteAsOf display) — pinning an exact "17:00"
-    // vs "05:00 PM" string here would make this test environment-specific
-    // for no reason relevant to what it verifies.
+    // (MRVL) recorded across the day. The complete date-and-time stamp is a
+    // wildcard because its spelling follows the runner's locale/timezone;
+    // this assertion is about the session/fill counts around it.
     expect(screen.getByText(/^2 sessions · last .+ · 1 no-trade · 1 fill$/)).toBeTruthy();
   });
 });

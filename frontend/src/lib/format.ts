@@ -28,12 +28,21 @@ export function fmtNum(v: number | null | undefined, digits = 2): string {
 // The ONE clock stamp for any "as of / updated / last" label: date AND time,
 // so a reader cannot mistake this morning for three days ago. Never call
 // the browser time-only formatter (tests/test_owner_timestamps_carry_date.py).
-export function fmtClock(d: Date): string {
-  return d.toLocaleString(undefined, {
+export type ClockFormatOptions = {
+  locale?: string;
+  timeZone?: string;
+  includeSeconds?: boolean;
+  noLeadingZero?: boolean;
+};
+
+export function fmtClock(d: Date, options: ClockFormatOptions = {}): string {
+  return d.toLocaleString(options.locale, {
     month: "short",
     day: "numeric",
-    hour: "2-digit",
+    hour: options.noLeadingZero ? "numeric" : "2-digit",
     minute: "2-digit",
+    ...(options.includeSeconds ? { second: "2-digit" as const } : {}),
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   });
 }
 
