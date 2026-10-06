@@ -29,6 +29,28 @@ def test_scheduler_runs_on_trading_day(mock_pipeline_cls):
     pipeline.run_morning.assert_called_once()
 
 
+@patch("src.scheduler.format_session_result", return_value="FAILED morning")
+@patch("src.scheduler.TradingPipeline")
+def test_scheduler_calendar_failure_is_loud_and_runs_no_session(
+    mock_pipeline_cls, mock_fmt,
+):
+    pipeline = MagicMock()
+    failure = RuntimeError("calendar 503")
+    pipeline.broker.is_trading_day.side_effect = failure
+    mock_pipeline_cls.return_value = pipeline
+
+    scheduler = TradingScheduler(MagicMock())
+    scheduler.notifier = MagicMock()
+    scheduler._run_safe(pipeline.run_morning, "morning")
+
+    pipeline.run_morning.assert_not_called()
+    assert mock_fmt.call_args.kwargs["error"] is failure
+    scheduler.notifier.send.assert_called_with(
+        "FAILED morning", symbols=[], preserve_structural_markup=True,
+        category="operational",
+    )
+
+
 @patch("src.scheduler.TradingPipeline")
 def test_scheduler_wires_mission_control_url_from_config(mock_pipeline_cls):
     """--mode live must get the same tap-through link as the one-shot

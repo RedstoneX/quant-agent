@@ -927,11 +927,11 @@ class TradingPipeline(
         ).run(symbols)
 
     def _is_trading_day(self) -> bool:
-        try:
-            return self.broker.is_trading_day()
-        except Exception as exc:
-            logger.warning("Trading-day check failed; assuming market closed: %s", exc)
-            return False
+        # False is reserved for a successful exchange-calendar answer saying
+        # there is no session. Broker/provider faults propagate so the session
+        # fails visibly and can be retried; they must not masquerade as a
+        # terminal market_holiday completion.
+        return self.broker.is_trading_day()
 
 
     # Realized-exit actions whose post-exit trajectory is worth auditing.

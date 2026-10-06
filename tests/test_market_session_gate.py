@@ -15,9 +15,10 @@ sources are unreadable, where it is logged and the reason names the cause.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src import coverage_watchdog
+from src.execution.broker import AlpacaBroker
 from src.trading_calendar import ET
 
 _FRI_1005 = datetime(2026, 9, 11, 10, 5, tzinfo=ET).astimezone(timezone.utc)
@@ -37,6 +38,39 @@ def test_session_gate_falls_back_to_the_clock_when_the_calendar_cannot_be_read()
     broker.is_trading_day.side_effect = RuntimeError("calendar down")
     open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
     assert open_now is True and "calendar down" in reason
+
+
+@patch("src.execution.broker.TradingClient")
+def test_real_broker_calendar_failure_reaches_protective_fallback(mock_tc_cls):
+    """Exercise the real AlpacaBroker -> AccountReads boundary, not a mock that
+    raises above the broker's calendar error handling.
+
+    The fallback is intentionally confined to this protective-stop gate; public
+    trading sessions use ``TradingPipeline._is_trading_day`` and propagate.
+    """
+    client = MagicMock()
+    client.get_calendar.side_effect = RuntimeError("calendar down")
+    mock_tc_cls.return_value = client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
+
+    assert open_now is True
+    assert "calendar down" in reason
+
+
+@patch("src.execution.broker.TradingClient")
+def test_real_broker_successful_empty_calendar_stays_shut(mock_tc_cls):
+    client = MagicMock()
+    client.get_calendar.return_value = []
+    mock_tc_cls.return_value = client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
+
+    assert open_now is False
+    assert "not a trading day" in reason
+    client.get_calendar.assert_called_once()
 
 
 def test_session_gate_falls_back_to_the_clock_when_an_edge_is_missing():

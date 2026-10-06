@@ -231,8 +231,8 @@ def test_a_market_holiday_is_skipped_via_the_broker_calendar(db, state_path):
 
 
 def test_a_dead_calendar_falls_back_to_the_weekday_and_still_alerts(db, state_path):
-    """`is_trading_day` answers False on a calendar failure. That must not
-    walk past every real day and suppress the alert."""
+    """A pathological all-False calendar must not walk past every real day
+    and suppress the alert; provider exceptions now propagate distinctly."""
     status = coverage_watchdog.check_coverage(
         _orcl_broker(trading_days=False), now=_SAT_0615, sweep_symbol="SGOV",
         db_path=db, state_path=state_path,
