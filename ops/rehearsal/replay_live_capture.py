@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ops.rehearsal.isolation import Sandbox
+from ops.rehearsal.durable_outcomes import (
+    DurableOutcomeMismatch, compare_durable_outcomes,
+)
 from ops.rehearsal.model_response_capture import import_model_responses
 from ops.rehearsal.runner import run_rehearsal
 
@@ -97,6 +100,13 @@ def replay_private_capture(capture_root: Path, *, production_db: Path | None = N
             sudo_user="qamc" if production_db is not None else None,
         )
         _assert_capture_reproduced(report, original, replayed_result, meta["run_id"])
+        try:
+            compare_durable_outcomes(
+                before, data / "quant_agent.db", sandbox.db_path,
+                captured_run=meta["run_id"], replay_run=report.run_id,
+            )
+        except DurableOutcomeMismatch as exc:
+            raise CapturedReplayError(f"durable outcome differs: {exc}") from exc
         return {"status": report.status, "model_calls": count,
                 "network_attempts": len(report.network_attempts),
                 "broker_calls": len(broker.get("entries", [])),
