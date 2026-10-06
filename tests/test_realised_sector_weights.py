@@ -95,9 +95,8 @@ def test_unknown_sector_is_null_never_other(db):
 def test_a_run_that_built_nothing_records_that_fact_not_zero_concentration(db):
     """Nothing built writes `[]`, NEVER NULL.
 
-    A NULL here could not be told apart from "the recorder failed to write
-    its content", so a count-based check reported "populating" over a
-    contentless row. `[]` plainly means no entry orders, and
+    A new NULL could not be told apart from "the recorder failed to write
+    its content". `[]` plainly means no orders of either kind, and
     `entry_orders_built` 0 on the same row still separates that from a
     book with zero concentration.
     """
@@ -138,8 +137,8 @@ def test_the_schema_itself_refuses_a_null_weights_row(db):
         )
 
 
-def test_legacy_null_rows_are_backfilled_on_open(tmp_path):
-    """A database written before the constraint must not keep NULL rows."""
+def test_legacy_null_rows_remain_unknown_and_future_nulls_are_refused(tmp_path):
+    """Counts cannot recover a missing sector/side/weight payload."""
     path = tmp_path / "legacy.db"
     conn = sqlite3.connect(str(path))
     conn.execute(
@@ -161,22 +160,64 @@ def test_legacy_null_rows_are_backfilled_on_open(tmp_path):
     )
     conn.execute(
         "INSERT INTO realised_sector_weights "
-        "(timestamp, run_id, weights_json, denominator, entry_orders_built) "
-        "VALUES ('2026-10-01 14:18:07', 'intra_check-1bc036f2', NULL, 'd', 0)"
+        "(timestamp, run_id, weights_json, denominator, entry_orders_built, "
+        "reducing_orders_built) "
+        "VALUES ('2026-10-01 14:18:07', 'legacy-reductions', NULL, 'd', 0, 6)"
     )
     conn.commit()
+    original = conn.execute("SELECT * FROM realised_sector_weights").fetchone()
     conn.close()
 
     d = Database(str(path))
     d.initialize()
-    rows = _row(d)
-    assert [r["weights_json"] for r in rows] == ["[]"]
+    assert tuple(d.conn.execute(
+        "SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'"
+    ).fetchone()) == original
+    assert _row(d)[0]["weights_json"] is None
     with pytest.raises(sqlite3.IntegrityError):
         d.conn.execute(
             "INSERT INTO realised_sector_weights "
             "(timestamp, run_id, weights_json, denominator) "
             "VALUES ('2026-10-02 00:00:00', 'x', NULL, 'd')"
         )
+    with pytest.raises(sqlite3.IntegrityError):
+        d.conn.execute(
+            "UPDATE realised_sector_weights SET weights_json = NULL "
+            "WHERE run_id = 'legacy-reductions'"
+        )
+    # This is the exact UPDATE the old initializer ran before its table
+    # rebuild. Rolling back must fail closed instead of rewriting history.
+    with pytest.raises(sqlite3.IntegrityError):
+        d.conn.execute(
+            "UPDATE realised_sector_weights SET weights_json = '[]' "
+            "WHERE weights_json IS NULL"
+        )
+    assert d.conn.execute(
+        "SELECT weights_json FROM realised_sector_weights "
+        "WHERE run_id = 'legacy-reductions'"
+    ).fetchone()[0] is None
+    assert d.record_realised_sector_weights(
+        decisions=[_decision("SELL", "AAA", 2.5)],
+        sectors={"AAA": "Energy"}, total_value=10_000,
+        run_id="new-reduction",
+    )
+    new_row = d.conn.execute(
+        "SELECT weights_json, reducing_orders_built "
+        "FROM realised_sector_weights WHERE run_id = 'new-reduction'"
+    ).fetchone()
+    assert new_row[1] == 1
+    assert json.loads(new_row[0]) == [
+        {"sector": "Energy", "side": "long", "kind": "reduce",
+         "weight_pct": 2.5, "orders": 1},
+    ]
+    d.conn.close()
+
+    reopened = Database(str(path))
+    reopened.initialize()
+    assert tuple(reopened.conn.execute(
+        "SELECT * FROM realised_sector_weights WHERE run_id = 'legacy-reductions'"
+    ).fetchone()) == original
+    assert reopened.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 def test_one_row_per_run(db):
