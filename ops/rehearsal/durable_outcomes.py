@@ -107,6 +107,15 @@ class _IdentityMap:
             self.pm_decisions.add(left)
 
     def compare(self, left, right, *, field: str, table: str, kind: str = ""):
+        if field == "id":
+            self._pair(f"row:{table}", left, right)
+            return
+        if field == "trade_row_id":
+            self._pair("row:trades", left, right)
+            return
+        if field == "row_id" and table == "protection_restore_wal_audit":
+            self._pair("row:pending_protection_restores", left, right)
+            return
         if field == "run_id":
             if left == self.runs[0] and right == self.runs[1]:
                 return
@@ -148,16 +157,60 @@ class _IdentityMap:
             raise DurableOutcomeMismatch(f"{table}.{field} differs")
 
 
+def _semantic_shape(value, *, field: str, run_id: str, inserted: bool):
+    """Index new rows by meaning, never by concurrent insertion order."""
+    if field in _CLOCK_COLUMNS:
+        return "<clock>"
+    if field == "id" and inserted:
+        return "<row-id>"
+    if field in _JSON_COLUMNS and isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    if field == "run_id" and value == run_id:
+        return "<run-id>"
+    if field in {"decision_id", "position_id", "trade_row_id", "row_id"} \
+            or field in _BROKER_ID_FIELDS:
+        return None if value is None else "<generated-id>"
+    if isinstance(value, str):
+        return value.replace(run_id, "<run-id>")
+    if isinstance(value, dict):
+        return {key: _semantic_shape(item, field=key, run_id=run_id,
+                                     inserted=inserted)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_semantic_shape(item, field=field, run_id=run_id,
+                                inserted=inserted) for item in value]
+    return value
+
+
+def _indexed_rows(rows: list[dict], *, section: str, run_id: str) -> list[tuple[str, dict]]:
+    indexed = []
+    for row in rows:
+        shape = {key: _semantic_shape(value, field=key, run_id=run_id,
+                                      inserted=section == "inserted")
+                 for key, value in row.items()}
+        signature = json.dumps(shape, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False)
+        indexed.append((signature, row))
+    return sorted(indexed, key=lambda item: item[0])
+
+
 def _compare_rows(table: str, section: str, captured: list[dict],
                   replayed: list[dict], identities: _IdentityMap):
     if len(captured) != len(replayed):
         raise DurableOutcomeMismatch(f"{table} {section} row count differs")
-    for left, right in zip(captured, replayed):
+    left_rows = _indexed_rows(captured, section=section, run_id=identities.runs[0])
+    right_rows = _indexed_rows(replayed, section=section, run_id=identities.runs[1])
+    if [signature for signature, _ in left_rows] != [signature for signature, _ in right_rows]:
+        raise DurableOutcomeMismatch(f"{table} {section} semantic rows differ")
+    for (_signature, left), (_, right) in zip(left_rows, right_rows):
         if left.keys() != right.keys():
             raise DurableOutcomeMismatch(f"{table} {section} schema differs")
         kind = left.get("kind", "")
         for field in left:
-            if field == "id" or field in _CLOCK_COLUMNS:
+            if field in _CLOCK_COLUMNS:
                 continue
             a, b = left[field], right[field]
             if field in _JSON_COLUMNS:

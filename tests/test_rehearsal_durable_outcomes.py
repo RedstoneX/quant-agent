@@ -110,6 +110,15 @@ def test_exact_durable_outcomes_allow_only_consistent_generated_ids(tmp_path):
     _compare(_fixture(tmp_path))
 
 
+def test_parallel_evidence_insert_order_does_not_change_verdict(tmp_path):
+    paths = _fixture(tmp_path)
+    with sqlite3.connect(paths[2]) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM specialist_evidence").fetchone()[0]
+        conn.execute("UPDATE specialist_evidence SET id=-id")
+        conn.execute("UPDATE specialist_evidence SET id=?+id", (count + 1,))
+    _compare(paths)
+
+
 @pytest.mark.parametrize("target,where", [
     ("specialist_evidence", "kind='reasoning'"),
     ("trade_refusals", "refusal='losing_geometry'"),
@@ -127,13 +136,13 @@ def test_changed_existing_trade_or_null_reason_is_red(tmp_path):
     paths = _fixture(tmp_path)
     with sqlite3.connect(paths[2]) as conn:
         conn.execute("UPDATE trades SET stop_loss=91 WHERE run_id='run-prior'")
-    with pytest.raises(DurableOutcomeMismatch, match="stop_loss"):
+    with pytest.raises(DurableOutcomeMismatch, match="trades changed semantic rows"):
         _compare(paths)
 
     with sqlite3.connect(paths[2]) as conn:
         conn.execute("UPDATE trades SET stop_loss=92 WHERE run_id='run-prior'")
         conn.execute("UPDATE order_attempts SET reason=NULL WHERE reason='broker accepted'")
-    with pytest.raises(DurableOutcomeMismatch, match="reason"):
+    with pytest.raises(DurableOutcomeMismatch, match="order_attempts inserted semantic rows"):
         _compare(paths)
 
 
@@ -156,7 +165,7 @@ def test_exit_reason_and_cancel_attempt_are_not_summarized_away(tmp_path):
     with sqlite3.connect(paths[2]) as conn:
         conn.execute("UPDATE trades SET reasoning='different exit' "
                      "WHERE run_id=? AND action='SELL'", (REPLAY,))
-    with pytest.raises(DurableOutcomeMismatch, match="reasoning"):
+    with pytest.raises(DurableOutcomeMismatch, match="trades inserted semantic rows"):
         _compare(paths)
     with sqlite3.connect(paths[2]) as conn:
         conn.execute("UPDATE trades SET reasoning='named trigger' "
