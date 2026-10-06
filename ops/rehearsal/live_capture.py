@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -23,6 +25,7 @@ from ops.rehearsal.direct_credentials import (
     bind_systemd_directory_to_rehearsal_identity,
     load_rehearsal_credentials,
 )
+from ops.rehearsal.model_response_capture import export_model_responses
 from ops.rehearsal.public_bundle import assert_public_safe
 from ops.rehearsal.session_inputs import session_inputs
 from ops.rehearsal.secondary_preflight import (
@@ -124,6 +127,24 @@ def _snapshot_before_session(database: Path, destination: Path) -> None:
     os.chmod(destination, 0o600)
 
 
+def _snapshot_input_files(data_dir: Path, destination: Path,
+                          max_bytes: int) -> None:
+    """Retain the session's pre-run disk caches without copying its database."""
+    total = 0
+    for entry in data_dir.rglob("*"):
+        if entry.is_symlink():
+            raise LiveCaptureError("pre-session data contains a symlink")
+        if entry.is_file() and entry.name not in {"before.db"} and \
+                not entry.name.startswith("quant_agent.db"):
+            total += entry.stat().st_size
+            if total > max_bytes:
+                raise LiveCaptureError("pre-session cache exceeds capture bound")
+    shutil.copytree(
+        data_dir, destination,
+        ignore=shutil.ignore_patterns("before.db", "quant_agent.db*"),
+    )
+
+
 @contextmanager
 def _scratch_cwd(code_root: Path):
     previous = Path.cwd()
@@ -139,6 +160,9 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
                     max_load_per_cpu: float) -> dict:
     """Capture a natural morning, retaining private evidence for later replay."""
     code_root = assert_disposable_code_root(code_root, PRODUCTION_ROOT)
+    source_sha = os.environ.get("QAMC_CAPTURE_SOURCE_SHA", "")
+    if len(source_sha) != 40 or any(c not in "0123456789abcdef" for c in source_sha):
+        raise LiveCaptureError("verified capture source commit is missing")
     if os.environ.get("QAMC_REHEARSAL") != "1":
         raise LiveCaptureError("rehearsal alert suppression is not enabled")
     bind_systemd_directory_to_rehearsal_identity()
@@ -176,6 +200,7 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
             raise LiveCaptureError("pipeline broker pair differs from preflight")
         from ops.rehearsal.runner import _rehearsal_notifier
         from src.pipeline import TradingPipeline
+        from src.trading_calendar import ET
 
         with _rehearsal_notifier():
             pipeline = TradingPipeline(config)
@@ -183,22 +208,39 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
                 raise LiveCaptureError("pipeline database escaped scratch")
             cassette = install_recording_broker_cassette(pipeline.broker)
             _snapshot_before_session(database, data_dir / "before.db")
+            _snapshot_input_files(data_dir, code_root / "pre_session_data",
+                                  max_capture_bytes)
             with session_inputs(pipeline, max_bytes=max_capture_bytes) as inputs:
+                started_at_et = datetime.now(ET).isoformat()
                 result = pipeline.run_morning()
+            pipeline.db.close()
+        if not isinstance(result, dict) or not result.get("run_id"):
+            raise LiveCaptureError("morning run did not report a replayable run id")
+        model_calls = export_model_responses(
+            data_dir / "before.db", database, result["run_id"],
+            data_dir / "model_responses.private.json",
+        )
         payload = cassette.to_payload()
         assert_public_safe(
             payload,
             secrets=(delivered.api_key, delivered.secret_key),
-            account_ids=(delivered.expected_account_number,
-                         primary_account_number),
+            account_ids=(primary_account_number,),
         )
         _write_private_json(data_dir / "broker.json", payload)
         _write_private_json(data_dir / "providers.json", inputs.payload())
         _write_private_json(data_dir / "result.json", result)
-        size = sum(path.stat().st_size for path in data_dir.rglob("*") if path.is_file())
+        _write_private_json(data_dir / "capture_meta.private.json", {
+            "session": "morning", "started_at_et": started_at_et,
+            "run_id": result["run_id"], "model_calls": model_calls,
+            "source_sha": source_sha,
+        })
+        size = sum(path.stat().st_size for root in
+                   (data_dir, code_root / "pre_session_data")
+                   for path in root.rglob("*") if path.is_file())
         if size > max_capture_bytes:
             raise LiveCaptureError("capture exceeded its declared byte bound")
-        return {"broker_calls": len(payload["entries"]), "bytes": size,
+        return {"broker_calls": len(payload["entries"]), "model_calls": model_calls,
+                "bytes": size,
                 "result_status": str(result.get("status", "unknown"))}
 
 

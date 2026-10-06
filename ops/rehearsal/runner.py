@@ -248,6 +248,7 @@ def run_rehearsal(
     market_recording=None,
     broker_cassette=None,
     session_input_payload=None,
+    model_response_db: str | Path | None = None,
     allow_degraded: bool = False,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
@@ -276,6 +277,9 @@ def run_rehearsal(
     one secondary-Paper session. It replaces the older independently sampled
     market/feed recordings for that run and is strict even if the application
     swallows a missing-input exception.
+    `model_response_db` is a separate, private response-library copy. Captured
+    model rows must not be inserted into the trading sandbox's starting state:
+    that would pre-charge this replay for the captured session's model spend.
     """
     _ensure_import_path()
 
@@ -355,7 +359,7 @@ def run_rehearsal(
         )
     elif requested.lower() == REPLAY_RUN_AUTO:
         choice = select_replay_run(
-            str(sandbox.db_path), session,
+            str(model_response_db or sandbox.db_path), session,
             not_after_utc=now_et.astimezone(timezone.utc).strftime(
                 "%Y-%m-%d %H:%M:%S"
             ),
@@ -369,7 +373,7 @@ def run_rehearsal(
     # is printed directly under the verdict, where it cannot be skimmed past.
 
     library = ResponseLibrary.from_database(
-        str(sandbox.db_path), run_id=choice.run_id,
+        str(model_response_db or sandbox.db_path), run_id=choice.run_id,
     )
     if not library.available():
         notes.append(
