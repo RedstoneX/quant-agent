@@ -35,9 +35,8 @@ def record_realised_sector_weights(
     disagree with the sizing it describes.
 
     Unknown sector stays NULL inside the JSON, never an "other" bucket.
-    `weights_json` itself is NEVER NULL (NOT NULL in the schema): a run
-    that built no entry orders writes `[]` with `entry_orders_built` 0,
-    which cannot be mistaken for a recorder that failed to write content.
+    New recordings never have a NULL `weights_json`. A run that built no
+    entry or reducing orders writes `[]`; a historical NULL remains unknown.
 
     Idempotent per run (UNIQUE on `run_id`).
     """
@@ -101,7 +100,7 @@ def record_realised_sector_weights(
     )
     for r in rows:
         r["weight_pct"] = round(r["weight_pct"], 6)
-    payload = json.dumps(rows)  # never NULL: [] means no entry orders
+    payload = json.dumps(rows)  # never NULL: [] means no orders of either kind
     try:
         with self._lock:
             self.conn.execute(

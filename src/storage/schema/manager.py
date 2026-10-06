@@ -665,9 +665,9 @@ class DatabaseSchema:
         # built only entries.
         #
         # UNKNOWN SECTOR STAYS NULL inside the JSON (never "other"), but
-        # `weights_json` ITSELF IS NEVER NULL: a run with no entry orders writes
-        # `[]` with `entry_orders_built` 0, so a contentless row cannot read as
-        # "populating". NOT NULL makes that shape unwritable.
+        # New recordings are never NULL: [] means no entry or reducing orders.
+        # Historical NULL payloads remain unknown; legacy tables use triggers
+        # to reject future NULLs without rewriting those rows.
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS realised_sector_weights (
@@ -689,7 +689,7 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
             "ON realised_sector_weights (session_date)"
         )
-        from src.storage.schema.realised_sector_weights_migration import ensure_not_null; ensure_not_null(self.conn)  # backfill + rebuild old nullable tables
+        from src.storage.schema.realised_sector_weights_migration import ensure_not_null; ensure_not_null(self.conn)
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
