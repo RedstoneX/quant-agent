@@ -2125,7 +2125,7 @@ def test_morning_smart_money_quiet_day_with_verified_coverage_stays_clean():
     ).data_status["smart_money"] == "ok"
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_compute_indicators):
     """2026-08-19 Tech batch-response symbol-loss fix, pipeline-level: when
     tech_analyst.analyze_batch comes back with some symbols unresolved
@@ -2259,7 +2259,7 @@ def _tech_stage_for_conviction_test(analyses_map):
     )
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_tech_full_batch_low_conviction_marks_low_confidence(
     mock_compute_indicators,
 ):
@@ -2299,7 +2299,7 @@ def test_morning_research_stage_tech_full_batch_low_conviction_marks_low_confide
     assert result_ctx.data_status["tech"] == "low_confidence"
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
     mock_compute_indicators,
 ):
@@ -2334,7 +2334,7 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
     assert result_ctx.data_status["tech"] == "ok"
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
     mock_compute_indicators, caplog,
 ):
@@ -2400,7 +2400,7 @@ def test_a_neutral_only_low_confidence_batch_does_not_log_research_degraded(
     ), f"tech must not be named as degraded on a neutral-only morning: {degraded_lines}"
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_an_actionable_low_confidence_batch_still_logs_research_degraded(
     mock_compute_indicators, caplog,
 ):
@@ -3030,7 +3030,7 @@ def test_morning_research_stage_news_high_confidence_full_coverage_stays_ok():
     assert result_ctx.data_status["news"] == "ok"
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_persists_specialist_evidence(mock_compute_indicators, tmp_path):
     """Stage 4: MorningResearchStage persists already-validated macro/news/
     tech evidence into `specialist_evidence` with natural scope (run for
@@ -3163,7 +3163,7 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
         db.close()
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indicators):
     from src.agents.base import AgentResult
     from src.models import (
@@ -3526,7 +3526,7 @@ def test_check_levels_coverage_never_raises_on_malformed_coverage_dict():
     assert not alert.called
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
     mock_compute_indicators,
 ):
@@ -3611,7 +3611,7 @@ def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
     assert alert.call_args.args[0].startswith("🔴 TECH DATA BLIND SPOT")
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
     mock_compute_indicators,
 ):
@@ -3697,7 +3697,7 @@ def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
     assert not alert.called
 
 
-@patch("src.pipeline_stages.compute_indicators")
+@patch("src.stage_morning_research.compute_indicators")
 def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_crashes(
     mock_compute_indicators, tmp_path,
 ):

@@ -208,7 +208,7 @@ _PATCHES = (
     patch("src.pipeline.RiskManagerAgent"),
     patch("src.pipeline.PortfolioManagerAgent"),
     patch("src.pipeline.TechAnalystAgent"),
-    patch("src.pipeline_stages.compute_indicators"),
+    patch("src.stage_morning_research.compute_indicators"),
     patch("src.data.technical.compute_indicators"),
 )
 
