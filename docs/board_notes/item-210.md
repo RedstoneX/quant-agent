@@ -1,5 +1,7 @@
 ## item 210 — the split plan was amended 2026-10-01 and now says when it runs
 
+**Update, 2026-10-06.** The earlier count of 36 pending pull requests and the quoted file sizes are obsolete. At this audit there were none pending, and the two original oversized files had shrunk to 1,756 and 805 lines. That is substantial progress, not proof that every moved boundary and test still works. The next job is to check the actual split and its tests, name only the remaining gaps, and repair those gaps without beginning another wholesale rebuild. The desk remains off.
+
 **Open.** The written plan for splitting the two oversized pipeline files was
 re-measured against the current code on 2026-10-01 and amended: its figures
 were all stale, one module boundary described a stop-moving method as if it

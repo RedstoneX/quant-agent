@@ -9,6 +9,7 @@ This file records what is accepted and true **now**. Git history preserves imple
 - **QAMC / Mission Control** is the whole product/system. **Dashboard** is the browser/iPad read-side UI.
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture.
+- **Owner operating hold, 2026-10-06:** the Paper desk is deliberately stopped and must not be restarted without explicit owner authorization. The owner rejected a second capture/replay system as a prerequisite to using the Paper desk as the beta test. Existing rehearsal code is inactive; its presence is not proof of a live session, nor a reason to delay the structural and defect audit. Verify current services and timers on the box rather than treating this dated statement as a runtime check.
 - **Owner 2026-09-17:** missing required data anywhere end-to-end is a defect in the step that should have produced it. Never invent the missing value. Never make skip/drop/ignore-and-continue the permanent product. Isolate-empty-name (item 78) is temporary quarantine, not the product.
 - Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
 - **FIXED 2026-08-27 (PR #108) — the exit path now follows this chain.**
