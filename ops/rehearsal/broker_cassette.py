@@ -180,6 +180,8 @@ class ReplayBrokerCassette:
         self._entries = copy.deepcopy(entries)
         self._cursor = 0
         self._violations: list[str] = []
+        self.submitted: list[_ReplaySubmittedOrder] = []
+        self._cancel_recording_client = None
         self._lock = threading.Lock()
         self._tokenizer = _IdentifierTokenizer()
         self._codec = _Codec(self._tokenizer)
@@ -230,7 +232,10 @@ class ReplayBrokerCassette:
                 )
             if "answer" not in expected:
                 raise BrokerCassetteError("recorded call has neither answer nor error")
-            return self._codec.decode(expected["answer"])
+            answer = self._codec.decode(expected["answer"])
+            if client_name == "trading" and method_name == "submit_order":
+                self.submitted.append(_ReplaySubmittedOrder.from_call(args, kwargs, answer))
+            return answer
 
     def assert_consumed(self) -> None:
         if self._violations:
@@ -256,6 +261,38 @@ class _ReplayBrokerClient:
         return replayed
 
 
+@dataclass(frozen=True)
+class _ReplaySubmittedOrder:
+    """Report only facts present in a consumed submit call and its answer."""
+
+    plain: dict[str, Any]
+
+    @classmethod
+    def from_call(cls, args, kwargs, answer):
+        request = kwargs.get("order_data")
+        if request is None and args:
+            request = args[0]
+
+        def value(name, owner):
+            raw = getattr(owner, name, None) if owner is not None else None
+            return getattr(raw, "value", raw)
+
+        qty = value("qty", request)
+        return cls({
+            "id": None if value("id", answer) is None else str(value("id", answer)),
+            "symbol": value("symbol", answer) or value("symbol", request),
+            "side": value("side", request),
+            "qty": None if qty is None else float(qty),
+            "type": value("type", request),
+            "limit_price": value("limit_price", request),
+            "stop_price": value("stop_price", request),
+            "status": value("status", answer),
+        })
+
+    def as_plain(self) -> dict[str, Any]:
+        return dict(self.plain)
+
+
 def install_replay_broker_cassette(broker, payload: Mapping[str, Any]):
     """Install strict offline SDK clients into an existing ``AlpacaBroker``.
 
@@ -275,7 +312,17 @@ def install_replay_broker_cassette(broker, payload: Mapping[str, Any]):
     replay = ReplayBrokerCassette(payload)
     trading_client = replay.client("trading")
     data_client = replay.client("stock_historical_data")
-    broker.client = trading_client
+    from src.sentinel.cancel_attempts import CancelRecordingClient
+
+    current_client = getattr(broker, "client", None)
+    if isinstance(current_client, CancelRecordingClient):
+        current_client._inner = trading_client
+        replay._cancel_recording_client = current_client
+        from src.sentinel.guarded import attach_reconciliation_db
+
+        attach_reconciliation_db(trading_client, current_client._conn_getter)
+    else:
+        broker.client = trading_client
     broker._data_client = data_client
     broker.api_key = SENTINEL_KEY
     broker.secret_key = SENTINEL_KEY
@@ -286,7 +333,12 @@ def install_replay_broker_cassette(broker, payload: Mapping[str, Any]):
 
 def assert_broker_uses_replay(broker, replay: ReplayBrokerCassette) -> str:
     """Prove the constructed broker holds only this cassette's clients."""
-    clients = (getattr(broker, "client", None), getattr(broker, "_data_client", None))
+    trading_client = getattr(broker, "client", None)
+    if replay._cancel_recording_client is not None:
+        if trading_client is not replay._cancel_recording_client:
+            raise BrokerCassetteError("broker cancel-recording wrapper was discarded")
+        trading_client = trading_client._inner
+    clients = (trading_client, getattr(broker, "_data_client", None))
     expected_names = ("trading", "stock_historical_data")
     for client, name in zip(clients, expected_names):
         if not isinstance(client, _ReplayBrokerClient):
@@ -352,6 +404,7 @@ def install_rehearsal_broker_transport(
         )
     replay = install_replay_broker_cassette(broker, payload)
     return RehearsalBrokerTransport(
+        trading_stub=replay,
         replay=replay,
         fill_model="cassette",
         notes=[
