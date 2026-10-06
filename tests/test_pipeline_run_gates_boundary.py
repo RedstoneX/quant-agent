@@ -141,7 +141,10 @@ def test_evidence_gate_boundary_propagates_an_unknown_verdict(monkeypatch, caplo
     stub = SimpleNamespace()
     ctx = SimpleNamespace(data_status={"tech": "ok"})
     with caplog.at_level("ERROR", logger=pipeline_halt_gates.logger.name):
-        with pytest.raises(RuntimeError, match="gate implementation failed"):
+        with pytest.raises(
+            evidence_gate.EvidenceGateEvaluationError,
+            match="gate implementation failed",
+        ):
             pipeline_halt_gates._evidence_gate_skip(stub, ctx, "run-7")
     assert "REFUSING the decision" in caplog.text
     assert "PROCEEDING" not in caplog.text

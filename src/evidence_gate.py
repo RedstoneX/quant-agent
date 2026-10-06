@@ -116,6 +116,16 @@ from src import evidence_freshness as _freshness
 
 logger = logging.getLogger(__name__)
 
+
+class EvidenceGateEvaluationError(RuntimeError):
+    """The gate implementation crashed before producing a verdict.
+
+    This is deliberately distinct from an unclassified seat status. Unknown
+    status words still produce a verdict and pass; this exception means the
+    classifier itself could not answer, so a decision must not proceed.
+    """
+
+
 #: A usable answer arrived. The seat may be weak, mixed, self-doubting or
 #: even provably wrong, but the desk HAS its answer and can weigh it.
 #: `figures_contradicted` sits here on purpose: a confident wrong number is

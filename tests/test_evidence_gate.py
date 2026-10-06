@@ -467,7 +467,7 @@ def test_a_gate_crash_fails_closed_before_the_decision_stage():
     """An unknown gate verdict cannot authorize a Portfolio Manager call."""
     p = _pipeline({"macro": "ok"})
     with patch.object(evidence_gate, "evaluate", side_effect=RuntimeError("boom")):
-        with pytest.raises(RuntimeError, match="boom"):
+        with pytest.raises(evidence_gate.EvidenceGateEvaluationError, match="boom"):
             _run(p)
     p._decision_stage.assert_not_called()
 
