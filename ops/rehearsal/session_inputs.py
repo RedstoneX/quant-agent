@@ -143,6 +143,7 @@ class SessionInputs:
         self._lock = threading.Lock()
         self._pending = defaultdict(deque)
         self._capture_errors = []
+        self._replay_violations = []
         self._max_bytes = max_bytes
         self._captured_bytes = 0
         if max_bytes is not None and max_bytes <= 0:
@@ -174,13 +175,26 @@ class SessionInputs:
         with self._lock:
             pending = self._pending[(kind, key)]
             if not pending:
+                self._replay_violations.append("missing recorded provider call")
                 raise SessionInputError(f"missing recorded {kind} call for {key}")
             entry = pending.popleft()
         if "error" in entry:
-            _raise_error(entry["error"], key)
+            try:
+                _raise_error(entry["error"], key)
+            except SessionInputError:
+                with self._lock:
+                    self._replay_violations.append("unreplayable recorded provider error")
+                raise
         if "value" not in entry:
+            with self._lock:
+                self._replay_violations.append("recorded provider call has no outcome")
             raise SessionInputError(f"recorded {kind} call has no outcome for {key}")
-        return _revive(entry["value"])
+        try:
+            return _revive(entry["value"])
+        except Exception:
+            with self._lock:
+                self._replay_violations.append("recorded provider value is malformed")
+            raise SessionInputError("recorded provider value is malformed") from None
 
     def _append_capture(self, entry):
         # Keep the natural session behavior when a response exceeds the
@@ -213,6 +227,10 @@ class SessionInputs:
     def assert_consumed(self):
         if self.recording:
             raise SessionInputError("capture ledger has nothing to consume")
+        if self._replay_violations:
+            raise SessionInputError(
+                f"{len(self._replay_violations)} strict provider replay violation(s) occurred"
+            )
         remaining = sum(len(v) for v in self._pending.values())
         if remaining:
             raise SessionInputError(f"{remaining} recorded provider call(s) were not consumed")

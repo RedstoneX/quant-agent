@@ -119,7 +119,8 @@ def test_http_failure_type_replays_and_missing_calls_fail_closed(monkeypatch):
         assert replayed.value.code == 503
         with pytest.raises(SessionInputError, match="missing recorded"):
             news.urlopen("https://example.test/absent")
-        replay.assert_consumed()
+        with pytest.raises(SessionInputError, match="strict provider replay violation"):
+            replay.assert_consumed()
 
 
 def test_real_market_provider_fallback_still_runs_during_replay(monkeypatch):
