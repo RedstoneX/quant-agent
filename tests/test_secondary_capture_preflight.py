@@ -1,6 +1,7 @@
 """The secondary Paper capture gate makes only account and book reads."""
 
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,9 +9,12 @@ import pytest
 from alpaca.common.enums import BaseURL
 
 from ops.rehearsal.secondary_preflight import (
-    CapturePreflight, SecondaryPreflightError, check_secondary_capture,
-    hold_capture_session_lock, load_primary_account_assertion,
+    CapturePreflight, REQUIRED_PARKED_TIMERS, SecondaryPreflightError,
+    assert_natural_morning_window, assert_qamc_timers_parked,
+    check_secondary_capture, hold_capture_session_lock,
+    load_primary_account_assertion,
 )
+from src.trading_calendar import ET
 
 
 class ReadOnlyClient:
@@ -252,3 +256,64 @@ def test_capture_lease_never_removes_a_changed_owner(tmp_path):
         with hold_capture_session_lock(lock):
             (lock / "owner").write_text("another process\n")
     assert (lock / "owner").read_text() == "another process\n"
+
+
+def test_capture_requires_every_qamc_timer_parked(monkeypatch):
+    from ops.rehearsal import secondary_preflight as module
+
+    monkeypatch.setattr(module.os, "geteuid", lambda: 1234)
+    monkeypatch.setattr(module.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1234))
+    states = {name: "disabled" for name in REQUIRED_PARKED_TIMERS}
+
+    def read(command, **_):
+        if "list-unit-files" in command:
+            output = "".join(f"{name} {state} enabled\n" for name, state in states.items())
+        else:
+            output = ""
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(module.subprocess, "run", read)
+    assert_qamc_timers_parked()
+    states["quant-agent-intra_check.timer"] = "enabled"
+    with pytest.raises(SecondaryPreflightError, match="timer is enabled"):
+        assert_qamc_timers_parked()
+    del states["quant-agent-intra_check.timer"]
+    with pytest.raises(SecondaryPreflightError, match="cannot be accounted for"):
+        assert_qamc_timers_parked()
+
+
+def test_capture_refuses_active_timer_even_when_unit_file_disabled(monkeypatch):
+    from ops.rehearsal import secondary_preflight as module
+
+    monkeypatch.setattr(module.os, "geteuid", lambda: 1234)
+    monkeypatch.setattr(module.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1234))
+
+    def read(command, **_):
+        if "list-unit-files" in command:
+            output = "".join(f"{name} disabled enabled\n" for name in REQUIRED_PARKED_TIMERS)
+        else:
+            output = "quant-agent-intra_safety.timer loaded active waiting\n"
+        return SimpleNamespace(returncode=0, stdout=output)
+
+    monkeypatch.setattr(module.subprocess, "run", read)
+    with pytest.raises(SecondaryPreflightError, match="timer is active"):
+        assert_qamc_timers_parked()
+
+
+@pytest.mark.parametrize("when,open_now,reason", [
+    ("2026-10-07T10:00:00", True, None),
+    ("2026-10-07T12:01:00", True, "outside the natural morning"),
+    ("2026-10-10T10:00:00", True, "outside the natural morning"),
+    ("2026-10-07T10:00:00", False, "market is not open"),
+])
+def test_capture_requires_natural_open_morning(when, open_now, reason):
+    class ClockClient:
+        def get_clock(self):
+            return SimpleNamespace(is_open=open_now)
+
+    moment = datetime.fromisoformat(when).replace(tzinfo=ET)
+    if reason:
+        with pytest.raises(SecondaryPreflightError, match=reason):
+            assert_natural_morning_window(ClockClient(), moment)
+    else:
+        assert_natural_morning_window(ClockClient(), moment)

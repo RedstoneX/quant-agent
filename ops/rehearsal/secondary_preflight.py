@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
+from src.trading_calendar import ET, SESSION_WINDOWS
 from src.credential_placeholder import looks_like_placeholder
 from src.credentials import load_systemd_credentials
 from src.session_identity import credentials_directory_var, session_identity
@@ -28,7 +29,14 @@ PAPER_URL = "https://paper-api.alpaca.markets"
 TRADING_UNITS = frozenset({
     "quant-agent-morning.service", "quant-agent-midday.service",
     "quant-agent-close.service", "quant-agent-evening.service",
-    "quant-agent-intra_check.service", "quant-agent-intra_safety.service",
+    "quant-agent-earnings_preprocess.service", "quant-agent-intra_check.service",
+    "quant-agent-intra_safety.service", "quant-agent-coverage-sweep.service",
+})
+REQUIRED_PARKED_TIMERS = frozenset({
+    "quant-agent-morning.timer", "quant-agent-midday.timer",
+    "quant-agent-close.timer", "quant-agent-evening.timer",
+    "quant-agent-earnings_preprocess.timer", "quant-agent-intra_check.timer",
+    "quant-agent-coverage-sweep.timer",
 })
 
 
@@ -151,6 +159,65 @@ def _running_trading_units() -> bool:
         raise SecondaryPreflightError("production session status cannot be read")
     return any(line.split() and line.split()[0] in TRADING_UNITS
                for line in result.stdout.splitlines())
+
+
+def assert_qamc_timers_parked() -> None:
+    """Refuse capture if any installed QAMC timer can fire during it.
+
+    ``intra_check`` and ``intra_safety`` bypass the cross-session lock.  The
+    stopped desk is therefore a prerequisite for a natural secondary capture,
+    not an incidental observation of which services happen to run now.
+    """
+    uid = pwd.getpwnam("qamc").pw_uid
+    prefix = ["env", f"XDG_RUNTIME_DIR=/run/user/{uid}"]
+    if os.geteuid() != uid:
+        prefix = ["sudo", "-n", "-u", "qamc", *prefix]
+    command = ["systemctl", "--user", "list-unit-files", "--type=timer",
+               "--no-legend", "--no-pager", "quant-agent-*.timer"]
+    try:
+        result = subprocess.run(
+            [*prefix, *command], capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+    except Exception:
+        raise SecondaryPreflightError("QAMC timer state cannot be read") from None
+    if result.returncode:
+        raise SecondaryPreflightError("QAMC timer state cannot be read")
+    states = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0].startswith("quant-agent-"):
+            states[fields[0]] = fields[1]
+    if not REQUIRED_PARKED_TIMERS <= states.keys():
+        raise SecondaryPreflightError("installed trading timers cannot be accounted for")
+    if any(state not in {"disabled", "masked", "masked-runtime"}
+           for state in states.values()):
+        raise SecondaryPreflightError("a QAMC timer is enabled")
+    active = subprocess.run(
+        [*prefix, "systemctl", "--user", "list-units", "--type=timer",
+         "--state=active", "--no-legend", "--no-pager", "quant-agent-*.timer"],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    if active.returncode:
+        raise SecondaryPreflightError("active QAMC timer state cannot be read")
+    if any(line.split() and line.split()[0].startswith("quant-agent-")
+           for line in active.stdout.splitlines()):
+        raise SecondaryPreflightError("a QAMC timer is active")
+
+
+def assert_natural_morning_window(client, now: datetime | None = None) -> None:
+    """Require both the desk's ET morning window and an open broker market."""
+    moment = (now or datetime.now(ET)).astimezone(ET)
+    minute = moment.hour * 60 + moment.minute
+    low, high = SESSION_WINDOWS["morning"]
+    if moment.weekday() >= 5 or not low <= minute <= high:
+        raise SecondaryPreflightError("outside the natural morning window")
+    try:
+        clock = client.get_clock()
+    except Exception:
+        raise SecondaryPreflightError("broker market clock cannot be read") from None
+    if getattr(clock, "is_open", None) is not True:
+        raise SecondaryPreflightError("broker market is not open")
 
 
 def _secondary_credentials(env: dict[str, str]) -> tuple[str, str, str]:

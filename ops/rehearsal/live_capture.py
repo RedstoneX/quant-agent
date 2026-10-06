@@ -24,9 +24,12 @@ from ops.rehearsal.direct_credentials import (
     load_rehearsal_credentials,
 )
 from ops.rehearsal.public_bundle import assert_public_safe
+from ops.rehearsal.session_inputs import session_inputs
 from ops.rehearsal.secondary_preflight import (
     CapturePreflight,
     SecondaryPreflightError,
+    assert_natural_morning_window,
+    assert_qamc_timers_parked,
     check_secondary_capture,
     hold_capture_session_lock,
     load_primary_account_assertion,
@@ -143,7 +146,6 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
     primary_account_number = load_primary_account_assertion()
     delivered = load_rehearsal_credentials()
     data_dir = code_root / "data"
-    data_dir.mkdir(mode=0o700, exist_ok=False)
     database = data_dir / "quant_agent.db"
     spec = CapturePreflight(
         primary_account_number=primary_account_number,
@@ -157,14 +159,17 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
         max_capture_bytes=max_capture_bytes,
     )
     # One read-only identity/book preflight, before constructing a pipeline.
+    assert_qamc_timers_parked()
     _client, pair = check_secondary_capture(
         spec, paper=True, base_url="https://paper-api.alpaca.markets"
     )
+    assert_natural_morning_window(_client)
     if pair != (delivered.api_key, delivered.secret_key):
         raise LiveCaptureError("secondary credential hand-offs disagree")
+    data_dir.mkdir(mode=0o700, exist_ok=False)
     # The preflight checks an existing session lock; acquisition immediately
     # after it excludes ordinary morning/midday/close/evening wrappers.  The
-    # launcher also requires disabled intra-check timers (they bypass it).
+    # timer check above is required because intra-check bypasses this lock.
     with hold_capture_session_lock(SESSION_LOCK), _scratch_cwd(code_root):
         config = _capture_config(code_root, database)
         if (config.api_keys.alpaca_key, config.api_keys.alpaca_secret) != pair:
@@ -178,7 +183,8 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
                 raise LiveCaptureError("pipeline database escaped scratch")
             cassette = install_recording_broker_cassette(pipeline.broker)
             _snapshot_before_session(database, data_dir / "before.db")
-            result = pipeline.run_morning()
+            with session_inputs(pipeline, max_bytes=max_capture_bytes) as inputs:
+                result = pipeline.run_morning()
         payload = cassette.to_payload()
         assert_public_safe(
             payload,
@@ -187,6 +193,7 @@ def capture_morning(*, code_root: Path, max_capture_seconds: int,
                          primary_account_number),
         )
         _write_private_json(data_dir / "broker.json", payload)
+        _write_private_json(data_dir / "providers.json", inputs.payload())
         _write_private_json(data_dir / "result.json", result)
         size = sum(path.stat().st_size for path in data_dir.rglob("*") if path.is_file())
         if size > max_capture_bytes:
