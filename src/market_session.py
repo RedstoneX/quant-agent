@@ -28,7 +28,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable
 
-from src.notifier.sections import fmt_time_12h
+from src.time_format import fmt_time_12h
 from src.trading_calendar import ET, in_regular_session
 
 logger = logging.getLogger("src.market_session")

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from src.notifier.sections import fmt_time_12h
+from src.time_format import fmt_time_12h
 
 __all__ = ["OWNER_TZ", "_duration_words", "_plural", "_time_words"]
 
