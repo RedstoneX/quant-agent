@@ -105,11 +105,9 @@ function easternTickMarkFormatter(time: Time, tickMarkType: TickMarkType): strin
     case TickMarkType.DayOfMonth:
       return formatEasternTime(time, { month: "short", day: "numeric" });
     case TickMarkType.TimeWithSeconds:
-      // owner-clock-axis-coordinate — a date on every axis tick is unreadable.
       return formatEasternTime(time, { hour: "numeric", minute: "2-digit", second: "2-digit" });
     case TickMarkType.Time:
     default:
-      // owner-clock-axis-coordinate — a date on every axis tick is unreadable.
       return formatEasternTime(time, { hour: "numeric", minute: "2-digit" });
   }
 }

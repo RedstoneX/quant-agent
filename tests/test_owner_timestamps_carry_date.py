@@ -17,9 +17,14 @@ OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight", "market_ses
 _CLOCK = re.compile(r"%-?[HIl]|%[pP]|%T|%R|%X|%c")
 _DATE = re.compile(r"%-?[dejmy]|%[YyBbAaDFxc]")
 _BROWSER_CLOCK_CALLS = ("formatEasternTime(", "Intl.DateTimeFormat(", ".toLocaleString(")
-_BROWSER_CLOCK = re.compile(r"\bhour\s*:")
-_BROWSER_DATE = re.compile(r"\b(?:year|month|day)\s*:")
-_AXIS_CLOCK_EXEMPTION = "owner-clock-axis-coordinate"
+_BROWSER_CLOCK = re.compile(r"(?:[{,]\s*)[\"']?(?:hour|timeStyle)[\"']?\s*:")
+_BROWSER_DATE = re.compile(r"(?:[{,]\s*)[\"']?(?:year|month|day|dateStyle)[\"']?\s*:")
+_AXIS_CLOCK_LABEL = "components/PriceChartPanel.tsx"
+_AXIS_CLOCK_FUNCTION = "easternTickMarkFormatter"
+_AXIS_CLOCK_CALLS = {
+    'formatEasternTime(time,{hour:"numeric",minute:"2-digit"})',
+    'formatEasternTime(time,{hour:"numeric",minute:"2-digit",second:"2-digit"})',
+}
 
 
 def _bare_clock(fmt: str) -> bool:
@@ -63,12 +68,54 @@ def _balanced_call(source: str, start: int) -> str:
     return source[start:]
 
 
+def _named_function_bounds(source: str, name: str) -> tuple[int, int] | None:
+    """Locate one ordinary JS/TS function without trusting nearby comments."""
+    start = source.find(f"function {name}(")
+    if start < 0:
+        return None
+    opening = source.find("{", start)
+    if opening < 0:
+        return None
+    depth = 0
+    quote = None
+    escaped = False
+    for pos in range(opening, len(source)):
+        char = source[pos]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ("'", '"', "`"):
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return start, pos + 1
+    return None
+
+
+def _is_intentional_axis_clock(source: str, label: str, start: int, call: str) -> bool:
+    """Exempt only the two coordinate calls in the real axis formatter."""
+    if label != _AXIS_CLOCK_LABEL:
+        return False
+    bounds = _named_function_bounds(source, _AXIS_CLOCK_FUNCTION)
+    compact_call = re.sub(r"\s+", "", call)
+    return bool(bounds and bounds[0] <= start < bounds[1] and compact_call in _AXIS_CLOCK_CALLS)
+
+
 def _browser_bare_clock_offenders(source: str, label: str) -> list[str]:
     """Find browser clock calls whose literal options carry no date.
 
-    Chart-axis coordinates are the one explicit exception: repeating the date
-    on every intraday tick makes the axis unreadable. Prose labels never get
-    that exemption.
+    The two known chart-axis coordinate calls are the sole exception: repeating
+    the date on every intraday tick makes the axis unreadable. Their exemption
+    is bound to their file, function and exact call shape, never to copyable
+    prose or comments.
     """
     offenders = []
     for marker in _BROWSER_CLOCK_CALLS:
@@ -76,12 +123,10 @@ def _browser_bare_clock_offenders(source: str, label: str) -> list[str]:
         while (start := source.find(marker, offset)) >= 0:
             call = _balanced_call(source, start)
             line_no = source.count("\n", 0, start) + 1
-            lines = source.splitlines()
-            context = "\n".join(lines[max(0, line_no - 2):line_no])
             if (
                 _BROWSER_CLOCK.search(call)
                 and not _BROWSER_DATE.search(call)
-                and _AXIS_CLOCK_EXEMPTION not in context
+                and not _is_intentional_axis_clock(source, label, start, call)
             ):
                 offenders.append(f"{label}:{line_no}")
             offset = start + len(marker)
@@ -169,3 +214,50 @@ def test_dashboard_guard_detects_hour_only_intl_formatting_in_prose():
     assert _browser_bare_clock_offenders(direct, "direct.ts") == ["direct.ts:1"]
     assert _browser_bare_clock_offenders(wrapped, "wrapped.ts") == ["wrapped.ts:1"]
     assert _browser_bare_clock_offenders(dated, "dated.ts") == []
+
+
+def test_dashboard_guard_rejects_time_style_without_a_date():
+    for style in ("short", "medium", "long", "full"):
+        direct = f"new Intl.DateTimeFormat('en-US', {{ timeStyle: '{style}' }})"
+        locale = f"now.toLocaleString('en-US', {{ timeStyle: '{style}' }})"
+        assert _browser_bare_clock_offenders(direct, "direct.ts") == ["direct.ts:1"]
+        assert _browser_bare_clock_offenders(locale, "locale.ts") == ["locale.ts:1"]
+    quoted_key = 'now.toLocaleString("en-US", { "timeStyle": "short" })'
+    assert _browser_bare_clock_offenders(quoted_key, "quoted.ts") == ["quoted.ts:1"]
+
+
+def test_dashboard_guard_allows_date_style_or_explicit_date_fields():
+    styled = "new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })"
+    explicit = "now.toLocaleString('en-US', { month: 'short', day: 'numeric', timeStyle: 'medium' })"
+    quoted = 'now.toLocaleString("en-US", { "dateStyle": "short", "timeStyle": "short" })'
+    assert _browser_bare_clock_offenders(styled, "styled.ts") == []
+    assert _browser_bare_clock_offenders(explicit, "explicit.ts") == []
+    assert _browser_bare_clock_offenders(quoted, "quoted.ts") == []
+
+
+def test_axis_exemption_is_structural_and_cannot_be_borrowed_by_prose():
+    forged = """// owner-clock-axis-coordinate
+const label = `as of ${formatEasternTime(now, { hour: "numeric", minute: "2-digit" })}`;
+"""
+    copied_call = 'formatEasternTime(time, { hour: "numeric", minute: "2-digit" })'
+    assert _browser_bare_clock_offenders(forged, _AXIS_CLOCK_LABEL) == [
+        f"{_AXIS_CLOCK_LABEL}:2",
+    ]
+    assert _browser_bare_clock_offenders(copied_call, _AXIS_CLOCK_LABEL) == [
+        f"{_AXIS_CLOCK_LABEL}:1",
+    ]
+
+
+def test_only_the_two_real_axis_calls_receive_the_structural_exemption():
+    root = SRC.parent / "frontend" / "src"
+    source = (root / _AXIS_CLOCK_LABEL).read_text()
+    exempt_calls = []
+    offset = 0
+    marker = "formatEasternTime("
+    while (start := source.find(marker, offset)) >= 0:
+        call = _balanced_call(source, start)
+        if _is_intentional_axis_clock(source, _AXIS_CLOCK_LABEL, start, call):
+            exempt_calls.append(re.sub(r"\s+", "", call))
+        offset = start + len(marker)
+    assert set(exempt_calls) == _AXIS_CLOCK_CALLS
+    assert len(exempt_calls) == 2
