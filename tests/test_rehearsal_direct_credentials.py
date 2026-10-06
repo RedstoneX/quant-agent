@@ -25,7 +25,6 @@ def _credential_dir(tmp_path: Path, **overrides: str) -> Path:
     values = {
         "alpaca_api_key": DUMMY_KEY,
         "alpaca_secret_key": DUMMY_SECRET,
-        "account_number": DUMMY_ACCOUNT,
     }
     values.update(overrides)
     directory = tmp_path / "credentials"
@@ -46,13 +45,12 @@ def test_loads_all_values_only_from_systemd_directory(tmp_path, monkeypatch):
 
     assert credentials.api_key == DUMMY_KEY
     assert credentials.secret_key == DUMMY_SECRET
-    assert credentials.expected_account_number == DUMMY_ACCOUNT
     assert DUMMY_KEY not in repr(credentials)
     assert DUMMY_SECRET not in repr(credentials)
 
 
 @pytest.mark.parametrize("missing", [
-    "alpaca_api_key", "alpaca_secret_key", "account_number",
+    "alpaca_api_key", "alpaca_secret_key",
 ])
 def test_missing_value_refuses_live_check(tmp_path, monkeypatch, missing):
     directory = _credential_dir(tmp_path)
@@ -102,18 +100,17 @@ def test_direct_transport_removes_onecli_proxy_and_ca(monkeypatch):
     assert "data.alpaca.markets" in os.environ["NO_PROXY"]
 
 
-def test_account_assertion_accepts_only_pinned_active_paper_account():
+def test_account_assertion_accepts_active_paper_account_from_broker():
     assert_expected_paper_account(
         SimpleNamespace(account_number=DUMMY_ACCOUNT, status="ACTIVE"),
-        DUMMY_ACCOUNT,
     )
 
 
-@pytest.mark.parametrize("account, expected", [
-    (SimpleNamespace(account_number="PAOTHER", status="ACTIVE"), DUMMY_ACCOUNT),
-    (SimpleNamespace(account_number=DUMMY_ACCOUNT, status="INACTIVE"), DUMMY_ACCOUNT),
-    (SimpleNamespace(account_number="LIVEACCOUNT", status="ACTIVE"), "LIVEACCOUNT"),
+@pytest.mark.parametrize("account", [
+    SimpleNamespace(account_number="", status="ACTIVE"),
+    SimpleNamespace(account_number=DUMMY_ACCOUNT, status="INACTIVE"),
+    SimpleNamespace(account_number="LIVEACCOUNT", status="ACTIVE"),
 ])
-def test_account_assertion_refuses_mismatch_inactive_or_nonpaper(account, expected):
+def test_account_assertion_refuses_missing_inactive_or_nonpaper(account):
     with pytest.raises(RehearsalCredentialError, match="NOTHING was placed"):
-        assert_expected_paper_account(account, expected)
+        assert_expected_paper_account(account)

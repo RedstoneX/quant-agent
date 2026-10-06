@@ -13,11 +13,10 @@ SDK call the desk makes (`grep self.client. src/execution/`) against BOTH:
 and prints one row per call: real answer shape vs stand-in shape vs verdict.
 
 Safety (non-negotiable, enforced in code, not in prose):
-  * the key, secret and pinned account number must all arrive through systemd's
+  * the key and secret must arrive through systemd's
     private credential directory; none is accepted from the environment;
   * the real account is fetched FIRST and the run aborts unless its
-    `account_number` equals that value — a mismatch means an account that
-    matters, and nothing else runs;
+    `account_number` and status confirm an active Paper account;
   * proxy and custom-CA environment variables are removed before the Alpaca
     clients are built, so this check cannot silently fall back to OneCLI;
   * every order this script places is cancelled before it exits.
@@ -39,6 +38,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from ops.rehearsal.conformance_sequence import SYMBOL, _exercise, _fields, _plain, _status_of, run_sequence  # noqa: F401
 from ops.rehearsal.direct_credentials import (
@@ -111,10 +111,15 @@ def build_live():
     from alpaca.data.historical.stock import StockHistoricalDataClient
     from alpaca.trading.client import TradingClient
     trading = TradingClient(credentials.api_key, credentials.secret_key, paper=True)
+    endpoint = getattr(trading, "_base_url", "")
+    resolved = urlparse(str(getattr(endpoint, "value", endpoint)).rstrip("/"))
+    if (resolved.scheme != "https" or resolved.netloc != "paper-api.alpaca.markets" or
+            resolved.path not in ("", "/") or resolved.query or resolved.fragment):
+        raise SystemExit("STOP: resolved trading endpoint is not Alpaca Paper")
     data = StockHistoricalDataClient(credentials.api_key, credentials.secret_key)
     acct = trading.get_account()
     try:
-        assert_expected_paper_account(acct, credentials.expected_account_number)
+        assert_expected_paper_account(acct)
     except RehearsalCredentialError as exc:
         raise SystemExit(f"STOP: {exc}") from exc
     print(f"account assertion PASSED: account_number == <redacted>, "

@@ -20,7 +20,7 @@ if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" || "$REPO_HEAD" != "$MAIN_H
     echo 'STOP: capture must run from a clean, verified main checkout' >&2
     exit 2
 fi
-for name in alpaca_api_key alpaca_secret_key account_number; do
+for name in alpaca_api_key alpaca_secret_key; do
     if ! sudo -n -u qamc test -s "${REHEARSAL_KEYS}/${name}"; then
         echo "STOP: secondary credential file ${name} is absent" >&2
         exit 2
@@ -52,7 +52,6 @@ UNIT_SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
     "--property=WorkingDirectory=${SCRATCH}" \
     "--property=LoadCredential=alpaca_api_key:${PRIMARY_KEYS}/alpaca_api_key" \
     "--property=LoadCredential=alpaca_secret_key:${PRIMARY_KEYS}/alpaca_secret_key" \
-    "--property=LoadCredential=secondary_account_number:${REHEARSAL_KEYS}/account_number" \
     --setenv=QAMC_SESSION_IDENTITY=desk \
     /usr/bin/timeout --kill-after=5 30 "$PYTHON" \
     -m ops.rehearsal.primary_identity_assertion \
@@ -69,10 +68,10 @@ UNIT_SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
     "--property=CPUQuota=300%" \
     "--property=LoadCredential=alpaca_api_key:${REHEARSAL_KEYS}/alpaca_api_key" \
     "--property=LoadCredential=alpaca_secret_key:${REHEARSAL_KEYS}/alpaca_secret_key" \
-    "--property=LoadCredential=account_number:${REHEARSAL_KEYS}/account_number" \
     "--property=LoadCredential=primary_account_number:${SCRATCH}/primary_account_number" \
     --setenv=QAMC_REHEARSAL=1 \
     --setenv=QAMC_SESSION_IDENTITY=rehearsal \
+    "--setenv=QAMC_CAPTURE_SOURCE_SHA=${REPO_HEAD}" \
     /usr/bin/timeout --kill-after=30 1200 \
     /usr/bin/bash "${SCRATCH}/scripts/secondary_capture_entry.sh" "$SCRATCH"
 

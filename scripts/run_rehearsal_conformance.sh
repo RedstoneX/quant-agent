@@ -16,7 +16,7 @@ if [[ "$PROJECT_ROOT" != "$RUNTIME_ROOT" ]]; then
     exit 1
 fi
 
-for name in alpaca_api_key alpaca_secret_key account_number; do
+for name in alpaca_api_key alpaca_secret_key; do
     if ! sudo -n -u qamc test -s "${CREDENTIAL_ROOT}/${name}"; then
         echo "STOP: rehearsal credential file ${name} is absent or empty" >&2
         exit 1
@@ -29,7 +29,6 @@ exec sudo -n -u qamc env XDG_RUNTIME_DIR="/run/user/${QAMC_UID}" \
     --property="WorkingDirectory=${RUNTIME_ROOT}" \
     --property="LoadCredential=alpaca_api_key:${CREDENTIAL_ROOT}/alpaca_api_key" \
     --property="LoadCredential=alpaca_secret_key:${CREDENTIAL_ROOT}/alpaca_secret_key" \
-    --property="LoadCredential=account_number:${CREDENTIAL_ROOT}/account_number" \
     --setenv=QAMC_REHEARSAL=1 \
     --setenv=QAMC_SESSION_IDENTITY=rehearsal \
     /usr/bin/timeout --kill-after=30 600 \

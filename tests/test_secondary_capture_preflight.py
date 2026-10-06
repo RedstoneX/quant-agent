@@ -20,7 +20,7 @@ from src.trading_calendar import ET
 class ReadOnlyClient:
     _base_url = "https://paper-api.alpaca.markets"
 
-    def __init__(self, *, account="secondary-test", status="ACTIVE",
+    def __init__(self, *, account="PASECONDARYTEST", status="ACTIVE",
                  positions=None, orders=None):
         self.account = account
         self.status = status
@@ -51,9 +51,8 @@ def setup(tmp_path):
     credentials.mkdir()
     (credentials / "alpaca_api_key").write_text("test-key-from-secondary")
     (credentials / "alpaca_secret_key").write_text("test-secret-from-secondary")
-    (credentials / "account_number").write_text("secondary-test")
     spec = CapturePreflight(
-        primary_account_number="primary-test",
+        primary_account_number="PAPRIMARYTEST",
         scratch_root=tmp_path / "scratch",
         capture_db=tmp_path / "scratch" / "data" / "quant_agent.db",
         production_root=tmp_path / "production",
@@ -92,11 +91,11 @@ def test_success_is_three_reads_and_no_identity_or_key_is_printed(setup, capsys)
 
 
 @pytest.mark.parametrize("account,status,positions,orders", [
-    ("primary-test", "ACTIVE", [], []),
+    ("PAPRIMARYTEST", "ACTIVE", [], []),
     ("other-test", "ACTIVE", [], []),
-    ("secondary-test", "INACTIVE", [], []),
-    ("secondary-test", "ACTIVE", [object()], []),
-    ("secondary-test", "ACTIVE", [], [object()]),
+    ("PASECONDARYTEST", "INACTIVE", [], []),
+    ("PASECONDARYTEST", "ACTIVE", [object()], []),
+    ("PASECONDARYTEST", "ACTIVE", [], [object()]),
 ])
 def test_account_or_book_mismatch_refuses_without_identifiers(
     setup, account, status, positions, orders,
@@ -164,20 +163,17 @@ def test_rehearsal_directory_must_match_systemd_delivery(setup):
         run(spec, env)
 
 
-def test_expected_secondary_identity_is_required_from_the_delivered_file(setup):
+def test_secondary_identity_is_derived_from_broker_without_delivered_file(setup):
     spec, env = setup
-    identity_file = Path(env["CREDENTIALS_DIRECTORY_REHEARSAL"]) / "account_number"
-    identity_file.unlink()
-    with pytest.raises(SecondaryPreflightError, match="account_number"):
-        run(spec, env)
+    checked, credentials = run(spec, env)
+    assert checked.account == "PASECONDARYTEST"
+    assert len(credentials) == 2
 
 
-def test_delivered_secondary_identity_cannot_equal_primary(setup):
+def test_broker_secondary_identity_cannot_equal_primary(setup):
     spec, env = setup
-    identity_file = Path(env["CREDENTIALS_DIRECTORY_REHEARSAL"]) / "account_number"
-    identity_file.write_text("primary-test")
     with pytest.raises(SecondaryPreflightError, match="identities match"):
-        run(spec, env)
+        run(spec, env, ReadOnlyClient(account="PAPRIMARYTEST"))
 
 
 def test_active_session_and_low_headroom_refuse(setup):

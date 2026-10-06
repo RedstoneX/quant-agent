@@ -23,7 +23,6 @@ def identity_inputs(tmp_path, monkeypatch):
     delivered.mkdir()
     (delivered / "alpaca_api_key").write_text("PKABCDEFGHIJKLMN\n")
     (delivered / "alpaca_secret_key").write_text("SKABCDEFGHIJKLMN\n")
-    (delivered / "secondary_account_number").write_text("PASECONDARY12345\n")
     scratch = tmp_path / "scratch"
     scratch.mkdir(mode=0o700)
     # The fixture directory belongs to ubuntu, while the real unit's scratch
@@ -44,7 +43,7 @@ def identity_inputs(tmp_path, monkeypatch):
 
 
 def _client(number="PAPRIMARY12345", *, endpoint="https://paper-api.alpaca.markets",
-            fail=None, calls=None):
+            status="ACTIVE", fail=None, calls=None):
     class Client:
         _base_url = endpoint
 
@@ -53,7 +52,7 @@ def _client(number="PAPRIMARY12345", *, endpoint="https://paper-api.alpaca.marke
                 calls.append("get_account")
             if fail is not None:
                 raise fail
-            return SimpleNamespace(account_number=number)
+            return SimpleNamespace(account_number=number, status=status)
 
     return Client()
 
@@ -77,14 +76,13 @@ def test_only_one_read_and_private_number_file(identity_inputs, monkeypatch):
     assert os.environ["HTTPS_PROXY"] == "http://onecli.invalid:9999"
 
 
-def test_same_account_refused_without_output(identity_inputs):
+def test_broker_paper_identity_is_derived_without_secondary_file(identity_inputs):
     env, scratch = identity_inputs
-    with pytest.raises(PrimaryIdentityError, match="identical"):
-        write_primary_identity_assertion(
-            scratch, env=env,
-            client_factory=lambda *_: _client("PASECONDARY12345"),
-        )
-    assert list(scratch.iterdir()) == []
+    target = write_primary_identity_assertion(
+        scratch, env=env,
+        client_factory=lambda *_: _client("PASECONDARY12345"),
+    )
+    assert target.read_text() == "PASECONDARY12345\n"
 
 
 def test_non_paper_endpoint_refused_before_account_call(identity_inputs):
@@ -98,6 +96,16 @@ def test_non_paper_endpoint_refused_before_account_call(identity_inputs):
             ),
         )
     assert calls == []
+    assert list(scratch.iterdir()) == []
+
+
+def test_inactive_primary_account_refused_without_output(identity_inputs):
+    env, scratch = identity_inputs
+    with pytest.raises(PrimaryIdentityError, match="not active"):
+        write_primary_identity_assertion(
+            scratch, env=env,
+            client_factory=lambda *_: _client(status="INACTIVE"),
+        )
     assert list(scratch.iterdir()) == []
 
 

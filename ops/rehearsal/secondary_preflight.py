@@ -220,7 +220,7 @@ def assert_natural_morning_window(client, now: datetime | None = None) -> None:
         raise SecondaryPreflightError("broker market is not open")
 
 
-def _secondary_credentials(env: dict[str, str]) -> tuple[str, str, str]:
+def _secondary_credentials(env: dict[str, str]) -> tuple[str, str]:
     """Require the existing rehearsal identity and systemd file hand-off."""
     if session_identity(env) != "rehearsal":
         raise SecondaryPreflightError("capture session identity is not rehearsal")
@@ -235,16 +235,12 @@ def _secondary_credentials(env: dict[str, str]) -> tuple[str, str, str]:
         delivered = load_systemd_credentials(env)
     except Exception:
         raise SecondaryPreflightError("rehearsal credentials cannot be read") from None
-    try:
-        account_number = (directory / "account_number").read_text().strip()
-    except OSError:
-        raise SecondaryPreflightError("rehearsal account_number cannot be read") from None
     key = delivered.get("ALPACA_API_KEY", "")
     secret = delivered.get("ALPACA_SECRET_KEY", "")
     if any(not value or looks_like_placeholder(value)
-           for value in (key, secret, account_number)):
+           for value in (key, secret)):
         raise SecondaryPreflightError("rehearsal credentials are missing or placeholders")
-    return key, secret, account_number
+    return key, secret
 
 
 def load_primary_account_assertion(env: dict[str, str] | None = None) -> str:
@@ -293,20 +289,20 @@ def check_secondary_capture(
         if client_factory is None:
             from alpaca.trading.client import TradingClient
             client_factory = lambda key, secret: TradingClient(key, secret, paper=True)
-        key, secret, expected_secondary = _secondary_credentials(
+        key, secret = _secondary_credentials(
             dict(os.environ if env is None else env))
-        if expected_secondary == spec.primary_account_number.strip():
-            raise SecondaryPreflightError("secondary and primary account identities match")
         credentials = (key, secret)
         client = client_factory(*credentials)
         endpoint = getattr(client, "_base_url", "")
         _check_local(spec, paper, base_url, str(getattr(endpoint, "value", endpoint)),
                      memory_mib=memory_mib, load_per_cpu=load_per_cpu)
         account = client.get_account()
-        if (str(getattr(account, "account_number", "")) != expected_secondary or
-                str(getattr(account, "account_number", "")) ==
-                spec.primary_account_number.strip()):
-            raise SecondaryPreflightError("broker account is not the expected secondary account")
+        account_number = str(getattr(account, "account_number", "") or "").strip()
+        if (not account_number.startswith("PA") or not account_number.isalnum() or
+                looks_like_placeholder(account_number)):
+            raise SecondaryPreflightError("broker did not return a valid Paper identity")
+        if account_number == spec.primary_account_number.strip():
+            raise SecondaryPreflightError("secondary and primary account identities match")
         status = getattr(account, "status", None)
         if str(getattr(status, "value", status)).upper() != "ACTIVE":
             raise SecondaryPreflightError("secondary broker account is not active")

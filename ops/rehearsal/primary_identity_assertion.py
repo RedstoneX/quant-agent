@@ -1,8 +1,7 @@
 """Read-only primary Paper identity for a transient secondary-capture preflight.
 
 Run as qamc in a one-shot systemd unit.  The unit must LoadCredential the
-primary pair as ``alpaca_api_key``/``alpaca_secret_key`` and the independently
-known secondary account number as ``secondary_account_number``.  This process
+primary pair as ``alpaca_api_key``/``alpaca_secret_key``.  This process
 uses only ``TradingClient.get_account``.  It writes only the primary account
 number, once, to a private scratch file for a subsequent unit's
 ``LoadCredential=primary_account_number:...``.  No primary key is copied there.
@@ -48,7 +47,7 @@ def _private_scratch(directory: Path, uid: int) -> Path:
     return directory
 
 
-def _delivered(env: dict[str, str]) -> tuple[str, str, str]:
+def _delivered(env: dict[str, str]) -> tuple[str, str]:
     if session_identity(env) != "desk":
         raise PrimaryIdentityError("primary identity check must use desk identity")
     raw = env.get("CREDENTIALS_DIRECTORY", "").strip()
@@ -56,17 +55,14 @@ def _delivered(env: dict[str, str]) -> tuple[str, str, str]:
         raise PrimaryIdentityError("systemd primary credential directory is unavailable")
     try:
         credentials = load_systemd_credentials(env)
-        secondary = (Path(raw) / "secondary_account_number").read_text().strip()
     except Exception:
         raise PrimaryIdentityError("systemd identity inputs could not be read") from None
     key = credentials.get("ALPACA_API_KEY", "")
     secret = credentials.get("ALPACA_SECRET_KEY", "")
     if any(not value or looks_like_placeholder(value)
-           for value in (key, secret, secondary)):
+           for value in (key, secret)):
         raise PrimaryIdentityError("systemd identity inputs are missing or placeholders")
-    if not secondary.startswith("PA") or not secondary.isalnum():
-        raise PrimaryIdentityError("secondary assertion is not an Alpaca Paper account")
-    return key, secret, secondary
+    return key, secret
 
 
 def _paper_endpoint(client) -> bool:
@@ -103,13 +99,13 @@ def write_primary_identity_assertion(
     env: dict[str, str] | None = None,
     client_factory: Callable[[str, str], object] | None = None,
 ) -> Path:
-    """One Paper account GET; write only a distinct account number, O_EXCL.
+    """One Paper account GET; write only its account number, O_EXCL.
 
     The source credential pair is in a systemd tmpfs, never an argument or an
     environment value.  Failure messages never contain a credential or account
     identifier.  The caller must arrange a transient unit with the correct
     primary source files; this function independently checks the broker's
-    Paper endpoint and that its account differs from the secondary assertion.
+    Paper endpoint and account identity. The capture unit compares identities.
     """
     if os.geteuid() != pwd.getpwnam("qamc").pw_uid:
         raise PrimaryIdentityError("primary identity check must run as qamc")
@@ -118,7 +114,7 @@ def write_primary_identity_assertion(
     if target.exists() or target.is_symlink():
         raise PrimaryIdentityError("primary identity assertion already exists")
     environment = dict(os.environ if env is None else env)
-    key, secret, secondary = _delivered(environment)
+    key, secret = _delivered(environment)
     if client_factory is None:
         from alpaca.trading.client import TradingClient
 
@@ -139,8 +135,9 @@ def write_primary_identity_assertion(
     if not number.startswith("PA") or not number.isalnum() or \
             looks_like_placeholder(number):
         raise PrimaryIdentityError("broker did not return a valid Paper identity")
-    if number == secondary:
-        raise PrimaryIdentityError("primary and secondary Paper accounts are identical")
+    status = getattr(account, "status", None)
+    if str(getattr(status, "value", status)).upper() != "ACTIVE":
+        raise PrimaryIdentityError("primary Paper account is not active")
     created = False
     try:
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
