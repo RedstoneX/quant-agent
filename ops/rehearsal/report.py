@@ -756,13 +756,13 @@ class RehearsalReport:
             )
         else:
             limits.append(
-                "Whether those orders would have filled. This rehearsal "
-                "deliberately assumed none of them did."
+                "Whether those orders would fill now. This rehearsal either "
+                "assumed none did or replayed historical broker answers."
             )
         limits.append(
-            "Whether the broker would have accepted them. Buying power, "
-            "pattern-day-trading rules, halted symbols and minimum order sizes "
-            "are all decided on the broker's side and were never asked."
+            "Whether the broker would accept them now. Synthetic runs never "
+            "ask; cassette runs replay historical answers rather than current "
+            "buying power, trading restrictions, halts and order-size rules."
         )
         limits.append(
             "What the market was actually doing. Prices come from the last "

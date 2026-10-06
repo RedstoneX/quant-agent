@@ -14,12 +14,16 @@ from alpaca.trading.requests import LimitOrderRequest
 
 from ops.rehearsal.broker_cassette import (
     BrokerCassette,
+    BrokerCassetteError,
+    BrokerReplayViolation,
     CassetteMismatch,
     MissingRecordedBrokerCall,
     RecordedBrokerError,
     RecordingBrokerClient,
     ReplayBrokerCassette,
     UnusedRecordedBrokerCalls,
+    assert_broker_uses_replay,
+    install_replay_broker_cassette,
 )
 from ops.rehearsal.public_bundle import assert_public_safe
 from src.execution.broker import AlpacaBroker
@@ -200,6 +204,38 @@ def test_replay_rejects_out_of_order_extra_and_unused_calls():
         exhausted.client("trading").get_account()
 
 
+def test_replay_remembers_a_swallowed_mismatch():
+    payload, _, _ = _record_full_cassette()
+    replay = ReplayBrokerCassette(payload)
+
+    with pytest.raises(CassetteMismatch):
+        replay.client("trading").get_activities()
+
+    with pytest.raises(BrokerReplayViolation, match="violated its recording"):
+        replay.assert_consumed()
+
+
+def test_installer_replaces_both_clients_and_refuses_trade_updates():
+    payload, _, _ = _record_full_cassette()
+    broker = AlpacaBroker.__new__(AlpacaBroker)
+    broker._fill_stream_enabled = False
+    broker.api_key = "would-be-live-key"
+    broker.secret_key = "would-be-live-secret"
+    broker.client = object()
+    broker._data_client = None
+
+    replay = install_replay_broker_cassette(broker, payload)
+
+    assert "both Alpaca SDK clients" in assert_broker_uses_replay(broker, replay)
+    assert broker.client is not None
+    assert broker._data_client is not None
+
+    enabled = AlpacaBroker.__new__(AlpacaBroker)
+    enabled._fill_stream_enabled = True
+    with pytest.raises(BrokerCassetteError, match="trade_updates are not recorded"):
+        install_replay_broker_cassette(enabled, payload)
+
+
 def test_two_sdk_clients_share_one_global_order():
     request = StockBarsRequest(
         symbol_or_symbols=["SPY"],
@@ -217,9 +253,12 @@ def test_two_sdk_clients_share_one_global_order():
     trading.get_account()
     market_data.get_stock_bars(request)
 
-    replay = ReplayBrokerCassette(json.loads(json.dumps(cassette.to_payload())))
+    payload = json.loads(json.dumps(cassette.to_payload()))
+    out_of_order = ReplayBrokerCassette(payload)
     with pytest.raises(CassetteMismatch):
-        replay.client("stock_historical_data").get_stock_bars(request)
+        out_of_order.client("stock_historical_data").get_stock_bars(request)
+
+    replay = ReplayBrokerCassette(payload)
     replay.client("trading").get_account()
     replay.client("stock_historical_data").get_stock_bars(request)
     replay.assert_consumed()
