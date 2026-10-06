@@ -91,6 +91,37 @@ const bars = Array.from({ length: 60 }, (_, i) => {
   const timestamp = new Date(Date.UTC(2026, 5, 1 + i)).toISOString();
   return { date: timestamp.slice(0, 10), timestamp, open: 205 + i * .3, high: 207 + i * .3, low: 203 + i * .3, close: 206 + i * .32, volume: 50000000 + i * 100000 };
 });
+const intradayBars = Array.from({ length: 60 }, (_, i) => {
+  const timestamp = new Date(Date.UTC(2026, 7, 25, 13, 30 + i * 5)).toISOString();
+  return {
+    date: "2026-08-25", timestamp,
+    open: 220 + i * .08, high: 220.4 + i * .08,
+    low: 219.7 + i * .08, close: 220.2 + i * .08,
+    volume: 500000 + i * 1000,
+  };
+});
+function holdingWhy(symbol) {
+  return {
+    symbol, company_name: symbol === "AAPL" ? "Apple Inc." : null,
+    lede: `The desk holds ${symbol} under the recorded bounded-risk plan.`,
+    readable: {
+      why: "The recorded setup remained constructive.",
+      primary_driver: "Technical",
+      primary_driver_detail: "Price held above the recorded support level.",
+      raised_by: "Technical analyst",
+      purchase: {
+        plain: `12 shares of ${symbol} at $221.45 on Aug 25.`,
+        date: "2026-08-25", price: 221.45, price_is_fill: true, quantity: 12,
+      },
+      insider: null, supporting: [], fundamental_reason: null,
+      invalidation: "A daily close below the recorded support level.", stop_price: 218.4,
+      horizon: { sessions: 10, plain: "Up to 10 sessions.", note: "Review each session." },
+      take_profit: { price: 232, plain: "$232.00", acted_on: false, note: "Recorded at entry." },
+      since_entry: [],
+    },
+    not_recorded: [], raw_evidence: {},
+  };
+}
 const runSummary = { run_id: runId, session_prefix: "morning", first_timestamp: "2026-08-25T14:00:00Z", last_timestamp: "2026-08-25T14:25:00Z", agent_count: 8, decision_id: "decision-1", total_cost_usd: 0.42 };
 const priorRunId = "morning-20260824-demo";
 const priorEvidence = [
@@ -167,9 +198,30 @@ async function installRoutes(page, scenario = "populated") {
       if (scenario === "empty" || scenario === "error") return json(route, { date: "2026-08-25", has_data: false, daily_pnl: null, reflection: null, runs: [], trades: [], candidates: [] });
       return json(route, { date: "2026-08-25", has_data: true, daily_pnl: account.history.at(-1), reflection: { date: "2026-08-25", tomorrow_outlook: "Selective", lessons: "Respect grounded passes.", suggested_actions: null, risk_rating: "medium", tomorrow_bias: "neutral", tomorrow_conviction: "medium", tomorrow_key_risks: "Concentration", sell_decisions_assessment: null, sell_grades_json: null, buy_grades_json: null, missed_opportunities_json: JSON.stringify([{ symbol: "NVDA", move_pct: 4.2, miss_category: "late_signal", lesson: "Wait for confirmed entry." }, { symbol: "TSLA", move_pct: -3.1, miss_category: "risk_disciplined", lesson: "Pass was correct." }]), timestamp: "2026-08-25T20:00:00Z" }, runs: [runSummary], trades: [trade, exitTrade], candidates: ["AAPL", "MSFT"] });
     }
-    if (path.startsWith("/prices/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), timeframe: url.searchParams.get("timeframe") || "1d", bars, error: null });
+    if (path.startsWith("/holdings/") && path.endsWith("/why")) {
+      return json(route, holdingWhy(decodeURIComponent(path.split("/").at(-2))));
+    }
+    if (path.startsWith("/prices/")) {
+      const timeframe = url.searchParams.get("timeframe") || "1d";
+      return json(route, {
+        symbol: decodeURIComponent(path.split("/").at(-1)), timeframe,
+        bars: timeframe === "1d" ? bars : intradayBars, error: null,
+      });
+    }
     if (path.startsWith("/events/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), dividends: [], earnings: [], error: null });
-    if (path === "/quotes") return json(route, { quotes: [{ symbol: "AAPL", last_price: 226.2, prev_close: 224.1, session_open: 224.5, session_high: 227.0, session_low: 223.8 }, { symbol: "SPY", last_price: 655, prev_close: 652, session_open: 653, session_high: 656, session_low: 651 }], as_of: "2026-08-25T18:30:00Z", source: "alpaca_market_data", error: null });
+    if (path === "/quotes") return json(route, {
+      quotes: [
+        {
+          symbol: "AAPL", last_price: 226.2, resolved_price: 226.2,
+          prev_close: 224.1, session_open: 224.5, session_high: 227.0, session_low: 223.8,
+        },
+        {
+          symbol: "SPY", last_price: 655, resolved_price: 655,
+          prev_close: 652, session_open: 653, session_high: 656, session_low: 651,
+        },
+      ],
+      as_of: "2026-08-25T18:30:00Z", source: "alpaca_market_data", error: null,
+    });
     if (path === "/search") return json(route, { query: "", trades: [], agent_logs: [] });
     return route.continue();
   });
@@ -224,6 +276,12 @@ async function shot(name, viewport, scenario = "populated", interact, destDir) {
     const page = await context.newPage();
     page.on("console", (message) => { if (message.type() === "error") { const text = `${name}: console: ${message.text()}`; stepErrors.push(text); console.error(text); } });
     page.on("pageerror", (error) => { const text = `${name}: pageerror: ${error.message}`; stepErrors.push(text); console.error(text); });
+    page.on("response", (response) => {
+      if (response.status() < 400) return;
+      const text = `${name}: HTTP ${response.status()} ${response.url()}`;
+      stepErrors.push(text);
+      console.error(text);
+    });
     await page.clock.setFixedTime(FIXED_NOW);
     await installRoutes(page, scenario);
     await page.goto(baseUrl, { waitUntil: "networkidle" });
@@ -256,6 +314,22 @@ async function shot(name, viewport, scenario = "populated", interact, destDir) {
   return { name, ok: stepErrors.length === 0, errors: stepErrors };
 }
 
+const DATED_INTRADAY_SUBTITLE = [
+  "Live $226.20 · as of Aug 25, 2:30:00 PM · live price line",
+  "5m bars through Aug 25, 2:25 PM · position 12 @ $221.45",
+].join(" · ");
+const TIME_ONLY_QUOTE = /as of 2:30:00 PM(?: ·|$)/;
+const TIME_ONLY_BARS = /5m bars through 2:25 PM(?: ·|$)/;
+
+async function assertDatedIntradayChart(page) {
+  await page.getByRole("button", { name: "5m", exact: true }).click();
+  await page.getByText(DATED_INTRADAY_SUBTITLE, { exact: true }).waitFor();
+  const text = await page.locator("body").innerText();
+  if (TIME_ONLY_QUOTE.test(text) || TIME_ONLY_BARS.test(text)) {
+    throw new Error("chart prose regressed to a time-only quote or bars-through label");
+  }
+}
+
 // Fail informatively: a single bad step (a stale selector, a timeout) used
 // to throw straight out of a top-level `await shot(...)`, aborting every
 // step after it — which is exactly how one stale selector at step 2 hid
@@ -267,7 +341,7 @@ const steps = [
   ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByText("Apple Inc.").waitFor();
     await page.getByText("position 12", { exact: false }).waitFor();
-    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await assertDatedIntradayChart(page);
   }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
     // Positions is the primary leftmost/active-by-default dockview pane.
@@ -283,8 +357,13 @@ const steps = [
   }],
   ["04-ipad-landscape-chart", { width: 1180, height: 820 }, "populated", async (page) => {
     await page.getByRole("button", { name: "Chart", exact: true }).click();
+    await assertDatedIntradayChart(page);
   }],
-  ["05-ipad-portrait-candidates", { width: 820, height: 1180 }],
+  ["05-ipad-portrait-chart", { width: 820, height: 1180 }, "populated", async (page) => {
+    await page.getByRole("button", { name: "Candidates", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Chart", exact: true }).click();
+    await assertDatedIntradayChart(page);
+  }],
   ["06-desktop-no-session-empty", { width: 1600, height: 1000 }, "empty"],
   ["07-ipad-portrait-read-errors", { width: 820, height: 1180 }, "error"],
   ["08-desktop-research-desk", { width: 1600, height: 1000 }, "populated", async (page) => { await page.getByRole("button", { name: "Research Desk" }).click(); await page.getByText("Research Intelligence Desk").waitFor(); await page.getByText(/Technical moved neutral → bullish/).first().waitFor(); await page.getByText("Breadth deteriorated after the earlier read.").first().waitFor(); await page.getByText("The disagreement survived. So did an order.").waitFor(); }],
