@@ -1,12 +1,12 @@
 """Read-only primary identity assertion: no key or account crosses output."""
 
 import os
-import pwd
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from ops.rehearsal import primary_identity_assertion
 from ops.rehearsal.primary_identity_assertion import (
     OUTPUT_NAME,
     PrimaryIdentityError,
@@ -16,8 +16,13 @@ from ops.rehearsal.primary_identity_assertion import (
 
 @pytest.fixture
 def identity_inputs(tmp_path, monkeypatch):
-    uid = pwd.getpwnam("qamc").pw_uid
-    monkeypatch.setattr(os, "geteuid", lambda: uid)
+    uid = os.geteuid()
+
+    def qamc_user(name):
+        assert name == "qamc"
+        return SimpleNamespace(pw_uid=uid)
+
+    monkeypatch.setattr(primary_identity_assertion, "pwd", SimpleNamespace(getpwnam=qamc_user))
     # Files are already systemd's per-unit copy in this test, never .env.
     delivered = tmp_path / "systemd"
     delivered.mkdir()
@@ -25,19 +30,6 @@ def identity_inputs(tmp_path, monkeypatch):
     (delivered / "alpaca_secret_key").write_text("SKABCDEFGHIJKLMN\n")
     scratch = tmp_path / "scratch"
     scratch.mkdir(mode=0o700)
-    # The fixture directory belongs to ubuntu, while the real unit's scratch
-    # belongs to qamc; only the ownership probe is replaced here.
-    real_lstat = Path.lstat
-
-    def lstat_as_qamc(path):
-        result = real_lstat(path)
-        if Path(path) == scratch:
-            fields = list(result)
-            fields[4] = uid
-            return os.stat_result(fields)
-        return result
-
-    monkeypatch.setattr(Path, "lstat", lstat_as_qamc)
     env = {"QAMC_SESSION_IDENTITY": "desk", "CREDENTIALS_DIRECTORY": str(delivered)}
     return env, scratch
 
