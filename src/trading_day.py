@@ -34,12 +34,12 @@ def most_recent_trading_day(now: datetime, broker: Any = None, on_error: Any = N
     Friday it must judge Friday, not Thursday — a session that has not
     finished cannot yet have failed to re-place anything, and one that has
     finished can. Holidays are excluded through `broker.is_trading_day`
-    when available. That helper answers False on a calendar-read failure,
-    so a broker outage would walk PAST a real trading day and could judge
-    a holiday-free week as "no session, because there was no day" — to
-    keep the failure on the alerting side, the walk is bounded and falls
-    back to the most recent plain weekday, which can only over-alert on a
-    holiday, never suppress a real gap.
+    when available. A calendar-read exception falls back immediately to the
+    candidate below. A pathological all-False answer could otherwise walk
+    PAST a real trading day and judge a holiday-free week as "no session,
+    because there was no day" — the bounded walk therefore falls back to the
+    most recent plain weekday, which can only over-alert on a holiday, never
+    suppress a real gap.
     """
     today_et = now.astimezone(ET).date()
     _start, today_end = _session_bounds_utc(today_et)

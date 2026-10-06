@@ -333,8 +333,8 @@ def test_trading_sessions_held_zero_when_end_not_after_start(mock_tc_cls):
 
 @patch("src.execution.broker.TradingClient")
 def test_trading_sessions_held_falls_back_to_weekday_on_calendar_error(mock_tc_cls):
-    """A calendar outage must degrade to the weekday approximation, not
-    raise — matching `is_trading_day`'s existing failure posture."""
+    """This reporting count degrades to weekdays; the session-entry calendar
+    check separately raises rather than calling an outage a holiday."""
     from datetime import date as _date
     from src.trading_calendar import trading_sessions_held as weekday_sessions_held
 
@@ -1118,9 +1118,8 @@ def test_is_trading_day_caches_calendar_lookups(mock_tc_cls):
 @patch("src.execution.broker.TradingClient")
 def test_is_trading_day_does_not_cache_failed_lookup(mock_tc_cls):
     """A broker-side hiccup (timeout, 503) on the calendar lookup makes
-    is_trading_day defensively return False — but the next call should
-    retry, not silently keep returning False all day. Pin: failed
-    lookups don't poison the cache."""
+    is_trading_day fail loudly rather than look like a holiday. The next call
+    retries instead of poisoning the cache for the rest of the day."""
     from datetime import date as _date
 
     mock_client = MagicMock()
@@ -1132,9 +1131,10 @@ def test_is_trading_day_does_not_cache_failed_lookup(mock_tc_cls):
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     target = _date(2026, 4, 20)
-    assert broker.is_trading_day(target) is False  # transient failure
+
+    pytest.raises(RuntimeError, broker.is_trading_day, target)
+    assert target not in broker._trading_day_cache
     assert broker.is_trading_day(target) is True  # retried, succeeded
-    assert mock_client.get_calendar.call_count == 2
 
 
 @patch("src.execution.broker.TradingClient")

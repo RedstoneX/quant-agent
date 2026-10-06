@@ -402,18 +402,14 @@ class AccountReads(AssetEligibilityReads):
             )
             result = bool(calendar)
             record_guarded_pass(self, "account_reads.trading_calendar_confirm", context={"date": str(target_date)})
-        except Exception as exc:
-            record_guarded_pass(
-                self,
-                "account_reads.trading_calendar_confirm",
-                exc,
-                log=logger,
-                context={**{"date": str(target_date)}, "effect": "assumed market closed"},
+        except Exception:
+            # Only a successful empty response means holiday/weekend. Do not
+            # cache or disguise an unavailable calendar as a closed market.
+            logger.exception(
+                "Trading-calendar lookup failed for %s; refusing to assume closed",
+                target_date,
             )
-            # Do NOT cache a failed lookup — caller's session is already
-            # aborted (we returned False) but a transient API hiccup
-            # shouldn't poison the cache for the rest of the day.
-            return False
+            raise
         self._trading_day_cache[target_date] = result
         return result
 
@@ -433,8 +429,8 @@ class AccountReads(AssetEligibilityReads):
         should prefer this method instead.
 
         Falls back to the weekday approximation on a calendar-query failure
-        (transient API hiccup) rather than raising, matching the existing
-        `is_trading_day` failure posture of degrading, not aborting.
+        because this is a reporting count. Unlike this helper, the session-entry
+        `is_trading_day` check raises: an outage cannot look like a holiday.
 
         Returns 0 if `end` is not after `start`.
         """

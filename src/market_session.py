@@ -135,7 +135,8 @@ def market_open_now(broker: Any, clock: Callable[[], datetime]) -> bool:
     FAILED to be placed, and answering "shut" would suppress a real naked-
     position alert. Answering "open" costs a redundant banner. The fail-open
     stays narrow (only a raising clock reaches it) and loud (logged with the
-    cause), and no order is placed off this answer.
+    cause). It may permit only additive/replacement protective-stop work,
+    never an entry or ordinary trading decision.
     """
     try:
         now = clock()

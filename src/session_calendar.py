@@ -17,14 +17,13 @@ is switched over to `phase_window()`.
 Two properties matter more than anything else here:
 
 1.  It FAILS LOUDLY when the exchange calendar cannot be read. The broker's
-    `is_trading_day`, `get_session_open` and `get_session_close` all DEGRADE
-    on failure — `is_trading_day` logs and returns False, the two edge reads
-    log and return None — so at the broker's surface "today is a holiday" and
-    "Alpaca did not answer" are the same answer. Quietly treating an outage as
-    a holiday, or worse as a normal 09:30-16:00 session, reintroduces exactly
-    the bug this is here to remove, invisibly. `SessionCalendarUnavailable` is
-    raised instead; a caller may catch it and decide, but no caller is handed
-    a guess dressed as a fact.
+    `is_trading_day` now raises on failure, but the two edge reads this module
+    needs still log and return None. At that edge surface, "today is a holiday"
+    and "Alpaca did not answer" are therefore the same answer. Quietly treating
+    an outage as a holiday, or worse as a normal 09:30-16:00 session,
+    reintroduces exactly the bug this is here to remove, invisibly.
+    `SessionCalendarUnavailable` is raised instead; a caller may catch it and
+    decide, but no caller is handed a guess dressed as a fact.
 
 2.  No holiday or early-close date is written down. A hardcoded 2026 holiday
     table is the same time bomb in a new costume: correct until the year
