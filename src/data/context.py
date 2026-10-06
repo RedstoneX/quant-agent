@@ -36,9 +36,8 @@ from src.data.technical import ATR_PERIOD, atr_series
 from src.models import OHLCV
 from src.quantities import avg_dollar_volume
 
-# Completed-session approximations for the named calendar horizons. The bar
-# count is exact but the one-week/month labels are not: holidays and month
-# lengths vary. Item 90 routes these to real calendar boundaries without
+# Completed-session approximations for calendar horizons. Holidays and month
+# lengths vary, so item 90 routes these to real calendar boundaries without
 # choosing counts from later returns.
 _W_1W, _W_1M, _W_3M, _W_6M, _W_12M = 5, 21, 63, 126, 252
 
@@ -59,10 +58,9 @@ _SLOPE_LOOKBACK = 10
 # this test.
 _CONSOLIDATION_WINDOW = ATR_PERIOD
 
-# Interim cap on gaps carried into the Technical prompt. It is a rendering
-# choice, not a market-structure claim; item 90 requires either derivation from
-# an explicit token budget, removal, or a controlled prompt-invariance result.
-# The nearest gaps are collected first.
+# Interim prompt cap, not a market-structure claim. Item 90 requires an
+# explicit token budget, removal, or controlled prompt-invariance evidence;
+# nearest gaps are collected first.
 _MAX_GAPS_REPORTED = 3
 
 

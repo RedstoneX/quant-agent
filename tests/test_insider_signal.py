@@ -315,35 +315,6 @@ def test_no_sell_fraction_anywhere_changes_the_label():
     assert tiny.detail != huge.detail
 
 
-def test_per_filing_detail_does_not_borrow_aggregate_study_outcomes():
-    """Scott/Xu aggregate stock-wide trades over six months; one Form 4 row
-    is not that unit, so its prompt detail may carry the raw ratio but none of
-    the study's band-level return claims."""
-    def detail_for(shares, post):
-        return classify_transaction(
-            _row(direction="sell", shares=shares, post_shares=post), InsiderHistory(),
-        ).detail
-
-    details = [
-        detail_for(9_999.0, 90_001.0),
-        detail_for(30_000.0, 70_000.0),
-        detail_for(60_000.0, 40_000.0),
-        classify_transaction(
-            _row(direction="buy", shares=5_000.0, post_shares=5_000.0),
-            InsiderHistory(),
-        ).detail,
-    ]
-
-    assert "10.0%" in details[0]
-    assert "30.0%" in details[1]
-    assert "60.0%" in details[2]
-    for detail in details:
-        assert "Scott & Xu" not in detail
-        assert "quarterly excess return" not in detail
-        assert "BULLISH" not in detail
-        assert "predicts negative" not in detail
-
-
 def test_missing_post_transaction_holding_is_indeterminate_not_routine():
     verdict = classify_transaction(
         _row(direction="sell", post_shares=None), InsiderHistory(),

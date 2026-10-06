@@ -512,10 +512,7 @@ def _scan_module(
         for target in targets:
             for name_node, value_node in _bound_name_values(target, node.value):
                 name = name_node.id
-                if not (
-                    name.isupper()
-                    or (name.startswith("_") and name.lstrip("_").isupper())
-                ):
+                if not (name.isupper() or (name.startswith("_") and name.lstrip("_").isupper())):
                     continue
                 for site_id, value, lineno in _leaves(
                     value_node, f"{module}.{name}", names, local
