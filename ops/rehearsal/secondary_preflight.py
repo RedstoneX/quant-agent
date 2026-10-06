@@ -17,7 +17,8 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from src.credential_placeholder import looks_like_placeholder
-from src.session_identity import credentials_directory_var
+from src.credentials import load_systemd_credentials
+from src.session_identity import credentials_directory_var, session_identity
 
 PAPER_URL = "https://paper-api.alpaca.markets"
 TRADING_UNITS = frozenset({
@@ -106,24 +107,30 @@ def _running_trading_units() -> bool:
 
 
 def _secondary_credentials(env: dict[str, str]) -> tuple[str, str, str]:
-    """Reuse the desk's file delivery names, explicitly bound to secondary."""
-    directory_name = credentials_directory_var("secondary")
+    """Require the existing rehearsal identity and systemd file hand-off."""
+    if session_identity(env) != "rehearsal":
+        raise SecondaryPreflightError("capture session identity is not rehearsal")
+    directory_name = credentials_directory_var("rehearsal")
     raw = env.get(directory_name, "").strip()
-    if not raw:
-        raise SecondaryPreflightError("secondary credential directory was not delivered")
+    if not raw or raw != env.get("CREDENTIALS_DIRECTORY", "").strip():
+        raise SecondaryPreflightError("rehearsal systemd credential directory was not delivered")
     directory = Path(raw).resolve()
     if not directory.is_dir():
-        raise SecondaryPreflightError("secondary credential directory is unavailable")
-    values = []
-    for name in ("alpaca_api_key", "alpaca_secret_key", "account_number"):
-        try:
-            value = (directory / name).read_text().strip()
-        except OSError as exc:
-            raise SecondaryPreflightError(f"secondary {name} cannot be read") from exc
-        if not value or looks_like_placeholder(value):
-            raise SecondaryPreflightError(f"secondary {name} is missing or a placeholder")
-        values.append(value)
-    return values[0], values[1], values[2]
+        raise SecondaryPreflightError("rehearsal credential directory is unavailable")
+    try:
+        delivered = load_systemd_credentials(env)
+    except Exception:
+        raise SecondaryPreflightError("rehearsal credentials cannot be read") from None
+    try:
+        account_number = (directory / "account_number").read_text().strip()
+    except OSError:
+        raise SecondaryPreflightError("rehearsal account_number cannot be read") from None
+    key = delivered.get("ALPACA_API_KEY", "")
+    secret = delivered.get("ALPACA_SECRET_KEY", "")
+    if any(not value or looks_like_placeholder(value)
+           for value in (key, secret, account_number)):
+        raise SecondaryPreflightError("rehearsal credentials are missing or placeholders")
+    return key, secret, account_number
 
 
 def check_secondary_capture(

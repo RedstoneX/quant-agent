@@ -58,7 +58,11 @@ def setup(tmp_path):
         max_capture_seconds=120,
         max_capture_bytes=1024 * 1024,
     )
-    return spec, {"CREDENTIALS_DIRECTORY_SECONDARY": str(credentials)}
+    return spec, {
+        "QAMC_SESSION_IDENTITY": "rehearsal",
+        "CREDENTIALS_DIRECTORY": str(credentials),
+        "CREDENTIALS_DIRECTORY_REHEARSAL": str(credentials),
+    }
 
 
 def run(spec, env, client=None, **kwargs):
@@ -132,7 +136,11 @@ def test_real_sdk_paper_endpoint_enum_is_accepted(setup):
 ])
 def test_isolation_or_bounds_refuse_before_credentials_are_read(setup, change):
     spec, env = setup
-    env = {"CREDENTIALS_DIRECTORY_SECONDARY": "/path/that/does/not/exist"}
+    env = {
+        "QAMC_SESSION_IDENTITY": "rehearsal",
+        "CREDENTIALS_DIRECTORY": "/path/that/does/not/exist",
+        "CREDENTIALS_DIRECTORY_REHEARSAL": "/path/that/does/not/exist",
+    }
     with pytest.raises(SecondaryPreflightError) as error:
         run(change(spec), env)
     assert "credential" not in str(error.value)
@@ -140,13 +148,20 @@ def test_isolation_or_bounds_refuse_before_credentials_are_read(setup, change):
 
 def test_missing_secondary_pair_does_not_fall_back_to_desk_environment(setup):
     spec, _ = setup
-    with pytest.raises(SecondaryPreflightError, match="secondary credential directory"):
+    with pytest.raises(SecondaryPreflightError, match="capture session identity"):
         run(spec, {"ALPACA_API_KEY": "desk-key", "ALPACA_SECRET_KEY": "desk-secret"})
+
+
+def test_rehearsal_directory_must_match_systemd_delivery(setup):
+    spec, env = setup
+    env["CREDENTIALS_DIRECTORY"] = "/some/other/directory"
+    with pytest.raises(SecondaryPreflightError, match="systemd credential directory"):
+        run(spec, env)
 
 
 def test_expected_secondary_identity_is_required_from_the_delivered_file(setup):
     spec, env = setup
-    identity_file = Path(env["CREDENTIALS_DIRECTORY_SECONDARY"]) / "account_number"
+    identity_file = Path(env["CREDENTIALS_DIRECTORY_REHEARSAL"]) / "account_number"
     identity_file.unlink()
     with pytest.raises(SecondaryPreflightError, match="account_number"):
         run(spec, env)
@@ -154,7 +169,7 @@ def test_expected_secondary_identity_is_required_from_the_delivered_file(setup):
 
 def test_delivered_secondary_identity_cannot_equal_primary(setup):
     spec, env = setup
-    identity_file = Path(env["CREDENTIALS_DIRECTORY_SECONDARY"]) / "account_number"
+    identity_file = Path(env["CREDENTIALS_DIRECTORY_REHEARSAL"]) / "account_number"
     identity_file.write_text("primary-test")
     with pytest.raises(SecondaryPreflightError, match="identities match"):
         run(spec, env)
