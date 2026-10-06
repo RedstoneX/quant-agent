@@ -230,7 +230,7 @@ def test_a_shorter_agent_name_does_not_absorb_a_longer_ones_history():
 def test_the_suffix_list_matches_the_one_replay_uses():
     """Two modules need the same list for the same reason; drifting apart
     would make one of them quietly wrong."""
-    from ops.rehearsal.replay import _SESSION_SUFFIXES as replay_suffixes
+    from ops.rehearsal.response_matching import SESSION_SUFFIXES as replay_suffixes
     from src.token_budget import _SESSION_SUFFIXES as budget_suffixes
 
     assert set(budget_suffixes) == set(replay_suffixes)
