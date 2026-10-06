@@ -1,5 +1,26 @@
 # Splitting src/pipeline.py and src/pipeline_stages.py — design only
 
+## Current reconciliation — 2026-10-06
+
+This plan's line ranges and status row below are historical. In the current tree,
+steps 0–8 and 10–12 have landed. Step 9's proposed `pipeline_evening.py` mixin
+was superseded: `src/sessions/evening_session.py`,
+`evening_stop_proximity_session.py`, `expected_sessions_session.py`, and
+`quarterly_meta_session.py` hold those bodies behind thin `TradingPipeline`
+entry points. The base is 1,756 lines and `pipeline_stages.py` is 805; the
+largest tracked `src/` Python file is 2,166 lines. This is a boundary inventory,
+not proof of live behavior or of the original one-step-per-PR sequence.
+
+`scripts.audit_moved_patch_targets` reports 150 LIVE, 2 MIRRORED, 0 REEXPORT,
+and 0 MISSING static test targets. The two mirrored seams are exercised by the
+late-entry-window and short-add tests. `scripts.pipeline_method_guard` and the
+rewritten `scripts.file_size_guard` pass. The focused split/stage/evening tests
+passed 151/151, and the extra evening-boundary/mirrored-seam selection passed
+19/19. The required PR #1546 CI passed both test shards on this same code tree.
+The scanner cannot prove dynamically constructed patch targets or an actual
+Paper session; neither is claimed here. No current executable gap was proven,
+so further moves require a specific failing boundary or test.
+
 Measured 2026-09-30 against main at 747d159 (`src/pipeline.py` 20,035 lines, `src/pipeline_stages.py` 10,536).
 Method of derivation: an AST pass over `TradingPipeline` (227 methods, class spans lines 940–20035) recording every
 `self.<method>()` call, every `self.<attr>` read/write, and every lazy import; plus grep of every importer, every

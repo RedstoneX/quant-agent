@@ -2,6 +2,8 @@
 
 **Update, 2026-10-06.** The earlier count of 36 pending pull requests and the quoted file sizes are obsolete. At this audit there were none pending, and the two original oversized files had shrunk to 1,756 and 805 lines. That is substantial progress, not proof that every moved boundary and test still works. The next job is to check the actual split and its tests, name only the remaining gaps, and repair those gaps without beginning another wholesale rebuild. The desk remains off.
 
+**Current check, 2026-10-06.** The planned moves are present or were replaced by smaller standalone parts. Checks of the moved test seams and 170 focused tests found no broken split that calls for another code move. The old step-by-step acceptance record and a real desk session are still unproven, so this item remains open. The Paper desk was not restarted.
+
 **Open.** The written plan for splitting the two oversized pipeline files was
 re-measured against the current code on 2026-10-01 and amended: its figures
 were all stale, one module boundary described a stop-moving method as if it
