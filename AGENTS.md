@@ -51,6 +51,11 @@ Parallelism is an efficiency tool, not an agent-count target.
 
 ## Execution discipline
 
+- **Owner-designated condensed sprint:** at the start of each work turn, name the next observable needed for the stated finish line. Do only the smallest change that can produce or protect that observable. A related defect, useful test framework, public artifact, or backlog item is not in scope merely because it is nearby; park it unless current evidence shows it blocks the finish line.
+- Before starting a branch, PR, CI run, or subagent, state which unfinished acceptance criterion it advances and what evidence would close it. If that cannot be stated, do not start it. Limit concurrent work to genuinely independent critical-path tasks; stop a worker when its task stops being necessary.
+- Use one narrow decisive test, then the required real CI once per substantive PR. Repeat a test or CI only after a relevant code change or a concrete failure. Do not build a generalized harness to prove a single real-world observation when the existing path can collect it.
+- When the next required observation depends on a market window, credential, external service, or owner decision, preserve work, report that exact dependency, and stop expanding into adjacent work. Never relabel a synthetic or partial check as the missing real observation.
+- Give the owner short status lines: finished evidence, current critical-path action, genuine blocker, and production state. Distinguish merged from deployed and tested from observed live.
 - Prefer outcome-driven work over micro-prompts.
 - Run the narrowest decisive test first; broaden only when evidence requires it.
 - Do not re-read unchanged authority or re-prove settled facts.
