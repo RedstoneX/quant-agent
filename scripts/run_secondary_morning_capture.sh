@@ -14,6 +14,8 @@ if [[ "$(id -un)" != ubuntu ]]; then
     echo 'STOP: run capture orchestration as the ubuntu engineering account' >&2
     exit 2
 fi
+# A stale local origin/main must not bless an obsolete capture checkout.
+git -C "$REPO_ROOT" fetch --quiet origin main
 REPO_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 MAIN_HEAD="$(git -C "$REPO_ROOT" rev-parse origin/main)"
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" || "$REPO_HEAD" != "$MAIN_HEAD" ]]; then
