@@ -156,7 +156,8 @@ def check_secondary_capture(
             raise SecondaryPreflightError("secondary and primary account identities match")
         credentials = (key, secret)
         client = client_factory(*credentials)
-        _check_local(spec, paper, base_url, str(getattr(client, "_base_url", "")),
+        endpoint = getattr(client, "_base_url", "")
+        _check_local(spec, paper, base_url, str(getattr(endpoint, "value", endpoint)),
                      memory_mib=memory_mib, load_per_cpu=load_per_cpu)
         account = client.get_account()
         if (str(getattr(account, "account_number", "")) != expected_secondary or

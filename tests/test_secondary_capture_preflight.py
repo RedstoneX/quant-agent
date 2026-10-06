@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from alpaca.common.enums import BaseURL
 
 from ops.rehearsal.secondary_preflight import (
     CapturePreflight, SecondaryPreflightError, check_secondary_capture,
@@ -111,6 +112,15 @@ def test_paper_config_and_resolved_sdk_endpoint_are_independent(setup):
     with pytest.raises(SecondaryPreflightError, match="resolved SDK endpoint"):
         run(spec, env, client)
     assert client.calls == []
+
+
+def test_real_sdk_paper_endpoint_enum_is_accepted(setup):
+    spec, env = setup
+    client = ReadOnlyClient()
+    client._base_url = BaseURL.TRADING_PAPER
+    checked, _ = run(spec, env, client)
+    assert checked is client
+    assert client.calls == ["account", "positions", "open_orders"]
 
 
 @pytest.mark.parametrize("change", [
