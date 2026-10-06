@@ -86,3 +86,43 @@ def test_runner_voids_a_broker_gap_at_the_real_calendar_path(tmp_path):
     assert "MissingRecordedBrokerCall" in caught.value.report.error
     assert caught.value.report.network_attempts == []
     assert "unrecorded broker call" in str(caught.value)
+
+
+def test_runner_installs_exact_session_provider_ledger(tmp_path):
+    sandbox = _sandbox(tmp_path, "captured-inputs")
+    now = datetime(2026, 10, 3, 9, 35, tzinfo=ET)
+
+    report = run_rehearsal(
+        sandbox,
+        session="morning",
+        now_et=now,
+        config_overrides={"execution.fill_stream_enabled": False},
+        broker_cassette=_closed_day_cassette(now.date()),
+        session_input_payload={"schema": 1, "entries": []},
+    )
+
+    assert report.status == "market_holiday"
+    assert report.network_attempts == []
+    assert "all captured provider calls were consumed exactly" in report.isolation_checks
+    assert "session providers replay captured call outcomes only" in report.isolation_checks
+
+
+def test_exact_session_provider_ledger_rejects_unused_calls(tmp_path):
+    from ops.rehearsal.session_inputs import SessionInputError
+
+    sandbox = _sandbox(tmp_path, "unused-input")
+    now = datetime(2026, 10, 3, 9, 35, tzinfo=ET)
+
+    with pytest.raises(SessionInputError, match="not consumed") as caught:
+        run_rehearsal(
+            sandbox,
+            session="morning",
+            now_et=now,
+            config_overrides={"execution.fill_stream_enabled": False},
+            broker_cassette=_closed_day_cassette(now.date()),
+            session_input_payload={"schema": 1, "entries": [
+                {"kind": "yfinance.download", "key": "unused", "value": None},
+            ]},
+        )
+
+    assert caught.value.report.network_attempts == []

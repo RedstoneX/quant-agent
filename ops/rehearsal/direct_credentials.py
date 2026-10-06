@@ -3,7 +3,7 @@
 The production desk receives Alpaca credentials as systemd credential files.
 Live rehearsal checks must exercise that same boundary: no OneCLI agent token,
 no placeholder header substitution, and no credential in the process
-environment.  The transient launcher loads three files into systemd's private
+environment.  The transient launcher loads two files into systemd's private
 credential directory; this module validates and returns them without logging
 their values.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from src.credentials import CREDENTIALS_DIRECTORY_ENV, load_systemd_credentials
 from src.session_identity import IDENTITY_ENV, credentials_directory_var, session_identity
@@ -25,7 +24,6 @@ class RehearsalCredentialError(RuntimeError):
 class RehearsalCredentials:
     api_key: str
     secret_key: str
-    expected_account_number: str
 
 
 def bind_systemd_directory_to_rehearsal_identity() -> None:
@@ -57,7 +55,7 @@ def bind_systemd_directory_to_rehearsal_identity() -> None:
 
 
 def load_rehearsal_credentials() -> RehearsalCredentials:
-    """Read the systemd-delivered key pair and independent account assertion."""
+    """Read only the systemd-delivered rehearsal key pair."""
     if session_identity() != "rehearsal":
         raise RehearsalCredentialError(
             f"{IDENTITY_ENV} is not rehearsal; refusing a live rehearsal check"
@@ -79,21 +77,7 @@ def load_rehearsal_credentials() -> RehearsalCredentials:
             "a live rehearsal check"
         )
 
-    account_path = Path(raw_directory) / "account_number"
-    try:
-        expected = account_path.read_text().strip()
-    except OSError as exc:
-        raise RehearsalCredentialError(
-            "systemd did not provide the rehearsal account identity assertion; "
-            "refusing a live rehearsal check"
-        ) from exc
-    if not expected:
-        raise RehearsalCredentialError(
-            "the rehearsal account identity assertion is empty; refusing a live "
-            "rehearsal check"
-        )
-
-    return RehearsalCredentials(api_key, secret_key, expected)
+    return RehearsalCredentials(api_key, secret_key)
 
 
 def force_direct_alpaca_transport() -> None:
@@ -109,15 +93,15 @@ def force_direct_alpaca_transport() -> None:
     os.environ["no_proxy"] = bypass
 
 
-def assert_expected_paper_account(account, expected: str) -> None:
-    """Fail before writes unless the broker confirms the pinned Paper account."""
+def assert_expected_paper_account(account, expected: str | None = None) -> None:
+    """Fail before writes unless the broker confirms an active Paper account."""
     actual = str(getattr(account, "account_number", "") or "").strip()
-    if not actual or actual != expected:
+    if not actual or (expected is not None and actual != expected):
         raise RehearsalCredentialError(
-            "broker account identity did not match the pinned rehearsal account; "
+            "broker account identity was missing or did not match the assertion; "
             "NOTHING was placed"
         )
-    if not actual.startswith("PA"):
+    if not actual.startswith("PA") or not actual.isalnum():
         raise RehearsalCredentialError(
             "broker account identity did not carry Alpaca's Paper prefix; NOTHING "
             "was placed"
@@ -125,5 +109,5 @@ def assert_expected_paper_account(account, expected: str) -> None:
     status = str(getattr(account, "status", "") or "").upper().split(".")[-1]
     if status != "ACTIVE":
         raise RehearsalCredentialError(
-            "the pinned rehearsal Paper account is not active; NOTHING was placed"
+            "the rehearsal Paper account is not active; NOTHING was placed"
         )

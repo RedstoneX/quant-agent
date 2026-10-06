@@ -168,6 +168,9 @@ class RecordingBrokerClient:
         return recorded
 
 
+from ops.rehearsal.broker_cassette_recording import install_recording_broker_cassette
+
+
 class ReplayBrokerCassette:
     """Strict global-order replay shared by named SDK-client stand-ins."""
 

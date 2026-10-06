@@ -191,6 +191,21 @@ def test_response_library_matches_each_chunk_independently():
     assert library.findings[-1]["agent"] == "tech_analyst"
 
 
+def test_exact_capture_replay_rejects_a_similar_but_changed_prompt():
+    call = _merged_call(
+        parts=[("chunk 1/1", "AAPL risk as of morning", "recorded answer")],
+        input_tokens=12, output_tokens=3, cost_usd=0.001,
+    )
+    library = ResponseLibrary([call], exact_prompts=True)
+
+    with pytest.raises(MissingRecordedResponse, match="no exact recorded prompt"):
+        library.match("tech_analyst", "AAPL risk as of midday")
+    assert library.findings[-1]["kind"] == "missing_exact_recorded_prompt"
+    assert len(library.unused()) == 1
+    assert library.match("tech_analyst", "AAPL risk as of morning").full_response == \
+        "recorded answer"
+
+
 def test_response_library_reports_expanded_count_not_row_count():
     """Before the fix, `available()` reported the DB row count (1) even
     though 4 real calls were behind it — actively misleading about how much
