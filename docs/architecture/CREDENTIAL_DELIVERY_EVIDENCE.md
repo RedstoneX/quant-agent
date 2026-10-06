@@ -40,16 +40,19 @@ The disposable account now has its own qamc-owned, mode-0400 source files under
 `/home/qamc/credentials/rehearsal/`. A bounded transient user unit loads those
 files under the same logical systemd credential names production uses. The
 Python process reads them only from `CREDENTIALS_DIRECTORY`; neither key is put
-in argv, the environment, the repository, or output. The expected account
-number is delivered as a third file and checked against Alpaca's read-only
-`get_account()` response before the first write-capable call.
+in argv, the environment, the repository, or output. No secondary account
+number file is required: each account's number is read from Alpaca's
+`get_account()` response. Before a secondary capture, a separate read-only
+transient unit obtains the primary Paper number and passes only that number to
+the capture unit; the latter reads the secondary number from its own Paper
+account endpoint and refuses identical identities or a non-empty secondary
+position/order book before the first write-capable session call.
 
-The runner removes proxy and custom-CA variables before constructing either
-Alpaca client, so both trading and market-data requests go directly to Alpaca.
-This is deliberately narrow: OpenRouter and FRED continue to use OneCLI in the
-desk. No permanent service or timer was added; `scripts/run_rehearsal_conformance.sh`
-creates one transient, bounded unit and systemd removes its private credential
-directory when the command exits.
+The conformance runner removes proxy and custom-CA variables before building
+its Alpaca clients. The capture runner preserves the existing OneCLI route for
+OpenRouter and FRED but bypasses that proxy for Alpaca's trading and data hosts.
+No permanent service or timer was added; transient units receive private
+credential directories that systemd removes when they exit.
 
 Commissioning on 2026-10-05 made only read-only broker calls: direct Paper
 authentication succeeded, the secondary account was active, and its identity
