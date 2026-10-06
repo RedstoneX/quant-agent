@@ -24,7 +24,7 @@ from src.trading_calendar import ET
 _FRI_1005 = datetime(2026, 9, 11, 10, 5, tzinfo=ET).astimezone(timezone.utc)
 
 
-# ---- the placement gate reads the exchange calendar, and fails closed ----
+# ---- confirmed closed answers stop placement; unreadable may fall open ----
 
 def test_session_gate_says_shut_on_a_non_trading_day():
     broker = MagicMock()
