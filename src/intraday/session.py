@@ -10,6 +10,7 @@ hands in), never a construction-time copy.
 import logging
 
 from src.cost_circuit import PaidAnalysisSuspended
+from src.evidence_gate import EvidenceGateEvaluationError
 from src.intraday_scan_outcome import failed_scan_result
 from src.pipeline_context import RunContext
 from src.sentinel.guarded_site import record_site as _site
@@ -221,6 +222,12 @@ class IntradaySession:
         # opportunity scan.
         try:
             scan_result = self._run_intraday_opportunity_scan(ctx)
+        except EvidenceGateEvaluationError:
+            # A broken refusal gate is not an ordinary opportunity-scan miss:
+            # no verdict exists, so let the session's established failed-run
+            # notification/nonzero boundary report it. Other scan crashes keep
+            # their historical non-fatal, explicitly recorded result below.
+            raise
         except PaidAnalysisSuspended as exc:
             scan_result = {
                 "status": "paid_analysis_suspended",

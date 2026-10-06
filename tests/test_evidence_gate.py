@@ -463,13 +463,13 @@ def test_a_clean_run_is_untouched():
     alert.assert_not_called()
 
 
-def test_a_gate_crash_lets_the_run_proceed():
-    """A gate that can stop the desk trading must not stop it by crashing."""
+def test_a_gate_crash_fails_closed_before_the_decision_stage():
+    """An unknown gate verdict cannot authorize a Portfolio Manager call."""
     p = _pipeline({"macro": "ok"})
     with patch.object(evidence_gate, "evaluate", side_effect=RuntimeError("boom")):
-        result, _, _ = _run(p)
-    assert result["status"] != "evidence_gate_skip"
-    p._decision_stage.assert_called_once()
+        with pytest.raises(evidence_gate.EvidenceGateEvaluationError, match="boom"):
+            _run(p)
+    p._decision_stage.assert_not_called()
 
 
 # ---------- owner-facing rendering of the skip (2026-09-18) ----------

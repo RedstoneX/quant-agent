@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from boundary_harness import check_boundary  # noqa: E402
-from src import pipeline_cost_gate, pipeline_halt_gates  # noqa: E402
+from src import evidence_gate, pipeline_cost_gate, pipeline_halt_gates  # noqa: E402
 from src.cost_circuit import PaidAnalysisSuspended  # noqa: E402
 
 
@@ -131,3 +131,20 @@ def test_evidence_gate_proceeds_from_a_stub_when_every_seat_answered():
     assert recorded == ["coverage"]
     assert isinstance(stub._last_evidence_freshness, dict)
     assert stub._last_decision_data_status == {"technical": "ok"}
+
+
+def test_evidence_gate_boundary_propagates_an_unknown_verdict(monkeypatch, caplog):
+    def broken_evaluate(_data_status):
+        raise RuntimeError("gate implementation failed")
+
+    monkeypatch.setattr(evidence_gate, "evaluate", broken_evaluate)
+    stub = SimpleNamespace()
+    ctx = SimpleNamespace(data_status={"tech": "ok"})
+    with caplog.at_level("ERROR", logger=pipeline_halt_gates.logger.name):
+        with pytest.raises(
+            evidence_gate.EvidenceGateEvaluationError,
+            match="gate implementation failed",
+        ):
+            pipeline_halt_gates._evidence_gate_skip(stub, ctx, "run-7")
+    assert "REFUSING the decision" in caplog.text
+    assert "PROCEEDING" not in caplog.text

@@ -119,14 +119,17 @@ def _evidence_gate_skip(
     try:
         verdict = evidence_gate.evaluate(ctx.data_status)
     except Exception as exc:  # noqa: BLE001
-        # A gate that can stop the desk trading must not stop it by
-        # crashing. `evaluate` is documented never to raise; if it
-        # somehow does, proceed and say so loudly.
-        logger.error(
-            "evidence gate raised (%s) — PROCEEDING with the decision. "
-            "This is a bug in src/evidence_gate.py.", exc,
+        # `evaluate` is documented never to raise. If that contract breaks,
+        # the gate's verdict is unknown, so the decision must fail closed.
+        # Give the outer intraday wrapper a narrow exception to propagate;
+        # ordinary opportunity-scan crashes remain contained there.
+        logger.exception(
+            "evidence gate raised — REFUSING the decision. "
+            "This is a bug in src/evidence_gate.py."
         )
-        return None
+        raise evidence_gate.EvidenceGateEvaluationError(
+            f"evidence gate evaluation failed: {exc}"
+        ) from exc
 
     def _record(symbol, outcome, reason, **details):
         # Forensic persistence must never be able to break the trading
