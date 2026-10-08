@@ -61,6 +61,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/stage_decision.py",
     "src/stage_risk.py",
     "src/stage_execution.py",
+    # 2026-10-08: the entry-viability preflight moved out of
+    # `src/stage_execution.py` verbatim. Same code, same scope.
+    "src/stage_entry_preflight.py",
     "src/pipeline_sizing.py",
     "src/pipeline_earnings_quality.py",
     # 2026-10-01, board item 210 step 12: the rotation-EXECUTION block and

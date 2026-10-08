@@ -16,6 +16,14 @@ on a price that was actually read. Three different states all mean "do not size"
   this reason. Existing positions are not touched: their broker-held stops
   protect them and nothing here cancels or moves one.
 
+A fourth state is not a refusal at all: no today print YET. Owner ruling
+2026-10-08: "this is a swing trading desk, not scalping. The desk can keep
+re-asking until a price is received. It should not be hammered." The entry
+preflight (`src.stage_entry_preflight`) holds such names in a waiting set and
+`src.price_feed_preflight.wait_for_today_prints` re-asks for ALL of them in
+one batched request on a rising backoff until each prints or the session's
+own slot ends; only then is a name skipped, under ``no_print_by_window_end``.
+
 The fault state lives on the pipeline for ONE run of the entry stage
 (`src.price_feed_preflight` resets it at the start of each). The reader is
 passed in rather than imported so this module never imports the pipeline (no
@@ -38,7 +46,7 @@ NO_SIZING_PRINT = "no_sizing_print"
 SIZING_PRICE_UNREADABLE = "sizing_price_unreadable"  # kept: the detail prefix tests read
 PRICE_READ_FAILED = "price_read_failed"
 PRICE_FEED_UNREADABLE = "price_feed_unreadable"
-NO_PRINT_AT_OPEN_DEFERRED = "no_print_at_open_deferred"
+NO_PRINT_BY_WINDOW_END = "no_print_by_window_end"
 
 
 def price_feed_fault(pipeline) -> str | None:
@@ -48,40 +56,12 @@ def price_feed_fault(pipeline) -> str | None:
     return fault if isinstance(fault, str) and fault else None
 
 
-def reset_price_feed(pipeline, reference_symbol: str | None, *,
-                     opening_session: bool = False) -> None:
-    """Entry-stage start: no fault carries over, this is the session's
-    reference symbol for classifying a later single-name failure, and
-    `opening_session` says whether a missing print is deferred, not refused."""
+def reset_price_feed(pipeline, reference_symbol: str | None) -> None:
+    """Entry-stage start: no fault carries over, and this is the session's
+    reference symbol for classifying a later single-name failure."""
     pipeline.price_feed_fault = None
     pipeline.price_feed_reference = reference_symbol
     pipeline.price_read_failures = {}
-    pipeline.price_feed_opening_session = bool(opening_session)
-    if not isinstance(getattr(pipeline, "price_feed_deferred", None), dict):
-        pipeline.price_feed_deferred = {}
-
-
-def _defer_at_open(pipeline, symbol: str, what: str) -> tuple[str, str] | None:
-    """Owner-approved 2026-10-08: 57 of 59 "no print today" warnings landed in
-    the first ten minutes after the 09:30 ET open, on names that print
-    millions of shares a day -- the read simply came before the IEX feed had
-    printed. In the OPENING session (the 09:30 pass; no minute number is
-    invented, the session type is the criterion) a missing print is DEFERRED
-    to the desk's next existing pass, never refused. The deferral is kept on
-    the pipeline and in the recorded skip; the next pass re-checks the name
-    through the same chain and sizes it normally once it has printed."""
-    if getattr(pipeline, "price_feed_opening_session", False) is not True:
-        return None
-    detail = (
-        f"{NO_PRINT_AT_OPEN_DEFERRED}: no today print yet for the {what} in the "
-        "opening session -- not a refusal: deferred to the desk's next pass, "
-        "where the name is sized normally once it has printed"
-    )
-    deferred = getattr(pipeline, "price_feed_deferred", None)
-    if isinstance(deferred, dict):
-        deferred[symbol] = detail
-    logger.info("%s %s deferred at the open: %s", symbol, what, detail)
-    return NO_PRINT_AT_OPEN_DEFERRED, detail
 
 
 def _record_fault(pipeline, where: str, exc: BaseException, **context) -> None:
@@ -149,13 +129,7 @@ def sizing_price_or_refusal(
         )
         return (None, *classify_price_read_failure(pipeline, exc, symbol=symbol, what=what))
     if isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
-        deferred = getattr(pipeline, "price_feed_deferred", None)
-        if isinstance(deferred, dict):
-            deferred.pop(symbol, None)  # it printed: sized normally from here
         return float(price), "", ""
-    deferral = _defer_at_open(pipeline, symbol, what)
-    if deferral is not None:
-        return None, *deferral
     return None, NO_SIZING_PRINT, (
         f"no today trade print to size the {what} against (a quote mid or a "
         "prior-session price is not a sizing reference) — refused rather than "
@@ -169,12 +143,19 @@ def classify_price_read_failure(pipeline, exc: BaseException, *, symbol: str,
 
     The reference symbol is read once. If that fails too the feed is down
     and the desk-level fault is declared; otherwise the fault is this name's
-    alone, recorded and counted, and the refusal names it as such.
+    alone, recorded and counted, and the refusal names it as such. When NO
+    reference is available (nothing held, no stamped reader) the failure
+    cannot be classified: it is still counted as a DESK-level row
+    (``price_feed.desk_unclassified``) so a genuine outage is never visible
+    only as N single-name rows, and the entry is refused as this name's.
     """
-    if reference_read_ok(pipeline) is False:
+    verdict = reference_read_ok(pipeline)
+    if verdict is False:
         return PRICE_FEED_UNREADABLE, declare_price_feed_fault(
             pipeline, "sizing_read", exc, symbol=symbol,
         )
+    if verdict is None:
+        _record_fault(pipeline, "desk_unclassified", exc, symbol=symbol, what=what)
     _record_fault(pipeline, "single_name", exc, symbol=symbol, what=what)
     return PRICE_READ_FAILED, (
         f"{SIZING_PRICE_UNREADABLE}: the price read for {symbol} failed after "

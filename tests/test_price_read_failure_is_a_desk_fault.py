@@ -8,6 +8,14 @@ refused (`price_read_failed`), others trade; reference fails too -> the feed
 is down, no new entries for the rest of the session (`price_feed_unreadable`),
 recorded durably. Absence stays a per-name `no_sizing_print`. Existing stops
 are never touched by any of this.
+
+Owner ruling, same day: "this is a swing trading desk, not scalping. The desk
+can keep re-asking until a price is received. It should not be hammered
+because that will get us banned." A name with no today print YET waits; ONE
+batched request per ask covers every waiting name, on a rising backoff, until
+it prints (then it is sized through the normal entry path) or the pass's own
+slot ends (then it is skipped under `no_print_by_window_end`). The ask count
+is bounded by the slot and logged.
 """
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ from src.pipeline_context import RunContext
 from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
 from src.refusal_errors import PriceReadFailed
 from src.sizing_refusal import (
-    NO_PRINT_AT_OPEN_DEFERRED, NO_SIZING_PRINT, PRICE_FEED_UNREADABLE, PRICE_READ_FAILED,
+    NO_PRINT_BY_WINDOW_END, NO_SIZING_PRINT, PRICE_FEED_UNREADABLE, PRICE_READ_FAILED,
 )
 from src.stage_execution import ExecutionStage
 
@@ -111,8 +119,16 @@ def _run(pipeline, decisions, monkeypatch, positions=None, session="midday"):
     def keep(_p, _c, sym, reason, *_a, **_k):
         skips.append((sym, reason))
 
+    import src.stage_entry_preflight as entry_preflight
+
     monkeypatch.setattr(stage_execution, "_record_execution_skip", keep)
     monkeypatch.setattr(preflight, "_record_execution_skip", keep)
+    monkeypatch.setattr(entry_preflight, "_record_execution_skip", keep)
+    # No real sleeping in the suite; a test that measures the wait replaces these.
+    if preflight._sleep is __import__("time").sleep:
+        monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
+        monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
+        monkeypatch.setattr(preflight, "read_latest_trade_prints", lambda _b, _s: {})
     ctx = RunContext.start(session)
     ctx.cash, ctx.total_value, ctx.last_equity = 50_000.0, 100_000.0, 100_000.0
     ctx.positions, ctx.symbols_bars = positions or [], {}
@@ -191,7 +207,9 @@ def test_absence_is_a_per_name_skip_and_other_names_still_trade(monkeypatch):
 
     pipeline = _pipeline(reader)
     skips = _run(pipeline, [_decision("GOOD"), _decision("THIN")], monkeypatch)
-    assert ("THIN", NO_SIZING_PRINT) in skips
+    # The batched re-ask (stubbed to answer nothing) runs out the slot; the
+    # name is then skipped with that reason, never as a read FAILURE.
+    assert ("THIN", NO_PRINT_BY_WINDOW_END) in skips
     assert ("THIN", PRICE_READ_FAILED) not in skips
     assert "GOOD" in _submitted(pipeline)
     assert sizing_refusal.price_feed_fault(pipeline) is None
@@ -233,36 +251,161 @@ def test_preflight_uses_a_held_name_first_and_resets_last_sessions_fault():
     assert preflight_price_feed(pipeline, ctx, decisions) is decisions
 
 
-# --- the open: no print yet is DEFERRED, not refused ------------------------
+# --- no print YET: wait, re-ask in ONE batch, size when it prints ----------
 
-def test_no_print_in_the_opening_session_is_deferred_then_sized_when_it_prints(monkeypatch):
-    state = {"printed": False}
-    quote_only = LivePrice(price=100.0, source="quote_mid", trade_at=datetime.now(ET),
-                           is_today=True, is_today_print=False)
+_QUOTE_ONLY = LivePrice(price=100.0, source="quote_mid", trade_at=datetime.now(ET),
+                        is_today=True, is_today_print=False)
 
-    def reader(symbol):
-        return _print(100.0) if state["printed"] else quote_only
 
-    pipeline = _pipeline(reader)
-    skips = _run(pipeline, [_decision("EARLY")], monkeypatch, session="morning")
-    assert ("EARLY", NO_PRINT_AT_OPEN_DEFERRED) in skips
-    assert ("EARLY", NO_SIZING_PRINT) not in skips
-    assert "EARLY" in pipeline.price_feed_deferred
+def _waiting_rig(monkeypatch, prints_on_ask: int | None, *, slot_s: float = 60.0):
+    """A pipeline whose stamped read has no today print for THIN/ALSO until
+    the batched re-ask number `prints_on_ask` answers (never, when None).
+    Returns (pipeline, batch_calls, sleeps)."""
+    import src.price_feed_preflight as preflight
+
+    state = {"printed": set()}
+    batch_calls: list[list[str]] = []
+    sleeps: list[float] = []
+
+    def stamped(symbol):
+        return _print(100.0) if symbol in state["printed"] or symbol == "GOOD" else _QUOTE_ONLY
+
+    def batch(symbols):
+        batch_calls.append(list(symbols))
+        if prints_on_ask is not None and len(batch_calls) >= prints_on_ask:
+            state["printed"].update(symbols)
+            return {s: _print(100.0) for s in symbols}
+        return {}
+
+    pipeline = _pipeline(stamped)
+    monkeypatch.setattr(preflight, "read_latest_trade_prints", lambda _b, syms: batch(syms))
+    monkeypatch.setattr(preflight, "_sleep", sleeps.append)
+    monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: slot_s)
+    return pipeline, batch_calls, sleeps
+
+
+def test_a_waiting_name_that_prints_on_the_second_ask_is_sized_and_submitted(monkeypatch):
+    pipeline, batch_calls, sleeps = _waiting_rig(monkeypatch, prints_on_ask=2)
+    skips = _run(pipeline, [_decision("GOOD"), _decision("THIN")], monkeypatch, session="morning")
+    assert {"GOOD", "THIN"} <= _submitted(pipeline)
+    assert not [r for sym, r in skips if sym == "THIN"]
+    assert batch_calls == [["THIN"], ["THIN"]]
+    # First ask immediate, then the ledgered backoff base before the second.
+    assert sleeps == [price_read.BACKOFF_BASE_S]
+
+
+def test_backoff_rises_and_caps_at_the_ledgered_ceiling(monkeypatch):
+    pipeline, batch_calls, sleeps = _waiting_rig(monkeypatch, prints_on_ask=5)
+    _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
+    assert len(batch_calls) == 5 and "THIN" in _submitted(pipeline)
+    base, cap = price_read.BACKOFF_BASE_S, price_read.BACKOFF_MAX_S
+    assert sleeps == [base, base * 2, min(base * 4, cap), min(base * 8, cap)]
+
+
+def test_one_batched_request_per_ask_covers_every_waiting_name(monkeypatch):
+    pipeline, batch_calls, _ = _waiting_rig(monkeypatch, prints_on_ask=1)
+    _run(pipeline, [_decision("THIN"), _decision("ALSO")], monkeypatch, session="morning")
+    assert batch_calls == [["THIN", "ALSO"]]  # one request, both names, not one per name
+    assert {"THIN", "ALSO"} <= _submitted(pipeline)
+
+
+def test_a_name_that_never_prints_is_skipped_at_the_slot_end_with_the_reason(monkeypatch):
+    import math
+    pipeline, batch_calls, sleeps = _waiting_rig(monkeypatch, prints_on_ask=None, slot_s=60.0)
+    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
+    assert ("THIN", NO_PRINT_BY_WINDOW_END) in skips
+    assert ("THIN", NO_SIZING_PRINT) not in skips
     pipeline.broker.submit_order.assert_not_called()
-    # The desk's next existing pass, after the feed has printed: sized normally.
-    state["printed"] = True
-    skips = _run(pipeline, [_decision("EARLY")], monkeypatch, session="intra_check")
-    assert "EARLY" in _submitted(pipeline)
-    assert "EARLY" not in pipeline.price_feed_deferred
+    # Bounded: never more asks than the slot allows at the backoff ceiling,
+    # and the programmed waits never exceed the slot.
+    ceiling = math.ceil(60.0 / price_read.BACKOFF_MAX_S)
+    assert 1 < len(batch_calls) <= 1 + ceiling  # one immediate, the rest on backoff
+    assert sum(sleeps) <= 60.0
+    assert max(sleeps) == price_read.BACKOFF_MAX_S
 
 
-def test_no_print_outside_the_opening_session_stays_a_per_name_refusal(monkeypatch):
-    quote_only = LivePrice(price=100.0, source="quote_mid", trade_at=datetime.now(ET),
-                           is_today=True, is_today_print=False)
-    pipeline = _pipeline(lambda s: quote_only)
-    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="midday")
+def test_a_zero_slot_asks_once_without_waiting_then_skips(monkeypatch):
+    pipeline, batch_calls, sleeps = _waiting_rig(monkeypatch, prints_on_ask=None, slot_s=0.0)
+    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="close")
+    assert ("THIN", NO_PRINT_BY_WINDOW_END) in skips
+    assert batch_calls == [["THIN"]] and sleeps == []
+
+
+def test_a_batched_reask_that_fails_is_the_desk_fault(monkeypatch):
+    import src.price_feed_preflight as preflight
+    pipeline = _pipeline(lambda s: _QUOTE_ONLY if s == "THIN" else _print(100.0))
+
+    def batch(_broker, _symbols):
+        raise PriceReadFailed("THIN: price read failed on all attempts")
+
+    monkeypatch.setattr(preflight, "read_latest_trade_prints", batch)
+    monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
+    monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
+    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
+    assert ("THIN", PRICE_FEED_UNREADABLE) in skips
+    fault = sizing_refusal.price_feed_fault(pipeline)
+    assert fault and "batched_reask" in fault
+
+
+def test_slot_end_is_the_earlier_of_the_session_window_and_the_next_tick():
+    from datetime import timedelta
+    from src.config.llm_cost import INTRA_CHECK_TICK_MINUTES
+    from src.price_feed_preflight import slot_seconds_left
+    from src.trading_calendar import SESSION_WINDOWS
+    close_end = SESSION_WINDOWS["close"][1]
+    at = datetime(2026, 10, 8, close_end // 60, close_end % 60, tzinfo=ET)
+    # Ten minutes before the close window ends: the window binds.
+    ten_before = at - timedelta(minutes=10)
+    assert slot_seconds_left(SimpleNamespace(session="close"), now=ten_before) == 600.0
+    # Mid-morning: the next tick binds.
+    mid = datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+    assert slot_seconds_left(SimpleNamespace(session="morning"), now=mid) == INTRA_CHECK_TICK_MINUTES * 60
+    # After the window: nothing to wait for.
+    assert slot_seconds_left(SimpleNamespace(session="close"), now=at) == 0.0
+    assert slot_seconds_left(SimpleNamespace(session="nonesuch"), now=mid) == 0.0
+
+
+# --- no reference available: the desk-level row is still written ----------
+
+def test_unclassifiable_failure_still_records_a_desk_level_row(monkeypatch):
+    rows: list[dict] = []
+    monkeypatch.setattr(sizing_refusal, "record_guarded_outcome", lambda **kw: rows.append(kw))
+
+    def reader(_p, _s):
+        raise sizing_refusal.SizingPriceUnavailable("NVDA: stamped read failed")
+
+    price, why, _ = sizing_refusal.sizing_price_or_refusal(reader, None, "NVDA", "buy")
+    assert (price, why) == (None, PRICE_READ_FAILED)
+    assert [r["where"] for r in rows] == ["price_feed.desk_unclassified", "price_feed.single_name"]
+
+
+# --- the real AlpacaBroker batched read ------------------------------------
+
+def test_broker_batched_read_is_one_request_and_keeps_only_today_prints():
+    from datetime import timedelta
+    b = _broker()
+    client = MagicMock()
+    client.get_stock_latest_trade.return_value = {
+        "AAA": SimpleNamespace(price=10.0, timestamp=datetime.now(ET)),
+        "BBB": SimpleNamespace(price=20.0, timestamp=datetime.now(ET) - timedelta(days=3)),
+        "CCC": SimpleNamespace(price=0, timestamp=None),
+    }
+    b._data_client = client
+    from src.execution.broker_parts.trade_prints import read_latest_trade_prints
+    got = read_latest_trade_prints(b, ["AAA", "BBB", "CCC"])
+    assert client.get_stock_latest_trade.call_count == 1
+    assert set(got) == {"AAA"} and got["AAA"].is_today_print and got["AAA"].price == 10.0
+
+
+def test_a_stub_broker_has_nothing_to_reask_so_absence_stands(monkeypatch):
+    from src.execution.broker_parts.trade_prints import read_latest_trade_prints
+    assert read_latest_trade_prints(MagicMock(), ["AAA"]) is None
+    pipeline = _pipeline(lambda s: _QUOTE_ONLY)
+    import src.price_feed_preflight as preflight
+    monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
+    monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
+    skips = _run(pipeline, [_decision("THIN")], monkeypatch)
     assert ("THIN", NO_SIZING_PRINT) in skips
-    assert ("THIN", NO_PRINT_AT_OPEN_DEFERRED) not in skips
 
 
 # --- the real AlpacaBroker read: retried, then typed ------------------------

@@ -136,14 +136,16 @@ def _exec_pipeline(price: float = 100.0):
 
 
 def _run(decision, monkeypatch, reader):
+    import src.stage_entry_preflight as entry_preflight
+
     skips = []
-    monkeypatch.setattr(stage_execution, "_today_sizing_price", reader)
-    monkeypatch.setattr(
-        stage_execution, "_record_execution_skip",
-        lambda _p, _c, sym, reason, *_a, **_k: skips.append((sym, reason)),
-    )
+    keep = lambda _p, _c, sym, reason, *_a, **_k: skips.append((sym, reason))  # noqa: E731
+    # The viability preflight was lifted out of the stage (2026-10-08) and
+    # binds these names itself, so both modules are patched.
+    for module in (stage_execution, entry_preflight):
+        monkeypatch.setattr(module, "_today_sizing_price", reader)
+        monkeypatch.setattr(module, "_record_execution_skip", keep)
     pipeline = _exec_pipeline()
-    # Not the opening session: at 09:30 a missing print is DEFERRED, not refused.
     ctx = RunContext.start("midday")
     ctx.cash, ctx.total_value, ctx.last_equity = 50_000.0, 100_000.0, 100_000.0
     ctx.positions, ctx.symbols_bars = [], {}

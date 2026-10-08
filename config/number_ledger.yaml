@@ -8650,17 +8650,17 @@ numbers:
     value: 2
     status: not-trade-governing
     site: src/infra_retry_policy.py
-    note: "Bounded retries of a transient infrastructure fault (an LLM provider blip, a failed owner-alert send) before the harder failure path runs. It is the same number as `MacroConfig.max_retries` in src/config/macro.py, which the macro provider's retry loop (`MacroDataProvider`) spends, and `LLMCostCircuitConfig` in src/config/llm_cost.py says it mirrors that policy. It bounds how many times a failed call is repeated, never a price, size, stop or whether a trade is allowed; a wrong value delays a retry by seconds or fails one call sooner. If the macro default is ever re-derived this row must be revisited, since the two are meant to stay equal."
+    note: "Bounded retries of a transient infrastructure fault (an LLM provider blip, a failed owner-alert send) before the harder failure path runs. It is the same number as `MacroConfig.max_retries` in src/config/macro.py, which the macro provider's retry loop (`MacroDataProvider`) spends, and `LLMCostCircuitConfig` in src/config/llm_cost.py says it mirrors that policy. It bounds how many times a failed call is repeated, never a price, size or stop level; since 2026-10-08 it also bounds the live-price read behind every sizing read, the entry-stage price-feed preflight and the batched today-print re-ask (src/execution/price_read.py), so a wrong value changes how soon a failed read is declared a fault and the entry refused, never the price or size itself. If the macro default is ever re-derived this row must be revisited, since the two are meant to stay equal."
   - id: src.infra_retry_policy.BACKOFF_BASE_S
     value: 2.0
     status: not-trade-governing
     site: src/infra_retry_policy.py
-    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S. Same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py, whose docstring states the doubling and the cap and which `MacroDataProvider._next_backoff` in src/data/macro.py applies. A pause between repeated calls; no trade quantity, price or gate reads it."
+    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S. Same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py, whose docstring states the doubling and the cap and which `MacroDataProvider._next_backoff` in src/data/macro.py applies. A pause between repeated calls. Since 2026-10-08 it is also the first wait of the retried live-price read behind sizing and the preflight, and the first wait of the batched today-print re-ask (src/price_feed_preflight.py); it paces when a read is repeated, never what price or size results."
   - id: src.infra_retry_policy.BACKOFF_MAX_S
     value: 8.0
     status: not-trade-governing
     site: src/infra_retry_policy.py
-    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls. Since 2026-10-08 it also caps the backoff of the retried live-price read behind sizing and the preflight, and the batched today-print re-ask: at this cap the re-ask issues 60/8 = 7.5 requests a minute, 3.75% of Alpaca's published 200 requests/minute limit (ledgered at src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY), and the ask count per pass is bounded by ceil(slot_seconds / this cap). It paces reads, never what price or size results."
   - id: src.data.event_calendar._FOMC_MONTHS['jan']
     value: 1
     status: instrument
