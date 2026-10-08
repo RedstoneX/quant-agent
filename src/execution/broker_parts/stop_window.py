@@ -35,9 +35,9 @@ class UnprotectedWindow:
     """Times one cancel+resubmit and appends its facts to `sink` on close."""
 
     def __init__(self, symbol: str, reason: str, sink: list,
-                 path: str = "replace_stop_loss"):
+                 path: str = "replace_stop_loss", **facts):
         self.symbol, self.reason, self.sink = symbol, reason, sink
-        self.path = path
+        self.path, self.facts = path, facts  # e.g. exposed_qty, leg_kind
         self.cancelled_ids: list[str] = []
         self._start = time.monotonic()
 
@@ -49,9 +49,8 @@ class UnprotectedWindow:
             return
         seconds = round(time.monotonic() - self._start, 3)
         self.sink.append({"symbol": self.symbol, "reason": self.reason,
-                          "cancelled_ids": list(self.cancelled_ids),
-                          "outcome": outcome, "window_seconds": seconds,
-                          "path": self.path})
+                          "cancelled_ids": list(self.cancelled_ids), "outcome": outcome,
+                          "window_seconds": seconds, "path": self.path, **self.facts})
         logger.warning(
             "%s: %s was WITHOUT a protective stop for %.3fs "
             "(reason=%s, outcome=%s, cancelled=%s)",
