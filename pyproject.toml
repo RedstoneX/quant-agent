@@ -299,6 +299,7 @@ max-branches = 12
 "src/risk/rules.py" = ["C901", "E501", "PLR0912", "PLR0915"]
 "src/risk/spent_trigger.py" = ["E501"]
 "src/risk/target_revision.py" = ["C901"]
+"src/risk/target_revision_rederive.py" = ["C901"]
 "src/risk/trail_evaluate.py" = ["C901", "PLR0912", "PLR0915"]
 "src/rotation.py" = ["C901", "E501", "PLR0912"]
 "src/rotation_parts/reporting_lines.py" = ["C901", "PLR0912"]
