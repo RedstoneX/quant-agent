@@ -262,6 +262,8 @@ def test_a_malformed_hook_payload_allows_the_stop(capsys):
 def test_an_empty_hook_payload_does_not_crash(monkeypatch):
     monkeypatch.setenv(work_queue.PROMISE_CHECK_ENV, "0")
     monkeypatch.setenv(work_queue.ADVERSARY_CHECK_ENV, "0")
+    # Hermetic: no live GitHub read of the merge queue.
+    monkeypatch.setattr(work_queue, "open_changes", lambda: ((), 0))
     assert work_queue.run_hook("") in (0, work_queue.BLOCK_EXIT)
 
 
@@ -562,6 +564,7 @@ def test_blocking_uses_the_only_code_the_harness_honours(monkeypatch,
     assert work_queue.BLOCK_EXIT == 2
     monkeypatch.setenv(work_queue.ADVERSARY_CHECK_ENV, "0")
     monkeypatch.setattr(work_queue, "build_queue", lambda *a, **k: _queue())
+    monkeypatch.setattr(work_queue, "open_changes", lambda: ((), 0))
     path = _transcript(tmp_path, [_user(), _assistant(text="Merging now.")])
     payload = json.dumps({"session_id": "s", "transcript_path": str(path)})
     assert work_queue.run_hook(str(payload),

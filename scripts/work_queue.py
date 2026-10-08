@@ -582,7 +582,8 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
            projects_root: Path | None = None,
            state_path: Path | None = None,
            promise: str | None = None,
-           gaps: list[str] | None = None) -> HookDecision:
+           gaps: list[str] | None = None,
+           open_changes: tuple[list[str] | tuple, int] | None = ((), 0)) -> HookDecision:
     """The whole policy, in one readable function, in the order it is
     checked. Every branch that is not certain resolves to "stop".
 
@@ -599,7 +600,14 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
       3. An unkept promise → block. First because it is about THIS turn and
          costs one sentence to fix, where the others are about other work.
       4. A closure nobody argued against → block.
-      5. An actionable backlog item → block, subject to the hand-back brake.
+      5. Finish before you start (owner, 2026-10-08): a red or conflicting
+         open change → block and hand THAT back; any other open change →
+         stop, because new work waits until the open work merges; the
+         merge queue could not be read → stop.
+      6. An actionable backlog item → block, subject to the hand-back brake.
+
+    `open_changes` is (stuck descriptions, number of open changes), or None
+    when GitHub could not be read. The default is an empty queue.
     """
     gaps = gaps or []
     if not queue.actionable and not promise and not gaps:
@@ -632,6 +640,19 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
             f"{first} Run the adversary against it and put its argument in "
             f"the description before this closes.{more}",
             kind="adversary")
+
+    if open_changes is None:
+        return HookDecision(False, "the merge queue could not be read; not "
+                                   "handing back new work on a guess")
+    stuck, n_open = open_changes
+    if stuck:
+        return HookDecision(
+            True,
+            f"{stuck[0]} must be fixed or closed before anything new starts.",
+            kind="finish")
+    if n_open:
+        return HookDecision(False, f"{n_open} open change(s) still merging; "
+                                   "new work waits until they land")
 
     item = queue.next_item
     assert item is not None  # non-empty actionable, checked above
@@ -671,6 +692,29 @@ def _enabled(env_name: str) -> bool:
         "0", "off", "false", "no")
 
 
+_FAILED_CHECK = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT"}
+
+
+def open_changes() -> tuple[list[str], int] | None:
+    """(stuck open PRs described, number open), or None if GitHub is unreadable."""
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "list", "--state", "open", "--limit", "100", "--json",
+             "number,title,mergeable,statusCheckRollup"],
+            capture_output=True, text=True, timeout=15, check=True).stdout
+        prs = json.loads(out)
+    except Exception:  # noqa: BLE001 - never break a session over this
+        return None
+    stuck = []
+    for pr in prs:
+        red = any((c.get("conclusion") or c.get("state") or "").upper()
+                  in _FAILED_CHECK for c in pr.get("statusCheckRollup") or [])
+        if red or pr.get("mergeable") == "CONFLICTING":
+            why = "is failing its checks" if red else "conflicts with main"
+            stuck.append(f"Open change #{pr['number']} ({pr['title']}) {why};")
+    return stuck, len(prs)
+
+
 def run_hook(raw: str, **kw: Any) -> int:
     """Read the harness's hook JSON, print the decision, return an exit code.
 
@@ -702,6 +746,7 @@ def run_hook(raw: str, **kw: Any) -> int:
     if _enabled(ADVERSARY_CHECK_ENV):
         gaps = adversary_gaps()
 
+    kw.setdefault("open_changes", open_changes())
     decision = decide(queue, payload.get("session_id"),
                       bool(payload.get("stop_hook_active")),
                       promise=promise, gaps=gaps, **kw)
@@ -710,6 +755,7 @@ def run_hook(raw: str, **kw: Any) -> int:
     lead = {
         "promise": "You said you were doing this and the turn did nothing",
         "adversary": "A closure has not been argued against",
+        "finish": "Finish before you start",
     }.get(decision.kind, "Next in the backlog, oldest first")
     print(f"{lead}: {decision.reason} [board read from: "
           f"{queue.source}]", file=sys.stderr)

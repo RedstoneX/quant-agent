@@ -167,6 +167,18 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # A change that edits the board file together with code collides with
+      # every other change in flight; see scripts/check_board_edits_alone.py.
+      # Skipped on main itself, where there is no branch to compare.
+      - uses: actions/checkout@v4
+        if: github.event_name != 'push'
+        with:
+          fetch-depth: 0
+      - name: Board edits travel alone
+        if: github.event_name != 'push'
+        run: |
+          git fetch -q origin main
+          python3 scripts/check_board_edits_alone.py origin/main
       - name: Require every shard to have passed
         run: |
           set -euo pipefail
