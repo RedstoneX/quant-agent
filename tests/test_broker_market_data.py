@@ -87,13 +87,6 @@ def test_latest_price_returns_none_when_nothing_is_quotable():
     assert b.get_latest_price("NVDA") is None
 
 
-def test_latest_price_returns_none_when_the_data_api_raises():
-    """A market-data outage must not propagate — it degrades to "no price"."""
-    b = _broker()
-    b._data_client = _price_client(raises=ConnectionError("data.alpaca.markets down"))
-    assert b.get_latest_price("NVDA") is None
-
-
 def test_latest_quote_returns_truthful_sides():
     b = _broker()
     b._data_client = _price_client(

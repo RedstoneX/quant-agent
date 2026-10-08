@@ -17,7 +17,9 @@ from src.entry_evidence import (
 )
 from src.entry_record import insert_pending_entry
 from src.entry_slippage_bound import entry_bound
-from src.sizing_refusal import sizing_price_or_refusal
+from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
+from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
+from src.stage_entry_preflight import entry_viability_preflight
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -91,6 +93,7 @@ class ExecutionStage:
 
     def run(self, ctx: RunContext) -> list[dict]:
         try:
+            price_feed_session_start(self._pipeline, ctx)
             return self._run_session(ctx)
         finally:
             _stop_trade_updates(self._pipeline)
@@ -509,6 +512,10 @@ class ExecutionStage:
             pipeline, ctx, buy_decisions, sell_status_by_id,
         )
 
+        # A desk that cannot read price places no new entry: one reference
+        # read proves the feed before anything is sized (owner, 2026-10-08).
+        buy_decisions = preflight_price_feed(pipeline, ctx, buy_decisions)
+
         # Anti-churn, the BUY-side mirror of the SELL-side
         # `held_symbol_bought_today` guard: a name this desk closed earlier
         # TODAY for failing its own entry bar is not bought back in the
@@ -517,116 +524,14 @@ class ExecutionStage:
             pipeline, ctx, buy_decisions,
         )
 
-        # Run the cheap deterministic entry-viability checks BEFORE selling
-        # SGOV. Production evidence showed the sweep funding names that were
-        # guaranteed to die moments later on stale-entry / no-price / qty-zero
-        # checks, creating avoidable sell/re-park churn. The full checks remain
-        # in the submit loop below; this preflight only removes names whose
-        # failure is already knowable and computes the actual quantized
-        # notional that funding should cover.
+        # The cheap deterministic entry-viability checks, lifted out verbatim
+        # to `src/stage_entry_preflight.py` (2026-10-08). Names with no today
+        # print wait there for the batched re-ask; see that module.
         fundable_notional: dict[str, float] = {}
-        preflight_survivors = []
-        for decision in buy_decisions:
-            market_price = _live_fill_price(pipeline, decision.symbol)
-            if market_price is not None:
-                price_map[decision.symbol] = market_price
-            if not isinstance(market_price, (int, float)) or market_price <= 0:
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "no_price",
-                    "no verifiable live price (daily bar close is not a fill reference)",
-                )
-                continue
-            if decision.entry_price > 0:
-                deviation = abs(decision.entry_price - market_price) / market_price
-                if deviation > 0.05:
-                    _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "stale_entry",
-                        f"entry ${decision.entry_price:.2f} is "
-                        f"{deviation * 100:.1f}% from market "
-                        f"${market_price:.2f} (threshold 5%)",
-                    )
-                    continue
-            # docs/WORK.md item 120: the funding preflight must size off the
-            # same TODAY PRINT the submit loop will, never the fill-reference
-            # mid. No print -> the submit loop will refuse this name, so the
-            # sweep must not sell SGOV to fund it.
-            sizing_print, why, detail = sizing_price_or_refusal(
-                _today_sizing_price, pipeline, decision.symbol, "buy",
-            )
-            if sizing_print is None:
-                _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
-                continue
-            preflight_price = max(sizing_print, decision.entry_price or 0)
-            # Spec §11.1: quantized the SAME way the submit loop below will,
-            # or the sweep funds a whole-share notional for an order that is
-            # about to be placed fractionally — under-funding it, and letting
-            # the cash gate re-impose the rounding tax this phase removes.
-            # It is also the difference between skipping a sub-one-share
-            # position as `qty_zero` and taking it, which under exact sizing
-            # is a legitimate position rather than nothing.
-            preflight_short = decision.action == "SHORT"
-            preflight_fractional = _fractional_sizing_allowed(
-                pipeline, decision.symbol, is_short=preflight_short,
-            )
-            preflight_qty = _size_shares(
-                pipeline,
-                (total_value * decision.allocation_pct / 100) / preflight_price,
-                fractional=preflight_fractional,
-            )
-            if preflight_qty <= 0:
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "qty_zero",
-                    f"allocation {decision.allocation_pct:.2f}% at "
-                    f"${preflight_price:.2f} rounds to zero shares",
-                )
-                continue
-            # Fund what the submit loop will SPEND, not what the allocation
-            # asked for. The loop takes `min(qty_by_alloc, qty_by_risk)`; on
-            # any session where the vol-adjusted budget binds — the ordinary
-            # case — funding the allocation figure over-sells the vehicle and
-            # the bookend re-parks the difference within the minute. Same
-            # helper, same quantization, so the two cannot drift apart.
-            #
-            # UNDER-funding is the one direction that costs a trade rather
-            # than a spread, so the reference price must be the submit
-            # loop's own. It is: for a long the loop takes
-            # `max(market_price, limit_price)` and for a short
-            # `min(market_price, limit_price)` — which is exactly
-            # `preflight_price` above. Every adjustment the loop makes AFTER
-            # that point moves the quantity DOWN, never up: a marketable-
-            # limit ceiling only raises the price, and the ATR floor only
-            # widens the stop, and each of those shrinks the shares the risk
-            # budget allows. So this is an upper bound on what will be
-            # spent, which is the safe side to be wrong on.
-            preflight_risk_qty = _qty_by_risk_budget(
-                pipeline, total_value=total_value,
-                sizing_price=preflight_price,
-                stop_price=decision.stop_loss,
-                is_short=preflight_short, fractional=preflight_fractional,
-            )
-            if preflight_risk_qty is not None and preflight_risk_qty < preflight_qty:
-                preflight_qty = preflight_risk_qty
-            if preflight_qty <= 0:
-                # The risk budget alone cannot carry one orderable unit. The
-                # submit loop will reach the same conclusion and skip; there
-                # is nothing here for the sweep to fund.
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "qty_zero",
-                    f"risk budget at ${preflight_price:.2f} entry / "
-                    f"${decision.stop_loss:.2f} stop rounds to zero shares",
-                )
-                continue
-            # A SHORT is deliberately excluded from the funding total: it
-            # sells borrowed shares and spends no cash (see D11 in the submit
-            # loop, where a short is never sized by the entry budget).
-            # Funding one liquidates the vehicle to raise cash that no order
-            # can spend — guaranteed churn, not a safety margin. BUY
-            # notionals are still counted in full, so this can only remove
-            # waste, never under-fund a BUY.
-            if not preflight_short:
-                fundable_notional[decision.symbol] = preflight_qty * preflight_price
-            preflight_survivors.append(decision)
-        buy_decisions = preflight_survivors
+        buy_decisions = entry_viability_preflight(
+            pipeline, ctx, buy_decisions, total_value=total_value,
+            price_map=price_map, fundable_notional=fundable_notional,
+        )
 
         # Cash-sweep funding. `planned_notional` counts BUYs ONLY, at the
         # quantity the submit loop will actually reach — allocation capped by
@@ -827,11 +732,15 @@ class ExecutionStage:
                         "LLM proposed entry $%.2f but cannot be validated.",
                         decision.action, decision.symbol, decision.entry_price,
                     )
-                    _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "no_price",
-                        "no verifiable price reference (broker + bars "
-                        "unavailable)",
-                    )
+                    classified = classified_no_price(pipeline, decision.symbol)
+                    if classified:
+                        _record_execution_skip(pipeline, ctx, decision.symbol, *classified)
+                    else:
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "no_price",
+                            "no verifiable price reference (broker + bars "
+                            "unavailable)",
+                        )
                     continue
 
                 # docs/WORK.md item 120: SIZING vs FILL. `market_price` above

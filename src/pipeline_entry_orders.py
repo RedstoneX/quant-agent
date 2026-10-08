@@ -35,6 +35,7 @@ _IN_FLIGHT_FILL_STATUSES = frozenset({"submitted", "pending_submit"})
 
 from src.pipeline_entry_text import _REPEG_OUTCOME_TEXT  # noqa: F401 (re-export)
 from src.sentinel.entry_guard import record_clean_pass, record_swallowed, record_swallowed_here
+from src.sizing_refusal import record_price_read_swallowed
 from src.entry_orders_observed import (  # noqa: F401  moved out, re-exported
     _alert_owner_entry_cancelled,
     _alert_unmeasurable_symbols,
@@ -245,7 +246,7 @@ def _today_order_price(pipeline, symbol) -> float | None:
             if isinstance(candidate, LivePrice):
                 stamped = candidate
         except Exception:  # noqa: BLE001
-            record_swallowed_here(pipeline, "price.stamped_read", symbol=symbol)
+            record_price_read_swallowed(pipeline, "price.stamped_read", symbol=symbol)
             return None
     if stamped is not None:
         if not (stamped.price > 0):

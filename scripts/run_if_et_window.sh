@@ -324,6 +324,15 @@ if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
     echo "${MODE} ${ET_DATE} $(date +%s) $$" > "$LOCK_OWNER_FILE"
 fi
 
+# The session's hard deadline, handed to Python as an absolute epoch so the
+# timeout above stays the ONE place the ceiling is written. Taken at the
+# instant `timeout` starts counting (same zero as the lock stamp above): the
+# no-print wait (src/price_feed_preflight.py) budgets against it so the
+# process is never TERMed mid-submit. Absent (a manual run), Python waits
+# not at all -- it fails closed, never open.
+SESSION_DEADLINE_EPOCH="$(( $(date +%s) + SESSION_RUN_TIMEOUT_SEC ))"
+export SESSION_DEADLINE_EPOCH
+
 if "$TIMEOUT" --kill-after="$SESSION_RUN_KILL_AFTER_SEC" "$SESSION_RUN_TIMEOUT_SEC" "$PYTHON" main.py --mode "$MODE"; then
     # intra_check is intentionally guard-less (see last-run guard block above) —
     # we don't write the marker for it, so the next 30-min tick can fire freely.

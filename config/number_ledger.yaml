@@ -3015,6 +3015,25 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
+  - id: src.price_feed_preflight.POST_WAIT_RESERVE_S
+    value: 700
+    status: sourced
+    site: src/price_feed_preflight.py
+    source: >-
+      MEASURED 2026-10-08 from the desk's own log, /home/qamc/quant-agent/quant_agent.log
+      and its rotations .1 .2 .4 .5 (2026-08-31 to 2026-10-01): for each of the 26
+      sessions that executed a buy, the time from the first post-preflight step (the
+      cash-sweep release `Order submitted: sell ... SGOV`, else the first
+      `BUY ... marketable-limit` line, both written after the wait site
+      the entry viability preflight in src/stage_entry_preflight.py) to the session's
+      `__main__: Result:` line, which covers the sweep, the submit loop in
+      the execution stage (src/stage_execution.py) and every buy's stop placement. Longest
+      699.26s (2026-09-15 morning, 4 buys: sweep sell 13:38:30.696 UTC, Result
+      13:50:09.955 UTC); next 442.6s (2026-09-16 morning), then 124.9s. Value is that
+      maximum rounded up to the whole second. It is subtracted from the wrapper's
+      exported hard deadline (scripts/run_if_et_window.sh, SESSION_RUN_TIMEOUT_SEC)
+      to bound the no-print wait at
+      src/price_feed_preflight.py::session_seconds_left; re-measure if the submit loop's fill waits change.
   - id: src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT
     value: 5
     status: derived
@@ -5615,10 +5634,10 @@ numbers:
       to Alpaca's published one-minute rate-limit window
       (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
+  - id: src.infra_retry_policy._BROKER_HTTP_TIMEOUT
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker_parts/market_data.py
+    site: src/infra_retry_policy.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
@@ -8736,19 +8755,22 @@ numbers:
       value is an identifier that happens to be written as a number.
   - id: src.infra_retry_policy.MAX_RETRIES
     value: 2
-    status: not-trade-governing
+    status: sourced
     site: src/infra_retry_policy.py
-    note: "Bounded retries of a transient infrastructure fault (an LLM provider blip, a failed owner-alert send) before the harder failure path runs. It is the same number as `MacroConfig.max_retries` in src/config/macro.py, which the macro provider's retry loop (`MacroDataProvider`) spends, and `LLMCostCircuitConfig` in src/config/llm_cost.py says it mirrors that policy. It bounds how many times a failed call is repeated, never a price, size, stop or whether a trade is allowed; a wrong value delays a retry by seconds or fails one call sooner. If the macro default is ever re-derived this row must be revisited, since the two are meant to stay equal."
+    source: 'Owner ruling 2026-10-08 quoted at src/price_feed_preflight.py::wait_for_today_prints (keep re-asking until a price is received, never hammer the provider); Alpaca free-plan market-data limit of 200 requests/minute, https://docs.alpaca.markets/docs/about-market-data-api'
+    note: "Retries of a failed read before the harder failure path runs: the live-price read behind every sizing read, the entry-stage price-feed preflight and the today-print re-ask (src/execution/price_read.py), as well as LLM-provider blips and owner-alert sends. Trade-governing since 2026-10-08: it decides when a name with no readable price is skipped and when a failed read is classified, so it changes WHETHER an entry is placed, never its price or size. Basis, stated exactly: the owner ruled the pacing (keep re-asking gently within the free 200 requests/minute limit); the VALUE is the desk-wide transient-fault default it already was (the same number as `MacroConfig.max_retries` in src/config/macro.py) and is not derived from the limit, which only bounds it. Computed share of the limit, not measured: at the 8 s ceiling the today-print re-ask issues 60/8 = 7.5 asks a minute, 3.75% of 200; each ask can retry inside itself up to MAX_RETRIES times, so the worst case is 22.5 requests a minute, 11.25%. The limit is ledgered at src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY."
   - id: src.infra_retry_policy.BACKOFF_BASE_S
     value: 2.0
-    status: not-trade-governing
+    status: sourced
     site: src/infra_retry_policy.py
-    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S. Same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py, whose docstring states the doubling and the cap and which `MacroDataProvider._next_backoff` in src/data/macro.py applies. A pause between repeated calls; no trade quantity, price or gate reads it."
+    source: 'Owner ruling 2026-10-08 quoted at src/price_feed_preflight.py::wait_for_today_prints (keep re-asking until a price is received, never hammer the provider); Alpaca free-plan market-data limit of 200 requests/minute, https://docs.alpaca.markets/docs/about-market-data-api'
+    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S; also the first wait of the today-print re-ask (src/price_feed_preflight.py). Trade-governing since 2026-10-08: it decides when a name with no readable price is skipped and when a failed read is classified, so it changes WHETHER an entry is placed, never its price or size. Basis, stated exactly: the owner ruled the pacing (keep re-asking gently within the free 200 requests/minute limit); the VALUE is the desk-wide transient-fault default it already was (the same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py) and is not derived from the limit, which only bounds it. Computed share of the limit, not measured: at the 8 s ceiling the today-print re-ask issues 60/8 = 7.5 asks a minute, 3.75% of 200; each ask can retry inside itself up to MAX_RETRIES times, so the worst case is 22.5 requests a minute, 11.25%. The limit is ledgered at src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY."
   - id: src.infra_retry_policy.BACKOFF_MAX_S
     value: 8.0
-    status: not-trade-governing
+    status: sourced
     site: src/infra_retry_policy.py
-    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+    source: 'Owner ruling 2026-10-08 quoted at src/price_feed_preflight.py::wait_for_today_prints (keep re-asking until a price is received, never hammer the provider); Alpaca free-plan market-data limit of 200 requests/minute, https://docs.alpaca.markets/docs/about-market-data-api'
+    note: "Ceiling on the doubling backoff, in seconds; it paces the retried live-price read and the today-print re-ask, whose ask count per pass is bounded by ceil(slot_seconds / this cap). Trade-governing since 2026-10-08: it decides when a name with no readable price is skipped and when a failed read is classified, so it changes WHETHER an entry is placed, never its price or size. Basis, stated exactly: the owner ruled the pacing (keep re-asking gently within the free 200 requests/minute limit); the VALUE is the desk-wide transient-fault default it already was (the same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py) and is not derived from the limit, which only bounds it. Computed share of the limit, not measured: at the 8 s ceiling the today-print re-ask issues 60/8 = 7.5 asks a minute, 3.75% of 200; each ask can retry inside itself up to MAX_RETRIES times, so the worst case is 22.5 requests a minute, 11.25%. The limit is ledgered at src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY."
   - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['jan']
     value: 1
     status: instrument

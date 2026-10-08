@@ -13,17 +13,15 @@ import logging
 
 from src.execution.broker_parts.trade_stream import _OnState
 from src.sentinel.counted import record_swallowed
+from src.execution.price_read import read_price_with_retry
+from src.execution.broker_parts.http_timeout import (  # noqa: F401 (re-export)
+    _BROKER_HTTP_TIMEOUT, _install_http_timeout,
+)
+from src.execution.broker_parts.intraday_snapshots import snapshots_from_client
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
-
-# Default HTTP timeout for ALL Alpaca SDK calls (connect, read).
-# Without this, a stalled TCP connection to the broker can hang the process
-# for hours under launchd — observed 2026-04-17 when the evening job sat for
-# 13+ hours at the very first broker call.
-_BROKER_HTTP_TIMEOUT = 30.0
-
 
 @dataclass(frozen=True)
 class LivePrice:
@@ -58,26 +56,6 @@ class LivePrice:
     trade_at: object | None
     is_today: bool
     is_today_print: bool
-
-
-def _install_http_timeout(client, timeout: float = _BROKER_HTTP_TIMEOUT) -> None:
-    """Inject a default timeout on an Alpaca SDK client's underlying requests.Session.
-
-    The SDK (alpaca-py 0.43.2) uses a requests.Session with no default timeout; each
-    call goes through RESTClient._one_request which just forwards opts. This patches
-    session.request to set timeout=30s if the caller didn't specify one.
-    """
-    session = getattr(client, "_session", None)
-    if session is None or getattr(session, "_quant_timeout_patched", False):
-        return
-    original_request = session.request
-
-    def _request_with_timeout(method, url, **kwargs):
-        kwargs.setdefault("timeout", timeout)
-        return original_request(method, url, **kwargs)
-
-    session.request = _request_with_timeout
-    session._quant_timeout_patched = True
 
 
 class MarketData:
@@ -402,71 +380,71 @@ class MarketData:
         is new is that the answer says which one it was and whether the trade
         print is from today's ET date, so a caller about to place or move an
         order can refuse a stale number instead of silently acting on it.
+        `None` is MEASURED absence; a read that FAILS is retried by
+        `src.execution.price_read` and then raises `PriceReadFailed`.
         """
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
+        return read_price_with_retry(self._read_latest_price_stamped_once, symbol, log=logger)
 
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
+    def _read_latest_price_stamped_once(self, symbol: str) -> "LivePrice | None":
+        if self._data_client is None:
+            from alpaca.data.historical.stock import StockHistoricalDataClient
 
-            from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+            self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+            _install_http_timeout(self._data_client)
 
-            alpaca_symbol = _alpaca_symbol(symbol)
+        from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
 
-            trade_data = self._data_client.get_stock_latest_trade(
-                StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
-            trade_price = float(getattr(trade, "price", 0) or 0)
-            if trade_price > 0:
-                trade_at = getattr(trade, "timestamp", None)
-                from src.trading_calendar import live_price_is_today
+        alpaca_symbol = _alpaca_symbol(symbol)
 
-                fresh = bool(live_price_is_today(trade_at))
-                return LivePrice(
-                    price=trade_price, source="last_trade", trade_at=trade_at,
-                    is_today=fresh, is_today_print=fresh,
-                )
-
-            quote_data = self._data_client.get_stock_latest_quote(
-                StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
-            ask_price = float(getattr(quote, "ask_price", 0) or 0)
-            bid_price = float(getattr(quote, "bid_price", 0) or 0)
-            quote_at = getattr(quote, "timestamp", None)
+        trade_data = self._data_client.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
+        )
+        trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
+        trade_price = float(getattr(trade, "price", 0) or 0)
+        if trade_price > 0:
+            trade_at = getattr(trade, "timestamp", None)
             from src.trading_calendar import live_price_is_today
 
-            quote_today = bool(live_price_is_today(quote_at))
-            if ask_price > 0 and bid_price > 0:
-                return LivePrice(
-                    price=(ask_price + bid_price) / 2, source="quote_mid",
-                    trade_at=quote_at, is_today=quote_today, is_today_print=False,
-                )
-            if ask_price > 0:
-                return LivePrice(
-                    price=ask_price, source="quote_ask", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-            if bid_price > 0:
-                return LivePrice(
-                    price=bid_price, source="quote_bid", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-        except Exception as exc:
-            logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
+            fresh = bool(live_price_is_today(trade_at))
+            return LivePrice(
+                price=trade_price, source="last_trade", trade_at=trade_at,
+                is_today=fresh, is_today_print=fresh,
+            )
 
+        quote_data = self._data_client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
+        )
+        quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
+        ask_price = float(getattr(quote, "ask_price", 0) or 0)
+        bid_price = float(getattr(quote, "bid_price", 0) or 0)
+        quote_at = getattr(quote, "timestamp", None)
+        from src.trading_calendar import live_price_is_today
+
+        quote_today = bool(live_price_is_today(quote_at))
+        if ask_price > 0 and bid_price > 0:
+            return LivePrice(
+                price=(ask_price + bid_price) / 2, source="quote_mid",
+                trade_at=quote_at, is_today=quote_today, is_today_print=False,
+            )
+        if ask_price > 0:
+            return LivePrice(
+                price=ask_price, source="quote_ask", trade_at=quote_at,
+                is_today=quote_today, is_today_print=False,
+            )
+        if bid_price > 0:
+            return LivePrice(
+                price=bid_price, source="quote_bid", trade_at=quote_at,
+                is_today=quote_today, is_today_print=False,
+            )
         return None
 
     def get_latest_price(self, symbol: str) -> float | None:
-        """Latest price as a bare number — unchanged behaviour.
+        """Latest price as a bare number; a FAILED read raises `PriceReadFailed`.
 
         Reporting and grading callers ("how far has this moved since we sold
-        it") do not care where the number came from, and they already degrade
-        to a last close when it is missing. They keep this. Anything that
-        places or moves an order should call `get_latest_price_stamped` and
-        check `is_today_print`.
+        it") do not care where the number came from; each wraps this call and
+        degrades to a last close. Anything that places or moves an order
+        should call `get_latest_price_stamped` and check `is_today_print`.
         """
         stamped = self.get_latest_price_stamped(symbol)
         return stamped.price if stamped is not None else None
@@ -504,48 +482,46 @@ class MarketData:
             logger.warning("Failed to fetch latest quote for %s: %s", symbol, exc)
         return out
 
+    def read_latest_trade_prints(self, symbols: list[str]) -> dict[str, LivePrice]:
+        """ONE batched latest-trades read for many names; only TODAY prints answer.
+
+        Used by the entry stage's today-print wait
+        (`src.price_feed_preflight.wait_for_today_prints`): every waiting name
+        goes into one request, never one request per name. Same
+        retry-then-typed-failure contract as `get_latest_price_stamped`: a read
+        that FAILS after the ledgered retry raises `PriceReadFailed`; an empty
+        dict is measured absence."""
+
+        def once(wanted: list[str]) -> dict[str, LivePrice]:
+            from alpaca.data.requests import StockLatestTradeRequest
+            from src.trading_calendar import live_price_is_today
+
+            if self._data_client is None:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                _install_http_timeout(self._data_client)
+            by_alpaca = {_alpaca_symbol(s): s for s in wanted}
+            trade_data = self._data_client.get_stock_latest_trade(
+                StockLatestTradeRequest(symbol_or_symbols=list(by_alpaca))
+            )
+            prints: dict[str, LivePrice] = {}
+            for alpaca_symbol, symbol in by_alpaca.items():
+                trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
+                trade_price = float(getattr(trade, "price", 0) or 0)
+                trade_at = getattr(trade, "timestamp", None)
+                if trade_price > 0 and live_price_is_today(trade_at):
+                    prints[symbol] = LivePrice(
+                        price=trade_price, source="last_trade", trade_at=trade_at,
+                        is_today=True, is_today_print=True,
+                    )
+            return prints
+
+        return read_price_with_retry(once, list(symbols), log=logger)
+
     def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
-        """Bulk current-session move data for the intraday opportunity scan.
-
-        One Alpaca snapshot call for the whole symbol list (not one call
-        per symbol — the same `symbol_or_symbols` bulk parameter
-        `get_latest_price` already uses for a single symbol) — cheap
-        enough to run every intra_check tick, unlike re-fetching daily
-        bars for the whole universe.
-
-        Returns, for every requested symbol, a dict of the current-session
-        facts needed both to detect a material move and to give Tech
-        truthful intraday evidence:
-
-            {"last_price", "last_trade_at", "prev_close",
-             "session_bar_at", "minute_close", "minute_bar_at",
-             "session_open", "session_close", "session_high",
-             "session_low", "session_volume"}
-
-        `last_trade_at` is the raw provider datetime (or None) for the
-        latest trade's own `timestamp` field — used by `broker_reads.py`
-        to tell a stale last_price from a live one (docs/WORK.md item 15).
-
-        The `session_*` fields come from Alpaca's `daily_bar`, which during
-        the session is an INCOMPLETE, still-forming bar — callers must
-        present it as such and must never append it to a series of completed
-        daily bars. **It is not guaranteed to be TODAY's**: for a name that
-        has not printed today, Alpaca returns the previous session's daily
-        bar in that slot. `session_bar_at` is that bar's own opening
-        timestamp so a caller can check the date before calling it "today"
-        (docs/WORK.md item 120). `minute_close` / `minute_bar_at` are the
-        snapshot's 1-minute bar and carry the same caveat.
-
-        NONE of these fields is freshness-checked here. Use
-        `src.data.live_price.resolve_live_price` to turn this payload into a
-        price that is known to come from today — this method deliberately
-        reports what the provider said, and the judgement about what counts
-        as today lives in one place.
-
-        Any field is `None` when unavailable. Never raises — broker/network
-        failure degrades to an empty dict (caller treats that as "no signal
-        this tick", not a crash).
-        """
+        """Bulk current-session move data; see `snapshots_from_client` for the
+        payload. The client is built HERE, where the replay patches it."""
         if not symbols:
             return {}
         if self._data_client is None:
@@ -557,105 +533,9 @@ class MarketData:
             except Exception as exc:
                 record_swallowed("broker.intraday_snapshots_client_init", exc, log=logger)
                 return {}
-
         from alpaca.data.requests import StockSnapshotRequest
 
-        requested = [(symbol, _alpaca_symbol(symbol)) for symbol in symbols]
-        alpaca_symbols = list(dict.fromkeys(mapped for _, mapped in requested))
-        successful_batches = 0
-
-        def _fetch_batch(batch: list[str]) -> dict:
-            """Bulk first; isolate a bad symbol only when Alpaca rejects a batch."""
-            nonlocal successful_batches
-            if not batch:
-                return {}
-            try:
-                result = self._data_client.get_stock_snapshot(
-                    StockSnapshotRequest(symbol_or_symbols=batch)
-                )
-                successful_batches += 1
-                return result if isinstance(result, dict) else {}
-            except Exception as exc:
-                status_code = getattr(exc, "status_code", None)
-                symbol_error = (
-                    status_code in (400, 404, 422)
-                    or "invalid symbol" in str(exc).lower()
-                )
-                if len(batch) == 1:
-                    record_swallowed("broker.intraday_snapshots_single", exc,
-                                     log=logger, symbol=batch[0])
-                    return {}
-                if not symbol_error:
-                    record_swallowed("broker.intraday_snapshots_bulk", exc,
-                                     log=logger, symbols=len(batch))
-                    return {}
-                midpoint = len(batch) // 2
-                logger.warning(
-                    "get_intraday_snapshots: batch of %d rejected; isolating bad symbol(s): %s",
-                    len(batch), exc,
-                )
-                return {
-                    **_fetch_batch(batch[:midpoint]),
-                    **_fetch_batch(batch[midpoint:]),
-                }
-
-        snapshots = _fetch_batch(alpaca_symbols)
-        if successful_batches == 0:
-            return {}
-
-        def _num(obj, attr):
-            if obj is None:
-                return None
-            try:
-                v = float(getattr(obj, attr, 0) or 0)
-            except (TypeError, ValueError):
-                return None
-            return v if v > 0 else None
-
-        out: dict[str, dict] = {}
-        for symbol, alpaca_symbol in requested:
-            snap = snapshots.get(alpaca_symbol) if isinstance(snapshots, dict) else None
-            trade = getattr(snap, "latest_trade", None) if snap is not None else None
-            prev_bar = getattr(snap, "previous_daily_bar", None) if snap is not None else None
-            # TODAY's still-forming bar. Deliberately kept in its own
-            # `session_*` namespace so no caller can mistake it for a
-            # completed daily bar (2026-08-19 intraday-evidence fix).
-            today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
-            # Alpaca's Trade model DOES carry its own `timestamp` field
-            # (verified against the installed SDK, 2026-09-13) — this is
-            # the provider's own market timestamp for the last print, not
-            # a guess. Kept as the raw datetime (or None); broker_reads.py
-            # serializes it and derives freshness from it.
-            last_trade_at = getattr(trade, "timestamp", None) if trade is not None else None
-            # board item 120: the `session_*` block was returned with no way
-            # to tell WHICH session it belongs to. Alpaca's snapshot carries
-            # the previous session's daily bar in `daily_bar` for a name that
-            # has not printed today, so a caller rendering "CURRENT SESSION
-            # (TODAY)" off these fields could be showing yesterday. `Bar
-            # .timestamp` is a required field on the installed SDK's model
-            # (`alpaca/data/models/bars.py`, verified 2026-09-20) and is the
-            # bar's OPENING timestamp, so its ET date is the session date.
-            session_bar_at = getattr(today_bar, "timestamp", None) if today_bar is not None else None
-            # The 1-minute bar is an aggregation of REAL PRINTS on the same
-            # entitled venue — not a quote. It is the finest-grained today
-            # print the snapshot carries, and it exists for names whose
-            # `latest_trade` is still yesterday's (item 120, 2026-09-17).
-            minute_bar = getattr(snap, "minute_bar", None) if snap is not None else None
-            minute_bar_at = getattr(minute_bar, "timestamp", None) if minute_bar is not None else None
-            out[symbol] = {
-                "last_price": _num(trade, "price"),
-                "last_trade_at": last_trade_at,
-                "prev_close": _num(prev_bar, "close"),
-                "session_bar_at": session_bar_at,
-                "minute_close": _num(minute_bar, "close"),
-                "minute_bar_at": minute_bar_at,
-                "session_open": _num(today_bar, "open"),
-                "session_close": _num(today_bar, "close"),
-                "session_high": _num(today_bar, "high"),
-                "session_low": _num(today_bar, "low"),
-                "session_volume": _num(today_bar, "volume"),
-            }
-        return out
+        return snapshots_from_client(self._data_client, symbols, StockSnapshotRequest)
 
     @staticmethod
     def _extract_symbol_payload(payload, symbol: str):

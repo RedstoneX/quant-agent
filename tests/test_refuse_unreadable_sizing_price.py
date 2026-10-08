@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import src.price_feed_preflight as price_feed_preflight
 import src.stage_execution as stage_execution
 from src.execution.broker import LivePrice
 from src.execution.broker_parts.account_reads import AccountReads
@@ -25,9 +26,10 @@ from src.pipeline_context import RunContext
 from src.pipeline_stages import (
     ExecutionStage, _rotation_buy_leg_projected_refusal, _today_sizing_price,
 )
-from src.refusal_errors import SizingPriceUnavailable
+from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
 from src.sizing_refusal import (
-    NO_SIZING_PRINT, SIZING_PRICE_UNREADABLE, sizing_price_or_refusal,
+    NO_PRINT_BY_WINDOW_END, NO_SIZING_PRINT, PRICE_READ_FAILED, SIZING_PRICE_UNREADABLE,
+    sizing_price_or_refusal,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -37,17 +39,22 @@ def _boom(*_a, **_k):
     raise ConnectionError("broker read timed out")
 
 
+def _price_boom(*_a, **_k):
+    # The broker's read layer retries, then raises this TYPED failure.
+    raise PriceReadFailed("NVDA: price read failed on all attempts") from ConnectionError("broker read timed out")
+
+
 # --- the reader: a FAILED read raises; a MEASURED absence stays None --------
 
 @pytest.mark.parametrize("broker", [
-    SimpleNamespace(get_latest_price_stamped=_boom),
-    SimpleNamespace(get_intraday_snapshots=_boom),
-    SimpleNamespace(get_latest_price=_boom),
+    SimpleNamespace(get_latest_price_stamped=_price_boom),
+    SimpleNamespace(get_intraday_snapshots=_price_boom),
+    SimpleNamespace(get_latest_price=_price_boom),
 ], ids=["stamped", "snapshot", "bare"])
 def test_every_failed_read_raises_rather_than_returning_none(broker):
     with pytest.raises(SizingPriceUnavailable) as err:
         _today_sizing_price(SimpleNamespace(broker=broker), "NVDA")
-    assert isinstance(err.value.__cause__, ConnectionError)
+    assert isinstance(err.value.__cause__, PriceReadFailed)
 
 
 def test_measured_absence_still_returns_none():
@@ -67,7 +74,7 @@ def test_unreadable_is_refused_with_its_own_reason_and_logs_traceback(caplog):
 
     with caplog.at_level("ERROR", logger="src.sizing_refusal"):
         price, why, detail = sizing_price_or_refusal(reader, None, "NVDA", "buy")
-    assert price is None and why == SIZING_PRICE_UNREADABLE
+    assert price is None and why == PRICE_READ_FAILED
     assert detail.startswith(SIZING_PRICE_UNREADABLE)
     assert any(r.exc_info for r in caplog.records)
 
@@ -131,14 +138,17 @@ def _exec_pipeline(price: float = 100.0):
 
 
 def _run(decision, monkeypatch, reader):
+    import src.stage_entry_preflight as entry_preflight
+
     skips = []
-    monkeypatch.setattr(stage_execution, "_today_sizing_price", reader)
-    monkeypatch.setattr(
-        stage_execution, "_record_execution_skip",
-        lambda _p, _c, sym, reason, *_a, **_k: skips.append((sym, reason)),
-    )
+    keep = lambda _p, _c, sym, reason, *_a, **_k: skips.append((sym, reason))  # noqa: E731
+    # The viability preflight was lifted out of the stage (2026-10-08) and
+    # binds these names itself, so both modules are patched.
+    for module in (stage_execution, entry_preflight):
+        monkeypatch.setattr(module, "_today_sizing_price", reader)
+        monkeypatch.setattr(module, "_record_execution_skip", keep)
     pipeline = _exec_pipeline()
-    ctx = RunContext.start("morning")
+    ctx = RunContext.start("midday")
     ctx.cash, ctx.total_value, ctx.last_equity = 50_000.0, 100_000.0, 100_000.0
     ctx.positions, ctx.symbols_bars = [], {}
     rc = ReasoningChain(macro_filter="x", news_check="x", earnings_check="x",
@@ -166,16 +176,20 @@ def _unreadable(_p, s):
 @pytest.mark.parametrize("action", ["BUY", "SHORT"])
 def test_unreadable_sizing_price_refuses_the_entry(action, monkeypatch):
     pipeline, skips = _run(_decision(action), monkeypatch, _unreadable)
-    assert ("TSLA", SIZING_PRICE_UNREADABLE) in skips
+    assert ("TSLA", PRICE_READ_FAILED) in skips
     assert ("TSLA", NO_SIZING_PRINT) not in skips
     pipeline.broker.submit_order.assert_not_called()
 
 
 @pytest.mark.parametrize("action", ["BUY", "SHORT"])
-def test_measured_absence_refuses_exactly_as_before(action, monkeypatch):
+def test_measured_absence_waits_then_skips_at_slot_end(action, monkeypatch):
+    # No print yet is not a read failure: the name waits for the batched
+    # re-ask and is skipped only when its slot ends (owner ruling 2026-10-08).
+    # The slot is pinned to zero so the result never depends on the clock.
+    monkeypatch.setattr(price_feed_preflight, "slot_seconds_left", lambda _ctx, now=None: 0.0)
     pipeline, skips = _run(_decision(action), monkeypatch, lambda _p, _s: None)
-    assert ("TSLA", NO_SIZING_PRINT) in skips
-    assert ("TSLA", SIZING_PRICE_UNREADABLE) not in skips
+    assert ("TSLA", NO_PRINT_BY_WINDOW_END) in skips
+    assert ("TSLA", PRICE_READ_FAILED) not in skips
     pipeline.broker.submit_order.assert_not_called()
 
 
