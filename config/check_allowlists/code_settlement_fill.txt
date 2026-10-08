@@ -1,0 +1,3 @@
+# Fixed allow-list for the settlement-fill check: one existing violation identity per line.
+# SHRINK-ONLY. Never add a line without a `Guard-rule-change:` line in the commit
+# message saying why the new violation is acceptable. Stale lines fail the check.
