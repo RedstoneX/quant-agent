@@ -1559,12 +1559,12 @@ def earnings_exam_report(scratch: Path | None = None):
     facts = _fixture_policy.load_blob(_EARNINGS_FIXTURE, "sec_mrvl_companyfacts.json.gz")
     root = Path(scratch or tempfile.mkdtemp(prefix="seat-exam-earnings-"))
     provider = EarningsDataProvider(data_dir=str(root / "provider"))
-    provider._sec_get = lambda url, **_kw: facts  # pinned bytes, no network
+    from src.data.xbrl_facts import fetch_xbrl_raw, format_xbrl_text, xbrl_comparable_values
     html_path = root / f"{filing['form_type']}_{filing['filing_date']}.html"
     html_path.write_bytes(html)
     text = extract_text(str(html_path))
-    xbrl_raw = provider._fetch_xbrl_raw(filing["cik"], filing["symbol"], filing["filing_date"])
-    block = provider._format_xbrl_text(xbrl_raw)
+    xbrl_raw = fetch_xbrl_raw(lambda _url: facts, filing["cik"], filing["symbol"], filing["filing_date"])
+    block = format_xbrl_text(xbrl_raw)
     if block:
         text = block + "\n" + text
     analysis_dir = root / "analyses" / filing["symbol"]
@@ -1574,7 +1574,7 @@ def earnings_exam_report(scratch: Path | None = None):
         filing_date=filing["filing_date"], filing_path=str(html_path),
         analysis_path=str(analysis_dir / f"analysis_{filing['form_type']}_{filing['filing_date']}.md"),
         text_excerpt=text, is_new=True,
-        xbrl_facts=provider._xbrl_comparable_values(xbrl_raw),
+        xbrl_facts=xbrl_comparable_values(xbrl_raw),
     )
 
 
