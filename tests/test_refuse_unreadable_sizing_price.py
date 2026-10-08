@@ -191,8 +191,10 @@ def test_failed_calendar_read_raises_and_is_not_cached():
 
 
 def test_pipeline_trading_day_check_propagates_the_failure():
-    from src.pipeline import TradingPipeline
+    from tests.pipeline_factory import build_pipeline
 
-    pipe = SimpleNamespace(broker=SimpleNamespace(is_trading_day=_boom))
+    broker = MagicMock(name="broker")
+    broker.is_trading_day.side_effect = _boom
+    pipe = build_pipeline(broker=broker)
     with pytest.raises(ConnectionError):
-        TradingPipeline._is_trading_day(pipe)
+        pipe._is_trading_day()
