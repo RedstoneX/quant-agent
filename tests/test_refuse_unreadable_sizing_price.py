@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import src.price_feed_preflight as price_feed_preflight
 import src.stage_execution as stage_execution
 from src.execution.broker import LivePrice
 from src.execution.broker_parts.account_reads import AccountReads
@@ -27,7 +28,8 @@ from src.pipeline_stages import (
 )
 from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
 from src.sizing_refusal import (
-    NO_SIZING_PRINT, PRICE_READ_FAILED, SIZING_PRICE_UNREADABLE, sizing_price_or_refusal,
+    NO_PRINT_BY_WINDOW_END, NO_SIZING_PRINT, PRICE_READ_FAILED, SIZING_PRICE_UNREADABLE,
+    sizing_price_or_refusal,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -180,9 +182,13 @@ def test_unreadable_sizing_price_refuses_the_entry(action, monkeypatch):
 
 
 @pytest.mark.parametrize("action", ["BUY", "SHORT"])
-def test_measured_absence_refuses_exactly_as_before(action, monkeypatch):
+def test_measured_absence_waits_then_skips_at_slot_end(action, monkeypatch):
+    # No print yet is not a read failure: the name waits for the batched
+    # re-ask and is skipped only when its slot ends (owner ruling 2026-10-08).
+    # The slot is pinned to zero so the result never depends on the clock.
+    monkeypatch.setattr(price_feed_preflight, "slot_seconds_left", lambda _ctx, now=None: 0.0)
     pipeline, skips = _run(_decision(action), monkeypatch, lambda _p, _s: None)
-    assert ("TSLA", NO_SIZING_PRINT) in skips
+    assert ("TSLA", NO_PRINT_BY_WINDOW_END) in skips
     assert ("TSLA", PRICE_READ_FAILED) not in skips
     pipeline.broker.submit_order.assert_not_called()
 
