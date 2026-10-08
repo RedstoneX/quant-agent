@@ -46,6 +46,7 @@ CLIENT_MODULES = {
 # its reason; there is no wildcard and no count. A module not listed here is a
 # client, so a NEW outbound import in the same package is still refused.
 NOT_CLIENT_SUBMODULES = {
+    "urllib.error": "exception classes (HTTPError, URLError); performs no I/O",
     "urllib.parse": "string splitting and quoting of URLs; performs no I/O",
     "alpaca.trading.requests": "pydantic request models (data classes); no client",
     "alpaca.trading.enums": "plain enums; no client",

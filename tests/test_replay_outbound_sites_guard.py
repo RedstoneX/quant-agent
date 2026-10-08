@@ -81,6 +81,8 @@ def test_the_scanner_sees_each_import_shape():
 # --- the guard's SUBJECT is named by identity: what is a client, what is not ---
 
 EXCLUDED_IMPORTS = {
+    "from urllib.error import HTTPError\n": "urllib.error",
+    "import urllib.error\n": "urllib.error",
     "from urllib.parse import urlsplit\n": "urllib.parse",
     "import urllib.parse\n": "urllib.parse",
     "from alpaca.trading.requests import GetOrdersRequest\n": "alpaca.trading.requests",
@@ -98,7 +100,7 @@ def test_each_excluded_submodule_is_excluded_for_its_stated_reason(source, submo
 def test_the_exclusion_list_is_exactly_these_names():
     """Identity, not a count: a new entry must be named here with its reason."""
     assert set(replay_outbound_guard.NOT_CLIENT_SUBMODULES) == {
-        "urllib.parse", "alpaca.trading.requests", "alpaca.trading.enums"}
+        "urllib.error", "urllib.parse", "alpaca.trading.requests", "alpaca.trading.enums"}
     assert set(replay_outbound_guard.NOT_CLIENT_ATTRIBUTES["socket"]) == {
         "setdefaulttimeout", "getdefaulttimeout"}
 
@@ -107,6 +109,7 @@ def test_the_exclusion_list_is_exactly_these_names():
     ("import urllib.request\n", "urllib"),
     ("from urllib.request import urlopen\n", "urllib"),
     ("from urllib.parse import urlsplit\nimport urllib.request\n", "urllib"),
+    ("from urllib.error import HTTPError\nfrom urllib.request import urlopen\n", "urllib"),
     ("from alpaca.trading.client import TradingClient\n", "alpaca"),
     ("from alpaca.trading.stream import TradingStream\n", "alpaca"),
     ("from alpaca.data.historical.stock import StockHistoricalDataClient\n", "alpaca"),
