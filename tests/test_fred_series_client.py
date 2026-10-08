@@ -87,8 +87,8 @@ def test_timed_out_request_yields_the_named_failure_and_leaves_socket_alone():
         s = provider._safe_get_series("VIXCLS", observation_start=date(2026, 1, 1))
     assert len(s) == 0
     assert socket.getdefaulttimeout() == before
-    coverage = provider._run_coverage if hasattr(provider, "_run_coverage") else None
-    assert coverage is None or "timed out" in str(coverage)
+    assert [f.series_id for f in provider._run_failed] == ["VIXCLS"]
+    assert "timed out" in provider._run_failed[0].reason
 
 
 def test_api_key_never_appears_in_an_http_error():
