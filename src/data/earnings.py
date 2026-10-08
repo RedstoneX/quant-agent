@@ -9,26 +9,25 @@ import logging
 import os
 import re
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
 from src.util.time import et_now, et_today
 from pathlib import Path
+from urllib.error import HTTPError, URLError  # noqa: F401 — handed to the SEC client
 from urllib.request import urlopen, Request
-from urllib.error import HTTPError, URLError
 
 from src.data.filing_text import extract_text
+from src.data.sec_client import (  # noqa: F401 — re-exported for existing callers
+    REQUEST_DELAY, SEC_ARCHIVES, SEC_BASE, SEC_TICKERS_URL, USER_AGENT,
+    FilingInfo, SecClient, build_sec_client,
+)
+from src.data.xbrl_facts import fetch_xbrl_raw, format_xbrl_text, xbrl_comparable_values
 from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
-SEC_BASE = "https://data.sec.gov"
-SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
-SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
-USER_AGENT = "quant-agent research@example.com"  # SEC requires contact info
-REQUEST_DELAY = 0.12  # SEC rate limit: 10 req/s
 
 # ETFs don't have SEC 10-Q/10-K filings — skip them at the entry point to
 # avoid wasting CIK lookups + retry budget on something that will always
@@ -37,15 +36,6 @@ REQUEST_DELAY = 0.12  # SEC rate limit: 10 req/s
 ETFS = {"SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLV", "XLI", "XLP",
         "XLY", "XLU", "XLRE", "XLB", "SMH", "SOXX", "DRAM", "CHPX",
         "SH", "SDS", "PSQ", "SQQQ"}
-
-
-@dataclass
-class FilingInfo:
-    symbol: str
-    form_type: str  # "10-Q" or "10-K"
-    filing_date: str
-    accession_number: str
-    primary_doc: str  # filename of main document
 
 
 @dataclass
@@ -73,14 +63,23 @@ class EarningsReport:
 
 
 class EarningsDataProvider:
-    def __init__(self, data_dir: str = "data/earnings", lookback_days: int = 45):
+    def __init__(self, data_dir: str = "data/earnings", lookback_days: int = 45,
+                 sec_client: SecClient | None = None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.data_dir / "manifest.json"
         self._manifest_lock = threading.Lock()
         self.manifest = self._load_manifest()
         self.lookback_days = lookback_days
-        self._ticker_to_cik: dict[str, str] | None = None
+        # The opener resolves `urlopen` in THIS module on every call, so the
+        # rehearsal recording that rebinds `src.data.earnings.urlopen` still
+        # intercepts SEC traffic.
+        self.sec = sec_client or build_sec_client(
+            opener=lambda req, timeout: urlopen(req, timeout=timeout),
+            request=lambda *a, **k: Request(*a, **k),
+            http_error=HTTPError, url_error=URLError,
+            lookback_days=lookback_days,
+        )
 
     def _load_manifest(self) -> dict:
         if self.manifest_path.exists():
@@ -211,381 +210,6 @@ class EarningsDataProvider:
         self.save_manifest()
         return abandoned
 
-    def _sec_get(
-        self,
-        url: str,
-        max_retries: int = 3,
-        total_timeout_s: float = 45.0,
-    ) -> bytes:
-        """GET with SEC-required headers, rate limiting, and retry on
-        transient SEC errors.
-
-        SEC enforces 10 req/sec via 429 (rate-limited) and returns 503
-        when the service is overloaded. Before this retry loop, both
-        errors raised HTTPError uncaught — caller's broad `except
-        Exception` turned them into a silent empty filing list, which
-        propagated to evening's `thesis_health_review` as missing 10-Q
-        context (the core input for value-investing thesis decisions).
-
-        Retries 429 / 503 / transient URLError with exponential backoff
-        (1s, 2s, 4s). 404 / 400 / other 4xx-5xx propagate immediately —
-        those mean the URL itself is wrong (bad CIK, missing filing),
-        not a transient rate-limit, and retrying wastes the budget.
-
-        `total_timeout_s` caps the worst-case time the loop can spend.
-        Without it, 3 retries on a sustained SEC outage could burn
-        REQUEST_DELAY(0.12s) + urlopen(15s) + backoff(1+2+4s) = ~21s × 3
-        = ~63s per URL. With 77 stocks × 2 calls (submissions + filing
-        body) that's hours of session time on a bad SEC day. 45s default
-        keeps any single URL's worst-case bounded and lets the outer
-        per-symbol `try: except Exception` move on.
-        """
-        start = time.time()
-        req = Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"})
-        last_exc: Exception | None = None
-        for attempt in range(max_retries):
-            elapsed = time.time() - start
-            if elapsed > total_timeout_s:
-                logger.warning(
-                    "SEC fetch exceeded total_timeout_s=%.0fs for %s "
-                    "after %d attempts (elapsed=%.1fs)",
-                    total_timeout_s, url, attempt, elapsed,
-                )
-                if last_exc is not None:
-                    raise last_exc
-                raise TimeoutError(
-                    f"SEC fetch exceeded {total_timeout_s}s for {url}"
-                )
-            time.sleep(REQUEST_DELAY)
-            try:
-                with urlopen(req, timeout=15) as resp:
-                    return resp.read()
-            except HTTPError as e:
-                last_exc = e
-                if e.code in (429, 503):
-                    backoff = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
-                    logger.warning(
-                        "SEC %d on attempt %d/%d for %s — backing off %.1fs",
-                        e.code, attempt + 1, max_retries, url, backoff,
-                    )
-                    time.sleep(backoff)
-                    continue
-                # Non-transient HTTP error: don't retry, surface immediately.
-                raise
-            except URLError as e:
-                # Network blip (DNS / connection reset / timeout). Retry
-                # since these are typically transient.
-                last_exc = e
-                backoff = 1.0 * (2 ** attempt)
-                logger.warning(
-                    "SEC URLError on attempt %d/%d for %s: %s — backing off %.1fs",
-                    attempt + 1, max_retries, url, e, backoff,
-                )
-                time.sleep(backoff)
-                continue
-        # All retries exhausted; surface the last exception so caller
-        # (currently inside a broad except Exception) can log it.
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(f"SEC fetch failed for {url} without exception")
-
-    def _get_cik(self, ticker: str) -> str | None:
-        """Look up CIK number for a ticker symbol."""
-        if self._ticker_to_cik is None:
-            try:
-                data = json.loads(self._sec_get(SEC_TICKERS_URL))
-                self._ticker_to_cik = {}
-                for entry in data.values():
-                    t = entry.get("ticker", "").upper()
-                    cik = str(entry.get("cik_str", ""))
-                    if t and cik:
-                        self._ticker_to_cik[t] = cik
-            except Exception as e:
-                logger.warning("Failed to fetch SEC ticker map: %s", e)
-                self._ticker_to_cik = {}
-        return self._ticker_to_cik.get(ticker.upper())
-
-    def _get_recent_filings(self, cik: str, ticker: str) -> list[FilingInfo]:
-        """Get recent 10-Q/10-K filings from SEC EDGAR.
-
-        Note on MLPs (master limited partnerships, e.g. EPD): they are SEC
-        registrants and DO file 10-Q/10-K via the partnership entity —
-        no special handling required. The Schedule K-1 some operators
-        associate with MLPs is a tax document mailed to unit holders, not
-        a substitute for the corporate filing. EPD shows up on EDGAR with
-        regular quarterly 10-Qs that this method will pick up.
-        """
-        padded_cik = cik.zfill(10)
-        url = f"{SEC_BASE}/submissions/CIK{padded_cik}.json"
-        try:
-            data = json.loads(self._sec_get(url))
-        except Exception as e:
-            record_swallowed("data.earnings.recent_filings", e, log=logger, symbol=ticker)
-            return []
-
-        recent = data.get("filings", {}).get("recent", {})
-        forms = recent.get("form", [])
-        dates = recent.get("filingDate", [])
-        accessions = recent.get("accessionNumber", [])
-        primary_docs = recent.get("primaryDocument", [])
-
-        # SEC's submissions JSON returns parallel arrays; in practice they
-        # always align, but an upstream truncation or partial response
-        # would silently desync them. Index-based access on the previous
-        # version checked only forms vs dates length and could IndexError
-        # on accessions / primary_docs if those came up short. zip()
-        # tolerates whichever array is shortest and exits cleanly — at
-        # worst we miss a trailing filing rather than crash mid-scan.
-        if not (len(forms) == len(dates) == len(accessions) == len(primary_docs)):
-            logger.warning(
-                "SEC submissions arrays misaligned for %s (CIK %s): "
-                "forms=%d dates=%d accessions=%d primary_docs=%d — "
-                "iterating over the shortest",
-                ticker, cik, len(forms), len(dates),
-                len(accessions), len(primary_docs),
-            )
-
-        cutoff = (et_now() - timedelta(days=self.lookback_days)).strftime("%Y-%m-%d")
-        filings = []
-        for form, filing_date, accession, primary_doc in zip(
-            forms, dates, accessions, primary_docs,
-        ):
-            if form not in ("10-Q", "10-K"):
-                continue
-            if filing_date < cutoff:
-                continue
-            filings.append(FilingInfo(
-                symbol=ticker,
-                form_type=form,
-                filing_date=filing_date,
-                accession_number=accession,
-                primary_doc=primary_doc or "",
-            ))
-        return filings
-
-    def _fetch_xbrl_raw(self, cik: str, ticker: str, filing_date: str) -> dict[str, tuple[float, str]]:
-        """Pull hard financial-statement figures from SEC's structured XBRL
-        data instead of hoping a text-regex found the right heading in the
-        filing's rendered HTML.
-
-        ROOT CAUSE this replaces: `_extract_key_sections` below regexes for
-        headings like "consolidated statements of operations" in flattened
-        plain text, and filing layout / heading phrasing varies enough by
-        filer that no amount of regex tuning holds up filing-to-filing.
-        Measured on production: ~20 of 67 filings recovered under 1,600
-        characters from a 184,000-character document this way, and 12 —
-        including MSFT, AAPL, GOOGL, BAC, CVX, NFLX — extracted exactly ZERO
-        financial figures. The earnings analyst had never seen a single
-        number for those names.
-
-        XBRL is the SEC-mandated structured version of these exact numbers,
-        served for free with no auth beyond the same User-Agent every other
-        SEC call here already sends. This is fetched INDEPENDENTLY of
-        whatever `_extract_key_sections` finds below, so it grounds the
-        numeric side of the analysis even when the text matcher fails
-        completely — it doesn't make the matcher smarter, it makes the
-        matcher's failure mode harmless for the numbers that matter most.
-        It does NOT cover MD&A / risk-factors prose: XBRL doesn't tag prose,
-        so that stays on the text-matching path exactly as before.
-
-        Fails open: any error (network, missing CIK in XBRL, no matching
-        concept) returns {} and callers proceed exactly as before this
-        existed — a SEC API hiccup can only leave the analysis as good as
-        before, never worse. Two callers share this one fetch so a filing
-        is only hit once per `_check_symbol` run, not twice:
-        `_get_xbrl_financial_facts` (below) turns this into the prompt's
-        text block, and `_xbrl_comparable_values` turns it into the
-        parsed-number ground truth `_classify_earnings_status`
-        (src/pipeline_stages.py) cross-checks the analyst's own figures
-        against.
-
-        Returns a plain `{concept_key: (value, period_end_iso)}` dict —
-        `concept_key` is the internal name used below ("revenue",
-        "net_income", "gross_profit", "operating_income", "assets", "cash",
-        "long_term_debt", "eps"), not the raw XBRL tag name.
-        """
-        padded_cik = cik.zfill(10)
-        url = f"{SEC_BASE}/api/xbrl/companyfacts/CIK{padded_cik}.json"
-        try:
-            data = json.loads(self._sec_get(url))
-        except Exception as e:  # noqa: BLE001 — fail open, see docstring
-            logger.warning(
-                "XBRL companyfacts fetch failed for %s (CIK %s): %s", ticker, cik, e,
-            )
-            return {}
-
-        facts = data.get("facts", {}).get("us-gaap", {})
-        if not facts:
-            return {}
-
-        try:
-            target = date.fromisoformat(filing_date)
-        except (TypeError, ValueError):
-            target = None
-
-        def _best_value(concept_names: list[str], unit_key: str):
-            # Gather candidates across ALL given concept names, not just the
-            # first one that has any data at all. Filers change which XBRL
-            # tag they report under over time — e.g. many large companies
-            # stopped using `Revenues` around ASC 606 adoption (~2018) in
-            # favor of `RevenueFromContractWithCustomerExcludingAssessedTax`.
-            # `Revenues` still HAS entries for those filers, just a decade
-            # stale — stopping at "first concept with any data" silently
-            # picked a ~10-year-old number for MSFT/AAPL revenue in testing.
-            # Comparing recency across every concept and picking the single
-            # freshest match closes that.
-            dated: list[tuple[date, dict]] = []
-            stale_fallbacks: list[tuple[date, dict]] = []
-            for concept in concept_names:
-                entries = facts.get(concept, {}).get("units", {}).get(unit_key, [])
-                if not entries:
-                    continue
-                candidates = [e for e in entries if e.get("form") in ("10-Q", "10-K")]
-                if not candidates:
-                    candidates = entries
-                for e in candidates:
-                    end = e.get("end")
-                    if not end:
-                        continue
-                    try:
-                        end_d = date.fromisoformat(end)
-                    except ValueError:
-                        continue
-                    if target is None or end_d <= target:
-                        dated.append((end_d, e))
-                    else:
-                        stale_fallbacks.append((end_d, e))
-            if dated:
-                dated.sort(key=lambda pair: pair[0])
-                chosen_end, chosen = dated[-1]
-            elif stale_fallbacks:
-                stale_fallbacks.sort(key=lambda pair: pair[0])
-                chosen_end, chosen = stale_fallbacks[-1]
-            else:
-                return None
-            # Some filers stop reporting a given XBRL tag (switch to a
-            # differently-named one, or fold it into a different line item)
-            # without ever filing a final value under the old tag — that
-            # stale entry still LOOKS like real data and would otherwise be
-            # presented as current. Measured while building this: BAC's
-            # cash tag was 5+ years stale, CVX's long-term-debt tag ~8
-            # years, NFLX's gross-profit tag ~5 years, despite each having
-            # CURRENT data available under the concept the analysis prompt
-            # actually needs. A number this old is worse than no number —
-            # it's the exact "PM sizes off an ungrounded field" failure
-            # mode this whole fix exists to close, just moved from text
-            # extraction into XBRL. One fiscal year plus one quarter of
-            # slack (~455 days) comfortably covers a filer that's merely
-            # running one quarter behind without accepting a genuinely
-            # abandoned tag.
-            MAX_STALENESS_DAYS = 455
-            if target is not None and (target - chosen_end).days > MAX_STALENESS_DAYS:
-                return None
-            val = chosen.get("val")
-            end = chosen.get("end", "?")
-            if val is None:
-                return None
-            return val, end
-
-        raw: dict[str, tuple[float, str]] = {}
-        revenue = _best_value(
-            ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD",
-        )
-        if revenue is not None:
-            raw["revenue"] = revenue
-        for concept, key in (
-            ("NetIncomeLoss", "net_income"),
-            ("GrossProfit", "gross_profit"),
-            ("OperatingIncomeLoss", "operating_income"),
-            ("Assets", "assets"),
-            ("CashAndCashEquivalentsAtCarryingValue", "cash"),
-            ("LongTermDebtNoncurrent", "long_term_debt"),
-        ):
-            v = _best_value([concept], "USD")
-            if v is not None:
-                raw[key] = v
-        eps = _best_value(["EarningsPerShareDiluted"], "USD/shares")
-        if eps is not None:
-            raw["eps"] = eps
-        return raw
-
-    # Human-readable labels for the text block the LLM prompt reads, in the
-    # same fixed order the block has always rendered in — kept in one place
-    # so `_get_xbrl_financial_facts` and any future consumer of
-    # `_fetch_xbrl_raw` render the same concepts under the same names.
-    _XBRL_TEXT_LABELS = (
-        ("revenue", "Total Revenue"),
-        ("net_income", "Net Income"),
-        ("gross_profit", "Gross Profit"),
-        ("operating_income", "Operating Income"),
-        ("assets", "Total Assets"),
-        ("cash", "Cash & Equivalents"),
-        ("long_term_debt", "Long-Term Debt"),
-        ("eps", "Diluted EPS"),
-    )
-
-    def _get_xbrl_financial_facts(self, cik: str, ticker: str, filing_date: str) -> str:
-        """Fetch + format `_fetch_xbrl_raw`'s values as the text block
-        prepended to the filing text the earnings analyst LLM reads —
-        unchanged output from before this was split out of one combined
-        fetch+format method, see `_fetch_xbrl_raw`'s docstring for the real
-        motivation and the fail-open contract this inherits unchanged
-        ("" on no data/error). `_check_symbol` calls `_format_xbrl_text`
-        directly instead of this, so a filing already fetched once via
-        `_fetch_xbrl_raw` isn't fetched again just to build this block."""
-        return self._format_xbrl_text(self._fetch_xbrl_raw(cik, ticker, filing_date))
-
-    def _format_xbrl_text(self, raw: dict[str, tuple[float, str]]) -> str:
-        """Pure formatter half of `_get_xbrl_financial_facts` — no network."""
-        if not raw:
-            return ""
-        lines: list[str] = []
-        for key, label in self._XBRL_TEXT_LABELS:
-            entry = raw.get(key)
-            if entry is None:
-                continue
-            value, end = entry
-            if key == "eps":
-                lines.append(f"{label}: ${value:.2f} (period ending {end})")
-            else:
-                lines.append(f"{label}: ${value:,.0f} (period ending {end})")
-        if not lines:
-            return ""
-        return (
-            "=== STRUCTURED FINANCIAL FACTS (SEC XBRL, not text-extracted) ===\n"
-            + "\n".join(lines)
-            + "\n"
-        )
-
-    # Concept keys (from `_fetch_xbrl_raw`) that map ONE-TO-ONE onto an
-    # `EarningsAnalysis` field — the same real-world figure, not a derived
-    # or differently-scoped one. Deliberately excludes `gross_profit` /
-    # `operating_income` (the analyst reports MARGINS — ratios it computes
-    # itself — not the raw dollar figures XBRL tags, so there's no
-    # apples-to-apples number to compare) and `long_term_debt` (XBRL here
-    # is non-current debt only, while `EarningsBalanceSheet.total_debt`
-    # conventionally includes the current portion too — comparing them
-    # would flag a definitional gap as if it were a factual error). Cash
-    # flow statement fields aren't fetched by `_fetch_xbrl_raw` at all yet,
-    # so there is nothing to compare them against.
-    _XBRL_COMPARABLE_KEYS = ("revenue", "net_income", "cash", "eps")
-
-    def _xbrl_comparable_values(self, raw: dict[str, tuple[float, str]]) -> dict[str, float]:
-        """The subset of `_fetch_xbrl_raw`'s output usable as real,
-        directly-comparable ground truth — see `_XBRL_COMPARABLE_KEYS` for
-        which fields and why only those. Pure/no network: callers already
-        have `raw` from one `_fetch_xbrl_raw` call and derive both the
-        prompt text block and this from it, rather than fetching twice.
-
-        Returns {} (not None) when nothing comparable was available — the
-        SEC XBRL fetch failed open, or none of the comparable concepts had
-        current data — which the mismatch check downstream already treats
-        the same as "nothing to compare," never as a mismatch.
-        """
-        return {
-            key: raw[key][0] for key in self._XBRL_COMPARABLE_KEYS if key in raw
-        }
-
     def _download_filing(self, cik: str, filing: FilingInfo) -> str | None:
         """Download filing HTML and save to local file. Returns local path."""
         symbol_dir = self.data_dir / filing.symbol
@@ -599,7 +223,7 @@ class EarningsDataProvider:
             return str(local_path)
 
         try:
-            content = self._sec_get(url)
+            content = self.sec.get(url)
             local_path.write_bytes(content)
             logger.info("Downloaded %s %s (%s) → %s", filing.symbol, filing.form_type,
                         filing.filing_date, local_path)
@@ -638,11 +262,11 @@ class EarningsDataProvider:
 
     def _check_symbol(self, symbol: str) -> EarningsReport | None:
         """Check a single symbol for new or existing filings."""
-        cik = self._get_cik(symbol)
+        cik = self.sec.cik_for(symbol)
         if not cik:
             return None
 
-        filings = self._get_recent_filings(cik, symbol)
+        filings = self.sec.recent_filings(cik, symbol)
         if not filings:
             # No recent filings — check for existing analysis (any form)
             return self._get_existing_analysis(symbol)
@@ -701,8 +325,8 @@ class EarningsDataProvider:
             return self._get_existing_analysis(symbol, form_type=latest.form_type)
 
         text = extract_text(local_path)
-        xbrl_raw = self._fetch_xbrl_raw(cik, symbol, latest.filing_date)
-        xbrl_block = self._format_xbrl_text(xbrl_raw)
+        xbrl_raw = fetch_xbrl_raw(self.sec.get, cik, symbol, latest.filing_date)
+        xbrl_block = format_xbrl_text(xbrl_raw)
         if xbrl_block:
             text = xbrl_block + "\n" + text
         analysis_path = self._get_analysis_path(symbol, latest.form_type, latest.filing_date)
@@ -715,7 +339,7 @@ class EarningsDataProvider:
             analysis_path=analysis_path,
             text_excerpt=text,
             is_new=True,
-            xbrl_facts=self._xbrl_comparable_values(xbrl_raw),
+            xbrl_facts=xbrl_comparable_values(xbrl_raw),
         )
 
     def _get_existing_analysis(

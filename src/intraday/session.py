@@ -14,6 +14,7 @@ from src.evidence_gate import EvidenceGateEvaluationError
 from src.intraday_scan_outcome import failed_scan_result
 from src.pipeline_context import RunContext
 from src.intraday.session_gate import session_has_ended
+from src.intraday.tick_trail import trail_on_tick
 from src.sentinel.guarded_site import record_site as _site
 from src.trading_calendar import session_date_key
 
@@ -46,6 +47,7 @@ class IntradaySession:
         run_intra_check_body=None,
         state=None,
         now=None,
+        trail_collaborators=None,
     ) -> None:
         self.db = db
         self.broker = broker
@@ -65,6 +67,7 @@ class IntradaySession:
         if run_intra_check_body is not None:
             self._run_intra_check_body = run_intra_check_body  # else: this part's own body
         self._state, self._now = state, now
+        self._trail_collaborators = trail_collaborators
 
     @property
     def _intra_preamble_deferred(self):
@@ -218,6 +221,13 @@ class IntradaySession:
             "run_id": run_id,
             "stop_coverage_gaps": coverage_gaps,
         }
+        # Owner ruling 2026-10-08: trail stops at every 30-minute check, not
+        # only at midday/close; before the scan, so protection moves first.
+        # Free and deterministic; see src/intraday/tick_trail.py.
+        result["tick_trail"] = trail_on_tick(
+            positions=positions, run_id=run_id, preamble_deferred=preamble_deferred,
+            **self._tick_trail_collaborators(),
+        )
         # 2026-08-19 intraday opportunity-discovery fix: bounded new-
         # opportunity scan.
         try:
@@ -256,3 +266,33 @@ class IntradaySession:
                 # snapshot above is now stale).
                 self._sync_positions_from_broker()
         return result
+
+    def _tick_trail_collaborators(self) -> dict:
+        """The host's trail, ATR read, broker-write lock, owner check and sweep split.
+
+        Handed in explicitly when given; otherwise read live off the host through
+        the `state` view. A host that lacks one gets None for it, and the tick
+        trail then reports itself unavailable instead of guessing.
+        """
+        if self._trail_collaborators is not None:
+            return dict(self._trail_collaborators)
+
+        def _host(name):
+            try:
+                return self._state.get(name) if self._state is not None else None
+            except AttributeError:
+                return None
+
+        sweeper_of = _host("_sweeper")
+
+        def _split(positions):
+            sweeper = sweeper_of() if callable(sweeper_of) else None
+            return sweeper.split_positions(positions) if sweeper is not None else (positions, None)
+
+        return {
+            "apply_deterministic_trails": _host("_apply_deterministic_trails"),
+            "atr_for_symbol": _host("_atr_for_symbol"),
+            "process_lock": _host("_intraday_scan_process_lock"),
+            "blocking_owner_session": _host("_blocking_owner_session"),
+            "split_positions": _split,
+        }
