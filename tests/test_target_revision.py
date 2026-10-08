@@ -989,9 +989,9 @@ def test_no_open_positions_and_no_flags_is_still_a_no_op():
 def test_trailing_regime_reads_the_pinned_entry_target_not_the_live_one():
     import ast
     import inspect
-    from src.pipeline import TradingPipeline
+    from src.exits_parts.trails import _apply_deterministic_trails
 
-    src = inspect.getsource(TradingPipeline._apply_deterministic_trails)
+    src = inspect.getsource(_apply_deterministic_trails)
     tree = ast.parse(textwrap.dedent(src))
     found = []
     for node in ast.walk(tree):
