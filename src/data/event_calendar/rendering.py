@@ -4,7 +4,8 @@ from datetime import timedelta
 
 from src.data.event_calendar.earnings import EarningsProximity
 from src.data.event_calendar.fomc import FOMC_MEASURED, FOMCCoverage, FOMCMeeting
-from src.data.event_calendar.macro import UNCOVERED_EVENTS, EventCalendarCoverage, MacroEvent
+from src.data.event_calendar.macro import UNCOVERED_EVENTS
+from src.data.event_calendar.macro_types import EventCalendarCoverage, MacroEvent
 from src.trading_calendar import et_today
 
 # --- rendering -------------------------------------------------------------

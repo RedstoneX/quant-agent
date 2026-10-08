@@ -117,11 +117,20 @@ from src.data.event_calendar.macro import (  # noqa: F401
     MACRO_RELEASES,
     UNCOVERED_EVENTS,
     ReleaseFailure,
+)
+from src.data.event_calendar.macro_cache import (  # noqa: F401
     RELEASE_SCHEDULE_CACHE_SCHEMA,
     RELEASE_SCHEDULE_CACHE_PATH,
     ReleaseScheduleCache,
+)
+from src.data.event_calendar.macro_types import (  # noqa: F401
     MacroEvent,
     EventCalendarCoverage,
+)
+from src.data.event_calendar.macro_fetch import (  # noqa: F401
+    fetch_release_dates,
+)
+from src.data.event_calendar.macro_provider import (  # noqa: F401
     MacroEventCalendarProvider,
 )
 from src.data.event_calendar.fomc import (  # noqa: F401
@@ -141,6 +150,8 @@ from src.data.event_calendar.fomc import (  # noqa: F401
     FOMCCalendarParseError,
     FOMCMeeting,
     FOMCCoverage,
+)
+from src.data.event_calendar.fomc_parse import (  # noqa: F401
     _FOMC_DURATION_WORDS,
     _FOMC_DURATION_RE,
     _FOMC_MONTHS,
@@ -152,6 +163,8 @@ from src.data.event_calendar.fomc import (  # noqa: F401
     _FOMC_HTML_DAYS_RE,
     _fomc_html_text,
     parse_fomc_meetings_from_html,
+)
+from src.data.event_calendar.fomc_provider import (  # noqa: F401
     FOMCCalendarProvider,
 )
 from src.data.event_calendar.earnings import (  # noqa: F401

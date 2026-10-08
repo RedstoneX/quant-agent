@@ -7,10 +7,32 @@ import types
 import pytest
 
 import src.data.event_calendar as package
-from src.data.event_calendar import earnings, fomc, macro, rendering
+from src.data.event_calendar import (
+    earnings,
+    fomc,
+    fomc_parse,
+    fomc_provider,
+    macro,
+    macro_cache,
+    macro_fetch,
+    macro_provider,
+    macro_types,
+    rendering,
+)
 from tests.boundary_harness import check_boundary
 
-MODULES = ("macro", "fomc", "earnings", "rendering")
+MODULES = (
+    "macro",
+    "macro_cache",
+    "macro_types",
+    "macro_fetch",
+    "macro_provider",
+    "fomc",
+    "fomc_parse",
+    "fomc_provider",
+    "earnings",
+    "rendering",
+)
 
 
 @pytest.mark.parametrize("name", MODULES)
@@ -31,7 +53,10 @@ def test_part_passes_the_boundary_harness(name):
 
 
 def test_package_reexports_every_public_name_of_each_part():
-    for part in (macro, fomc, earnings, rendering):
+    for part in (
+        macro, macro_cache, macro_types, macro_fetch, macro_provider,
+        fomc, fomc_parse, fomc_provider, earnings, rendering,
+    ):
         for attr, value in vars(part).items():
             if attr.startswith("__") or attr == "logger" or isinstance(value, types.ModuleType):
                 continue
@@ -41,8 +66,8 @@ def test_package_reexports_every_public_name_of_each_part():
 
 
 def test_parts_are_built_without_a_pipeline():
-    assert macro.MacroEventCalendarProvider is package.MacroEventCalendarProvider
-    assert fomc.FOMCCalendarProvider is package.FOMCCalendarProvider
+    assert macro_provider.MacroEventCalendarProvider is package.MacroEventCalendarProvider
+    assert fomc_provider.FOMCCalendarProvider is package.FOMCCalendarProvider
     assert earnings.fetch_earnings_proximity is package.fetch_earnings_proximity
     assert rendering.format_event_risk_block is package.format_event_risk_block
 
