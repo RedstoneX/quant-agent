@@ -249,6 +249,57 @@ class AlignmentExit:
                 symbol, type(e).__name__, e,
             )
 
+    def _target_for_holding(
+        self, *, symbol: str, is_short: bool,
+    ) -> tuple[float | None, str | None, str]:
+        """The CURRENT target, the date it took effect and which record set it.
+
+        The value is `trades.take_profit` on the position's opening row —
+        the only column `update_open_take_profit` moves. The effective date
+        is the position's own open timestamp, or the newest APPLIED target
+        revision filed since that open (`db.get_target_revisions`), because
+        a revision resets the question of whether the target was reached.
+        Never raises: an unreadable target is (None, None, why), which the
+        exit reads as today's rule and says so in its verdict.
+        """
+        opening = "SHORT" if is_short else "BUY"
+        try:
+            row = self.db.get_symbol_last_buy(symbol, action=opening) or {}
+            target = row.get("take_profit")
+            if target is None or not float(target) > 0:
+                return None, None, "no target on the opening row"
+            opened = (
+                self.db.get_position_open_timestamp(row) or row.get("timestamp") or ""
+            )
+            opened = str(opened).replace("T", " ")[:19]
+            if not opened:
+                return None, None, "opening row carries no timestamp"
+            effective, version = opened[:10], f"entry record of {opened}"
+            revisions = (self.db.get_target_revisions([symbol]) or {}).get(
+                symbol.upper(), [],
+            )
+            for rev in revisions:  # newest first
+                stamp = str(rev.get("timestamp") or "").replace("T", " ")[:19]
+                if not rev.get("applied") or rev.get("new_price") is None:
+                    continue
+                if stamp < opened:
+                    break  # filed for an earlier round-trip of this name
+                effective = stamp[:10]
+                version = (
+                    f"applied revision of {stamp} (run {rev.get('run_id')}, "
+                    f"{rev.get('code')}, {rev.get('prior_price')} -> {rev.get('new_price')})"
+                )
+                if float(rev.get("new_price")) != float(target):
+                    version += f"; the row now reads {float(target):.4f}"
+                break
+            return float(target), effective, version
+        except Exception as e:  # noqa: BLE001 — unreadable target is today's rule
+            logger.warning(
+                "alignment exit: could not read %s's target (%s: %s) — the "
+                "target vote is not applied this session", symbol, type(e).__name__, e,
+            )
+            return None, None, f"target read failed: {type(e).__name__}: {e}"
+
     def _position_opened_today(self, symbol: str) -> bool:
         """Was this position bought in TODAY's session? DATE EQUALITY ONLY.
 
@@ -322,9 +373,15 @@ class AlignmentExit:
                     # the check does not name a level there is no
                     # structural mark.
                     broken_level = getattr(protection, "broken_level", None)
+            target, effective, version = self._target_for_holding(
+                symbol=symbol, is_short=is_short,
+            )
             return check_alignment_exit(
                 thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
                 broken_structural_level=broken_level, is_short=is_short,
+                target=target, target_effective_date=effective,
+                target_version=version,
+                bar_dates=[getattr(b, "date", None) for b in sorted_bars],
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(

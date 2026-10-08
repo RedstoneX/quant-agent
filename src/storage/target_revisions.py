@@ -74,21 +74,28 @@ class TargetRevisionRecords:
 
     def get_target_revisions(self, symbols, *, limit: int = 200) -> dict[str, list[dict]]:
         """`{symbol: [payload, ...]}` newest first, for the cockpit and for
-        grading whether revising targets helps."""
+        grading whether revising targets helps.
+
+        `limit` is PER SYMBOL. It used to cap the whole result, so a book
+        of names that revise daily could push a quiet name's rows out of
+        the window entirely and make its newest row read as missing — and
+        the alignment exit reads that newest APPLIED row to date the
+        current target, so a missing row silently undated it.
+        """
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
         if not wanted:
             return {}
-        placeholders = ",".join("?" for _ in wanted)
         sql = (
             "SELECT symbol, evidence_json, timestamp, run_id FROM "
             "specialist_evidence WHERE agent_name='risk_manager' AND kind=? "
-            f"AND symbol IN ({placeholders}) ORDER BY timestamp DESC, id DESC "
-            "LIMIT ?"
+            "AND symbol = ? ORDER BY timestamp DESC, id DESC LIMIT ?"
         )
+        rows: list = []
         with self._lock:
-            rows = self.conn.execute(
-                sql, (self.TARGET_REVISION_KIND, *wanted, int(limit)),
-            ).fetchall()
+            for sym in dict.fromkeys(wanted):
+                rows.extend(self.conn.execute(
+                    sql, (self.TARGET_REVISION_KIND, sym, int(limit)),
+                ).fetchall())
         out: dict[str, list[dict]] = {}
         for row in rows:
             row = dict(row)
