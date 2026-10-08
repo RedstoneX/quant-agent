@@ -48,7 +48,7 @@ def _check(monkeypatch, tree):
 
 def test_a_cycle_is_refused(monkeypatch, capsys):
     assert _check(monkeypatch, _tree(a="import src.b\n", b="import src.a\n")) == 1
-    assert "src.b -> src.a -> src.b" in capsys.readouterr().err
+    assert "src.a -> src.b -> src.a" in capsys.readouterr().err
 
 
 def test_a_cycle_hidden_in_a_function_body_is_still_a_cycle(monkeypatch):

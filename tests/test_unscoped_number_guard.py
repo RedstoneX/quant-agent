@@ -1,96 +1,50 @@
-"""The unscoped-number guard stores no ceiling (docs/GUARDS_WITHOUT_STORED_STATE.md)."""
+"""The unscoped-number guard compares with a fixed, committed allow-list, never the trunk."""
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
-import pytest
-
-from scripts import guard_reference, unscoped_number_guard
-from scripts.guard_reference import ReferenceUnavailable
+from scripts import check_allowlist, unscoped_number_guard
 
 
-def test_no_unscoped_number_is_added_against_the_trunk():
-    bad = unscoped_number_guard.violations()
-    assert not bad, "\n  ".join(bad)
+def test_unscoped_numbers_match_the_fixed_allow_list():
+    unlisted, stale = unscoped_number_guard.check()
+    assert not unlisted and not stale, check_allowlist.report(unlisted, stale, unscoped_number_guard.ALLOWLIST)
 
 
-def test_the_trunk_is_actually_measured():
-    assert len(unscoped_number_guard.trunk_sites()) > 50, "trunk measured nothing"
+def _listed(tmp_path, site_ids):
+    path = tmp_path / "code_unscoped_number.txt"
+    path.write_text(check_allowlist.render("unscoped-number", [(i,) for i in site_ids]), encoding="utf-8")
+    return path
 
 
-def _site(site_id, value):
-    from src.number_sources import NumberSite
-    return NumberSite(site_id, site_id.rsplit(".", 1)[0].replace(".", "/") + ".py", 1, value)
+def _sites(monkeypatch, site_ids):
+    monkeypatch.setattr(unscoped_number_guard, "working_sites", lambda: list(site_ids))
 
 
-def _delta(monkeypatch, trunk, working):
-    monkeypatch.setattr(unscoped_number_guard, "working_number_sites", lambda: working)
-    monkeypatch.setattr(unscoped_number_guard, "trunk_number_sites", lambda: trunk)
-    return unscoped_number_guard.violations()
+def test_a_new_number_not_in_the_list_fails(tmp_path, monkeypatch):
+    _sites(monkeypatch, ["src.a.KEEP", "src.c.NEW_LIMIT"])
+    unlisted, stale = unscoped_number_guard.check(_listed(tmp_path, ["src.a.KEEP"]))
+    assert len(unlisted) == 1 and "src.c.NEW_LIMIT" in unlisted[0] and not stale
 
 
-def test_a_new_number_is_caught_as_a_delta(monkeypatch):
-    real = unscoped_number_guard.working_number_sites()
-    bad = _delta(monkeypatch, real[:-1], real)
-    assert bad and "+1" in bad[0] and real[-1].site_id in bad[0], bad
+def test_listed_numbers_pass(tmp_path, monkeypatch):
+    _sites(monkeypatch, ["src.a.KEEP"])
+    assert unscoped_number_guard.check(_listed(tmp_path, ["src.a.KEEP"])) == ([], [])
 
 
-def test_deleting_one_constant_does_not_pay_for_adding_another(monkeypatch):
-    """The net total is unchanged (one out, one in); the new number is still refused."""
-    trunk = [_site("src.a.OLD_LIMIT", 5.0), _site("src.b.KEEP", 1.0)]
-    working = [_site("src.b.KEEP", 1.0), _site("src.c.NEW_LIMIT", 7.0)]
-    bad = _delta(monkeypatch, trunk, working)
-    assert bad and "+1" in bad[0] and "src.c.NEW_LIMIT" in bad[0] and "OLD_LIMIT" not in bad[0], bad
+def test_a_stale_entry_fails(tmp_path, monkeypatch):
+    _sites(monkeypatch, [])
+    unlisted, stale = unscoped_number_guard.check(_listed(tmp_path, ["src.a.GONE"]))
+    assert not unlisted and len(stale) == 1
 
 
-def test_a_shared_value_alone_is_not_identity(monkeypatch):
-    """Same value, different name AND different module: two unrelated constants."""
-    trunk = [_site("src.a.OLD_LIMIT", 5.0)]
-    working = [_site("src.c.NEW_LIMIT", 5.0)]
-    assert _delta(monkeypatch, trunk, working), "an unrelated constant hid behind a shared value"
+def test_a_renamed_constant_needs_the_list_edited(tmp_path, monkeypatch):
+    """No trunk-derived excuse for a move or rename: the new id is unlisted, the old one stale."""
+    _sites(monkeypatch, ["src.a.LIMIT"])
+    unlisted, stale = unscoped_number_guard.check(_listed(tmp_path, ["src.a.OLD_LIMIT"]))
+    assert len(unlisted) == 1 and len(stale) == 1
 
 
-def test_a_renamed_constant_is_the_same_number(monkeypatch):
-    trunk = [_site("src.a.OLD_LIMIT", 5.0), _site("src.b.KEEP", 1.0)]
-    working = [_site("src.a.LIMIT", 5.0), _site("src.b.KEEP", 1.0)]
-    assert _delta(monkeypatch, trunk, working) == []
-
-
-def test_a_moved_constant_is_the_same_number(monkeypatch):
-    trunk = [_site("src.a.LIMIT", 5.0), _site("src.b.KEEP", 1.0)]
-    working = [_site("src.z.LIMIT", 5.0), _site("src.b.KEEP", 1.0)]
-    assert _delta(monkeypatch, trunk, working) == []
-
-
-def test_a_rename_with_a_changed_value_is_a_new_number(monkeypatch):
-    trunk = [_site("src.a.OLD_LIMIT", 5.0)]
-    working = [_site("src.a.LIMIT", 6.0)]
-    assert _delta(monkeypatch, trunk, working), "a value change hid behind a rename"
-
-
-def test_one_lost_site_pays_for_at_most_one_new_site(monkeypatch):
-    trunk = [_site("src.a.LIMIT", 5.0)]
-    working = [_site("src.a.LIMIT_A", 5.0), _site("src.a.LIMIT_B", 5.0)]
-    bad = _delta(monkeypatch, trunk, working)
-    assert bad and "+1" in bad[0] and "LIMIT_B" in bad[0], bad
-
-
-def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
-    repo = tmp_path / "norepo"
-    (repo / "src").mkdir(parents=True)
-    (repo / "src" / "m.py").write_text("X = 1\n")
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
-    subprocess.run(["git", "add", "src/m.py"], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
-                    "commit", "-qm", "base"], cwd=repo, check=True)
-    monkeypatch.setattr(guard_reference, "ROOT", Path(repo))
-    monkeypatch.setattr(unscoped_number_guard, "ROOT", Path(repo))
-    monkeypatch.setattr(unscoped_number_guard, "working_number_sites", lambda: [])
-    with pytest.raises(ReferenceUnavailable) as exc:
-        unscoped_number_guard.violations()
-    assert "origin/main" in str(exc.value)
-    assert unscoped_number_guard.main() == 2
+def test_the_guard_reads_no_git_trunk():
+    assert not hasattr(unscoped_number_guard, "trunk_blobs") and not hasattr(unscoped_number_guard, "trunk_sites")
 
 
 def _repo_with(tmp_path, files, scoped=True):
