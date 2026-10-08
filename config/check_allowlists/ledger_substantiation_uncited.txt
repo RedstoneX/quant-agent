@@ -1,0 +1,3 @@
+# Ledger rows carrying no citation (identity = row id).
+# Shrink-only: delete an entry when it no longer occurs (stale entries fail).
+# A new entry needs a Guard-rule-change line in the commit message.
