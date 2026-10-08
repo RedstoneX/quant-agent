@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts import file_size_guard, guard_reference, trunk_refresh
+from scripts import guard_reference, trunk_refresh
+from tests.test_trunk_reference_is_coherent import size_growth
 
 AUTHOR = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"]
 
@@ -47,7 +48,6 @@ def stale_clone(tmp_path, monkeypatch):
     _git(clone, "checkout", "-q", "-b", "feature", "refs/scratch/fresh")
     assert _git(clone, "rev-parse", "origin/main") != _git(clone, "rev-parse", "refs/scratch/fresh")
     monkeypatch.setattr(guard_reference, "ROOT", clone)
-    monkeypatch.setattr(file_size_guard, "ROOT", clone)
     monkeypatch.setattr(trunk_refresh, "_notes", {})
     yield clone
 
@@ -58,19 +58,19 @@ def _no_refresh(monkeypatch):
 
 def test_stale_ref_charges_the_branch_for_mains_growth_without_refresh(stale_clone, monkeypatch):
     _no_refresh(monkeypatch)
-    assert any("big.py" in v for v in file_size_guard.violations())
+    assert any("big.py" in v for v in size_growth())
 
 
 def test_refresh_removes_the_phantom(stale_clone):
-    assert file_size_guard.violations() == []
+    assert size_growth() == []
 
 
 def test_a_real_growth_still_reds_with_and_without_refresh(stale_clone, monkeypatch):
     _grow(stale_clone, 900, "branch really grows big.py")
-    assert any("big.py" in v and "900" in v for v in file_size_guard.violations())
+    assert any("big.py" in v and "900" in v for v in size_growth())
     monkeypatch.setattr(trunk_refresh, "_notes", {})
     _no_refresh(monkeypatch)
-    assert any("big.py" in v and "900" in v for v in file_size_guard.violations())
+    assert any("big.py" in v and "900" in v for v in size_growth())
 
 
 def test_dead_network_degrades_to_local_ref_and_says_so(stale_clone, capsys):
