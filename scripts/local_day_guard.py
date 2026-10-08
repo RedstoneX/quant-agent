@@ -1,4 +1,4 @@
-"""Local-day-as-exchange-day guard with no stored offender list.
+"""Local-day-as-exchange-day guard against a fixed, committed allow-list.
 
 An exchange day must be compared to an exchange day, never to the runner's.
 This repo has hit that bug at least four times; each time a window of tests
@@ -12,12 +12,11 @@ a cached measurement committed to the repo, the same collision engine as the
 JSON baselines, just written in Python. Every change that touched a listed file
 had to edit it, so unrelated changes jammed each other.
 
-So this stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). At check time it
-names every offending site in the working tree — file, kind, enclosing scope
-and the call's own source text — names them again on ``origin/main``, and fails
-on any IDENTITY the tree holds more copies of than the trunk. Never a total:
-removing one offender and adding a different one must still fail. If
-``origin/main`` cannot be read it REFUSES; it never passes by default.
+So the limit is FIXED and written in the repo: ``config/check_allowlists/
+code_local_day.txt`` names every existing offending site by IDENTITY -- file,
+kind, enclosing scope and the call's own source text -- never a total or a line
+number. The guard fails on any offender not in the list and on any listed entry
+that no longer occurs. It reads no git ref, so unrelated merges cannot redden it.
 
 WHAT IS FORBIDDEN
 -----------------
@@ -37,8 +36,7 @@ In ``tests/`` only:
 
 It is deliberately an AST scan, not a grep: the indirect spellings are the ones
 that slipped before. To extend it, add a shape to ``_classify_call`` with a
-one-word kind; there is no list to update afterwards, because the trunk is the
-list.
+one-word kind.
 
 Run it directly: ``python -m scripts.local_day_guard``.
 """
@@ -46,15 +44,13 @@ from __future__ import annotations
 
 import ast
 import sys
+from pathlib import Path
 
+from scripts.check_allowlist import ALLOWLIST_DIR, compare, report
 from scripts.guard_reference import (
     ROOT,
-    ReferenceUnavailable,
-    TRUNK,
-    added_sites,
     enclosing_scopes,
     site_identity,
-    trunk_blobs,
     working_paths,
 )
 
@@ -155,63 +151,27 @@ def working_offences() -> dict[Site, list[int]]:
     return out
 
 
-def trunk_offences(paths: list[str]) -> dict[Site, int]:
-    """How many copies of each offending site ``origin/main`` already holds.
-
-    A path absent from the trunk simply has none — that is how a new file is
-    recognised. A trunk blob that will not parse is unmeasurable, so the guard
-    refuses rather than treat it as clean.
-    """
-    counts: dict[Site, int] = {}
-    for path, text in trunk_blobs(paths).items():
-        try:
-            found = scan_sites(path, text)
-        except SyntaxError as exc:
-            raise ReferenceUnavailable(
-                f"cannot parse {TRUNK}:{path} ({exc}), so this guard cannot measure "
-                f"what that file already contained; it refuses rather than pass."
-            ) from exc
-        for kind, _line, scope, src in found:
-            key = (path, kind, scope, src)
-            counts[key] = counts.get(key, 0) + 1
-    return counts
+ALLOWLIST = ALLOWLIST_DIR / "code_local_day.txt"
 
 
-def violations() -> list[str]:
-    """Every offending site this working tree holds that ``origin/main`` does not.
-
-    Identity, not total: a site is (path, kind, enclosing scope, source text),
-    so removing one offender never licenses adding a different one.
-    """
-    now = working_offences()
-    before = trunk_offences(scanned_paths())
-    bad: list[str] = []
-    for (path, kind, scope, src), n, was in added_sites(
-        {site: len(lines) for site, lines in now.items()}, before
-    ):
-        bad.append(
-            f"{path} [{kind}] in {scope}: `{src}` x{n} on this branch vs x{was} on "
-            f"{TRUNK} (+{n - was}); offending lines {sorted(now[(path, kind, scope, src)])}"
-        )
-    return bad
+def check(allowlist: Path = ALLOWLIST) -> tuple[list[str], list[str]]:
+    """``(unlisted, stale)``: offenders missing from the fixed list, and listed ones now gone."""
+    sites = [site for site, lines in working_offences().items() for _ in lines]
+    return compare(sites, allowlist)
 
 
 def main(argv: list[str] | None = None) -> int:
-    try:
-        bad = violations()
-    except ReferenceUnavailable as exc:
-        print(f"REFUSING: {exc}", file=sys.stderr)
-        return 2
-    if bad:
+    unlisted, stale = check()
+    if unlisted or stale:
         print(
             "a local or import-time day is compared where an exchange day is meant; "
             "read the exchange day at the moment of comparison "
             "(src.trading_calendar.et_today / tests.desk_clock.freeze_desk_day) "
-            "instead of adding these against %s:\n%s" % (TRUNK, "\n".join(bad)),
+            "instead of adding these:\n" + report(unlisted, stale, ALLOWLIST),
             file=sys.stderr,
         )
         return 1
-    print(f"local-day guard: this tree adds no new local-day offender against {TRUNK}.")
+    print("local-day guard: offenders match the fixed allow-list exactly.")
     return 0
 
 

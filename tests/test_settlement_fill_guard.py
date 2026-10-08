@@ -113,16 +113,47 @@ def test_pinned_evidence_raises_instead_of_recording_nothing() -> None:
         pinned_evidence(_Analysis(), "atr_41")
 
 
-def test_the_repo_itself_adds_no_new_silent_supplier() -> None:
-    """CI's entry point: run the guard over the real tree against the trunk."""
-    from scripts.guard_reference import ReferenceUnavailable
+def test_the_repo_itself_matches_the_fixed_allow_list() -> None:
+    """CI's entry point: run the guard over the real tree against the committed list."""
     from scripts.settlement_fill_guard import main
 
-    try:
-        rc = main()
-    except ReferenceUnavailable as exc:  # pragma: no cover - CI fetches trunk
-        pytest.skip(f"origin/main unavailable: {exc}")
-    assert rc == 0, "a new settlement-recording field is supplied by a silent default"
+    assert main() == 0, "a settlement-recording field is supplied by a silent default, or the list is stale"
+
+
+def _list(tmp_path, identities):
+    from scripts.check_allowlist import render
+
+    path = tmp_path / "code_settlement_fill.txt"
+    path.write_text(render("settlement-fill", identities), encoding="utf-8")
+    return path
+
+
+def test_a_new_silent_supplier_not_in_the_list_fails(tmp_path) -> None:
+    from scripts.settlement_fill_guard import check
+
+    unlisted, stale = check({"src/fake.py": _VIOLATION}, {"entry_atr"}, _list(tmp_path, []))
+    assert len(unlisted) == 1 and "silent_default_getattr" in unlisted[0] and not stale
+
+
+def test_a_listed_silent_supplier_passes(tmp_path) -> None:
+    from scripts.settlement_fill_guard import check
+
+    listed = _list(tmp_path, [("src/fake.py", "write_entry", "entry_atr", "silent_default_getattr")])
+    assert check({"src/fake.py": _VIOLATION}, {"entry_atr"}, listed) == ([], [])
+
+
+def test_a_stale_entry_fails(tmp_path) -> None:
+    from scripts.settlement_fill_guard import check
+
+    listed = _list(tmp_path, [("src/fake.py", "write_entry", "entry_atr", "silent_default_getattr")])
+    unlisted, stale = check({"src/fake.py": _CLEAN}, {"entry_atr"}, listed)
+    assert not unlisted and len(stale) == 1
+
+
+def test_the_guard_reads_no_git_trunk() -> None:
+    import scripts.settlement_fill_guard as g
+
+    assert not hasattr(g, "trunk_blobs") and "origin/main" not in g.ALLOWLIST.read_text()
 
 
 def test_the_subject_is_every_tracked_production_module_root_included() -> None:
