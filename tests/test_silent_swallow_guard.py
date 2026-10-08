@@ -2,70 +2,80 @@
 
 See scripts/silent_swallow_guard.py for the pattern, what counts as a durable
 record in this codebase, and the money-module scope. The guard stores nothing:
-it scans the working tree, scans the same modules on ``origin/main``, and fails
-on the DELTA by site IDENTITY (never a total). When the trunk cannot be read it REFUSES rather than passes
-(docs/GUARDS_WITHOUT_STORED_STATE.md).
+it scans the working tree and compares with the committed allow-list
+``config/check_allowlists/code_silent_swallow.txt`` by site IDENTITY (never a
+total): a swallow not listed fails, and a listed entry that no longer occurs fails.
 """
 from __future__ import annotations
 
 import ast
 import subprocess
 
-import pytest
-
+from scripts import check_allowlist
 from scripts import money_modules as mm
 from scripts import silent_swallow_guard as g
 from scripts.guard_reference import ReferenceUnavailable
 
 
-def test_no_new_silent_swallow_on_money_paths():
-    new = g.added()
-    assert not new, (
-        "NEW silent swallow(s) on a money path (broad except -> empty return, "
-        "nothing durable recorded):\n" + g.delta_report(new) + "\n" + g.FIX_ADVICE
+def test_money_path_swallows_match_the_fixed_allow_list():
+    unlisted, stale = g.check()
+    assert not unlisted and not stale, (
+        g.delta_report(unlisted, stale) + "\n" + g.FIX_ADVICE
     )
 
 
-def test_guard_refuses_when_the_trunk_cannot_be_read(monkeypatch):
-    """Rule 3: no reference means a non-zero refusal, never a silent pass."""
-    def _no_trunk(paths):
-        raise ReferenceUnavailable("origin/main is unreachable in this test")
-
-    monkeypatch.setattr(g, "trunk_blobs", _no_trunk)
-    with pytest.raises(ReferenceUnavailable):
-        g.added()
-    assert g.main() == 2
+def _listed(tmp_path, sites):
+    path = tmp_path / "code_silent_swallow.txt"
+    path.write_text(check_allowlist.render("silent-swallow", sites), encoding="utf-8")
+    return path
 
 
-def test_nothing_stored_on_disk():
-    """Rule 1: the baseline file is gone and nothing re-creates it."""
-    assert not (g.ROOT / "tests" / "silent_swallow_baseline.json").exists()
-    assert not hasattr(g, "load_baseline") and not hasattr(g, "shrink_baseline")
+_BEFORE = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
+_AFTER = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return []\n"
 
 
-def test_delta_report_names_the_file_and_counts_what_it_gained():
-    """Rule 4: the message is a delta, not an absolute count."""
-    text = g.delta_report([
-        (("src/execution/broker.py", "f", "except Exception:\n    return None"), 10, 1, 0),
-        (("src/execution/broker.py", "g", "except Exception:\n    return []"), 20, 2, 1),
-    ])
-    assert "src/execution/broker.py: gained 2 silently-swallowed exception(s)" in text
-    assert "src/execution/broker.py::g  (line 20, 2 here vs 1 on origin/main)" in text
+def _scan_as(monkeypatch, text):
+    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, text))
 
 
-def test_swapping_one_offender_for_another_is_still_an_addition(monkeypatch):
+def _sites(text):
+    return [site for site, _ in g.scan_text("x.py", text)]
+
+
+def test_a_new_swallow_not_in_the_list_fails(tmp_path, monkeypatch):
+    _scan_as(monkeypatch, _BEFORE)
+    unlisted, stale = g.check(("x.py",), _listed(tmp_path, []))
+    assert len(unlisted) == 1 and "return None" in unlisted[0] and not stale
+
+
+def test_a_listed_swallow_passes(tmp_path, monkeypatch):
+    _scan_as(monkeypatch, _BEFORE)
+    assert g.check(("x.py",), _listed(tmp_path, _sites(_BEFORE))) == ([], [])
+
+
+def test_a_stale_entry_fails(tmp_path, monkeypatch):
+    _scan_as(monkeypatch, "def f():\n    return 1\n")
+    unlisted, stale = g.check(("x.py",), _listed(tmp_path, _sites(_BEFORE)))
+    assert not unlisted and len(stale) == 1
+
+
+def test_swapping_one_offender_for_another_is_still_an_addition(tmp_path, monkeypatch):
     """The net-zero hole: remove one swallow, add a different one, same total.
-    Identity comparison still reports the new one."""
-    before = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
-    after = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return []\n"
-    monkeypatch.setattr(g, "trunk_blobs", lambda paths: {"x.py": before})
-    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, after))
-    new = g.added(("x.py",))
-    assert [(site[1], site[2].splitlines()[-1].strip(), n, was) for site, _, n, was in new] == [
-        ("f", "return []", 1, 0)
-    ]
-    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, before))
-    assert g.added(("x.py",)) == []
+    Identity comparison reports the new one as unlisted and the old one as stale."""
+    _scan_as(monkeypatch, _AFTER)
+    unlisted, stale = g.check(("x.py",), _listed(tmp_path, _sites(_BEFORE)))
+    assert len(unlisted) == 1 and "return []" in unlisted[0] and len(stale) == 1
+
+
+def test_a_second_copy_of_a_listed_swallow_fails(tmp_path, monkeypatch):
+    twice = _BEFORE + _BEFORE.replace("def f", "def f")
+    _scan_as(monkeypatch, twice)
+    unlisted, _ = g.check(("x.py",), _listed(tmp_path, _sites(_BEFORE)))
+    assert len(unlisted) == 1
+
+
+def test_the_guard_reads_no_git_trunk():
+    assert not hasattr(g, "trunk_blobs") and not hasattr(g, "trunk_violations")
 
 
 # --- self-tests: the guard fires on the pattern and stays quiet on a durable record ---
@@ -141,7 +151,7 @@ def test_scope_is_derived_not_stored():
     assert all((g.ROOT / m).exists() for m in mods)
 
 
-def test_guard_bites_in_a_module_the_hand_list_never_named(monkeypatch):
+def test_guard_bites_in_a_module_the_hand_list_never_named(tmp_path, monkeypatch):
     """Plant a swallow in a derived-only module: the guard fails; take it out: green."""
     rel = "src/protection/protected_sell.py"
     assert rel in g.money_modules()
@@ -150,11 +160,12 @@ def test_guard_bites_in_a_module_the_hand_list_never_named(monkeypatch):
         "\n\ndef _planted(b):\n    try:\n        return b.stop()\n"
         "    except Exception:\n        return None\n"
     )
-    monkeypatch.setattr(g, "trunk_blobs", lambda paths: {rel: before})
+    listed = _listed(tmp_path, _sites(before))
     monkeypatch.setattr(g, "scan", lambda r: g.scan_text(r, planted))
-    assert [(site[1], n, was) for site, _, n, was in g.added((rel,))] == [("_planted", 1, 0)]
+    unlisted, stale = g.check((rel,), listed)
+    assert len(unlisted) == 1 and "_planted" in unlisted[0] and not stale
     monkeypatch.setattr(g, "scan", lambda r: g.scan_text(r, before))
-    assert g.added((rel,)) == []
+    assert g.check((rel,), listed) == ([], [])
 
 
 def test_guard_refuses_when_the_sdk_cannot_be_read(monkeypatch):

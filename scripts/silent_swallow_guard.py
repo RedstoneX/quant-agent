@@ -1,4 +1,4 @@
-"""Silent-swallow guard with no stored baseline: scan here, scan trunk, compare.
+"""Silent-swallow guard against a fixed, committed allow-list.
 
 The pattern it hunts (measured 2026-10-01: 949 broad handlers in src/, 922 of
 which never re-raise)::
@@ -24,15 +24,10 @@ A handler that re-raises is never a swallow. Logging never counts.
 Scope: the money-touching modules only, derived from source at check time by
 ``scripts/money_modules.py`` -- never a pinned list of paths.
 
-This guard stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). The old
-tests/silent_swallow_baseline.json was one shared shrink-only file that every
-open change had to edit, so changes jammed each other. At check time the scan
-runs twice -- once over the working tree, once over the same modules as they
-stand on ``origin/main`` -- and the guard reports the DELTA: which handlers this
-change ADDED. Sites are compared by IDENTITY (path, enclosing scope, handler
-source text), never by a total or an ordinal, so removing one offender and
-adding another in the same function still fails. If ``origin/main`` cannot be
-read it REFUSES; it never passes by default.
+The limit is FIXED: ``config/check_allowlists/code_silent_swallow.txt`` lists
+every existing swallow by IDENTITY (path, enclosing scope, handler source text),
+never a total or an ordinal. The guard fails on a swallow not in the list and on
+a listed entry that no longer occurs. It reads no git ref.
 
 Run it directly: ``python -m scripts.silent_swallow_guard``.
 """
@@ -40,18 +35,12 @@ from __future__ import annotations
 
 import ast
 import sys
+from pathlib import Path
 
 from scripts.money_modules import derive as derive_money_modules
 from scripts.swallow_resolver import Resolver, import_bindings  # noqa: F401 -- re-exported
-from scripts.guard_reference import (
-    ROOT,
-    ReferenceUnavailable,
-    TRUNK,
-    added_sites,
-    enclosing_scopes,
-    site_identity,
-    trunk_blobs,
-)
+from scripts.check_allowlist import ALLOWLIST_DIR, compare, report
+from scripts.guard_reference import ROOT, ReferenceUnavailable, enclosing_scopes, site_identity
 
 #: Money-touching modules are DERIVED at check time (scripts/money_modules.py):
 #: every module holding a function from which an exchange write is reachable,
@@ -203,55 +192,18 @@ def violations(modules: tuple[str, ...] | None = None) -> list[tuple[Site, int]]
     return out
 
 
-def trunk_violations(modules: tuple[str, ...] | None = None) -> list[Site]:
-    """Silent swallows on ``origin/main``, one identity per occurrence.
-
-    Raises ``ReferenceUnavailable`` when the trunk cannot be read: this guard
-    compares and stores nothing, so an unreadable reference is a refusal, never
-    a pass. A module absent from the trunk is simply new, not an error.
-    """
-    modules = money_modules() if modules is None else modules
-    sites: list[Site] = []
-    for rel, text in trunk_blobs(list(modules)).items():
-        try:
-            sites.extend(k for k, _ in scan_text(rel, text))
-        except SyntaxError as exc:  # trunk file we cannot parse -> cannot compare
-            raise ReferenceUnavailable(
-                f"cannot parse {rel} as it stands on {TRUNK}: {exc}"
-            ) from exc
-    return sites
+ALLOWLIST = ALLOWLIST_DIR / "code_silent_swallow.txt"
 
 
-def added(modules: tuple[str, ...] | None = None) -> list[tuple[Site, int, int, int]]:
-    """Silent swallows this working tree holds MORE copies of than ``origin/main``.
-
-    Returns ``(site, line, copies_now, copies_on_trunk)``. Identity comparison
-    via ``guard_reference.added_sites``: removals never offset an addition.
-    """
-    modules = money_modules() if modules is None else modules
-    now = violations(modules)
-    lines: dict[Site, int] = {}
-    for site, line in now:
-        lines.setdefault(site, line)
-    return [
-        (site, lines[site], n, was)
-        for site, n, was in added_sites([s for s, _ in now], trunk_violations(modules))
-    ]
+def check(
+    modules: tuple[str, ...] | None = None, allowlist: Path = ALLOWLIST
+) -> tuple[list[str], list[str]]:
+    """``(unlisted, stale)``: swallows missing from the fixed list, and listed ones now gone."""
+    return compare([site for site, _ in violations(modules)], allowlist)
 
 
-def delta_report(new: list[tuple[Site, int, int, int]]) -> str:
-    """Per-file delta lines: 'this file gained N silently-swallowed exceptions'."""
-    per_file: dict[str, list[str]] = {}
-    for (rel, scope, src), line, n, was in sorted(new):
-        head = src.splitlines()[0]
-        per_file.setdefault(rel, []).append(
-            f"      {rel}::{scope}  (line {line}, {n} here vs {was} on {TRUNK}): {head}"
-        )
-    return "\n".join(
-        f"  {rel}: gained {len(rows)} silently-swallowed exception(s) against {TRUNK}\n"
-        + "\n".join(rows)
-        for rel, rows in sorted(per_file.items())
-    )
+def delta_report(unlisted: list[str], stale: list[str], allowlist: Path = ALLOWLIST) -> str:
+    return report(unlisted, stale, allowlist)
 
 
 FIX_ADVICE = (
@@ -265,20 +217,19 @@ FIX_ADVICE = (
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        new = added()
-    except ReferenceUnavailable as exc:
+        unlisted, stale = check()
+    except ReferenceUnavailable as exc:  # the exchange SDK needed to derive scope
         print(f"REFUSING: {exc}", file=sys.stderr)
         return 2
-    if new:
+    if unlisted or stale:
         print(
-            f"NEW silent swallows on money paths against {TRUNK}:\n"
-            + delta_report(new)
-            + "\n"
-            + FIX_ADVICE,
+            "Silent swallows on money paths differ from " + ALLOWLIST.name + ":\n"
+            + delta_report(unlisted, stale)
+            + ("\n" + FIX_ADVICE if unlisted else ""),
             file=sys.stderr,
         )
         return 1
-    print(f"silent-swallow guard: no money-path module gained a silent swallow against {TRUNK}.")
+    print("silent-swallow guard: money-path swallows match the fixed allow-list exactly.")
     return 0
 
 
