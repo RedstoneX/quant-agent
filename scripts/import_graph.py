@@ -201,6 +201,11 @@ def shortest_cycles(edges) -> list[list[str]]:
                 path.append(v); v = prev[v]
             path.reverse()  # b ... a
             cyc = path  # b -> ... -> a, closes via a -> b
+            # Start at the smallest module: `edges` is a set, so without this
+            # the printed rotation followed string-hash order and changed run
+            # to run (PYTHONHASHSEED), flaking any test that reads the report.
+            k = cyc.index(min(cyc))
+            cyc = cyc[k:] + cyc[:k]
             found.setdefault(frozenset(zip(cyc, cyc[1:] + cyc[:1])), cyc)
     return sorted(found.values(), key=lambda c: (len(c), c))
 
