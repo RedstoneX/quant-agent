@@ -77,9 +77,9 @@ def test_allow_listed_files_have_not_grown_new_desk_output(audit: audit_mod.Audi
     if not audit.grown:
         return
     lines = ["", "These files are allow-listed, but they now carry real desk output",
-             "their copy on origin/main does not:", ""]
+             "the fixed list struct_desk_output.txt does not name:", ""]
     for path, (then, now) in sorted(audit.grown.items()):
-        lines.append(f"  {path}: {then} finding(s) on origin/main, now {now}")
+        lines.append(f"  {path}: {then} finding(s) listed, now {now}")
     lines.append("")
     for f in audit.grown_findings[:12]:
         lines.append(f.render())
@@ -88,7 +88,7 @@ def test_allow_listed_files_have_not_grown_new_desk_output(audit: audit_mod.Audi
         "WHAT TO DO: remove the newly added real values. Being on the",
         "allow-list excuses what was already published; it does not permit",
         "publishing more, and nothing in this repository can be edited to",
-        "excuse it: what the file already carried is read off origin/main.",
+        "excuse it: what the file already carried is pinned in the fixed list.",
     ]
     pytest.fail("\n".join(lines), pytrace=False)
 

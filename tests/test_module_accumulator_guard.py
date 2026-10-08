@@ -12,22 +12,15 @@ frozensets and immutable literals pass.
 
 Covers: `src/` (every *.py). Out of scope: tests/, scripts/, ops/, frontend/.
 
-Nothing is stored. At check time each src module is compared with the SAME
-module on `origin/main` (via scripts.guard_reference, as the cram and size
-ratchets do): only an accumulator name the working copy has MORE of than the
-trunk copy is refused. A file absent from the trunk is entirely new, EXCEPT
-that an accumulator is identified by its name and not by where it lives: a
-name the change removes from one trunk module and binds in another is the
-same accumulator moved and passes; a copy that leaves the trunk one in place,
-or a second copy of a moved one, is still refused. If the
-trunk cannot be read the guard raises ReferenceUnavailable -- it never reads
-a missing reference as "no offenders on trunk".
+Fixed list. Every accumulator that exists today is pinned as ``path | name``
+in config/check_allowlists/struct_module_accumulator.txt (shrink-only, sorted).
+Nothing is compared with any trunk. A (path, name) pair not in the list fails,
+and so does a listed pair that no longer occurs (stale entry). Moving an
+accumulator to another module therefore edits the list, visibly.
 
 Not caught (gameable): mutation from ANOTHER module via import; mutable
 state hidden in a class attribute, a function default arg, a closure or an
-`lru_cache`; a new accumulator that replaces a same-named trunk one in the same module,
-or that takes the name of one removed elsewhere in the same change; mutation
-through an alias (`d = _REG; d[k] = v`); `globals()[...]`; sqlite/file state.
+`lru_cache`; mutation through an alias (`d = _REG; d[k] = v`); `globals()[...]`; sqlite/file state.
 """
 from __future__ import annotations
 
@@ -35,10 +28,7 @@ import ast
 from collections import Counter
 from pathlib import Path
 
-import pytest
-
-from scripts import guard_reference
-from scripts.guard_reference import ReferenceUnavailable
+from scripts import guard_reference, struct_allowlist
 
 ROOT = Path(__file__).resolve().parent.parent
 SCANNED = ("src",)
@@ -177,92 +167,56 @@ def working_sources() -> dict[str, str]:
             for p in paths}
 
 
-def new_accumulators(work: dict[str, str] | None = None) -> list[str]:
-    """Accumulators the working tree has that the trunk did not have.
-
-    An accumulator is identified by its NAME, not by the file it sits in:
-    one the change REMOVES from a trunk module and binds again under a new
-    path is the same accumulator relocated, not a new one. A copy that
-    leaves the trunk one in place is still new, and so is a second copy of a
-    moved one. A trunk module the change deleted outright is read too, so a
-    lift out of a deleted file counts as a move as well.
-    """
-    real = work is None
-    work = working_sources() if real else work
-    wanted = sorted(work)
-    if real:
-        gone = [p for p in guard_reference.trunk_paths(".py")
-                if p.split("/", 1)[0] in SCANNED and p not in work]
-        wanted = sorted(set(wanted) | set(gone))
-    trunk = guard_reference.trunk_blobs(wanted)  # raises if unreadable
-    now, before = _scan(work), _scan(trunk)
-    freed: Counter = Counter()
-    for path, names in before.items():
-        freed.update(names - now.get(path, Counter()))
-    bad = []
-    for path, names in sorted(now.items()):
-        for name in sorted(names - before.get(path, Counter())):
-            if freed[name] > 0:
-                freed[name] -= 1
-                continue
-            bad.append(f"{path}: {name}")
-    return bad
+def found_accumulators(work: dict[str, str] | None = None) -> list[str]:
+    """Every accumulator in the working tree, as ``path | name``."""
+    work = working_sources() if work is None else work
+    return [f"{path} | {name}" for path, names in sorted(_scan(work).items())
+            for name in sorted(names.elements())]
 
 
-def test_no_new_module_level_accumulator_against_the_trunk():
-    bad = new_accumulators()
-    assert not bad, (
-        "New module-level mutable accumulator(s) vs origin/main:\n"
-        + "\n".join(bad)
-        + "\nStored bookkeeping is banned: write a counted row / compute at "
-        "check time."
-    )
+def violations(work: dict[str, str] | None = None, directory: Path | None = None) -> list[str]:
+    fix = "Stored bookkeeping is banned: write a counted row / compute at check time."
+    return struct_allowlist.problems("module_accumulator", found_accumulators(work), fix, directory)
 
 
-def test_trunk_accumulators_are_actually_read():
-    """The trunk has pre-existing accumulators; seeing none would mean the
-    reference read is empty and the guard passes vacuously."""
-    paths = [p for p in guard_reference.trunk_paths(".py")
-             if p.split("/", 1)[0] in SCANNED]
-    seen = sum(sum(c.values())
-               for c in _scan(guard_reference.trunk_blobs(paths)).values())
-    assert seen > 0, "no accumulators seen on origin/main at all"
+def test_module_level_accumulators_match_the_fixed_list():
+    bad = violations()
+    assert not bad, "Module-level mutable accumulators differ from the fixed list:\n" + "\n".join(bad)
 
 
-def test_new_file_is_wholly_new_and_preexisting_passes(monkeypatch):
-    old = "_A = {}\ndef f():\n    _A['k'] = 1\n"
-    monkeypatch.setattr(guard_reference, "trunk_blobs",
-                        lambda paths: {"src/a.py": old})
-    assert new_accumulators({"src/a.py": old}) == []
-    assert new_accumulators({"src/a.py": old, "src/b.py": old}) == ["src/b.py: _A"]
+def test_the_scan_actually_sees_accumulators():
+    """Seeing none would mean the scan is empty and the guard passes vacuously."""
+    assert len(working_sources()) > 50
+    assert found_accumulators(), "no accumulators seen in src/ at all"
 
 
-def test_moved_accumulator_is_the_same_one_not_a_new_one(monkeypatch):
-    old = "_A = {}\ndef f():\n    _A['k'] = 1\n"
-    monkeypatch.setattr(guard_reference, "trunk_blobs",
-                        lambda paths: {"src/a.py": old})
+OLD = "_A = {}\ndef f():\n    _A['k'] = 1\n"
+
+
+def _list(tmp_path, entries):
+    struct_allowlist.write("module_accumulator", entries, tmp_path)
+    return tmp_path
+
+
+def test_a_new_accumulator_fails(tmp_path):
+    bad = violations({"src/a.py": OLD, "src/b.py": OLD}, _list(tmp_path, ["src/a.py | _A"]))
+    assert len(bad) == 1 and "NEW" in bad[0] and "src/b.py | _A" in bad[0], bad
+
+
+def test_a_listed_accumulator_passes(tmp_path):
+    assert violations({"src/a.py": OLD}, _list(tmp_path, ["src/a.py | _A"])) == []
+
+
+def test_a_stale_entry_fails(tmp_path):
     stripped = "def f():\n    return 1\n"
-    assert new_accumulators({"src/a.py": stripped, "src/b.py": old}) == []
-    # a second copy of the moved one, or a new name in the new home, is new
-    assert new_accumulators({"src/a.py": stripped, "src/b.py": old,
-                             "src/c.py": old}) == ["src/c.py: _A"]
-    also_b = old + "_B = []\ndef g():\n    _B.append(1)\n"
-    assert new_accumulators({"src/a.py": stripped, "src/b.py": also_b}) == [
-        "src/b.py: _B"]
+    bad = violations({"src/a.py": stripped}, _list(tmp_path, ["src/a.py | _A"]))
+    assert len(bad) == 1 and "STALE" in bad[0], bad
 
 
-def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
-    import subprocess
-    repo = tmp_path / "norepo"
-    (repo / "src").mkdir(parents=True)
-    (repo / "src" / "m.py").write_text("_A = []\ndef f():\n    _A.append(1)\n")
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
-    subprocess.run(["git", "add", "src/m.py"], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c",
-                    "user.name=t", "commit", "-qm", "base"], cwd=repo, check=True)
-    monkeypatch.setattr(guard_reference, "ROOT", Path(repo))
-    with pytest.raises(ReferenceUnavailable):
-        new_accumulators()
+def test_a_moved_accumulator_needs_a_visible_list_edit(tmp_path):
+    stripped = "def f():\n    return 1\n"
+    bad = violations({"src/a.py": stripped, "src/b.py": OLD}, _list(tmp_path, ["src/a.py | _A"]))
+    assert len(bad) == 2, bad
 
 
 # --- prove it bites -------------------------------------------------------

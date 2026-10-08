@@ -1,0 +1,4 @@
+# Fixed allow-list for the silent_patch_targets check: one existing violation identity per line.
+# Shrink-only. Sorted. A new entry needs a Guard-rule-change: line in the commit.
+# A stale entry (no longer occurring) fails the check; delete it.
+src.pipeline.AlpacaBroker | src.pipeline_protection
