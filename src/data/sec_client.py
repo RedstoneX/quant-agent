@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Callable
 
+from src.sentinel.counted import record_swallowed
 from src.util.time import et_now
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,7 @@ class SecClient:
                     if t and cik:
                         self._ticker_to_cik[t] = cik
             except Exception as e:
+                record_swallowed("data.sec_client.ticker_map", e, log=logger)
                 logger.warning("Failed to fetch SEC ticker map: %s", e)
                 self._ticker_to_cik = {}
         return self._ticker_to_cik.get(ticker.upper())
@@ -157,6 +159,7 @@ class SecClient:
         try:
             data = json.loads(self.get(url))
         except Exception as e:
+            record_swallowed("data.sec_client.submissions", e, log=logger, symbol=ticker)
             logger.warning("Failed to fetch submissions for %s (CIK %s): %s", ticker, cik, e)
             return []
 
