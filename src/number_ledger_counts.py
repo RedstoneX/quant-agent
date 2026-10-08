@@ -1,16 +1,36 @@
-"""Count the `arbitrary` rows in the trunk's own ledger, at check time.
+"""Ledger row-identity ratchets, judged against COMMITTED allow-lists.
 
-Lifted out of `src/number_sources.py` (file-size ratchet) with no change in
-behaviour. Nothing is stored and nothing is cached. If the trunk cannot be
-read the caller is REFUSED (``ReferenceUnavailable``) rather than passed: a
-ratchet with no reference is decoration.
+Lifted out of `src/number_sources.py` (file-size ratchet). The limit is fixed in
+the repo: `config/check_allowlists/ledger_arbitrary_rows.txt` names every row
+that is `arbitrary`, and `config/check_allowlists/ledger_routeless_rows.txt`
+every `arbitrary` row with no `settles_by`. Nothing is read from the trunk, so
+an unrelated merge cannot redden waiting work. A row not on its list fails; a
+listed row that no longer qualifies is a stale entry and fails too (shrink-only).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import yaml
 
 LEDGER_RELATIVE = "config/number_ledger.yaml"
+ALLOWLIST_DIR = Path(__file__).resolve().parent.parent / "config" / "check_allowlists"
+ARBITRARY_ALLOWLIST = ALLOWLIST_DIR / "ledger_arbitrary_rows.txt"
+ROUTELESS_ALLOWLIST = ALLOWLIST_DIR / "ledger_routeless_rows.txt"
+
+#: A new `arbitrary` row is a number REGISTERED; without these it is a number
+#: PARKED, with no route by which it could ever leave.
+ROUTE_FIELDS = ("settles_by", "open_question")
+
+
+def read_allowlist(path: Path) -> set[str]:
+    """Row ids named in a committed allow-list; `#` lines and blanks are comments."""
+    return {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 def count_arbitrary(text: str) -> int:
@@ -19,19 +39,6 @@ def count_arbitrary(text: str) -> int:
     return sum(
         1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary"
     )
-
-
-def trunk_arbitrary_count() -> int:
-    """The `arbitrary` count on the trunk, read fresh at check time."""
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    blobs = trunk_blobs([LEDGER_RELATIVE])
-    if LEDGER_RELATIVE not in blobs:
-        raise ReferenceUnavailable(
-            f"{LEDGER_RELATIVE} is absent from the trunk, so the arbitrary "
-            "count has no reference to be judged against"
-        )
-    return count_arbitrary(blobs[LEDGER_RELATIVE])
 
 
 def statuses_by_id(text: str) -> dict[str, str]:
@@ -44,64 +51,38 @@ def statuses_by_id(text: str) -> dict[str, str]:
     }
 
 
-def trunk_statuses() -> dict[str, str]:
-    """The trunk's status-per-row-id, read fresh at check time.
+def ratchet_violations(ledger, allowed):
+    """The arbitrary ratchet, keyed on row IDENTITY against a committed list.
 
-    REFUSES (``ReferenceUnavailable``) when the trunk cannot be read: a
-    ratchet with no reference is decoration.
-    """
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    blobs = trunk_blobs([LEDGER_RELATIVE])
-    if LEDGER_RELATIVE not in blobs:
-        raise ReferenceUnavailable(
-            f"{LEDGER_RELATIVE} is absent from the trunk, so the arbitrary "
-            "rows have no reference to be judged against"
-        )
-    return statuses_by_id(blobs[LEDGER_RELATIVE])
-
-
-#: A new `arbitrary` row is a number REGISTERED; without these it is a number
-#: PARKED, with no route by which it could ever leave.
-ROUTE_FIELDS = ("settles_by", "open_question")
-
-
-def ratchet_violations(ledger, trunk):
-    """The arbitrary ratchet, keyed on row IDENTITY rather than on a total.
-
-    A count cannot tell DODGING from DISCOVERY. Downgrading a row the trunk
-    already sources is the dishonest act the ratchet exists to refuse; a sweep
-    bringing a number into the ledger for the first time and declaring it
-    unsourced is the only way the standing order to drive the count to zero
-    can ever start on a number nobody had scoped. A total refuses both, and
-    is also satisfied by a net-zero swap (one row dodges down while an
-    unrelated row is sourced up), which identities are not.
+    A count cannot tell DODGING from DISCOVERY and passes a net-zero swap; named
+    identities do neither. Every `arbitrary` row must be on `allowed`; every
+    entry of `allowed` must still be an `arbitrary` row (a stale entry fails, so
+    the list can only shrink). Adding a row needs a `Guard-rule-change:` line.
 
     Returns `(site_id, detail)` for every row that must be refused.
     """
     out = []
     for site_id, entry in sorted(ledger.items()):
-        if entry.get("status") != "arbitrary":
-            continue  # leaving `arbitrary` is always allowed
-        was = trunk.get(site_id)
-        if was is not None and was != "arbitrary":
-            out.append((
-                site_id,
-                f"is `{was}` on the trunk and `arbitrary` here. Reclassifying "
-                "a row that already had a source is the dodge this ratchet "
-                "exists to refuse: restore the source or revert the row.",
-            ))
+        if entry.get("status") != "arbitrary" or site_id in allowed:
             continue
-        if site_id in trunk:
-            continue  # already arbitrary on the trunk; unchanged
         missing = [f for f in ROUTE_FIELDS if not entry.get(f)]
-        if missing:
+        route = (
+            f" It also carries no {' and no '.join(missing)}: a new unsourced "
+            "number is admitted only with a route to settlement."
+            if missing else ""
+        )
+        out.append((
+            site_id,
+            "is `arbitrary` but not on config/check_allowlists/"
+            "ledger_arbitrary_rows.txt. Source it, or (with a Guard-rule-change "
+            "line) list it." + route,
+        ))
+    for site_id in sorted(allowed):
+        if ledger.get(site_id, {}).get("status") != "arbitrary":
             out.append((
                 site_id,
-                "is new to the ledger and `arbitrary` but carries no "
-                f"{' and no '.join(missing)}. A new unsourced number is "
-                "admitted only with a route to settlement; without one it is "
-                "parked, not registered.",
+                "is on ledger_arbitrary_rows.txt but is no longer `arbitrary` "
+                "in the ledger: stale entry, delete it from the list.",
             ))
     return out
 
@@ -117,42 +98,34 @@ def routeless_by_id(text: str) -> dict[str, bool]:
     }
 
 
-def trunk_routeless() -> dict[str, bool]:
-    """The trunk's routeless-per-row-id, read fresh at check time.
+def route_ratchet_violations(ledger, allowed):
+    """The settlement-route ratchet, keyed on row IDENTITY against a committed list.
 
-    REFUSES (``ReferenceUnavailable``) when the trunk cannot be read.
-    """
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    blobs = trunk_blobs([LEDGER_RELATIVE])
-    if LEDGER_RELATIVE not in blobs:
-        raise ReferenceUnavailable(
-            f"{LEDGER_RELATIVE} is absent from the trunk, so the routeless "
-            "rows have no reference to be judged against"
-        )
-    return routeless_by_id(blobs[LEDGER_RELATIVE])
-
-
-def route_ratchet_violations(ledger, trunk_route):
-    """The settlement-route ratchet, keyed on row IDENTITY against the trunk.
-
-    A row that is `arbitrary` with no `settles_by` here must also have been
-    exactly that on the trunk. A row the trunk sourced or routed, or a row new
-    to the ledger, may not arrive routeless. Gaining a route is always allowed.
+    An `arbitrary` row with no `settles_by` must be on `allowed`; an `allowed`
+    entry that is no longer routeless (gained a route, was sourced, or is gone)
+    is stale and fails. Gaining a route is therefore always allowed but shrinks
+    the list in the same change.
     """
     out = []
     for site_id, entry in sorted(ledger.items()):
         if entry.get("status") != "arbitrary" or entry.get("settles_by") is not None:
             continue
-        if trunk_route.get(site_id) is True:
-            continue  # routeless on the trunk too; unchanged
-        where = "new to the ledger" if site_id not in trunk_route else (
-            "sourced or routed on the trunk"
-        )
+        if site_id in allowed:
+            continue
         out.append((
             site_id,
-            f"is `arbitrary` with no `settles_by` here but is {where}. "
-            "A routeless number may not be created or regressed: give it a "
-            "`settles_by` route, or restore its source.",
+            "is `arbitrary` with no `settles_by` and not on config/"
+            "check_allowlists/ledger_routeless_rows.txt. A routeless number may "
+            "not be created or regressed: give it a `settles_by` route, or "
+            "restore its source.",
         ))
+    for site_id in sorted(allowed):
+        entry = ledger.get(site_id)
+        if not (entry and entry.get("status") == "arbitrary"
+                and entry.get("settles_by") is None):
+            out.append((
+                site_id,
+                "is on ledger_routeless_rows.txt but is no longer a routeless "
+                "`arbitrary` row: stale entry, delete it from the list.",
+            ))
     return out
