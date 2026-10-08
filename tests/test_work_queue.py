@@ -345,7 +345,7 @@ def test_a_token_adversary_line_does_not_count():
 def test_a_failed_github_read_never_manufactures_work(monkeypatch):
     """Not being able to look is not evidence that a review is missing.
     Unauthenticated reads are rate-limited, so this is the common case."""
-    monkeypatch.setattr(work_queue, "read_open_pull_requests",
+    monkeypatch.setattr("scripts.work_queue_adversary.read_open_pull_requests",
                         lambda *a, **k: ([], "the request limit is used up"))
     assert work_queue.adversary_gaps() == []
 
@@ -353,7 +353,7 @@ def test_a_failed_github_read_never_manufactures_work(monkeypatch):
 def test_a_github_reader_that_throws_never_manufactures_work(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("network gone")
-    monkeypatch.setattr(work_queue, "read_open_pull_requests", boom)
+    monkeypatch.setattr("scripts.work_queue_adversary.read_open_pull_requests", boom)
     assert work_queue.adversary_gaps() == []
 
 

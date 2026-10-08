@@ -18208,3 +18208,15 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 **Follow-up 2026-10-05.** The dashboard (nine labels plus the legacy page) and the session-open/close reasons still showed a bare time; all now carry the date, and the test also scans the dashboard source so a bare clock cannot return.
 
 **Still open.** Nothing.
+
+## The structural split was checked against the tree and nothing is unfinished (item 210, 2026-10-08)
+
+The owner's order to verify the big-file split came back clean: every step of the original plan is either done or replaced by something equivalent.
+
+**What was checked.** The original split plan (steps 0-13) against the current main branch, step by step, plus every test that replaces a name at a string path.
+
+**Result.** 11 steps proven in the tree, 3 superseded by a different but equivalent shape (risk gate, admission and evening session became slot or service pieces), 0 unfinished [measured: git read of main, 2026-10-08]. 0 broken test patch targets out of 1,115 scanned [measured: scripted scan of tests]. The repo's own patch-target audit reports 150 live, 2 mirrored, 0 missing [measured: `scripts/audit_moved_patch_targets.py`].
+
+**Not proven.** The original one-step-per-PR order, and a real trading session. 12 pipeline-family files remain over 400 lines; that is residual size, not a defect.
+
+**Still open.** Nothing.

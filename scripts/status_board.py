@@ -265,7 +265,7 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         # No merge commit found. That is not proof of absence — a squash or
         # rebase merge leaves none — so fall through to GitHub rather than
         # calling it a failure, and report unknown if that is unavailable too.
-        rc, out = _run(["gh", "pr", "view", str(num), "--repo", "RedstoneX/quant-agent",
+        rc, out = _run(["gh", "pr", "view", str(num), "--repo", "redstone-hq/quant-agent",
                         "--json", "state", "-q", ".state"], repo_root)
         if rc != 0:
             return RuleResult(

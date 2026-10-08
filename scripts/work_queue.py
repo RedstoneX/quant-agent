@@ -140,12 +140,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+
+
 from pathlib import Path
 from typing import Any
 
@@ -161,12 +162,12 @@ from scripts.status_board import (  # noqa: E402
     load_pending_decisions,
     load_pm_gate,
 )
+from scripts import merge_queue_state  # noqa: E402
+from scripts.merge_queue_state import finish_first  # noqa: E402
 from scripts.turn_promises import unkept_promise  # noqa: E402
-from src.inflight import (  # noqa: E402
-    RETIRED_LINE,
-    WORK_MD,
-    OpenPR,
-    read_open_pull_requests,
+from scripts.work_queue_adversary import (  # noqa: E402,F401 - re-exported
+    ADVERSARY_LINE, MIN_ADVERSARY_WORDS, adversary_gaps, closes_a_board_item,
+    has_adversary_evidence, unreviewed_closures,
 )
 
 #: How long after its last write a subagent transcript still counts as a
@@ -415,112 +416,6 @@ def running_agents(session_id: str | None,
 
 
 # ---------------------------------------------------------------------------
-# Was the closure argued against?
-# ---------------------------------------------------------------------------
-
-#: The owner's rule: no board item is closed until the adversary agent
-#: (`.claude/agents/qamc-adversary.md`) has argued against closing it. It was
-#: skipped on five closures in a row on 2026-09-13, and the reason it keeps
-#: being skipped is that work coming back green produces no signal that it
-#: was never challenged. Nothing about "remember to run the adversary" has
-#: held; this is the mechanical version.
-#:
-#: The evidence is a line in the pull request description beginning
-#: `Adversary:` and carrying at least a sentence. A bare `Adversary: yes` is
-#: not evidence of an argument and does not count.
-ADVERSARY_LINE = re.compile(r"^\s*Adversary\s*:\s*(.+)$", re.I | re.M)
-
-#: What counts as "at least a sentence" after the label. Deliberately low —
-#: this is a presence check, not a quality one; judging the argument is the
-#: reader's job, and a threshold high enough to judge would be gamed by
-#: padding anyway.
-MIN_ADVERSARY_WORDS = 6
-
-#: "item 12", "items 30/31/32" — the convention this repository's pull
-#: request titles already use for the item they close.
-ITEM_REF = re.compile(r"\bitems?\s+#?(\d+)\b", re.I)
-
-#: In the BODY the same words are usually a citation, not a claim: PR 351
-#: ("docs: make README match the desk that actually exists") mentions
-#: "item 44" only to explain where a deleted rule came from, and demanding
-#: an adversary line for that is the cried wolf. So a body reference counts
-#: only when a closing verb is attached to it.
-ITEM_CLOSED = re.compile(
-    r"\b(?:closes?|closing|closed|resolves?|resolved|retires?|retired"
-    r"|completes?|completed|finishes?|finished|fixes)\b[^.\n]{0,40}?"
-    r"\bitems?\s+#?(\d+)\b", re.I)
-
-
-def closes_a_board_item(pr: OpenPR) -> str | None:
-    """Why this change looks like a board closure, or None.
-
-    Two independent signals, either of which is enough:
-
-      * it edits the backlog's "Retired item numbers" line — that line is
-        only ever touched to retire an item, so editing it IS a closure
-        whatever the description says; and
-      * its TITLE names a board item by number — this repository's own
-        convention for the item a change closes — or its description says
-        in words that it closes one.
-
-    A change whose files could not be read still gets the second test. It
-    never gets the first, because a read that failed is not evidence.
-    """
-    patch = pr.work_md_patch
-    if patch:
-        for line in patch.splitlines():
-            if line[:1] in "+-" and line[1:2] != line[:1] and RETIRED_LINE in line:
-                return f"it edits the {WORK_MD} line that retires board items"
-    match = ITEM_REF.search(pr.title or "")
-    if match:
-        return f"its title names board item {match.group(1)}"
-    match = ITEM_CLOSED.search(pr.body or "")
-    if match:
-        return f"its description says it closes board item {match.group(1)}"
-    return None
-
-
-def has_adversary_evidence(body: str) -> bool:
-    """Does this description carry a real `Adversary:` line?"""
-    for match in ADVERSARY_LINE.finditer(body or ""):
-        argument = match.group(1).strip()
-        if len(argument.split()) >= MIN_ADVERSARY_WORDS:
-            return True
-    return False
-
-
-def unreviewed_closures(prs: list[OpenPR]) -> list[str]:
-    """One plain sentence per open change that closes an item unchallenged."""
-    out: list[str] = []
-    for pr in prs:
-        why = closes_a_board_item(pr)
-        if why and not has_adversary_evidence(pr.body):
-            out.append(f"PR {pr.number} ({pr.title or 'untitled'}) closes a "
-                       f"board item — {why} — but its description carries no "
-                       f"'Adversary:' line, so nothing argued against closing "
-                       f"it.")
-    return out
-
-
-def adversary_gaps(fetch: Any = None) -> list[str]:
-    """The unreviewed closures, or an empty list if GitHub could not be read.
-
-    A failed read must NEVER manufacture work. "I could not see the pull
-    requests" is not evidence that a review is missing, and a hook that
-    treats it as such would hold sessions open every time GitHub rate-limits
-    this address — which for an unauthenticated reader is routine.
-    """
-    try:
-        prs, problem = (read_open_pull_requests(fetch) if fetch
-                        else read_open_pull_requests())
-    except Exception:  # noqa: BLE001 - this check never breaks a session
-        return []
-    if problem:
-        return []
-    return unreviewed_closures(prs)
-
-
-# ---------------------------------------------------------------------------
 # Hand-back accounting — the loop brake
 # ---------------------------------------------------------------------------
 
@@ -582,7 +477,8 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
            projects_root: Path | None = None,
            state_path: Path | None = None,
            promise: str | None = None,
-           gaps: list[str] | None = None) -> HookDecision:
+           gaps: list[str] | None = None,
+           open_changes: Any = ((), 0)) -> HookDecision:
     """The whole policy, in one readable function, in the order it is
     checked. Every branch that is not certain resolves to "stop".
 
@@ -599,7 +495,8 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
       3. An unkept promise → block. First because it is about THIS turn and
          costs one sentence to fix, where the others are about other work.
       4. A closure nobody argued against → block.
-      5. An actionable backlog item → block, subject to the hand-back brake.
+      5. Finish before you start: see scripts/merge_queue_state.py.
+      6. An actionable backlog item → block, subject to the hand-back brake.
     """
     gaps = gaps or []
     if not queue.actionable and not promise and not gaps:
@@ -632,6 +529,10 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
             f"{first} Run the adversary against it and put its argument in "
             f"the description before this closes.{more}",
             kind="adversary")
+
+    held = finish_first(open_changes() if callable(open_changes) else open_changes)
+    if held is not None:
+        return HookDecision(*held)
 
     item = queue.next_item
     assert item is not None  # non-empty actionable, checked above
@@ -702,6 +603,7 @@ def run_hook(raw: str, **kw: Any) -> int:
     if _enabled(ADVERSARY_CHECK_ENV):
         gaps = adversary_gaps()
 
+    kw.setdefault("open_changes", merge_queue_state.open_changes)  # lazy
     decision = decide(queue, payload.get("session_id"),
                       bool(payload.get("stop_hook_active")),
                       promise=promise, gaps=gaps, **kw)
@@ -710,6 +612,7 @@ def run_hook(raw: str, **kw: Any) -> int:
     lead = {
         "promise": "You said you were doing this and the turn did nothing",
         "adversary": "A closure has not been argued against",
+        "finish": "Finish before you start",
     }.get(decision.kind, "Next in the backlog, oldest first")
     print(f"{lead}: {decision.reason} [board read from: "
           f"{queue.source}]", file=sys.stderr)

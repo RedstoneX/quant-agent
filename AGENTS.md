@@ -36,6 +36,12 @@ Use parallel workers/subagents proactively when independent work can safely run 
 
 Parallelism is an efficiency tool, not an agent-count target.
 
+**Finish before you start (owner, 2026-10-08).** Build work is limited by the merge queue, not by CPU or tokens. Success is changes merged, never branches built: ~70 unmerged branches piled up by 2026-10-06 because work started faster than it landed.
+- Do not open a new change or start a new writing worker while any open PR is red or conflicting, or while open PRs reach what main can merge in an hour. Read-only work is unlimited.
+- Arm auto-merge and leave merging to GitHub's merge queue: it tests armed changes together with main, in batches, and merges only the green ones (the old `merge-train` workflow is gone).
+- A code change never edits `docs/WORK.md`. Board updates go in their own docs-only change after the code merges; CI refuses the mix (`scripts/check_board_edits_alone.py`).
+- The backlog stop hook (`scripts/work_queue.py`) follows the same order: a stuck open change is handed back first, and no new backlog item is handed back while any change is still open.
+
 ## Hard boundaries
 
 - Alpaca Paper only; live-broker order submission needs separate explicit authorization.
@@ -84,7 +90,7 @@ already say.
   doc merge driver:** see `docs/WORK.md`, "Engineering setup" and "Operational
   facts". One completion to the `gh` note there: the PATCH needs a field flag
   to carry a body from a file, not just `-X PATCH` —
-  `gh api -X PATCH repos/RedstoneX/quant-agent/pulls/<n> -F body=@<file>`.
+  `gh api -X PATCH repos/redstone-hq/quant-agent/pulls/<n> -F body=@<file>`.
   The merge driver's one-time per-clone `git config` command is in
   `README.md`, "Install".
 - **A green check from the docs/GitBook integration is not CI.** Confirm the
