@@ -49,7 +49,7 @@ def test_no_recorded_input_is_error_shaped(path):
 
 
 def test_capture_refuses_failures_and_records_nothing(tmp_path, monkeypatch):
-    import fredapi
+    from src.data import fred_series_client
 
     class _Broken:
         def __init__(self, **_):
@@ -60,7 +60,7 @@ def test_capture_refuses_failures_and_records_nothing(tmp_path, monkeypatch):
 
         get_series_info = get_series
 
-    monkeypatch.setattr(fredapi, "Fred", _Broken)
+    monkeypatch.setattr(fred_series_client, "FredSeriesClient", _Broken)
     out = tmp_path / "feeds.json"
     result = feed_recording.capture(["DGS10"], ["http://127.0.0.1:9/nothing"], out)
     assert result["fred_series"] == {} and result["fred_series_info"] == {} and result["http"] == {}

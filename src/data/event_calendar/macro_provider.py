@@ -1,11 +1,10 @@
 """FRED release-dates provider."""
 
-import json
 import logging
 import random
 import time
 from datetime import date, timedelta
-from src.data import news as _transport  # the one module whose `urlopen` the rehearsal rebinds
+from src.data.fred_series_client import http_get_json
 
 from src.data.event_calendar.macro import (
     _FAILURE_REASON_MAX_LEN,
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 class MacroEventCalendarProvider:
     """Forward schedule of US macro releases, from FRED's free release-dates API.
 
-    `fredapi` (the client `src/data/macro.py` uses) exposes no releases/dates
+    `src/data/fred_series_client.py` (the client `src/data/macro.py` uses) exposes no releases/dates
     method at all — its surface is series-only — so this issues the HTTP GET
     itself, with the stdlib `urllib` the rest of this package already uses for
     third-party HTTP (`src/data/earnings.py` for EDGAR, `src/data/news.py` for
@@ -186,10 +185,7 @@ class MacroEventCalendarProvider:
     def _http_get_json(self, url: str, timeout: float) -> dict:
         """One GET returning parsed JSON. Split out so tests can substitute a
         transport without patching urllib globally."""
-        request = _transport.Request(url, headers={"User-Agent": "quant-agent event-calendar"})
-        with _transport.urlopen(request, timeout=timeout) as response:  # noqa: S310 — fixed https host
-            payload = response.read()
-        return json.loads(payload.decode("utf-8"))
+        return http_get_json(url, timeout, "quant-agent event-calendar")
 
     def _fetch_release_dates(
         self, release: MacroRelease, start: date, end: date,

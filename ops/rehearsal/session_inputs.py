@@ -332,7 +332,7 @@ def session_inputs(pipeline, payload=None, *, max_bytes: int | None = None):
 
         def wrapped(series_id, *args, _method=method, _original=original, **kwargs):
             key = str(_value({"series": str(series_id).upper(), "args": list(args),
-                              "kwargs": kwargs}))
+                              "kwargs": {k: v for k, v in kwargs.items() if k != "request_timeout_s"}}))
             return ledger.call("FRED." + _method, key,
                                lambda: _original(series_id, *args, **kwargs))
 

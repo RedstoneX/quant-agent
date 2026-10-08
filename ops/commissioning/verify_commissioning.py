@@ -45,7 +45,7 @@ each provider is probed through the same library its real caller uses:
 
     OpenRouter  -> httpx     (via the `openai` SDK, src/agents/base.py)
     Alpaca      -> requests  (via `alpaca-py`, src/execution/broker.py)
-    FRED        -> urllib    (via `fredapi`, src/data/macro.py)
+    FRED        -> urllib    (via src/data/fred_series_client.py)
 """
 
 from __future__ import annotations
@@ -1025,7 +1025,7 @@ def check_preflight(ctx: Ctx) -> None:
     content, a market-data host QAMC can reach but not parse, or a FRED
     series that no longer resolves. This group answers the question the
     operator actually has — "will the pipeline work when commissioned?" —
-    by constructing the same `openai`, `alpaca-py` and `fredapi` clients
+    by constructing the same `openai`, `alpaca-py` and FRED (`FredSeriesClient`) clients
     the trading engine builds and completing one real read with each.
 
     Opt-in (`--live`) because it makes authenticated calls with the real

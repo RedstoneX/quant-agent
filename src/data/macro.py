@@ -1,13 +1,12 @@
 import logging
-import socket
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import pandas as pd
-from fredapi import Fred
 
 from src.data.fred_publication_days import roll_to_publication_day
+from src.data.fred_series_client import FredSeriesClient as Fred  # the name the rehearsal rig rebinds
 from src.data.macro_fetch_budget import build_macro_fetch_budget
 from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
@@ -618,19 +617,20 @@ class MacroDataProvider:
             )
             self._series_info_cache[series_id] = None
             return None
-        prev_timeout = socket.getdefaulttimeout()
         try:
-            socket.setdefaulttimeout(
-                self.request_timeout_s if surplus is None
-                # No floor under the surplus. The old code clamped this to
-                # `max(1.0, remaining)`, which let a metadata call overshoot
-                # into budget that belonged to an unasked observation — the
-                # test `test_metadata_never_spends_an_observation_it_cannot_
-                # replace` catches exactly that. The surplus is positive here
-                # (checked above), so it is a valid socket timeout as it is.
-                else min(self.request_timeout_s, surplus)
+            raw = self.fred.get_series_info(
+                series_id,
+                request_timeout_s=(
+                    self.request_timeout_s if surplus is None
+                    # No floor under the surplus. The old code clamped this to
+                    # `max(1.0, remaining)`, which let a metadata call overshoot
+                    # into budget that belonged to an unasked observation — the
+                    # test `test_metadata_never_spends_an_observation_it_cannot_
+                    # replace` catches exactly that. The surplus is positive here
+                    # (checked above), so it is a valid request timeout as it is.
+                    else min(self.request_timeout_s, surplus)
+                ),
             )
-            raw = self.fred.get_series_info(series_id)
             observation_end = None
             last_updated = None
             # pandas Series (fredapi's real return) and plain mappings both
@@ -649,8 +649,6 @@ class MacroDataProvider:
                 "FRED metadata unavailable for %s: %s — freshness for this "
                 "series will report unknown", series_id, e,
             )
-        finally:
-            socket.setdefaulttimeout(prev_timeout)
         self._series_info_cache[series_id] = info
         return info
 
@@ -861,63 +859,62 @@ class MacroDataProvider:
             if self._consecutive_failed_series < self.breaker_after_failed_series
             else 0
         )
-        prev_timeout = socket.getdefaulttimeout()
         result = None
         transport_failed = False
         failure_reason = ""
-        try:
-            for attempt in range(retries + 1):
-                if attempt == 0:
-                    budget = allowance
-                else:
-                    # A RETRY is second-class work: it may only draw on the
-                    # surplus above the waiting series' reserves, so riding
-                    # out one series' trouble can never cost another series
-                    # its single attempt.
-                    surplus = self.budget.surplus_s(series_id)
-                    budget = (
-                        None if surplus is None
-                        else min(self.request_timeout_s, surplus)
-                    )
-                    if budget is not None and budget <= 0:
-                        transport_failed = True
-                        logger.warning(
-                            "FRED %s failed on attempt %d/%d and the retry "
-                            "budget is spent — not retrying, because what is "
-                            "left of the ceiling is reserved for series that "
-                            "have not been asked yet",
-                            series_id, attempt, retries + 1,
-                        )
-                        break
-                # Scoped socket timeout so other modules' sockets aren't
-                # affected, clipped to this series' share of the budget so a
-                # hung socket can never eat the rest of the run.
-                socket.setdefaulttimeout(
-                    # Positive by the gates above; no floor, for the same
-                    # reason as the metadata path — a floor is budget taken
-                    # from a series that has not been asked yet.
-                    self.request_timeout_s if budget is None else budget
+        for attempt in range(retries + 1):
+            if attempt == 0:
+                budget = allowance
+            else:
+                # A RETRY is second-class work: it may only draw on the
+                # surplus above the waiting series' reserves, so riding
+                # out one series' trouble can never cost another series
+                # its single attempt.
+                surplus = self.budget.surplus_s(series_id)
+                budget = (
+                    None if surplus is None
+                    else min(self.request_timeout_s, surplus)
                 )
-                try:
-                    result = self.fred.get_series(series_id, **kwargs)
-                    break
-                except Exception as e:
-                    failure_reason = str(e) or type(e).__name__
-                    surplus = self.budget.surplus_s(series_id)
-                    if attempt < retries and (surplus is None or surplus > 0):
-                        backoff = self.budget.next_backoff(attempt, series_id)
-                        logger.warning(
-                            "FRED API error for %s (attempt %d/%d): %s — "
-                            "retrying in %.1fs",
-                            series_id, attempt + 1, retries + 1, e, backoff,
-                        )
-                        if backoff > 0:
-                            time.sleep(backoff)
-                        continue
-                    logger.warning("FRED API error for %s: %s", series_id, e)
+                if budget is not None and budget <= 0:
                     transport_failed = True
-        finally:
-            socket.setdefaulttimeout(prev_timeout)
+                    logger.warning(
+                        "FRED %s failed on attempt %d/%d and the retry "
+                        "budget is spent — not retrying, because what is "
+                        "left of the ceiling is reserved for series that "
+                        "have not been asked yet",
+                        series_id, attempt, retries + 1,
+                    )
+                    break
+            # The timeout rides on this one request (never on the process's
+            # sockets), clipped to this series' share of the budget so a
+            # hung socket can never eat the rest of the run. Positive by
+            # the gates above; no floor, for the same reason as the
+            # metadata path — a floor is budget taken from a series that
+            # has not been asked yet.
+            try:
+                result = self.fred.get_series(
+                    series_id,
+                    request_timeout_s=(
+                        self.request_timeout_s if budget is None else budget
+                    ),
+                    **kwargs,
+                )
+                break
+            except Exception as e:
+                failure_reason = str(e) or type(e).__name__
+                surplus = self.budget.surplus_s(series_id)
+                if attempt < retries and (surplus is None or surplus > 0):
+                    backoff = self.budget.next_backoff(attempt, series_id)
+                    logger.warning(
+                        "FRED API error for %s (attempt %d/%d): %s — "
+                        "retrying in %.1fs",
+                        series_id, attempt + 1, retries + 1, e, backoff,
+                    )
+                    if backoff > 0:
+                        time.sleep(backoff)
+                    continue
+                logger.warning("FRED API error for %s: %s", series_id, e)
+                transport_failed = True
 
         if transport_failed:
             self._consecutive_failed_series += 1

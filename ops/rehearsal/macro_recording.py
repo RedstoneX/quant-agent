@@ -102,15 +102,15 @@ def recorded_feeds_with_macro(record: list[str], recording: dict | None):
     for the model transports. Misses and recorded failures raise exactly as in
     `feed_recording`; nothing falls back to live.
     """
-    import fredapi
+    from src.data.fred_series_client import FredSeriesClient
 
     offline = feed_recording._offline_fred(record, recording)[0]()
-    saved = {n: getattr(fredapi.Fred, n) for n in ("get_series", "get_series_info")}
+    saved = {n: getattr(FredSeriesClient, n) for n in ("get_series", "get_series_info")}
     with feed_recording.recorded_feeds(record, recording) as message:
-        fredapi.Fred.get_series = lambda self, sid, **kw: offline.get_series(sid, **kw)
-        fredapi.Fred.get_series_info = lambda self, sid, **kw: offline.get_series_info(sid, **kw)
+        FredSeriesClient.get_series = lambda self, sid, **kw: offline.get_series(sid, **kw)
+        FredSeriesClient.get_series_info = lambda self, sid, **kw: offline.get_series_info(sid, **kw)
         try:
             yield message + "; FRED methods also replaced on the class, so an already-built provider is covered"
         finally:
             for name, original in saved.items():
-                setattr(fredapi.Fred, name, original)
+                setattr(FredSeriesClient, name, original)
