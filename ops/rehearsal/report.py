@@ -53,10 +53,8 @@ STATUS_PLAIN = {
         "the next scheduled opportunity to try again."
     ),
     "market_holiday": "The market was closed, so no session ran.",
-    "broker_error": (
-        "The session could not read the account from the broker and stopped "
-        "before doing anything."
-    ),
+    "session_closed": "The market had already closed early, so no paid check ran.",
+    "broker_error": "The session could not read the account from the broker and stopped before doing anything.",
     "emergency_sold": (
         "The account had already fallen through its daily loss limit, so "
         "everything was sold and no new trades were considered. "
@@ -1285,6 +1283,7 @@ def _verdict(report: RehearsalReport) -> str:
     # trader_feed.py / notifier.py status groupings.
     healthy = {
         "executed", "no_orders", "no_trades", "market_holiday", "early_close",
+        "session_closed",
         "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity", "nothing_new", "preprocessed",

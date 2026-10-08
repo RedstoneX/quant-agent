@@ -13,6 +13,7 @@ from src.cost_circuit import PaidAnalysisSuspended
 from src.evidence_gate import EvidenceGateEvaluationError
 from src.intraday_scan_outcome import failed_scan_result
 from src.pipeline_context import RunContext
+from src.intraday.session_gate import session_has_ended
 from src.sentinel.guarded_site import record_site as _site
 from src.trading_calendar import session_date_key
 
@@ -44,6 +45,7 @@ class IntradaySession:
         persist_intra_check_report=None,
         run_intra_check_body=None,
         state=None,
+        now=None,
     ) -> None:
         self.db = db
         self.broker = broker
@@ -62,7 +64,7 @@ class IntradaySession:
             self._persist_intra_check_report = persist_intra_check_report  # else: this part's own body
         if run_intra_check_body is not None:
             self._run_intra_check_body = run_intra_check_body  # else: this part's own body
-        self._state = state
+        self._state, self._now = state, now
 
     @property
     def _intra_preamble_deferred(self):
@@ -147,6 +149,9 @@ class IntradaySession:
         if not self._is_trading_day():
             logger.info("Intra check skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
+        if session_has_ended(self.broker, self._now() if self._now else None):
+            logger.info("Intra check skipped: exchange session already closed")
+            return {"status": "session_closed", "run_id": run_id}
 
         halt = self._kill_switch_halt_result(run_id)
         if halt is not None:
@@ -165,16 +170,11 @@ class IntradaySession:
         # A live session runs this same preamble itself near the start of its
         # own run, and it may be in the middle of cancelling stops to sell; a
         # stop added here in that window is the worst pairing item 127 names.
-        # Deferring skips only this tick's preamble, and the next tick
-        # re-reads the broker. This used to add "the loss check below still
-        # runs every tick" as the rest of the safety argument; there is no
-        # loss check any more (2026-09-20, retired item 32), so the
-        # argument for deferring now rests entirely on the next tick
-        # re-reading. Board item 127 is open on that exposure.
-        # Board item 177 (2026-10-01): the free safety work below now also
-        # has its own entry point (`run_intra_safety`) and its own systemd
-        # unit, so it no longer depends on this paid tick running. The paid
-        # tick still calls it, unchanged, so nothing here got less reliable.
+        # Deferring skips only this tick's preamble; the next tick re-reads
+        # the broker (no loss check any more, retired item 32). Board item
+        # 127 is open on that exposure.
+        # Board item 177: the free safety work below also has its own entry
+        # point (`run_intra_safety`) and systemd unit; this tick still calls it.
         coverage_gaps, preamble_deferred = self._run_intra_safety_preamble(run_id)
         self._intra_preamble_deferred = preamble_deferred
 
