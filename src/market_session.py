@@ -30,6 +30,7 @@ from typing import Any, Callable
 
 from src.time_format import fmt_time_12h
 from src.trading_calendar import ET, in_regular_session
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger("src.market_session")
 
@@ -48,7 +49,7 @@ def _calendar_edge(
         value = getattr(broker, getter, None)
         value = value(today) if callable(value) else None
     except Exception as exc:  # noqa: BLE001
-        logger.warning("market-open: %s unreadable for %s: %s", getter, today, exc)
+        record_swallowed("market_session._calendar_edge", exc, log=logger)
         problems.append(f"{getter}: {exc}")
         return None
     if isinstance(value, datetime):

@@ -219,6 +219,8 @@ def alert_order_outcome_unconfirmed(
         )
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed
+        record_swallowed("notifier.alerts.alert_order_outcome_unconfirmed", exc, log=logger)
         logger.warning(
             "unconfirmed-order alert for %s could not be sent: %s", symbol, exc,
         )
@@ -271,6 +273,8 @@ def alert_records_disagree_with_broker(
         )
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed
+        record_swallowed("notifier.alerts.alert_records_disagree_with_broker", exc, log=logger)
         logger.warning(
             "records-disagree alert for %s could not be sent: %s", symbol, exc,
         )
@@ -331,6 +335,8 @@ def alert_stop_out_recorded(
         )
         return send_owner_alert(body, symbols=[sym])
     except Exception as exc:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed
+        record_swallowed("notifier.alerts.alert_stop_out_recorded", exc, log=logger)
         logger.warning(
             "stop-out-recorded alert for %s could not be sent: %s", symbol, exc,
         )
@@ -371,6 +377,8 @@ def alert_positions_reprotected(count: int) -> bool:
         )
         return send_owner_alert(body)
     except Exception as exc:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed
+        record_swallowed("notifier.alerts.alert_positions_reprotected", exc, log=logger)
         logger.warning(
             "positions-reprotected alert could not be sent: %s", exc,
         )

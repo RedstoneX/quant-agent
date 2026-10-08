@@ -22,6 +22,14 @@ def _stop(oid, stop, qty=10, otype="stop", limit=None, klass="simple",
     return o
 
 
+def _unamendable(*args, **kwargs):
+    """A bracket parent: the one shape item 201 still sends to cancel+resubmit
+    (stop_invariant.py fits quantities in place on every amendable shape)."""
+    o = _stop(*args, **kwargs)
+    o.legs = [MagicMock()]
+    return o
+
+
 def _pos(qty):
     p = MagicMock()
     p.symbol, p.qty = "ZZZ", qty
@@ -77,7 +85,7 @@ def test_whole_share_coverage_repair_amends_qty_and_price_in_place(tc):
 @patch("src.execution.broker.TradingClient")
 def test_fractional_coverage_change_still_cancels_but_the_window_is_recorded(tc):
     b, client = _broker(tc)
-    b._list_open_stop_orders_by_side = MagicMock(return_value=([_stop("s1", 100.0, qty=10)], []))
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_unamendable("s1", 100.0, qty=10)], []))
     b._list_open_protective_stop_orders = MagicMock(return_value=[])
     b.get_positions = MagicMock(return_value=[_pos(10.5)])
     b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])
@@ -140,7 +148,7 @@ def test_a_recorded_window_carries_the_session_that_produced_it(tc):
     """Item 1512: a window row with no joinable session id is useless for the
     one question it exists to answer — which run left the position naked."""
     b, _client = _broker(tc)
-    b._list_open_stop_orders_by_side = MagicMock(return_value=([_stop("s1", 100.0, qty=10)], []))
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_unamendable("s1", 100.0, qty=10)], []))
     b._list_open_protective_stop_orders = MagicMock(return_value=[])
     b.get_positions = MagicMock(return_value=[_pos(10.5)])
     b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])
@@ -156,7 +164,7 @@ def test_a_recorded_window_carries_the_session_that_produced_it(tc):
 @patch("src.execution.broker.TradingClient")
 def test_a_site_without_a_session_id_says_so_instead_of_recording_a_silent_null(tc):
     b, _client = _broker(tc)
-    b._list_open_stop_orders_by_side = MagicMock(return_value=([_stop("s1", 100.0, qty=10)], []))
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_unamendable("s1", 100.0, qty=10)], []))
     b._list_open_protective_stop_orders = MagicMock(return_value=[])
     b.get_positions = MagicMock(return_value=[_pos(10.5)])
     b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])

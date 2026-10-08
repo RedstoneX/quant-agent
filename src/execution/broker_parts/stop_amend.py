@@ -182,8 +182,8 @@ class StopAmender:
 
         A whole-share QUANTITY amend was ALSO measured working on 2026-09-30
         (3 shares to 2, one open stop); only a FRACTIONAL quantity amend is
-        refused, which is why a coverage-repairing size change still goes to
-        the fallback. A bracket/OTO child is UNMEASURED, not known-unamendable.
+        refused, which is why stop_invariant.py cancels a sliver before it grows
+        a GTC leg. A bracket/OTO child is UNMEASURED, not known-unamendable.
 
         Measured against the broker on rehearsal account <redacted-rehearsal-account> on
         2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
@@ -224,26 +224,15 @@ class StopAmender:
             covered = sum(abs(float(spec["qty"])) for spec in stop_specs)
         except (TypeError, ValueError, KeyError):
             return _AMEND_NOT_ATTEMPTED
-        # A price-only amend cannot fix a coverage gap: if the resting stops do
-        # not already cover exactly the position, the fallback (which resubmits
-        # at the position's qty) is the path that repairs it. Compare at the
-        # broker's own fractional resolution and SAY why when it does not match,
-        # so a persistently-skipped atomic path is visible instead of invisible.
+        # One whole-share leg on a whole-share position: the quantity amend was
+        # measured working (2026-09-30), so it rides along with the price amend.
+        # Every other coverage gap is closed AFTER the price amend, on the
+        # confirmed book, by stop_invariant.py (item 201) -- never by cancelling.
         new_qty = None
-        if abs(covered - position_qty) > 1e-9:
-            # One whole-share leg on a whole-share position: the quantity amend
-            # was measured working (2026-09-30), so repair it in place.
-            if (len(stop_specs) == 1 and covered == int(covered)
-                    and position_qty == int(position_qty) and position_qty >= 1):
-                new_qty = int(position_qty)
-            else:
-                logger.info(
-                    "replace_stop_loss: %s's %d resting stop(s) cover %s of %s held "
-                    "shares, so the in-place amend is skipped and the "
-                    "cancel+resubmit path runs to repair coverage.",
-                    symbol, len(stop_specs), covered, position_qty,
-                )
-                return _AMEND_NOT_ATTEMPTED
+        if (abs(covered - position_qty) > 1e-9 and len(stop_specs) == 1
+                and covered == int(covered) and position_qty == int(position_qty)
+                and position_qty >= 1):
+            new_qty = int(position_qty)
         price = _quantize_price(new_stop_price)
         if price is None or price <= 0:
             return _AMEND_NOT_ATTEMPTED

@@ -50,7 +50,7 @@
 
 generated_at: "2026-08-30"
 spec_path: "docs/QAMC_REMEDIATION_SPEC.md"
-repo: "RedstoneX/quant-agent"
+repo: "redstone-hq/quant-agent"
 verified_against:
   origin_main_sha: "e5d47c6219b68c265a1adaa48ed7b8e4e0c6ff72"
   production_head_sha_at_audit: "e5d47c62"
@@ -110,7 +110,7 @@ phases:
     confidence: "high"
     evidence:
       - kind: manual
-        note: "CI gate is a GitHub repo setting, not a file in this repo: confirm with `gh api repos/RedstoneX/quant-agent/branches/main/protection` — required_status_checks.contexts must include \"pytest\" and enforce_admins.enabled must be true. Verified true at audit time."
+        note: "CI gate is a GitHub repo setting, not a file in this repo: confirm with `gh api repos/redstone-hq/quant-agent/branches/main/protection` — required_status_checks.contexts must include \"pytest\" and enforce_admins.enabled must be true. Verified true at audit time."
       - kind: pr_merged
         number: 96
         note: "fix(ci): add API deps to the dev extra so the test suite can be collected"

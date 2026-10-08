@@ -26,6 +26,7 @@ from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
 from src.execution.broker_parts.stop_clock import defer_if_closed, reprotect_or_naked
+from src.execution.broker_parts.stop_invariant import enforce_stop_quantity_invariant
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 # Quantity rules + the quantity gate live in src/execution/order_gates.py (a
 # leaf); the two names are re-exported here because callers patch them here.
@@ -106,9 +107,10 @@ class StopPlacer:
         submit_stop_legs=None,
         restore_stop_orders=None,
         window_log=None,
+        wait_for_order_terminal=None,
     ):
-        self.client = client
-        self._window_log = window_log if window_log is not None else []
+        self.client, self.wait_for_order_terminal = client, wait_for_order_terminal
+        self._window_log = [] if window_log is None else window_log
         self._list_open_stop_orders_by_side = list_open_stop_orders_by_side
         self._list_open_protective_stop_orders = list_open_protective_stop_orders
         self._list_open_sell_stop_orders = list_open_sell_stop_orders
@@ -959,12 +961,9 @@ class StopPlacer:
         # means "not attempted / outcome unknown" and drops through to the
         # legacy cancel+resubmit below; None means the broker REFUSED and the
         # original stop is still resting, so we must NOT cancel anything.
-        # Re-read the position IMMEDIATELY before the amend. The fallback
-        # already does this right before it submits, with a comment naming the
-        # sub-second window; the amend path was comparing against a qty read
-        # further up, so a fill landing in between could leave the stop
-        # covering more than is held. A read failure is not a reason to amend
-        # on stale data -- drop to the fallback, which repairs coverage.
+        # Re-read the position IMMEDIATELY before the amend: a fill landing
+        # between a stale read and the amend could leave the stop covering more
+        # than is held. A read failure drops to the fallback, which repairs it.
         try:
             fresh = [
                 p for p in self.get_positions()
@@ -990,8 +989,8 @@ class StopPlacer:
                 position_qty=abs(float(fresh[0].qty)),
             )
         )
-        if amended is not _AMEND_NOT_ATTEMPTED:
-            return amended
+        if amended is not _AMEND_NOT_ATTEMPTED:  # item 201: then fit the QUANTITIES to what is held
+            return enforce_stop_quantity_invariant(self, symbol, amended, side=side, fresh=fresh)
 
         if (deferred := defer_if_closed(self, symbol, stop_specs, new_stop_price, fresh)):
             return deferred  # out of hours: cancel NOTHING (see stop_clock.py)

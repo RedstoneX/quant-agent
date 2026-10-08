@@ -257,7 +257,9 @@ class TelegramNotifier:
         """Telegram's JSON body, or {} if it did not send parseable JSON."""
         try:
             body = response.json()
-        except Exception:  # noqa: BLE001 - a proxy error page is not JSON
+        except Exception as exc:  # noqa: BLE001 - a proxy error page is not JSON
+            from src.sentinel.counted import record_swallowed
+            record_swallowed("notifier.transport.json_body", exc, log=logger)
             return {}
         return body if isinstance(body, dict) else {}
 

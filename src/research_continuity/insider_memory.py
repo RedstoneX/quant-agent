@@ -17,6 +17,7 @@ import logging
 from collections.abc import Callable
 
 from src.research_continuity.carry_forward import CarryForward
+from src.sentinel.counted import record_swallowed_here
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -141,12 +142,18 @@ class InsiderMemory:
                 ("smart_money_analyst",),
             ).fetchone()
         except Exception:  # noqa: BLE001
+            record_swallowed_here(
+                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
+            )
             return []
         if not row:
             return []
         try:
             run_id = row["run_id"] if hasattr(row, "keys") else row[0]
         except Exception:  # noqa: BLE001
+            record_swallowed_here(
+                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
+            )
             return []
         if not isinstance(run_id, str) or not run_id.strip():
             return []
@@ -158,6 +165,9 @@ class InsiderMemory:
                 (run_id, "smart_money_analyst", "finding"),
             ).fetchall()
         except Exception:  # noqa: BLE001
+            record_swallowed_here(
+                "research_continuity.insider_memory._findings_from_specialist_evidence", log=logger
+            )
             return []
         findings: list = []
         for item in rows or []:
@@ -211,12 +221,14 @@ class InsiderMemory:
                 ("smart_money_analyst",),
             ).fetchone()
         except Exception:  # noqa: BLE001
+            record_swallowed_here("research_continuity.insider_memory._specialist_insider_as_of", log=logger)
             return ""
         if not row:
             return ""
         try:
             raw = row["timestamp"] if hasattr(row, "keys") else row[0]
         except Exception:  # noqa: BLE001
+            record_swallowed_here("research_continuity.insider_memory._specialist_insider_as_of", log=logger)
             return ""
         return str(raw or "").strip()
 

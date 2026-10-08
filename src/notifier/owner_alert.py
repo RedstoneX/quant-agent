@@ -45,6 +45,8 @@ def send_owner_alert(
     try:
         notifier = build_default_notifier(factory=TelegramNotifier)
     except Exception:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed_here
+        record_swallowed_here("notifier.owner_alert.send_owner_alert", log=logger)
         logger.exception("owner alert could not build its notifier")
         return False
     return send_owner_alert_with_outcome(

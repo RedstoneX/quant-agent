@@ -22,6 +22,7 @@ import logging
 
 from src.recording_accessors import pinned_evidence
 from src.pipeline_stages import _record_pipeline_event
+from src.sentinel.counted import record_swallowed
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -123,6 +124,7 @@ def _evidence_gate_skip(
         # the gate's verdict is unknown, so the decision must fail closed.
         # Give the outer intraday wrapper a narrow exception to propagate;
         # ordinary opportunity-scan crashes remain contained there.
+        record_swallowed("pipeline_halt_gates._evidence_gate_skip", exc, log=logger)
         logger.exception(
             "evidence gate raised — REFUSING the decision. "
             "This is a bug in src/evidence_gate.py."

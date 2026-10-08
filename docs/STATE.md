@@ -759,7 +759,8 @@ Important consequences:
 - Codex may complete implementation, self-review, merge and Paper-production deployment autonomously.
 - Independent review is optional evidence, not permission and not a blocking gate.
 - **CI is now a blocking gate.** As of 2026-08-27 `main` is protected: the `pytest`
-  check is required, strict mode is on, and `enforce_admins` is true, so a failing
+  check is required, merges go through GitHub's native merge queue (ruleset on
+  `main`, repo `redstone-hq/quant-agent`), and `enforce_admins` is true, so a failing
   suite blocks merges for everyone including administrators. Verified by merging a
   deliberately failing test (refused: `Required status check "pytest" is failing`).
 - Changes to `OUTCOME.md`, `STATE.md` and `WORK.md` require **owner ratification**

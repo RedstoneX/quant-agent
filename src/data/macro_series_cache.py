@@ -83,6 +83,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from src.data.fred_publication_days import crossed_a_publication_boundary
+from src.sentinel.counted import record_swallowed, record_swallowed_here
 
 logger = logging.getLogger(__name__)
 
@@ -168,11 +169,12 @@ class MacroSeriesCache:
         except (FileNotFoundError, NotADirectoryError):
             return None
         except Exception as e:  # noqa: BLE001
-            logger.warning("Unreadable FRED series cache for %s: %s", series_id, e)
+            record_swallowed("data.macro_series_cache.load", e, log=logger)
             return None
         try:
             entry = json.loads(raw)
         except Exception:  # noqa: BLE001
+            record_swallowed_here("data.macro_series_cache.load", log=logger)
             return None
         if not isinstance(entry, dict) or entry.get("schema") != SCHEMA:
             return None
