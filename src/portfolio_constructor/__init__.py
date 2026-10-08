@@ -116,6 +116,7 @@ from src.portfolio_constructor.config import (
 )
 from src.portfolio_constructor.assembly import hold_parts, install_delegates
 from src.portfolio_constructor.divergence_counter import log_divergence
+from src.portfolio_constructor import refusal_log, sector_dial, target_derivation
 
 
 @install_delegates
@@ -205,52 +206,19 @@ class PortfolioConstructor:
         self.last_order_sectors: dict[str, str | None] = {}
 
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
-        """Return every data fault recorded since the last drain, and clear.
-
-        See `last_data_faults`. Returned as a fresh dict so the caller can
-        hold it after this instance moves on to the next session.
-        """
-        faults = dict(self.last_data_faults)
-        self.last_data_faults = {}
-        return faults
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        return refusal_log.drain_data_faults(self)
 
     def _note_data_fault(
         self, symbol: str, direction: str, fault: str, detail: str,
     ) -> None:
-        """Record and log one UNMEASURABLE symbol. Never raises.
-
-        The log line deliberately says "skipped" and "UNMEASURABLE", not
-        "rejected": the constructor did not judge this trade, it could not
-        measure the symbol. `_DropReasonCapture` still picks the line up
-        (so the symbol is never silently absent from `last_drop_reasons`),
-        and the caller reads `last_data_faults` FIRST to file it under the
-        right class.
-        """
-        try:
-            key = str(symbol or "").strip().upper()
-            self.last_data_faults[key] = {
-                "fault": str(fault), "detail": str(detail),
-                "direction": str(direction or ""),
-            }
-        except Exception:  # noqa: BLE001 — a record side-channel must never raise
-            pass
-        logger.warning(
-            "Constructor: %s %s skipped — UNMEASURABLE, a data fault and "
-            "not a trade judgement [%s]: %s",
-            "SHORT" if str(direction).lower() == "short" else "BUY",
-            symbol, fault, detail,
-        )
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        refusal_log._note_data_fault(self, symbol, direction, fault, detail)
 
 
     def drain_refusals(self) -> dict[str, dict[str, str]]:
-        """Return every structured refusal since the last drain, and clear.
-
-        See `last_refusals`. A fresh dict, so the caller can hold it after
-        this instance moves on to the next session.
-        """
-        refusals = dict(self.last_refusals)
-        self.last_refusals = {}
-        return refusals
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        return refusal_log.drain_refusals(self)
 
     #: Parity stand-downs (owner ruling 2026-10-01, board item 218).
     #: {SYMBOL: {"reason", "detail", "direction"}} for every name the parity
@@ -264,131 +232,35 @@ class PortfolioConstructor:
     PARITY_STANDDOWN_REWARD_INSIDE_NOISE = "reward_inside_noise_floor"
 
     def _parity_verdict(self, entry_price, stop_loss, derivation, is_short):
-        """The ONE parity test. Returns `(refuse, ratio, standdown)`.
-
-        Called from `_resolve_entry_and_stop` (construction) and from
-        `real_reward_risk_preview` (PM eligibility/ranking) so the two
-        cannot disagree. Before 2026-10-01's second pass the preview did
-        not run it at all, so a name could rank, be proposed, and then die
-        silently at construction — the exact divergence
-        `real_reward_risk_preview` was built to close.
-
-        THREE STAND-DOWNS, all of them "the numerator is not a number this
-        code believes", and all recorded rather than silent:
-
-        * no structural level found at all — refusing on the ATR
-          projection would be refusing on an invented number, which
-          doctrine bars;
-        * the level is PAST the horizon reach, in which case
-          `derive_structural_target` has already ruled it unreachable and
-          returned a measured-move target instead, while still reporting
-          the level in `level_used`. Crediting reward from a price the
-          same function just declared unreachable overstates the reward;
-        * the reward sits INSIDE the one-session noise floor
-          (`target_inside_noise`), i.e. the code has already labelled the
-          reward noise. Refusing on a figure labelled noise is refusing on
-          a number the desk does not believe.
-        """
-        level = getattr(derivation, "level_used", None)
-        if level is None:
-            return (False, None, self.PARITY_STANDDOWN_NO_LEVEL)
-        if getattr(derivation, "basis", "") != "structural_level":
-            return (False, None, self.PARITY_STANDDOWN_LEVEL_PAST_REACH)
-        if getattr(derivation, "target_inside_noise", False):
-            return (False, None, self.PARITY_STANDDOWN_REWARD_INSIDE_NOISE)
-        refuse, ratio = reward_risk_parity_refuses(
-            entry_price, stop_loss, level,
-            is_short=is_short, reward_is_measured_level=True,
-        )
-        return (refuse, ratio, None)
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        return refusal_log._parity_verdict(self, entry_price, stop_loss, derivation, is_short)
 
     def _note_parity_standdown(self, symbol, direction, reason, derivation):
-        key = str(symbol or "").strip().upper()
-        if not key:
-            return
-        self.last_parity_standdowns[key] = {
-            "reason": reason, "direction": direction,
-            "basis": getattr(derivation, "basis", ""),
-            "level_used": getattr(derivation, "level_used", None),
-            "horizon_reach": getattr(derivation, "horizon_reach", None),
-        }
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        refusal_log._note_parity_standdown(self, symbol, direction, reason, derivation)
 
     def _record_parity_refusal(
         self, symbol, direction, entry, stop, level, ratio, *, stage="construction",
     ):
-        """Write ONE parity refusal to the durable table. Never raises.
-
-        The owner ruled parity a trial. A trial whose only record is an
-        English sentence in an in-memory dict, drained only for the symbols
-        that happen to reach `constructor_dropped`, cannot be judged — so
-        every number goes in its OWN column here.
-        """
-        recorder = self.refusal_recorder
-        if recorder is None:
-            return
-        recorder.record_parity_refusal(
-            symbol, direction, entry, stop, level, ratio, stage=stage,
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        refusal_log._record_parity_refusal(
+            self, symbol, direction, entry, stop, level, ratio, stage=stage,
         )
 
     def _record_subfloor_risk_target(
         self, symbol: str, direction: str | None, requested_pct: float,
     ) -> None:
-        """Record a positive sub-floor PM risk request. Never raises.
-
-        Board item 223, ruled on the risk route 2026-10-01 on the
-        adversary's measurement (NOT an owner ruling): NO deterministic
-        refusal.
-        Nothing here refuses, resizes or reroutes the target — the caller
-        continues with the request untouched. The row exists because the
-        floor is an INSTRUCTION to the portfolio manager (the prompt says
-        so, and measured compliance is 115 of 115 targets carrying a risk
-        allocation), and an instruction with no evidence trail cannot tell
-        us whether it is ever broken.
-        """
-        recorder = self.refusal_recorder
-        if recorder is None:
-            return
-        recorder.record_subfloor_risk_target(
-            symbol, direction, requested_pct, self.cfg.min_risk_pct,
-        )
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        refusal_log._record_subfloor_risk_target(self, symbol, direction, requested_pct)
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
         *, only_if_unrecorded: bool = False, action: str | None = None,
     ) -> None:
-        """Record and log one NAMED trade refusal. Never raises.
-
-        The log line says "refused" so `_DropReasonCapture` also picks it
-        up (the symbol is never absent from `last_drop_reasons`), but the
-        durable record is the structured entry — the caller reads
-        `last_refusals` FIRST and files the code as data.
-
-        `only_if_unrecorded` is for the BACKSTOP callers (board item 10,
-        2026-09-14): a terminal check that fires after a more specific rule
-        has already refused the same symbol — `_resolve_entry_and_stop`'s
-        side check running on a `None` that `_widen_stop_past_noise` just
-        refused by name, say. The specific reason must win, so the backstop
-        writes nothing (and logs nothing) when this symbol already carries a
-        refusal or a data fault from this call. Without it the generic code
-        would overwrite the precise one and the fix would make the record
-        worse, not better.
-        """
-        key = str(symbol or "").strip().upper()
-        if only_if_unrecorded and (
-            key in self.last_refusals or key in self.last_data_faults
-        ):
-            return
-        try:
-            self.last_refusals[key] = {
-                "refusal": str(refusal), "detail": str(detail),
-                "direction": str(direction or ""),
-            }
-        except Exception:  # noqa: BLE001 — a record side-channel must never raise
-            pass
-        logger.warning(
-            "Constructor: %s %s refused [%s] — %s",
-            action or ("SHORT" if str(direction).lower() == "short" else "BUY"),
-            symbol, refusal, detail,
+        """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
+        refusal_log._note_refusal(
+            self, symbol, direction, refusal, detail,
+            only_if_unrecorded=only_if_unrecorded, action=action,
         )
 
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
@@ -1259,46 +1131,10 @@ class PortfolioConstructor:
         self, target: TargetPosition, market_price: float | None,
         live_stop: float | None,
     ) -> tuple[float | None, float | None]:
-        """(current price, live broker stop) for a trim of an unanalysed
-        holding, or (None, None) after filing a named refusal.
-
-        §2.1's own formula, applied to the position as it stands: shares to
-        keep = equity x target risk / |price - live stop|. The stop must sit on
-        the losing side of the price (below for a long, above for a short) —
-        otherwise it bounds no loss and cannot size anything.
-        """
-        import math as _math
-        sym = target.symbol
-        is_short = target.direction == "short"
-        action = "COVER" if is_short else "SELL"
-        price = float(market_price) if market_price else 0.0
-        stop = float(live_stop) if live_stop else 0.0
-        usable = (
-            _math.isfinite(price) and _math.isfinite(stop) and price > 0
-            and stop > 0 and (stop > price if is_short else stop < price)
+        """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
+        return target_derivation._held_trim_entry_and_stop(
+            self._note_refusal, target, market_price, live_stop,
         )
-        if usable:
-            return (price, stop)
-        if not stop:
-            why = "it has no live stop order at the broker"
-        elif not price:
-            why = "there is no current price for it"
-        else:
-            why = (
-                f"its live stop (${stop:,.2f}) is not "
-                f"{'above' if is_short else 'below'} the current price "
-                f"(${price:,.2f}), so it bounds no loss"
-            )
-        self._note_refusal(
-            sym, target.direction, TRIM_REFUSAL_NO_USABLE_LIVE_STOP,
-            f"the PM asked to trim {sym} to {target.risk_allocation_pct:.2f}% "
-            f"risk. {sym} was not analysed this session, so the trim can only "
-            f"be sized from the position's own stop, and {why}. The position "
-            f"is left unchanged. This is not a market data fault.",
-            action=action,
-        )
-        # drop-reason: filed just above (TRIM_REFUSAL_NO_USABLE_LIVE_STOP).
-        return (None, None)
 
     def _derive_target(
         self,
@@ -1307,154 +1143,31 @@ class PortfolioConstructor:
         entry_price: float,
         direction: str,
     ) -> TargetDerivation:
-        """Compute the take-profit from structure, or refuse by name.
-
-        This replaces reading `analysis.reference_target` as the trade's
-        target. The model's number is still passed in — as `model_target`,
-        which the derivation never uses to choose an answer and only carries
-        so the disagreement can be logged. See
-        `src/data/levels.py::derive_structural_target`.
-
-        Deterministic and cheap, so it is called from both
-        `_resolve_entry_and_stop` (which needs it for the reward:risk check
-        after widening) and the builders (which need the number itself)
-        rather than being threaded through as state. Same inputs, same
-        answer, both times.
-        """
-        if analysis is None:
-            # The desk holds no technical analysis for this symbol at all.
-            # Every derivation input is absent at once, so this is named
-            # for what it is rather than for the first missing field.
-            detail = (
-                "DATA FAULT: no technical analysis exists for this symbol "
-                "this session — nothing to measure a target or a stop from"
-            )
-            self._note_data_fault(symbol, direction, FAULT_NO_ANALYSIS, detail)
-            return TargetDerivation(price=None, fault=FAULT_NO_ANALYSIS, detail=detail)
-        derivation = derive_structural_target(
-            entry_price=entry_price,
-            direction=direction,
-            levels=getattr(analysis, "computed_levels", None) or [],
-            atr=getattr(analysis, "atr_14", None),
-            horizon_sessions=getattr(analysis, "expected_horizon_sessions", None),
-            setup_type=getattr(analysis, "setup_type", None),
-            model_target=getattr(analysis, "reference_target", None),
-            min_target_atr_multiple=self.cfg.min_target_atr_multiple,
-            breakout_projection_atr_multiple=self.cfg.breakout_projection_atr_multiple,
-            max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
-            max_horizon_sessions=self.cfg.max_target_horizon_sessions,
-            # What the bar history behind `computed_levels` was, so an
-            # empty list from a dead feed is a DATA fault and one from a
-            # measured, structureless chart is a refusal. `getattr` with
-            # the unknown default because older rows and hand-built
-            # analyses (backtest shim, tests) predate the field.
-            levels_coverage=getattr(analysis, "levels_coverage", None) or COVERAGE_UNKNOWN,
+        """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
+        return target_derivation._derive_target(
+            self.cfg, self._note_data_fault, self._log_target_divergence,
+            symbol, analysis, entry_price, direction,
         )
-        if derivation.fault:
-            # Recorded here, at the single funnel every derivation passes
-            # through, so the eligibility preview and order construction
-            # cannot disagree about what was unmeasurable.
-            self._note_data_fault(
-                symbol, direction, derivation.fault, derivation.detail,
-            )
-        self._log_target_divergence(symbol, derivation)
-        return derivation
 
     def _log_target_divergence(
         self, symbol: str, derivation: TargetDerivation,
     ) -> None:
-        """Delegate to `divergence_counter.log_divergence`, which logs the
-        comparison and, when a recorder is wired, writes one durable row for
-        it. Nothing is accumulated in memory."""
-        log_divergence(
-            symbol=symbol, derivation=derivation,
-            threshold_pct=self.cfg.target_divergence_warn_pct,
-            recorder=self.refusal_recorder,
+        """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
+        target_derivation._log_target_divergence(
+            self.cfg, self.refusal_recorder, symbol, derivation,
         )
 
     @staticmethod
     def _target_note(derivation: TargetDerivation) -> str:
-        """Provenance for the order's reasoning, appended after truncation.
-
-        The AI Risk Manager reads `reasoning`. It must be able to see that
-        the take-profit is a computed level rather than the analyst's number,
-        and where the two differ — otherwise it re-does the comparison in its
-        head, which is the class of error that produced two contradictory
-        reward:risk figures in one response on 2026-08-31.
-        """
-        if derivation.price is None:
-            return ""
-        note = f" [target ${derivation.price:,.2f} — {derivation.basis}]"
-        if derivation.model_target is not None and derivation.divergence_pct is not None:
-            note = (
-                f" [target ${derivation.price:,.2f} computed from "
-                f"{derivation.basis.replace('_', ' ')}; analyst's reference "
-                f"${derivation.model_target:,.2f}, "
-                f"{derivation.divergence_pct:+.1f}%]"
-            )
-        # The thin-reward fact travels WITH the target or it does not exist
-        # (2026-09-30). `derive_structural_target` now targets the nearest
-        # wall instead of stepping over it, which is the honest answer, but
-        # a $730.41 target on a $728.41 entry reads as an ordinary target to
-        # every downstream reader unless the room is stated. This string is
-        # the one place the AI Risk Manager sees the target's provenance, so
-        # the smallness goes here rather than dying in `detail`, which
-        # nothing reads on a successful derivation.
-        if derivation.target_inside_noise:
-            note = note.rstrip("]") + (
-                "; ENTIRE reward is inside one session's typical range — "
-                "thin geometry, judge it on conviction and risk, not on "
-                "this ratio]"
-            )
-        return note
+        """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
+        return target_derivation._target_note(derivation)
 
     @staticmethod
     def _current_weights(
         positions: list[Position], total_value: float,
     ) -> dict[str, float]:
-        """Current-position weights as gross-leverage percentages.
-
-        Uses the same `_gross_multiplier` convention as
-        `RiskRuleEngine.check` (risk/rules.py:28). For inverse / leveraged
-        ETFs (SH=−1x, SDS=−2x, PSQ=−1x, SQQQ=−3x) the gross multiplier
-        is the unsigned magnitude — a $10K SQQQ position consumes 30%
-        gross notional, not 10% raw, exactly as the risk engine
-        evaluates it.
-
-        Pre-fix this used raw `market_value / total_value`, so a PM
-        target_weight_pct=20 on SQQQ (intended as the 20% single-name
-        cap) computed as 20% raw in the constructor but 60% gross at
-        the engine — the engine then hard-blocked every leveraged-ETF
-        target at the ceiling, while the constructor's delta math saw
-        no trim needed. Now constructor + engine agree on the
-        semantics: target_weight_pct IS gross-leverage percentage.
-        """
-        if total_value <= 0:
-            return {}
-        # Local import to avoid the cyclic risk -> portfolio_constructor
-        # import chain at module load.
-        from src.risk.rules import position_weight_pct
-        # SIGNED, not absolute. A short has a negative qty and a negative
-        # market_value (Alpaca convention), so it lands in the map as a
-        # NEGATIVE weight. Signed is the correct choice because every consumer
-        # of this map does exposure arithmetic, not magnitude arithmetic:
-        #   - the delta loop computes `target_pct - current_pct`, and only the
-        #     signed form makes "held -8%, want 0%" read as +8% of buying to
-        #     do rather than 8% of selling;
-        #   - the close test `target_pct == 0 and current_pct > 0` must NOT
-        #     fire for a short, because a SELL on a short adds to it;
-        #   - `_build_sell` already refuses `current_pct <= 0`, so a short is
-        #     structurally excluded from the sell path rather than mis-sized.
-        # An absolute weight would make a short indistinguishable from a long
-        # of the same size at exactly the places where the direction is the
-        # whole question. The previous `p.qty > 0` filter dropped shorts from
-        # the map entirely, so `current_weights.get(sym, 0.0)` reported a held
-        # short as unheld and the delta loop would re-open it every session.
-        return {
-            p.symbol: position_weight_pct(p, total_value)
-            for p in positions
-            if p.qty != 0
-        }
+        """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
+        return sector_dial._current_weights(positions, total_value)
 
 
     def _apply_sector_dial(
@@ -1466,120 +1179,10 @@ class PortfolioConstructor:
         total_value: float,
         action: str = "BUY",
     ) -> tuple[float, str]:
-        """Spec §10.3. Shrink a crowded sector's next trade instead of vetoing it.
-
-        Returns `(allocation_pct, note)`. `allocation_pct` is RAW notional
-        percent (the units every downstream consumer spends); the sector
-        budget is GROSS, so the conversion happens here exactly once, the
-        same way the single-name clamp above does it.
-
-        Spec §12.2: the budget consulted is the one for THIS ORDER'S SIDE.
-        A crowded long book in a sector does not shrink a short into it, and
-        the reverse — "a long and a short in the same sector is not a hedge",
-        so neither is it a shared budget. This is what keeps the owner's pair
-        trade (long the leader, short the laggard in one hot sector) legal.
-
-        Returns a NEGATIVE allocation to mean "refuse" — either the sector is
-        at its absolute ceiling, or what crowding leaves is too small to be
-        worth trading. The callers already treat `<= 0` as no order.
-        """
-        from src.risk.rules import (
-            _gross_multiplier, decision_side, sector_allowance_pct,
-            sector_size_scale,
-        )
-        from src.sector_reference import _get_sector
-
-        sector = _get_sector(symbol)
-        if not sector or sector == "Unknown":
-            # Sizing (this pass) still skips the dial for an unresolved
-            # sector — a deliberate, unrelated design choice, not a gap.
-            # 2026-09-01 audit: the ENGINE (RiskRuleEngine.check, rule 5)
-            # no longer matches this — it now pools "Unknown" as its own
-            # bucket and gates it, so an order this pass declines to shrink
-            # still cannot silently over-concentrate; the engine's hard wall
-            # catches what this pass does not pre-shrink. See
-            # src/risk/rules.py rule 5's comment for the full defect.
-            return allocation_pct, ""
-
-        side = decision_side(action)
-        current_pct = sector_weights.get((sector, side), 0.0)
-        scale = sector_size_scale(
-            current_pct,
-            soft_cap_pct=self.cfg.max_sector_pct,
-            hard_cap_pct=self.cfg.max_sector_hard_pct,
-        )
-        allowance_gross = sector_allowance_pct(
-            current_pct,
-            soft_cap_pct=self.cfg.max_sector_pct,
-            hard_cap_pct=self.cfg.max_sector_hard_pct,
-        )
-        gross_mul = _gross_multiplier(symbol)
-        # Below the diversification target the dial is inert (scale == 1.0)
-        # and the allowance is wider than any single name may take anyway —
-        # say nothing, change nothing, so an uncrowded trade's audit trail
-        # is not cluttered with a cap that never bound.
-        scaled = allocation_pct * scale
-        allowance_raw = allowance_gross / gross_mul
-        final = min(scaled, allowance_raw)
-        if final >= allocation_pct:
-            return allocation_pct, ""
-
-        if scale <= 0.0 or allowance_raw <= 0.0:
-            # Board item 10 (2026-09-14, second pass). Both dial refusals
-            # logged a sentence the capture's regex happens to match, so
-            # they were never invisible — but a matched sentence lands as a
-            # generic `constructor_dropped` row, not as a code the funnel
-            # can count. Filed here rather than at the two `return None`
-            # sites in the builders, because only this method knows WHICH
-            # of the two ends fired.
-            self._note_refusal(
-                symbol, "short" if side == "short" else "long",
-                STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
-                f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
-                f"equity, at or past the {self.cfg.max_sector_hard_pct:.0f}% "
-                f"absolute ceiling; no size is available. Concentration "
-                f"scales size, but not without end.",
-            )
-            return -1.0, (
-                f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
-                f"at {current_pct:.1f}% of equity, at or past the "
-                f"{self.cfg.max_sector_hard_pct:.0f}% absolute ceiling. "
-                f"Concentration scales size, but not without end]"
-            )
-
-        # Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity
-        # MRVL trade was refused here as "under the $500 minimum order ...
-        # pays full commission"). `min_order_usd` was an arbitrary flat $500
-        # with no broker minimum behind it (config/number_ledger.yaml), and
-        # Alpaca charges NO stock commission — the refusal was a bad
-        # decision justified by a false reason. A sector-crowded trade is no
-        # longer refused for notional size; it goes through at whatever
-        # `final` leaves, however small (no commission + fractional shares
-        # mean a small trade is not actually costly to hold). This
-        # deliberately does NOT invent a new, arbitrary sliver threshold —
-        # see the board note for why. `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER`
-        # is kept defined (tests reference it) even though this path no
-        # longer raises it.
-
-        logger.info(
-            "Constructor: %s size scaled for sector crowding "
-            "(%.2f%% → %.2f%%; sector '%s' at %.1f%% gross, target %.0f%%, "
-            "ceiling %.0f%%, dial %.2f)",
-            symbol, allocation_pct, final, sector, current_pct,
-            self.cfg.max_sector_pct, self.cfg.max_sector_hard_pct, scale,
-        )
-        # Provenance for the AI Risk Manager and the owner. A smaller position
-        # than the PM asked for must never be silently applied — someone
-        # seeing an unexpectedly small position has to be able to find out
-        # why, and this is the string that tells them.
-        return final, (
-            f" [constructor: size scaled {allocation_pct:.2f}% → {final:.2f}% "
-            f"because sector '{sector}' ({side} side) is already "
-            f"{current_pct:.1f}% of equity, over the "
-            f"{self.cfg.max_sector_pct:.0f}% concentration "
-            f"target. The idea was judged on its own merits and taken, just "
-            f"smaller; it is refused only past {self.cfg.max_sector_hard_pct:.0f}%. "
-            f"Deterministic, not PM inconsistency]"
+        """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
+        return sector_dial._apply_sector_dial(
+            self.cfg, self._note_refusal, symbol, allocation_pct,
+            sector_weights=sector_weights, total_value=total_value, action=action,
         )
 
     def _accrue_sector(
@@ -1587,30 +1190,5 @@ class PortfolioConstructor:
         sector_weights: dict[tuple[str, str], float],
         decision: TradeDecision,
     ) -> None:
-        """Book an order's GROSS sector consumption so the NEXT order in the
-        same batch sees a book that already contains it.
-
-        Without this, three targets in one crowded sector would each be sized
-        against the same stale starting weight and collectively breach the
-        ceiling — the identical accumulator the pipeline's risk filter keeps
-        in `pending_sector_investment`, for the identical reason.
-        """
-        from src.risk.rules import _gross_multiplier, decision_side
-        from src.sector_reference import _get_sector
-        if decision.action not in ("BUY", "SHORT"):
-            return
-        sector = _get_sector(decision.symbol)
-        # Board item 224 recording: keep what this lookup said, including
-        # that it said nothing. None means "could not determine", and the
-        # realised-weights row stores it as NULL rather than as a bucket.
-        self.last_order_sectors[decision.symbol] = (
-            sector if sector and sector != "Unknown" else None
-        )
-        if not sector or sector == "Unknown":
-            return
-        # Spec §12.2 — into THIS order's side. A SHORT booked into the long
-        # bucket would shrink the next long for crowding that is not there.
-        key = (sector, decision_side(decision.action))
-        sector_weights[key] = sector_weights.get(key, 0.0) + (
-            decision.allocation_pct * _gross_multiplier(decision.symbol)
-        )
+        """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
+        sector_dial._accrue_sector(self.last_order_sectors, sector_weights, decision)
