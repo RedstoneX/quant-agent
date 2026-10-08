@@ -137,3 +137,77 @@ def test_coverage_is_reported_and_enforcement_state_is_explicit():
     scripts, real, named = gate.coverage()
     assert scripts >= real >= named > 0
     assert gate.ENFORCE_BEHAVIOURAL is False
+
+
+# --- allow-lists and ruff exceptions: additions need the line, shrinking does not ---
+
+_ALLOW = "config/check_allowlists/example.txt"
+_PYPROJECT = ('[project]\nname = "x"\n\n[tool.ruff.lint.per-file-ignores]\n'
+              '"src/a.py" = ["E501"]\n\n[tool.ruff.lint.mccabe]\nmax-complexity = 10\n')
+
+
+def _limits_base(tmp_path: Path) -> tuple[Path, str]:
+    repo = _repo(tmp_path)
+    _write(repo, _ALLOW, "# comment\nsrc/a.py\nsrc/b.py\n")
+    _write(repo, "pyproject.toml", _PYPROJECT)
+    _commit(repo, "base", _ALLOW, "pyproject.toml")
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    return repo, sha
+
+
+def test_an_added_allowlist_line_is_refused_without_the_line(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, _ALLOW, "# comment\nsrc/a.py\nsrc/b.py\nsrc/c.py\n")
+    _commit(repo, "grow", _ALLOW)
+    out = _problems(repo, base)
+    assert out and _ALLOW in out[0]
+
+
+def test_an_added_allowlist_line_passes_with_the_line(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, _ALLOW, "# comment\nsrc/a.py\nsrc/b.py\nsrc/c.py\n")
+    _commit(repo, "grow\n\n" + JUSTIFIED, _ALLOW)
+    assert _problems(repo, base) == []
+
+
+def test_removing_an_allowlist_line_or_editing_a_comment_passes(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, _ALLOW, "# a new comment\nsrc/a.py\n")
+    _commit(repo, "shrink", _ALLOW)
+    assert _problems(repo, base) == []
+
+
+def test_a_new_allowlist_file_with_entries_is_refused(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, "config/check_allowlists/new.txt", "src/z.py\n")
+    _commit(repo, "new list", "config/check_allowlists/new.txt")
+    assert _problems(repo, base)
+
+
+def test_a_pyproject_per_file_ignore_addition_is_refused(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, "pyproject.toml", _PYPROJECT.replace(
+        '"src/a.py" = ["E501"]\n', '"src/a.py" = ["E501"]\n"src/b.py" = ["C901"]\n'))
+    _commit(repo, "ignore", "pyproject.toml")
+    out = _problems(repo, base)
+    assert out and "pyproject.toml" in out[0]
+
+
+def test_a_raised_ruff_limit_is_refused_and_a_removed_ignore_passes(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, "pyproject.toml", _PYPROJECT.replace("max-complexity = 10", "max-complexity = 20"))
+    _commit(repo, "raise", "pyproject.toml")
+    assert _problems(repo, base)
+    (tmp_path / "two").mkdir()
+    repo2, base2 = _limits_base(tmp_path / "two")
+    _write(repo2, "pyproject.toml", _PYPROJECT.replace('"src/a.py" = ["E501"]\n', ""))
+    _commit(repo2, "drop ignore", "pyproject.toml")
+    assert _problems(repo2, base2) == []
+
+
+def test_pyproject_edits_outside_ruff_tables_are_not_caught(tmp_path):
+    repo, base = _limits_base(tmp_path)
+    _write(repo, "pyproject.toml", _PYPROJECT.replace('name = "x"', 'name = "y"'))
+    _commit(repo, "rename", "pyproject.toml")
+    assert _problems(repo, base) == []
