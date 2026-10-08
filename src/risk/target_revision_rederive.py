@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from src.data.levels import TargetDerivation, derive_structural_target
+from src.data.levels import COVERAGE_UNKNOWN, TargetDerivation, derive_structural_target
 from src.risk.target_revision_basis import (
     REANCHORED_BASIS,
     REVISION_BEHIND_PRICE,
