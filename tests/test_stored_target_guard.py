@@ -116,12 +116,23 @@ def test_there_is_exactly_one_rederivation_body():
     """Both entry points route through `_rederive_on_todays_bars`. A second
     implementation of the same number is how a desk ends up with a target
     that disagrees with itself depending on which caller asked."""
-    body = pathlib.Path(tr.__file__).read_text()
+    # The helper was lifted into its own module (2026-10-08 split); every
+    # target_revision* module is read, so a call cannot escape by moving file.
+    files = sorted(pathlib.Path(tr.__file__).parent.glob("target_revision*.py"))
+    home = pathlib.Path(tr.__file__).with_name("target_revision_rederive.py")
+    assert home in files
+    for path in files:
+        body = path.read_text()
+        if path != home:
+            assert "derive_structural_target(" not in body, (
+                f"a derivation call escaped the shared helper into {path.name}"
+            )
+    body = home.read_text()
     assert body.count("derive_structural_target(") >= 1
     # Every call to the levels derivation lives inside the shared helper.
     helper_start = body.index("def _rederive_on_todays_bars")
     before = body[:helper_start]
-    assert "derive_structural_target(\n" not in before, (
+    assert "derive_structural_target(" not in before, (
         "a derivation call escaped the shared helper"
     )
 

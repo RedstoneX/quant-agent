@@ -8548,15 +8548,15 @@ numbers:
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
       parameter was renamed to match.
-  - id: src.risk.target_revision.levels_still_in_the_way(break_margin_atr_multiple)
+  - id: src.risk.target_revision_basis.levels_still_in_the_way(break_margin_atr_multiple)
     value: 1
     status: derived
-    site: src/risk/target_revision.py
+    site: src/risk/target_revision_basis.py
     derived_from: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py::levels_still_in_the_way).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision_basis.py::levels_still_in_the_way).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
