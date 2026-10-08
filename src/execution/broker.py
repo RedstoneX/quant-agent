@@ -64,6 +64,8 @@ from src.execution.broker_parts.market_data import (  # noqa: F401 (re-exports k
     LivePrice, _BROKER_HTTP_TIMEOUT, _install_http_timeout, MarketData,
 )
 
+from src.execution.broker_parts.stop_order_snapshot import snapshot_stop_order
+
 logger = logging.getLogger(__name__)
 
 # `_PLAIN_PRICE_LABELS` moved to src/execution/broker_parts/order_desk.py (re-exported above).
@@ -440,6 +442,9 @@ class AlpacaBroker:
 
     def get_latest_quote(self, *args, **kwargs):
         return self._market_data().get_latest_quote(*args, **kwargs)
+
+    def read_latest_trade_prints(self, *args, **kwargs):
+        return self._market_data().read_latest_trade_prints(*args, **kwargs)
 
     def get_intraday_snapshots(self, *args, **kwargs):
         return self._market_data().get_intraday_snapshots(*args, **kwargs)
@@ -1385,28 +1390,7 @@ class AlpacaBroker:
                 stop_orders.append(order)
         return stop_orders
 
-    @staticmethod
-    def _snapshot_stop_order(order) -> dict | None:
-        try:
-            qty = float(getattr(order, "qty", 0) or 0)
-        except (TypeError, ValueError):
-            qty = 0.0
-        try:
-            stop_price = float(getattr(order, "stop_price", 0) or 0)
-        except (TypeError, ValueError):
-            stop_price = 0.0
-        try:
-            limit_price = float(getattr(order, "limit_price", 0) or 0)
-        except (TypeError, ValueError):
-            limit_price = 0.0
-        if qty <= 0 or stop_price <= 0:
-            return None
-        return {
-            "id": str(order.id),
-            "qty": qty,
-            "stop_price": stop_price,
-            "limit_price": limit_price or None,
-        }
+    _snapshot_stop_order = staticmethod(snapshot_stop_order)
 
     def _submit_stop_limit_order(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""

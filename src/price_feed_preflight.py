@@ -26,7 +26,6 @@ import time
 from datetime import timedelta
 
 from src.config.llm_cost import INTRA_CHECK_TICK_MINUTES
-from src.execution.broker_parts.trade_prints import read_latest_trade_prints
 from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S
 from src.pipeline_candidate_records import _record_execution_skip
 from src.refusal_errors import PriceReadFailed
@@ -143,7 +142,10 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
             wait_s = min(wait_s * 2, BACKOFF_MAX_S)
         asks += 1
         try:
-            prints = read_latest_trade_prints(broker, list(pending))
+            # Explicit capability check: a stub broker that does not declare
+            # the batched reader has nothing to re-ask (absence stands below).
+            prints = (broker.read_latest_trade_prints(list(pending))
+                      if hasattr(broker, "read_latest_trade_prints") else None)
         except PriceReadFailed as exc:
             fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
                                              symbol=",".join(pending))

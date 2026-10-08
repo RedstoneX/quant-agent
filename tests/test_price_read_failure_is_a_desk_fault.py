@@ -128,7 +128,7 @@ def _run(pipeline, decisions, monkeypatch, positions=None, session="midday"):
     if preflight._sleep is __import__("time").sleep:
         monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
         monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
-        monkeypatch.setattr(preflight, "read_latest_trade_prints", lambda _b, _s: {})
+        monkeypatch.setattr(pipeline.broker, "read_latest_trade_prints", lambda _s: {}, raising=False)
     ctx = RunContext.start(session)
     ctx.cash, ctx.total_value, ctx.last_equity = 50_000.0, 100_000.0, 100_000.0
     ctx.positions, ctx.symbols_bars = positions or [], {}
@@ -278,7 +278,7 @@ def _waiting_rig(monkeypatch, prints_on_ask: int | None, *, slot_s: float = 60.0
         return {}
 
     pipeline = _pipeline(stamped)
-    monkeypatch.setattr(preflight, "read_latest_trade_prints", lambda _b, syms: batch(syms))
+    monkeypatch.setattr(pipeline.broker, "read_latest_trade_prints", batch, raising=False)
     monkeypatch.setattr(preflight, "_sleep", sleeps.append)
     monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: slot_s)
     return pipeline, batch_calls, sleeps
@@ -335,10 +335,10 @@ def test_a_batched_reask_that_fails_is_the_desk_fault(monkeypatch):
     import src.price_feed_preflight as preflight
     pipeline = _pipeline(lambda s: _QUOTE_ONLY if s == "THIN" else _print(100.0))
 
-    def batch(_broker, _symbols):
+    def batch(_symbols):
         raise PriceReadFailed("THIN: price read failed on all attempts")
 
-    monkeypatch.setattr(preflight, "read_latest_trade_prints", batch)
+    monkeypatch.setattr(pipeline.broker, "read_latest_trade_prints", batch, raising=False)
     monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
     monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
     skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
@@ -391,16 +391,15 @@ def test_broker_batched_read_is_one_request_and_keeps_only_today_prints():
         "CCC": SimpleNamespace(price=0, timestamp=None),
     }
     b._data_client = client
-    from src.execution.broker_parts.trade_prints import read_latest_trade_prints
-    got = read_latest_trade_prints(b, ["AAA", "BBB", "CCC"])
+    got = b.read_latest_trade_prints(["AAA", "BBB", "CCC"])
     assert client.get_stock_latest_trade.call_count == 1
     assert set(got) == {"AAA"} and got["AAA"].is_today_print and got["AAA"].price == 10.0
 
 
 def test_a_stub_broker_has_nothing_to_reask_so_absence_stands(monkeypatch):
-    from src.execution.broker_parts.trade_prints import read_latest_trade_prints
-    assert read_latest_trade_prints(MagicMock(), ["AAA"]) is None
     pipeline = _pipeline(lambda s: _QUOTE_ONLY)
+    del pipeline.broker.read_latest_trade_prints  # this stub declares no batched reader
+    assert not hasattr(pipeline.broker, "read_latest_trade_prints")
     import src.price_feed_preflight as preflight
     monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
     monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
