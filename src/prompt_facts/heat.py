@@ -6,6 +6,7 @@ constructor argument, so this builds and runs with no pipeline behind it.
 """
 
 import logging
+from src.sentinel.counted import record_swallowed
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -46,5 +47,5 @@ class PromptHeat:
                 exclude_symbols=excluded, unreadable_stops=unreadable,
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("portfolio heat build failed: %s", e)
+            record_swallowed("prompt_facts.heat._build_portfolio_heat", e, log=logger)
             return None

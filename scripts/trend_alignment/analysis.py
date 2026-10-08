@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import statistics
 
-import trend_alignment  # noqa: F401  (puts the repo root on sys.path)
 from src.data.levels import MAX_HORIZON_SESSIONS  # noqa: E402
 from src.data.technical import ATR_PERIOD, compute_indicators  # noqa: E402
 from src.risk.exit_guard import BREAK_CONFIRMATION_ATR_MULTIPLE  # noqa: E402
@@ -13,7 +12,7 @@ from src.risk.trailing import (  # noqa: E402
     _swing_highs,
     _swing_lows,
 )
-from trend_alignment.data import MeasurementDataError  # noqa: E402,F401
+from .data import MeasurementDataError  # noqa: E402,F401
 
 #: The measurement's reference window. The desk's own horizon cap, not a pick.
 REF = MAX_HORIZON_SESSIONS

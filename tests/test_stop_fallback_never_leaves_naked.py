@@ -38,6 +38,14 @@ def _stop(oid, stop, qty=10, otype="stop", limit=None):
     return o
 
 
+def _unamendable(*args, **kwargs):
+    """A bracket parent: the one shape item 201 still sends to cancel+resubmit
+    (stop_invariant.py fits quantities in place on every amendable shape)."""
+    o = _stop(*args, **kwargs)
+    o.legs = [MagicMock()]
+    return o
+
+
 def _pos(qty):
     p = MagicMock()
     p.symbol, p.qty = "ZZZ", qty
@@ -48,7 +56,7 @@ def _fallback_broker(tc, *, market_open=True):
     """A broker whose shape (fractional coverage repair) forces the fallback."""
     b, client = _broker(tc, market_open=market_open)
     b._list_open_stop_orders_by_side = MagicMock(
-        return_value=([_stop("s1", 100.0, qty=10)], []))
+        return_value=([_unamendable("s1", 100.0, qty=10)], []))
     b._list_open_protective_stop_orders = MagicMock(return_value=[])
     b.get_positions = MagicMock(return_value=[_pos(10.5)])
     return b, client

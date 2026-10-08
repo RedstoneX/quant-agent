@@ -8,6 +8,7 @@ keyword-only constructor argument, so this builds and runs with no pipeline behi
 import logging
 
 from src.trading_calendar import et_today
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ReviewGrading:
         try:
             all_rows = self.db.get_trades(limit=200, executed_only=True)
         except Exception as e:
-            logger.warning("recent_sells: db fetch failed: %s", e)
+            record_swallowed("prompt_facts.review.grading._build_recent_sells_for_grading", e, log=logger)
             return []
         if not all_rows:
             return []
@@ -122,7 +123,7 @@ class ReviewGrading:
         try:
             all_rows = self.db.get_trades(limit=200, executed_only=True)
         except Exception as e:
-            logger.warning("recent_buys: db fetch failed: %s", e)
+            record_swallowed("prompt_facts.review.grading._build_recent_buys_for_grading", e, log=logger)
             return []
         if not all_rows:
             return []

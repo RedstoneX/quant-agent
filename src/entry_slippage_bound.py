@@ -32,6 +32,7 @@ from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import json
 import logging
 from typing import Any, NamedTuple
+from src.sentinel.counted import record_swallowed_here
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ def latest_daily_range_pct(bars: Any) -> float | None:
     try:
         last = (bars or [])[-1]
     except Exception:  # noqa: BLE001
+        record_swallowed_here("entry_slippage_bound.latest_daily_range_pct", log=logger)
         return None
     try:
         high = float(last["high"] if isinstance(last, dict) else last.high)

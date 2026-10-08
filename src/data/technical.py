@@ -5,6 +5,7 @@ import pandas as pd
 import ta
 
 from src.models import OHLCV, TechnicalIndicators
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -191,5 +192,5 @@ def atr_for_symbol(market, symbol: str) -> float | None:
         atr = compute_indicators(symbol, bars).atr_14
         return float(atr) if atr and atr > 0 else None
     except Exception as e:  # noqa: BLE001
-        logger.warning("ATR fetch failed for %s: %s", symbol, e)
+        record_swallowed("data.technical.atr_for_symbol", e, log=logger)
         return None

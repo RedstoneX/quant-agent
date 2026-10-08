@@ -11,7 +11,6 @@ import sys
 import time
 from datetime import date
 
-import trend_alignment  # noqa: F401  (puts the repo root on sys.path)
 from src.models import OHLCV  # noqa: E402
 
 

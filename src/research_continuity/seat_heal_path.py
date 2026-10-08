@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from src.sentinel.counted import record_swallowed
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -189,7 +190,9 @@ class SeatHealer:
             self._record_heal(ctx, blocked, alert=True)
             return False
         except Exception as exc:  # noqa: BLE001
-            logger.warning("seat heal: cost-circuit preflight failed for %s: %s", seat, exc)
+            record_swallowed(
+                "research_continuity.seat_heal_path._try_one_paid_research_retry", exc, log=logger
+            )
             return False
         ctx.heal_paid_retries = record_paid_retry(retries, seat)
         try:
