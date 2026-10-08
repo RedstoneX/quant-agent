@@ -3,13 +3,16 @@ src.conviction_ledger -> src.execution.stop_records
 src.coverage_watchdog -> src.execution.scale_in
 src.coverage_watchdog -> src.execution.stop_records
 src.coverage_watchdog -> src.execution.stop_repair
+src.exits_parts.trails -> src.execution.exit_path_records
+src.exits_parts.trails -> src.execution.scale_in
+src.exits_parts.trails -> src.execution.stop_read
+src.exits_parts.trails -> src.execution.stop_records
 src.notifier.costs -> src.execution.broker
 src.pipeline -> src.execution.broker
 src.pipeline -> src.execution.cash_sweep
 src.pipeline -> src.execution.stop_read
 src.pipeline_entry_orders -> src.execution.broker
 src.pipeline_entry_orders -> src.execution.cash_sweep
-src.pipeline_exits -> src.execution.exit_path_records
 src.pipeline_exits -> src.execution.scale_in
 src.pipeline_exits -> src.execution.stop_read
 src.pipeline_exits -> src.execution.stop_records
