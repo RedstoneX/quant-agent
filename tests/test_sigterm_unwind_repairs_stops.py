@@ -27,8 +27,12 @@ def _morning_pipeline(calls, *, repair_fails_on_kill=False):
     p._restore_sigterm = lambda prior: calls.append("restore")
 
     def reconcile():
-        calls.append("repair")
-        if repair_fails_on_kill and calls.count("repair") == 2:
+        calls.append("session-start reconcile")
+        return []
+
+    def add_missing():
+        calls.append("kill repair")
+        if repair_fails_on_kill:
             raise RuntimeError("broker 503")
         return []
 
@@ -36,6 +40,7 @@ def _morning_pipeline(calls, *, repair_fails_on_kill=False):
         raise SessionTerminated("morning: SIGTERM from the run wrapper")
 
     p._reconcile_stop_coverage = reconcile
+    p._add_missing_stops = add_missing
     p._release_retired_cash_park = killed
     p._discharge_deferred_gross_ceiling = lambda ctx: calls.append("discharge")
     p._reconcile_fills = lambda ctx: calls.append("settle")
@@ -49,7 +54,10 @@ def test_morning_kill_repairs_stops_before_any_settle_step():
     with pytest.raises(SessionTerminated):
         p.run_morning()
     # Session-start repair, then the kill's repair, THEN the settle steps.
-    assert calls == ["repair", "repair", "discharge", "settle", "sync", "restore"]
+    assert calls == [
+        "session-start reconcile", "kill repair",
+        "discharge", "settle", "sync", "restore",
+    ]
 
 
 def test_a_failed_repair_is_loud_and_the_unwind_still_runs(caplog):
@@ -63,8 +71,17 @@ def test_a_failed_repair_is_loud_and_the_unwind_still_runs(caplog):
     assert failed and failed[0].exc_info is not None, "failure must carry its traceback"
 
 
+class _AddOnlyBroker(MagicMock):
+    """Fails the test on ANY cancel or replace: the kill path must only add."""
+
+    def __getattr__(self, name):
+        if "cancel" in name or "replace" in name:
+            raise AssertionError(f"kill path touched broker.{name}")
+        return super().__getattr__(name)
+
+
 def _coverage_pipeline(resting):
-    broker = MagicMock()
+    broker = _AddOnlyBroker()
     broker.get_positions.return_value = [MagicMock(symbol="AAA", qty=12.0)]
     broker.snapshot_protective_stops.return_value = (True, resting)
     broker.get_latest_price.return_value = 100.0
@@ -86,16 +103,20 @@ def _coverage_pipeline(resting):
 ])
 def test_the_kill_repair_reads_the_broker_and_never_duplicates(resting, placed):
     p = _coverage_pipeline(resting)
+    owed_levels = MagicMock(side_effect=AssertionError("owed-level replace ran"))
     with patch("time.sleep"), \
-            patch("src.pipeline_protection._market_is_open_now", return_value=True):
+            patch("src.pipeline_protection._market_is_open_now", return_value=True), \
+            patch("src.pipeline_protection.drain_owed_stop_levels", owed_levels), \
+            patch("src.execution.pending_stop_drain.drain_safely", owed_levels):
         p._repair_stops_on_kill("test")
     assert p.broker._submit_protective_stop_retrying.call_count == placed
+    assert not owed_levels.called
 
 
 def test_the_intraday_scan_installs_the_unwind_and_repairs_on_a_real_sigterm(monkeypatch):
     calls: list[str] = []
     p = build_pipeline()
-    p._reconcile_stop_coverage = lambda: calls.append("repair") or []
+    p._add_missing_stops = lambda: calls.append("repair") or []
 
     def body(self, *args, **kwargs):
         calls.append("body")
