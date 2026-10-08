@@ -6,6 +6,8 @@ import os
 from datetime import date
 from pathlib import Path
 
+from src.sentinel.counted import record_swallowed
+
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,7 @@ class ReleaseScheduleCache:
                 return {}
             raw = json.loads(self.path.read_text()) or {}
         except Exception as e:  # noqa: BLE001 — a broken cache is a miss
+            record_swallowed("data.event_calendar.macro_cache.read", e, log=logger)
             logger.warning("Release-schedule cache unreadable (%s) — ignoring", e)
             return {}
         if raw.get("schema") != RELEASE_SCHEDULE_CACHE_SCHEMA:
@@ -91,7 +94,8 @@ class ReleaseScheduleCache:
             dates = sorted(
                 date.fromisoformat(str(d)) for d in (entry.get("dates") or [])
             )
-        except Exception:  # noqa: BLE001 — a malformed entry is a miss
+        except Exception as e:  # noqa: BLE001 — a malformed entry is a miss
+            record_swallowed("data.event_calendar.macro_cache.load", e, log=logger, release_id=release_id)
             return None
         if not dates:
             return None

@@ -6,7 +6,7 @@ import random
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.request import Request, urlopen
+from src.data import news as _transport  # the one module whose `urlopen` the rehearsal rebinds
 
 from src.data.event_calendar.fomc import (
     FOMC_JSON_CALENDAR_URL,
@@ -126,8 +126,8 @@ class FOMCCalendarProvider:
         """One GET returning raw bytes. Split out so tests substitute a
         transport instead of patching urllib globally — the same seam
         `MacroEventCalendarProvider._http_get_json` provides."""
-        request = Request(url, headers={"User-Agent": _FOMC_USER_AGENT})
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 — fixed https host
+        request = _transport.Request(url, headers={"User-Agent": _FOMC_USER_AGENT})
+        with _transport.urlopen(request, timeout=timeout) as response:  # noqa: S310 — fixed https host
             return response.read()
 
     def _fetch_document(self, url: str) -> tuple[bytes | None, str]:

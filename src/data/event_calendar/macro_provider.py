@@ -5,7 +5,7 @@ import logging
 import random
 import time
 from datetime import date, timedelta
-from urllib.request import Request, urlopen
+from src.data import news as _transport  # the one module whose `urlopen` the rehearsal rebinds
 
 from src.data.event_calendar.macro import (
     _FAILURE_REASON_MAX_LEN,
@@ -186,8 +186,8 @@ class MacroEventCalendarProvider:
     def _http_get_json(self, url: str, timeout: float) -> dict:
         """One GET returning parsed JSON. Split out so tests can substitute a
         transport without patching urllib globally."""
-        request = Request(url, headers={"User-Agent": "quant-agent event-calendar"})
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 — fixed https host
+        request = _transport.Request(url, headers={"User-Agent": "quant-agent event-calendar"})
+        with _transport.urlopen(request, timeout=timeout) as response:  # noqa: S310 — fixed https host
             payload = response.read()
         return json.loads(payload.decode("utf-8"))
 
