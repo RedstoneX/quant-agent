@@ -65,6 +65,9 @@ from src.execution.broker_parts.market_data import (  # noqa: F401 (re-exports k
 )
 
 from src.execution.broker_parts.stop_order_snapshot import snapshot_stop_order
+from src.execution.broker_parts import entry_protection as _entry_protection
+from src.execution.broker_parts.entry_protection import _ENTRY_SIDES  # noqa: F401 (re-export keeps the name importable)
+from src.execution.broker_parts import stop_cancel as _stop_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +136,7 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 # `_install_http_timeout` moved to src/execution/broker_parts/market_data.py (re-exported above).
 
 
-#: Entry sides `place_entry_protection` will derive a protective side from.
-#: Anything else is refused rather than guessed — see the fail-closed note in
-#: `place_entry_protection`. "sell" and "sell_short" both open/extend a short.
-_ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
+# `_ENTRY_SIDES` moved to src/execution/broker_parts/entry_protection.py (re-exported above).
 
 # `PROTECTIVE_ORDER_ACTIVE_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
@@ -501,248 +501,30 @@ class AlpacaBroker:
     ) -> tuple[bool, list[dict]]:
         """List + snapshot open protective stop orders WITHOUT cancelling them.
 
-        audit F1 (review #1): the write-ahead recovery row must be
-        persisted BEFORE any broker mutation. Splitting the read
-        (snapshot) from the write (cancel) lets the pipeline do
-        snapshot → persist WAL → cancel, so a process kill anywhere
-        from the cancel onward is recoverable. Previously the WAL insert
-        ran AFTER cancel_protective_stops had already cancelled the
-        stops at the broker — a kill in that window left a naked
-        position with no recovery intent.
-
-        `side` is the STOP order's own side: "sell" (default) finds the
-        stops protecting a long; "buy" finds the stops protecting a short.
-        Every existing caller cancels/restores/re-protects a long being
-        SOLD, so the default is unchanged; the coverage reconciler is the
-        one caller that passes `side="buy"` to check a short.
-
-        Returns ``(ok, specs)``. ``ok`` is FALSE when the broker's own
-        order listing failed — board item 172, and this used to be the
-        single most dangerous lie on the read path.
-
-        It was documented as "always True", because a listing API error was
-        swallowed by `_list_open_protective_stop_orders` and surfaced as an
-        empty list. An empty list means "this position has no protective
-        stop", so a broker outage was reported to the desk as a CONFIRMED
-        NAKED POSITION — and the coverage reconciler then repaired against
-        it, placing a full-size stop on top of a live stop it could not
-        see. Both the strongest possible false statement about loss
-        protection and a duplicate-protection write, from one swallowed
-        exception.
-
-        Callers that ignore `ok` are no worse off than before: `specs` is
-        still empty in that case. Callers that read it can tell "there is
-        no stop" from "I could not ask", which is the whole distinction
-        item 172 exists for.
-
-        NOT true of every caller, and the first version of this docstring
-        said it was. `TradingPipeline._cancel_stops_with_write_ahead` reads
-        `ok` and skips the SELL on False, so making this return False where
-        it previously always returned True changed the EXIT path as well as
-        the read path — five exit call sites, none of them reviewed when
-        that change was made. The test pinning that skip
-        (`test_cancel_stops_with_write_ahead_skips_on_snapshot_failure`,
-        added 2026-05-16) pinned unreachable code for four months, because
-        until board item 172 `ok` could not be False [measured from
-        `git log -S`, 2026-09-23]. Nobody chose that behaviour; it was
-        inherited. What it does now is decided at that call site and
-        documented there.
-
-        THE READ IS RETRIED before it reports UNKNOWN. The listers have had
-        no retry at all: one exception and the answer was "I cannot ask",
-        which now costs a skipped exit. The desk's own derived retry shape
-        for the stop path — `_STOP_PLACEMENT_MAX_ATTEMPTS` attempts with
-        `_STOP_PLACEMENT_BACKOFF_S` backoff — is justified on the grounds
-        that "every failure worth retrying is transient: a 429, a 5xx, a
-        dropped connection". That argument is STRONGER for a read than for
-        the write it was written for: a retried read cannot double-place
-        anything. Same constants, so there is no new number here.
-        """
-        errors: list = []
-        stops: list = []
-        for attempt in range(_STOP_PLACEMENT_MAX_ATTEMPTS):
-            errors = []
-            stops = self._list_open_protective_stop_orders(
-                symbol, side=side, errors=errors,
-            )
-            if not errors:
-                break
-            if attempt + 1 < _STOP_PLACEMENT_MAX_ATTEMPTS:
-                delay = _STOP_PLACEMENT_BACKOFF_S[
-                    min(attempt, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
-                ]
-                logger.warning(
-                    "snapshot_protective_stops: listing %s's protective "
-                    "stops failed (%s) — retrying in %.1fs (attempt %d of "
-                    "%d).",
-                    symbol, "; ".join(errors), delay,
-                    attempt + 2, _STOP_PLACEMENT_MAX_ATTEMPTS,
-                )
-                time.sleep(delay)
-        if errors:
-            logger.error(
-                "snapshot_protective_stops: could not READ %s's protective "
-                "stops after %d attempts (%s) — reporting UNKNOWN, not "
-                "'no stop'.",
-                symbol, _STOP_PLACEMENT_MAX_ATTEMPTS, "; ".join(errors),
-            )
-            return False, []
-        if not stops:
-            return True, []
-        specs: list[dict] = []
-        for order in stops:
-            spec = self._snapshot_stop_order(order)
-            if spec:
-                specs.append(spec)
-        return True, specs
+        Thin shim: body moved to src/execution/broker_parts/stop_cancel.py."""
+        return _stop_cancel.snapshot_protective_stops(self, symbol, side=side)
 
     def cancel_snapshotted_stops(
         self, symbol: str, specs: list[dict],
     ) -> StopCancelOutcome:
         """Cancel pre-snapshotted protective stops by id.
 
-        Returns a :class:`StopCancelOutcome`, never a bool. Three states the
-        caller MUST distinguish: ``cleared`` (SELL may proceed), not cleared
-        with ``coverage_shrank`` False (nothing moved on net, every share is
-        still covered), and ``coverage_shrank`` True (a cancel failed, the
-        rollback also failed, and ``outcome.unprotected`` names the shares
-        that are naked at the broker right now — skip the SELL AND keep the
-        recovery row for them). That third state is what the old bare
-        ``False`` hid: two callers read it as "nothing moved" and deleted
-        the only durable intent that could re-attach the missing stops.
-        """
-        if not specs:
-            return StopCancelOutcome.nothing_to_do(symbol)
-        cancelled: list[dict] = []
-        untouched: list[dict] = []
-        cancel_failed: list[dict] = []
-        for spec in specs:
-            sid = spec.get("id")
-            if not sid:
-                # Never sent to the broker: still alive, still covering.
-                untouched.append(spec)
-                continue
-            try:
-                self.client.cancel_order_by_id(sid)
-                cancelled.append(spec)
-                record_guarded_pass(self, "cancel_snapshotted_stops.cancel", context={"symbol": symbol, "order": sid})
-            except Exception as exc:
-                record_guarded_pass(self, "cancel_snapshotted_stops.cancel", exc, log=logger,
-                           context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"})
-                cancel_failed.append(spec)
-        return settle_cancel(
-            symbol, specs, cancelled, untouched, cancel_failed,
-            self._restore_stop_orders, logger,
-        )
+        Thin shim: body moved to src/execution/broker_parts/stop_cancel.py."""
+        return _stop_cancel.cancel_snapshotted_stops(self, symbol, specs)
 
     def cancel_protective_stops(self, symbol: str) -> tuple[bool, list[dict]]:
         """Cancel all open SELL stop orders for one symbol so a fresh exit
-        order has free shares to work with.
 
-        Returns ``(success, cancelled_specs)``:
-          - ``success`` is True iff every stop was cancelled cleanly (or
-            none existed). Caller should skip the SELL on False.
-          - ``cancelled_specs`` is the list of stop snapshots (qty,
-            stop_price, limit_price) that were successfully cancelled.
-            Caller uses this to:
-              1. ``_restore_stop_orders`` if the SELL is rejected by
-                 the broker (rollback the cancellation so coverage is
-                 preserved).
-              2. ``_submit_stop_limit_order`` on the residual qty after
-                 a *partial* exit (TAKE_PROFIT / REDUCE / PARTIAL_SELL)
-                 — without this, the residual position rides naked
-                 until the next session re-attaches an OTO stop.
-
-        Why this exists: Alpaca rejects new SELL orders when shares are
-        held_for_orders by an existing protective stop — the OTO stop-loss
-        leg attached to a morning BUY, or a TRAIL_STOP placed by midday.
-        Without clearing those holds first, REDUCE / SELL / EMERGENCY_SELL
-        / TAKE_PROFIT all surface as 'insufficient qty available' rejects
-        (2026-04-25 AMZN incident, related_orders=[<TRAIL_STOP id>]).
-
-        On partial cancel failure (some succeed, then one raises) the
-        already-cancelled stops are restored before returning False —
-        same rollback discipline as ``replace_stop_loss``. The caller
-        won't proceed with the SELL anyway, so leaving partial-cancelled
-        state at the broker would just shrink coverage for no gain.
-
-        Now composed from snapshot_protective_stops +
-        cancel_snapshotted_stops (audit F1 review #1). The external
-        contract is unchanged: no stops -> (True, []); all cancelled ->
-        (True, specs); partial failure -> rolled back, (False, []).
-        Direct callers/tests are unaffected; SELL paths use the
-        pipeline's write-ahead orchestrator instead so the recovery row
-        lands before the cancel.
-        """
-        ok, specs = self.snapshot_protective_stops(symbol)
-        if not ok:
-            return False, []
-        if not specs:
-            return True, []
-        outcome = self.cancel_snapshotted_stops(symbol, specs)
-        if not outcome.cleared:
-            if outcome.coverage_shrank:
-                # This composite has no channel for a partial loss, so it
-                # must not quietly answer "nothing happened". Direct callers
-                # get the specs they now have to re-protect.
-                raise StopCoverageLost(outcome)
-            return False, []
-        return True, specs
+        Thin shim: body moved to src/execution/broker_parts/stop_cancel.py."""
+        return _stop_cancel.cancel_protective_stops(self, symbol)
 
     def cancel_stray_protective_stops(
         self, symbol: str, *, side: str = "sell",
     ) -> int:
         """Cancel every protective stop still resting on a symbol that is
-        now FLAT. Returns the count cancelled.
 
-        Board item 127(b), owner ruling 2026-09-25: a forced/emergency exit
-        fires IMMEDIATELY and never waits on stop-work, so a concurrent
-        stop-repair can re-add a protective stop inside the cancel-then-sell
-        window. Once the exit takes the position to zero shares that stop is
-        a stray — it protects nothing, the reprotect path never sees it (it
-        was placed AFTER the pre-sell snapshot, so it is not in the sell's
-        ``cancelled_specs``), and ``_reconcile_stop_coverage`` skips flat
-        symbols outright — so nothing else would ever clear it, and a stop
-        left resting on zero shares can later elect into an unintended
-        short. This is the cheap cleanup the ruling assumes in place of the
-        rejected lock-wait.
-
-        Unlike ``cancel_snapshotted_stops`` there is NO rollback: the
-        position is flat, so there is nothing to protect and a "restore"
-        would only re-place the very stray order being removed. Best-effort
-        and side-correct (``side="buy"`` finds the buy-stops that had
-        protected a short); a cancel that raises is logged and never blocks
-        the others, and the whole thing degrades to a no-op — the exit has
-        already succeeded and must not be undone by a housekeeping error.
-        """
-        try:
-            ok, specs = self.snapshot_protective_stops(symbol, side=side)
-            record_guarded_pass(self, "cancel_stray_protective_stops.list", context={"symbol": symbol, "side": side})
-        except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self, "cancel_stray_protective_stops.list", exc, log=logger,
-                       context={"symbol": symbol, "side": side, "effect": "a stray stop may still rest; the operator should confirm it is gone"})
-            return 0
-        if not ok or not specs:
-            return 0
-        cancelled = 0
-        for spec in specs:
-            sid = spec.get("id")
-            if not sid:
-                continue
-            try:
-                self.client.cancel_order_by_id(sid)
-                cancelled += 1
-                record_guarded_pass(self, "cancel_stray_protective_stops.cancel", context={"symbol": symbol, "order": sid, "side": side})
-            except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(self, "cancel_stray_protective_stops.cancel", exc, log=logger,
-                           context={"symbol": symbol, "order": sid, "side": side, "effect": "a stop may still rest on a flat position; clear it by hand"})
-        if cancelled:
-            logger.info(
-                "Cancelled %d stray protective %s-stop(s) on now-flat %s "
-                "(item 127(b): a repair re-added protection inside the "
-                "cancel-then-sell window)", cancelled, side, symbol,
-            )
-        return cancelled
+        Thin shim: body moved to src/execution/broker_parts/stop_cancel.py."""
+        return _stop_cancel.cancel_stray_protective_stops(self, symbol, side=side)
 
     def cancel_open_entry_orders(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
@@ -971,258 +753,9 @@ class AlpacaBroker:
         held_qty_before: float = 0.0,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
-        protective stop (stop-MARKET, guaranteed exit) for the ACTUAL filled
-        qty.
 
-        If the entry is STILL WORKING after the wait (slow tape, wide limit),
-        the unfilled remainder is CANCELLED first — audit round 2: the 15s
-        wait treated "still live" identically to "terminal 0-fill" and walked
-        away, so a DAY entry limit could fill hours later with no stop
-        watching it (and a resting BUY could even re-buy into a crash after an
-        emergency liquidation). Cancelling converges the order; whatever DID
-        fill by then gets its stop from the post-cancel re-read. Losing the
-        unfilled remainder is the accepted cost of protection-first.
-
-        THIS CANCEL IS THE END-OF-CYCLE CANCEL (owner-approved 2026-09-12),
-        and its timing is derived, not chosen. This desk does not run
-        continuously: it runs as separate scheduled SESSIONS — see
-        `SESSION_WINDOWS` in `src/trading_calendar.py` — each a single
-        process that analyses at the prices and levels of that moment,
-        proposes entries, submits them, protects the fills, and EXITS. New
-        entries come only from the morning session; the midday and close
-        sessions review positions. (The systemd/launchd timer ticks every 30
-        minutes, but that tick only asks `scripts/run_if_et_window.sh`
-        whether a session is due; it is not a re-scan.) So "the decision
-        cycle that created the order" is this very process, and its boundary
-        is the point where this process stops waiting for the fill and moves
-        on — which is exactly here. An entry that outlived its own session
-        would be resting on a thesis nobody is still holding: the next
-        session re-analyses from scratch at real current prices and will
-        re-propose the trade if it still wants it. Cancelling here — rather
-        than leaving a DAY order resting until 16:00 ET — is therefore
-        binding the order's life to the desk's own heartbeat, not to a
-        timeout somebody picked. There is deliberately no separate "cancel
-        after N minutes" constant: the boundary IS the end of this stage, and
-        stays correct if the session schedule ever changes. The only number
-        in play is `_ENTRY_FILL_TIMEOUT_S`, the in-cycle patience for a fill,
-        which predates this and is unchanged.
-
-        `on_unfilled_cancel`, when given, is called with a small dict
-        (`order_id`, `status`, `filled_qty`) after a still-working entry was
-        cancelled here and the post-cancel re-read shows NOTHING filled under
-        any id in its chain. The caller uses it to page the owner with the
-        prices that were tried — this method does not know them. Not invoked
-        for a partial fill (shares were acquired and the stop covers them)
-        or for an order that reached terminal on its own. Never allowed to
-        raise into this method.
-
-        `side` is the ENTRY order's own side — "buy" opens or adds to a long
-        (the only side any order path in this repo has ever submitted, hence
-        the default), "sell"/"sell_short" opens a short. The protective stop
-        is always the OPPOSITE side, at the opposite buffer: a SELL stop
-        below a long, a BUY stop above a short. See `STOP_LIMIT_BUFFER_PCT`.
-
-        `superseded_filled_qty` is shares this entry already acquired under a
-        DIFFERENT order id — the ancestors of a re-peg chain. `order_id` is
-        the last order in that chain, and Alpaca's fill counters do not carry
-        across a replacement, so the shares an ancestor filled are invisible
-        here. They are real shares in a real position, and a stop sized to
-        only the last order's fill would leave them naked. Adding them is what
-        keeps the invariant "every filled share is under a stop" true across a
-        re-peg. Default 0.0: for every caller that never re-pegs, this method
-        behaves exactly as it did before.
-
-        `cover_full_position` (long scale-in path B, 2026-09-15): after a
-        positive fill, size the protective sell to the broker's FULL
-        position quantity, not this order's fill. A partial add on a name
-        that already held shares would otherwise rearm a stop over the
-        add alone and leave the original lot naked. `held_qty_before` is
-        the fallback if the broker position cannot be read: fill + what
-        was held, the two quantities already measured, not a third number.
-
-        Returns the stop order dict, or None when nothing was placed (entry
-        filled 0 / stop submit failed). Never raises — a failure here must not
-        abort the session.
-
-        Spec §11.1 guard 1: the stop submission now RETRIES immediately and
-        hard before giving up (`_submit_protective_stop_retrying`). A None
-        return therefore means the retries were exhausted, and the position is
-        naked — the CALLER owes an owner alert on it (guard 2); the
-        coverage-reconcile auto-repair belt remains the backstop, not the
-        first line.
-        """
-        # Fail closed on a side we do not recognise, BEFORE touching the
-        # broker. `"sell" if side == "buy" else "buy"` reads harmlessly but is
-        # fail-OPEN: a typo, a None, or some future side string falls into the
-        # short branch, and a LONG then gets a BUY stop placed ABOVE it — not
-        # weak protection, but a standing order to buy more of a position that
-        # is already losing.
-        #
-        # This returns rather than raising, because the contract above is that
-        # this function never aborts a session. Returning None is the same
-        # outcome as any other protection failure: logged at ERROR, position
-        # left naked-but-KNOWN, and picked up by the coverage-reconcile
-        # auto-repair belt. Naked-and-believed-covered is the state that
-        # actually costs money, and refusing here is what prevents it.
-        normalized = (side or "").strip().lower()
-        if normalized not in _ENTRY_SIDES:
-            logger.error(
-                "entry protection: %s refusing to guess a protective side for "
-                "entry side %r (expected one of %s) — NO stop placed, position "
-                "will be left uncovered and must be repaired by reconcile",
-                symbol, side, sorted(_ENTRY_SIDES),
-            )
-            return None
-
-        try:
-            status = self.wait_for_order_terminal(
-                order_id, timeout_seconds=_ENTRY_FILL_TIMEOUT_S,
-            )
-            record_guarded_pass(self, "entry_protection.wait_terminal", context={"symbol": symbol, "order": order_id})
-        except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self, "entry_protection.wait_terminal", exc, log=logger,
-                       context={"symbol": symbol, "order": order_id, "effect": "status unknown"})
-            status = None
-
-        cancelled_here = False
-        if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
-            # Still working at the end of its cycle — cancel the remainder so
-            # it can't fill unwatched and so it stops resting on a thesis
-            # this session is about to walk away from (see the docstring).
-            # A fill can land during cancel propagation; the post-cancel
-            # re-read below protects whatever landed.
-            logger.warning(
-                "entry protection: %s entry %s still working at the end of "
-                "its session (status=%s) — cancelling the unfilled remainder "
-                "so no share can fill without a stop watching it and no "
-                "order outlives the analysis that created it",
-                symbol, order_id, status or "unknown",
-            )
-            try:
-                self.client.cancel_order_by_id(order_id)
-                cancelled_here = True
-                record_guarded_pass(self, "entry_protection.cancel_working_entry", context={"symbol": symbol, "order": order_id})
-            except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(self, "entry_protection.cancel_working_entry", exc, log=logger,
-                           context={"symbol": symbol, "order": order_id, "effect": "a later fill will be UNPROTECTED until the next coverage reconcile"})
-            try:
-                status = self.wait_for_order_terminal(
-                    order_id, timeout_seconds=10.0,
-                ) or status
-                record_guarded_pass(self, "entry_protection.wait_after_cancel", context={"symbol": symbol, "order": order_id})
-            except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(self, "entry_protection.wait_after_cancel", exc, log=logger,
-                           context={"symbol": symbol, "order": order_id, "effect": "falls through to the unconfirmed-outcome branch below"})
-            if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
-                # Fill confirmation has genuinely DEGRADED: the bounded
-                # window closed, the cancel-and-recheck closed too, and the
-                # broker still has not said what happened to a live order.
-                # The desk proceeds on filled_qty=0 below — the safe
-                # assumption, possibly a wrong one — so the owner has to be
-                # told, not just the log. This is NOT "the websocket is
-                # off": it is reachable identically with the socket on, and
-                # is exactly the outcome the REST path is supposed to
-                # prevent. See src/notifier.py's fill-confirmation block.
-                try:
-                    from src.notifier import alert_order_outcome_unconfirmed
-                    alert_order_outcome_unconfirmed(
-                        symbol, order_id,
-                        waited_seconds=_ENTRY_FILL_TIMEOUT_S,
-                        last_status=(status or "").lower() or None,
-                    )
-                    record_guarded_pass(self, "entry_protection.unconfirmed_alert", context={"symbol": symbol, "order": order_id})
-                except Exception as exc:  # noqa: BLE001
-                    record_guarded_pass(self, "entry_protection.unconfirmed_alert", exc, log=logger,
-                               context={"symbol": symbol, "order": order_id, "effect": "the owner was NOT told the outcome is unconfirmed"})
-
-        try:
-            info = self.get_order_fill_info(order_id) or {}
-            record_guarded_pass(self, "entry_protection.fill_info", context={"symbol": symbol, "order": order_id})
-        except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self, "entry_protection.fill_info", exc, log=logger,
-                       context={"symbol": symbol, "order": order_id, "effect": "treated as filled_qty=0"})
-            info = {}
-        try:
-            filled_qty = float(info.get("filled_qty") or 0)
-        except (TypeError, ValueError):
-            filled_qty = 0.0
-        try:
-            carried = float(superseded_filled_qty or 0)
-        except (TypeError, ValueError):
-            carried = 0.0
-        if carried > 0:
-            logger.info(
-                "entry protection: %s carries %.4f share(s) filled under a "
-                "superseded order id; stop will cover %.4f + %.4f",
-                symbol, carried, filled_qty, carried,
-            )
-            filled_qty += carried
-        if filled_qty > 0 and cover_full_position:
-            full_qty = cover_qty_for_rearm(
-                self, symbol=symbol, filled_qty=filled_qty,
-                held_qty_before=held_qty_before,
-            )
-            if full_qty > filled_qty + 1e-9:
-                logger.info(
-                    "entry protection: %s scale-in fill %.4f — stop sized to "
-                    "broker full position %.4f, not the add alone",
-                    symbol, filled_qty, full_qty,
-                )
-            if full_qty > 0:
-                filled_qty = full_qty
-
-        if filled_qty <= 0:
-            logger.warning(
-                "entry protection: %s entry %s filled 0 (status=%s) — no stop "
-                "placed (nothing to protect)", symbol, order_id, status or "unknown",
-            )
-            if cancelled_here and on_unfilled_cancel is not None:
-                try:
-                    on_unfilled_cancel({
-                        "order_id": order_id,
-                        "status": (status or "").lower() or "unknown",
-                        "filled_qty": 0.0,
-                    })
-                    record_guarded_pass(self, "entry_protection.unfilled_cancel_callback", context={"symbol": symbol, "order": order_id})
-                except Exception as exc:  # noqa: BLE001
-                    record_guarded_pass(self, "entry_protection.unfilled_cancel_callback", exc, log=logger,
-                               context={"symbol": symbol, "order": order_id, "effect": "the caller was not told the entry went unfilled"})
-            return None
-        if (
-            requested_qty and filled_qty < requested_qty
-            and not cover_full_position
-        ):
-            logger.warning(
-                "entry protection: %s partially filled %.4f/%.4f — stop sized to "
-                "the ACTUAL fill", symbol, filled_qty, requested_qty,
-            )
-        # The protective order's side is the OPPOSITE of the entry's: a BUY
-        # entry (long) is protected by a SELL stop below it; a SELL/SELL_SHORT
-        # entry (short) is protected by a BUY stop above it. The buffer
-        # mirrors the same way — see STOP_LIMIT_BUFFER_PCT above. Getting
-        # this backwards is THE most dangerous bug in shorts-safe: the order
-        # still submits without error, it just sits on the wrong side of the
-        # trigger and can never fill, so the position runs unprotected in
-        # exactly the direction it needed protecting.
-        protective_side = "sell" if normalized == "buy" else "buy"
-        buffer_mult = (
-            (1 - self.STOP_LIMIT_BUFFER_PCT) if protective_side == "sell"
-            else (1 + self.STOP_LIMIT_BUFFER_PCT)
-        )
-        stop_order = self._submit_protective_stop_retrying(
-            symbol=symbol, qty=filled_qty, stop_price=stop_price,
-            limit_price=stop_price * buffer_mult, side=protective_side,
-        )
-        if stop_order is None:
-            logger.error(
-                "entry protection FAILED for %s (%.4f shares held, stop $%.2f) "
-                "after %d attempt(s) — position is UNPROTECTED; the caller must "
-                "raise an OWNER alert (spec §11.1 guard 2) and the coverage "
-                "reconcile must repair it",
-                symbol, filled_qty, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
-            )
-            return None
-        return stop_order
+        Thin shim: body moved to src/execution/broker_parts/entry_protection.py."""
+        return _entry_protection.place_entry_protection(self, symbol, order_id, stop_price, requested_qty=requested_qty, side=side, superseded_filled_qty=superseded_filled_qty, on_unfilled_cancel=on_unfilled_cancel, cover_full_position=cover_full_position, held_qty_before=held_qty_before, _ENTRY_FILL_TIMEOUT_S=_ENTRY_FILL_TIMEOUT_S)
 
     def _stop_placer(self) -> StopPlacer:
         """Thin shim: builds the standalone placer from this broker's collaborators
