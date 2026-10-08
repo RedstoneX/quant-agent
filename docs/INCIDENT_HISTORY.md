@@ -15320,7 +15320,7 @@ open-sourcing the repo) — never real credentials, never exposed. Fixed
 on the box with an explanatory comment so this doesn't get re-investigated
 as a false alarm again. Separately, GitHub Pages was enabled for this repo
 (public, `main`/`docs`), so anything added to `docs/` renders at
-`https://redstonex.github.io/quant-agent/<filename>` automatically.
+`https://redstone-hq.github.io/quant-agent/<filename>` automatically.
 
 **Real, still-open decision, not resolved here:** whether to add a live
 congressional (US House/Senate) trading data stream to the smart-money
