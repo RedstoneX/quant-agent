@@ -193,7 +193,6 @@ def test_failed_calendar_read_raises_and_is_not_cached():
 def test_pipeline_trading_day_check_propagates_the_failure():
     from src.pipeline import TradingPipeline
 
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = SimpleNamespace(is_trading_day=_boom)
+    pipe = SimpleNamespace(broker=SimpleNamespace(is_trading_day=_boom))
     with pytest.raises(ConnectionError):
-        pipe._is_trading_day()
+        TradingPipeline._is_trading_day(pipe)
