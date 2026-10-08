@@ -54,6 +54,8 @@ def _default_trade_updates_lease_path() -> Path:
     return Path("data") / ".trade_updates.lock"
 
 
+from src.execution.broker_parts import trade_stream_bounds, trade_stream_auth, trade_stream_reconnect
+_SPLIT_PARTS = (trade_stream_bounds, trade_stream_auth, trade_stream_reconnect)  # patch-mirror targets, see broker.py
 from src.execution.broker_parts.trade_stream_bounds import (  # noqa: F401
     _ALPACA_STREAM_AUTH_DEADLINE_S,
     _ALPACA_STREAM_RECONNECT_MAX_S,

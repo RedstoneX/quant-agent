@@ -1468,9 +1468,6 @@ import sys as _sys
 import types as _types
 from src.execution.broker_parts import market_data as _market_data_part
 from src.execution.broker_parts import trade_stream as _trade_stream_part
-from src.execution.broker_parts import trade_stream_auth as _trade_stream_auth_part
-from src.execution.broker_parts import trade_stream_bounds as _trade_stream_bounds_part
-from src.execution.broker_parts import trade_stream_reconnect as _trade_stream_reconnect_part
 
 # Sector cluster: OWNED by `src.sector_reference` (L0). Its names stay reachable
 # here so tests that patch `src.execution.broker.<name>` keep working; a write
@@ -1483,13 +1480,10 @@ _SECTOR_MIRROR_NAMES = frozenset({
     "_INDEX_ETFS", "_ETF_SECTORS", "_SECTOR_LOOKUP_TIMEOUT_S",
     "_ALLOWED_SECTORS", "_SECTOR_ALIASES",
 })
-_MIRRORED_PARTS = (
-    _trade_stream_part, _trade_stream_auth_part, _trade_stream_bounds_part,
-    _trade_stream_reconnect_part, _market_data_part, _sector_reference,
-)
+_MIRRORED_PARTS = (_trade_stream_part, *_trade_stream_part._SPLIT_PARTS, _market_data_part, _sector_reference)
 _FORWARDED_GLOBALS = {
-    "_stream_auth_deprecation_logged": _trade_stream_auth_part,
-    "_stream_current_auth_format_logged": _trade_stream_auth_part,
+    "_stream_auth_deprecation_logged": _trade_stream_part._SPLIT_PARTS[1],
+    "_stream_current_auth_format_logged": _trade_stream_part._SPLIT_PARTS[1],
 }
 
 
