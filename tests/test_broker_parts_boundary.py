@@ -171,7 +171,7 @@ def test_trade_stream_module_passes_the_boundary_check():
     # They moved verbatim; nothing else may fail.
     assert set(verdict.failures) <= {1}, verdict.failures
     assert set(verdict.failures.get(1, [])) == {
-        "TradeStreamWarmup: no __init__", "TradeStreamGaveUp: no __init__",
+        "TradeStreamWarmup: no __init__",
     }, verdict.failures
 
 
@@ -210,7 +210,8 @@ def test_patch_on_the_broker_module_reaches_the_moved_body(monkeypatch):
     monkeypatch.setattr("src.execution.broker.TradingStream", sentinel)
     assert trade_stream.TradingStream is sentinel
     monkeypatch.setattr(broker_module, "_stream_auth_deprecation_logged", True)
-    assert trade_stream._stream_auth_deprecation_logged is True
+    from src.execution.broker_parts import trade_stream_auth
+    assert trade_stream_auth._stream_auth_deprecation_logged is True
     assert broker_module._stream_auth_deprecation_logged is True
     assert "_stream_auth_deprecation_logged" not in vars(broker_module)
 

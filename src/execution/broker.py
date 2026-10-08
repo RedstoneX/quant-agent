@@ -1464,10 +1464,10 @@ _SECTOR_MIRROR_NAMES = frozenset({
     "_INDEX_ETFS", "_ETF_SECTORS", "_SECTOR_LOOKUP_TIMEOUT_S",
     "_ALLOWED_SECTORS", "_SECTOR_ALIASES",
 })
-_MIRRORED_PARTS = (_trade_stream_part, _market_data_part, _sector_reference)
+_MIRRORED_PARTS = (_trade_stream_part, *_trade_stream_part._SPLIT_PARTS, _market_data_part, _sector_reference)
 _FORWARDED_GLOBALS = {
-    "_stream_auth_deprecation_logged": _trade_stream_part,
-    "_stream_current_auth_format_logged": _trade_stream_part,
+    "_stream_auth_deprecation_logged": _trade_stream_part._SPLIT_PARTS[1],
+    "_stream_current_auth_format_logged": _trade_stream_part._SPLIT_PARTS[1],
 }
 
 

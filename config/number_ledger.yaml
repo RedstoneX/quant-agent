@@ -4243,16 +4243,16 @@ numbers:
       Whether a support level counts as broken -- and therefore whether the
       desk lifts protection and sells -- turns on a distance that no published
       work measures in these units.
-  - id: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
+  - id: src.risk.exit_guard_trend.TREND_CONFIRMING_CLOSES
     value: 2
     status: sourced
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_trend.py
     source: >-
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition: src/risk/exit_guard.py@`TREND_CONFIRMING_CLOSES = 2`
-      and the module note at src/risk/exit_guard.py::TREND_CONFIRMING_CLOSES.
+      (a Wyckoff spring). Definition: src/risk/exit_guard_trend.py@`TREND_CONFIRMING_CLOSES = 2`
+      and the module note at src/risk/exit_guard_trend.py::TREND_CONFIRMING_CLOSES.
     note: >-
       Consecutive confirmed closes required to treat ANY break as real, in BOTH
       regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
@@ -4264,16 +4264,16 @@ numbers:
       70) made a distinct constant from NOISE_BAND_ATR_MULTIPLE; the two share
       a value of 1.0 but not a source, and may not be re-collapsed. This note
       said NOISE_BAND_ATR_MULTIPLE until 2026-10-04 — it predated the split
-      and contradicted src/risk/exit_guard.py::check_structural_protection.
-  - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
+      and contradicted src/risk/exit_guard_trend.py::_break_confirmation_settings.
+  - id: src.risk.exit_guard_trend.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_trend.py
     source: >-
       Wilder's own ADX threshold for a strong trend, as published in J. Welles
       Wilder, New Concepts in Technical Trading Systems (1978), the standard
       convention (ADX above 25 = trend strong enough to trade with). Definition
-      and use: src/risk/exit_guard.py::ADX_STRONG_TREND_THRESHOLD.
+      and use: src/risk/exit_guard_trend.py::ADX_STRONG_TREND_THRESHOLD.
     note: >-
       Trade-governing: at or above this ADX a with-trend structural break enters
       the patient strong-with-trend regime (two confirmed closes AND the prior
@@ -4287,7 +4287,7 @@ numbers:
     note: >-
       A character window for string matching inside the exit-reason phrase
       check. It parses English, not price.
-  - id: src.risk.exit_guard._NOISE_FLOOR['distance_to_stop_pct']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['distance_to_stop_pct']
     settles_by:
       kind: measurement
       state: specified
@@ -4302,7 +4302,7 @@ numbers:
         this metric is recorded at, the floor is indistinguishable from zero and the key is deleted
     value: 0.1
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4315,7 +4315,7 @@ numbers:
     cost_while_unanswered: >-
       An exit is either taken on noise or suppressed while the position
       genuinely deteriorates.
-  - id: src.risk.exit_guard._NOISE_FLOOR['pace']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['pace']
     settles_by:
       kind: measurement
       state: specified
@@ -4332,7 +4332,7 @@ numbers:
         doing nothing and the key is deleted
     value: 0.05
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4345,7 +4345,7 @@ numbers:
       digit.
     cost_while_unanswered: >-
       As above, on the pace input.
-  - id: src.risk.exit_guard._NOISE_FLOOR['r_multiple']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['r_multiple']
     settles_by:
       kind: measurement
       state: specified
@@ -4360,7 +4360,7 @@ numbers:
         anything and the key is deleted
     value: 0.05
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4371,7 +4371,7 @@ numbers:
       Below what change in R-multiple is the signal noise?
     cost_while_unanswered: >-
       As above, on the R input.
-  - id: src.risk.exit_guard._NOISE_FLOOR['thesis_progress_pct']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['thesis_progress_pct']
     settles_by:
       kind: measurement
       state: specified
@@ -4385,7 +4385,7 @@ numbers:
         floor finer than one step is inert and the key is deleted
     value: 0.5
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4396,30 +4396,30 @@ numbers:
       Below what change in stated thesis progress is the signal noise?
     cost_while_unanswered: >-
       As above, on the thesis-progress input.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[0]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[0]
     value: 20
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
       the periods universally published on price charts; the list bounds what
       a condition may name, and no value here sizes, stops or refuses
       anything.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[1]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[1]
     value: 50
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
       the periods universally published on price charts; the list bounds what
       a condition may name, and no value here sizes, stops or refuses
       anything.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[2]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[2]
     value: 200
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
@@ -5244,7 +5244,95 @@ numbers:
     cost_while_unanswered: >-
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.
-  - id: src.rotation.ROTATION_MARGIN_PCT
+  - id: src.rotation_parts.types.ROTATION_MARGIN_PCT
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the session-to-session noise in the desk's own ranking score for an UNCHANGED name
+        over the universe the desk could trade, on public daily bars, so the margin a challenger must
+        clear is compared against how much the score moves on its own when nothing about the name
+        has changed
+      closes_when: the score-noise distribution is in hand and the margin is set above the noise at
+        a stated percentile, so a rotation cannot be triggered by score jitter; the margin is DELETED,
+        and rank order alone decides, if the measured score noise is below the resolution the score
+        is reported at
+    value: 0.25
+    status: arbitrary
+    site: src/rotation_parts/types.py
+    note: >-
+      How much better a candidate must be before the desk rotates out of a
+      holding. A round quarter percent with no source. Auto-rotation is the
+      one flag the owner wants enabled, so this binds the moment it is.
+      Board item 39, 2026-09-20: this is now the ONLY remaining blocker on
+      execution.rotation_ranked_margin_enabled. The sequencing defect that
+      also blocked that tier - a rotation SELL firing ahead of a
+      replacement BUY a later gate refuses - is closed; this is not. The
+      categorical tier does not depend on this number at all and is
+      unaffected.
+    open_question: >-
+      How much better must a candidate be than a held name to justify paying
+      two spreads and two commissions to swap?
+    already_ruled_out: >-
+      docs/WORK.md item 39(a) carries the list and it is not short:
+      Grinold & Kahn's no-trade region, FTSE Russell banding, published
+      rebalancing tolerance bands, backtesting, and (2026-09-17) the
+      models' own confidence scores and entry-price-versus-now. The shape
+      is sourced; the NUMBER is not, and none of those yields one in
+      verdict-score units. Do not repeat this search.
+    what_would_settle_it: >-
+      docs/WORK.md item 39(a), verbatim: a published study of rank-swap
+      turnover versus decay by SIGNAL gap, or a breakeven computed from
+      measured round-trip cost against a score-to-expected-return mapping
+      this desk does not yet compute - building that mapping is the real
+      prerequisite. A research question, not an owner call.
+    cost_while_unanswered: >-
+      Rotation either churns for marginal improvement or never fires.
+  - id: src.rotation.evaluate_rotation_opportunity(margin_pct)
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the session-to-session noise in the desk's own ranking score for an UNCHANGED name
+        over the universe the desk could trade, on public daily bars, so the margin a challenger must
+        clear is compared against how much the score moves on its own when nothing about the name
+        has changed
+      closes_when: the score-noise distribution is in hand and the margin is set above the noise at
+        a stated percentile, so a rotation cannot be triggered by score jitter; the margin is DELETED,
+        and rank order alone decides, if the measured score noise is below the resolution the score
+        is reported at
+    value: 0.25
+    status: arbitrary
+    site: src/rotation.py
+    note: >-
+      How much better a candidate must be before the desk rotates out of a
+      holding. A round quarter percent with no source. Auto-rotation is the
+      one flag the owner wants enabled, so this binds the moment it is.
+      Board item 39, 2026-09-20: this is now the ONLY remaining blocker on
+      execution.rotation_ranked_margin_enabled. The sequencing defect that
+      also blocked that tier - a rotation SELL firing ahead of a
+      replacement BUY a later gate refuses - is closed; this is not. The
+      categorical tier does not depend on this number at all and is
+      unaffected.
+    open_question: >-
+      How much better must a candidate be than a held name to justify paying
+      two spreads and two commissions to swap?
+    already_ruled_out: >-
+      docs/WORK.md item 39(a) carries the list and it is not short:
+      Grinold & Kahn's no-trade region, FTSE Russell banding, published
+      rebalancing tolerance bands, backtesting, and (2026-09-17) the
+      models' own confidence scores and entry-price-versus-now. The shape
+      is sourced; the NUMBER is not, and none of those yields one in
+      verdict-score units. Do not repeat this search.
+    what_would_settle_it: >-
+      docs/WORK.md item 39(a), verbatim: a published study of rank-swap
+      turnover versus decay by SIGNAL gap, or a breakeven computed from
+      measured round-trip cost against a score-to-expected-return mapping
+      this desk does not yet compute - building that mapping is the real
+      prerequisite. A research question, not an owner call.
+    cost_while_unanswered: >-
+      Rotation either churns for marginal improvement or never fires.
+  - id: src.rotation.evaluate_rotation(margin_pct)
     settles_by:
       kind: measurement
       state: specified
@@ -5471,10 +5559,10 @@ numbers:
   # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
   # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
   # src/execution/stop_repair.py. No value changed. ---
-  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MIN_S
+  - id: src.execution.broker_parts.trade_stream_bounds._ALPACA_STREAM_RECONNECT_MIN_S
     value: 1.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_bounds.py
     note: >-
       Fallback reconnect floor for the trade_updates fill-notification
       socket, used only when the installed alpaca-py TradingStream does not
@@ -5484,48 +5572,48 @@ numbers:
       notification socket retries, never whether or how much to trade; the
       bounded REST fill-confirmation path is unaffected when this socket is
       off entirely.
-  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MAX_S
+  - id: src.execution.broker_parts.trade_stream_bounds._ALPACA_STREAM_RECONNECT_MAX_S
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_bounds.py
     note: >-
       Fallback reconnect ceiling for the same trade_updates socket, same
       alpaca-py default (site-packages/alpaca/trading/stream.py:54,
       alpaca-py 0.43.5). Same reasoning as
       src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
       optional notification socket's retry speed, not a trade decision.
-  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_SESSION
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_SESSION
     value: 6
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
-      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
       One of three constants added 2026-09-18 to close an unbounded retry
       loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
-      (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY); none of the three decides, sizes,
+      (the `_STREAM_ATTEMPT_CEILING_PER_DAY` constant beside it); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
-  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY
     value: 200
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
-      requests/minute (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
+      requests/minute (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker_parts.trade_stream._STREAM_RATE_LIMIT_STAND_DOWN_S
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_RATE_LIMIT_STAND_DOWN_S
     value: 60.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
-      (src/execution/broker_parts/trade_stream.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
+      (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
   - id: src.execution.broker_parts.http_timeout._BROKER_HTTP_TIMEOUT
     value: 30.0
@@ -8141,10 +8229,10 @@ numbers:
     cost_while_unanswered: >-
       Every ordinary exit concedes up to 0.5%; if too tight on a fast tape the
       exit does not fill and the position is held against the decision.
-  - id: src.rotation.ROTATION_REASON_MAX_CHARS
+  - id: src.rotation_parts.types.ROTATION_REASON_MAX_CHARS
     value: 500
     status: not-trade-governing
-    site: src/rotation.py
+    site: src/rotation_parts/types.py
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
@@ -8662,9 +8750,11 @@ numbers:
     site: src/infra_retry_policy.py
     note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls. Since 2026-10-08 it also caps the backoff of the retried live-price read behind sizing and the preflight, and the batched today-print re-ask: at this cap the re-ask issues 60/8 = 7.5 requests a minute, 3.75% of Alpaca's published 200 requests/minute limit (ledgered at src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY), and the ask count per pass is bounded by ceil(slot_seconds / this cap). It paces reads, never what price or size results."
   - id: src.data.event_calendar._FOMC_MONTHS['jan']
+    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['jan']
     value: 1
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8673,10 +8763,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['feb']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['feb']
     value: 2
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8685,10 +8775,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['mar']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['mar']
     value: 3
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8697,10 +8787,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['apr']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['apr']
     value: 4
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8709,10 +8799,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['may']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['may']
     value: 5
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8721,10 +8811,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['jun']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['jun']
     value: 6
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8733,10 +8823,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['jul']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['jul']
     value: 7
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8745,10 +8835,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['aug']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['aug']
     value: 8
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8757,10 +8847,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['sep']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['sep']
     value: 9
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8769,10 +8859,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['oct']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['oct']
     value: 10
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8781,10 +8871,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['nov']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['nov']
     value: 11
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8793,10 +8883,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_MONTHS['dec']
+  - id: src.data.event_calendar.fomc_parse._FOMC_MONTHS['dec']
     value: 12
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
     note: >-
       Month-name decoding table used by the HTML fallback parser for
@@ -8805,10 +8895,10 @@ numbers:
       not a chosen quantity, and any other value would be a decoding bug
       rather than a different risk appetite. Nothing multiplies, sizes or
       prices anything from it.
-  - id: src.data.event_calendar._FOMC_DURATION_WORDS['one']
+  - id: src.data.event_calendar.fomc_parse._FOMC_DURATION_WORDS['one']
     value: 1
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
       English number-word decoding table used by the parser for the Fed's own
@@ -8819,10 +8909,10 @@ numbers:
       be a decoding bug rather than a different risk appetite. It only labels how
       many days a meeting block spans, feeding prompt context and an advisory
       event flag; nothing multiplies, sizes or prices anything from it.
-  - id: src.data.event_calendar._FOMC_DURATION_WORDS['two']
+  - id: src.data.event_calendar.fomc_parse._FOMC_DURATION_WORDS['two']
     value: 2
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
       English number-word decoding table used by the parser for the Fed's own
@@ -8833,10 +8923,10 @@ numbers:
       be a decoding bug rather than a different risk appetite. It only labels how
       many days a meeting block spans, feeding prompt context and an advisory
       event flag; nothing multiplies, sizes or prices anything from it.
-  - id: src.data.event_calendar._FOMC_DURATION_WORDS['three']
+  - id: src.data.event_calendar.fomc_parse._FOMC_DURATION_WORDS['three']
     value: 3
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
       English number-word decoding table used by the parser for the Fed's own
@@ -8847,10 +8937,10 @@ numbers:
       be a decoding bug rather than a different risk appetite. It only labels how
       many days a meeting block spans, feeding prompt context and an advisory
       event flag; nothing multiplies, sizes or prices anything from it.
-  - id: src.data.event_calendar._FOMC_DURATION_WORDS['four']
+  - id: src.data.event_calendar.fomc_parse._FOMC_DURATION_WORDS['four']
     value: 4
     status: instrument
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_parse.py
     source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
       English number-word decoding table used by the parser for the Fed's own
@@ -8861,10 +8951,10 @@ numbers:
       be a decoding bug rather than a different risk appetite. It only labels how
       many days a meeting block spans, feeding prompt context and an advisory
       event flag; nothing multiplies, sizes or prices anything from it.
-  - id: src.data.event_calendar._FOMC_MAX_MEETING_DAYS
+  - id: src.data.event_calendar.fomc._FOMC_MAX_MEETING_DAYS
     value: 4
     status: sourced
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc.py
     source: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (meeting blocks are 1-2 days)'
     note: >-
       Sanity bound on one parsed FOMC meeting block, used to DROP a parse
@@ -8875,10 +8965,10 @@ numbers:
       doubling of headroom so a legitimate block is never discarded and only
       an obviously broken parse is. It only ever rejects data; it sets no
       window a trade is measured against.
-  - id: src.data.event_calendar._FOMC_CACHE_BACKFILL_DAYS
+  - id: src.data.event_calendar.fomc._FOMC_CACHE_BACKFILL_DAYS
     value: 45
     status: sourced
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc.py
     source: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (eight meetings a year)'
     note: >-
       How far BACK the on-disk FOMC cache keeps concluded meetings. The
@@ -8889,11 +8979,11 @@ numbers:
       inter-meeting interval is the smallest margin that never leaves the
       cache with no recent meeting in it. No order, size, price or stop is
       computed from it.
-  - id: src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS
+  - id: src.data.event_calendar.macro.RELEASE_SCHEDULE_LOOKAHEAD_DAYS
     value: 120
     status: sourced
-    site: src/data/event_calendar.py
-    source: 'src/data/event_calendar.py::RELEASE_SCHEDULE_LOOKAHEAD_DAYS (the derivation comment above the constant)'
+    site: src/data/event_calendar/macro.py
+    source: 'src/data/event_calendar/macro.py::RELEASE_SCHEDULE_LOOKAHEAD_DAYS (the derivation comment above the constant)'
     note: >-
       FETCH window for one `/fred/release/dates` request, explicitly NOT the
       horizon a seat judges imminence against (`get_upcoming_events`'s
@@ -8905,10 +8995,10 @@ numbers:
       response trustworthy evidence of a genuinely unpublished schedule
       rather than a too-narrow window. Widening it costs nothing: it is the
       same single request with a later `realtime_end`.
-  - id: src.data.event_calendar._FAILURE_REASON_MAX_LEN
+  - id: src.data.event_calendar.macro._FAILURE_REASON_MAX_LEN
     value: 200
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro.py
     note: >-
       Characters of exception text kept before truncation on the way to a
       log line or a seat's prompt. A display cap on an ERROR STRING: it bounds
@@ -8917,10 +9007,10 @@ numbers:
       `src.data.news._FAILURE_REASON_MAX_LEN` for the same reason. No
       quantity, threshold or comparison a trade depends on reads it; changing
       it changes only how much of a message a reader sees.
-  - id: src.data.event_calendar.EARNINGS_EVENT_WINDOW_SESSIONS
+  - id: src.data.event_calendar.earnings.EARNINGS_EVENT_WINDOW_SESSIONS
     value: 3
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/earnings.py
     note: >-
       Sessions-to-earnings inside which a scheduled report is CALLED
       imminent. Measured at both call sites on 2026-10-05: it formats the
@@ -8937,10 +9027,10 @@ numbers:
       recorded here as informational rather than `arbitrary` only because
       nothing mechanical depends on it, and it should be re-examined the
       moment any code branches on this window.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(cache_ttl_days)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(cache_ttl_days)
     value: 7
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -8950,10 +9040,10 @@ numbers:
       file, which this constructor default mirrors field for field. Equal to
       `src.config.risk_adjuncts.EventRiskConfig.fomc_cache_ttl_days` (7), the configured value that overrides it
       in production.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(max_retries)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(max_retries)
     value: 2
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -8963,10 +9053,10 @@ numbers:
       file, which this constructor default mirrors field for field. Equal to
       `src.config.risk_adjuncts.EventRiskConfig.fomc_max_retries` (2) and to `src.infra_retry_policy.MAX_RETRIES`
       (2), the desk-wide bounded-retry count already in this file.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(request_timeout_s)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(request_timeout_s)
     value: 10
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -8975,10 +9065,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
       `src.config.risk_adjuncts.EventRiskConfig.fomc_request_timeout_s` (10).
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_base_s)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(retry_backoff_base_s)
     value: 2
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -8988,10 +9078,10 @@ numbers:
       file, which this constructor default mirrors field for field. Equal to
       `src.infra_retry_policy.BACKOFF_BASE_S`, the desk-wide backoff base already recorded in this
       file.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_jitter_s)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(retry_backoff_jitter_s)
     value: 1
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9000,10 +9090,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. One second of random jitter
       spread so concurrent retries do not re-collide; it shortens or lengthens a wait only.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_max_s)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(retry_backoff_max_s)
     value: 8
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9013,10 +9103,10 @@ numbers:
       file, which this constructor default mirrors field for field. Equal to
       `src.infra_retry_policy.BACKOFF_MAX_S`, the desk-wide backoff ceiling already recorded in this
       file.
-  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(total_fetch_deadline_s)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.__init__(total_fetch_deadline_s)
     value: 15
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9026,10 +9116,10 @@ numbers:
       file, which this constructor default mirrors field for field. Equal to
       `src.config.risk_adjuncts.EventRiskConfig.fomc_deadline_s` (15); when it is exceeded the seat is told the
       FOMC calendar is unavailable rather than shown stale dates.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(breaker_after_failed_releases)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(breaker_after_failed_releases)
     value: 1
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Circuit-breaker trip count: after ONE release fetch fails the remaining
       releases are skipped for this run and the calendar is reported PARTIAL
@@ -9037,10 +9127,10 @@ numbers:
       fast on the first failure), not a tuned threshold, and it changes only
       how much is fetched and how the absence is labelled -- never a size, a
       price, a stop or a verdict.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(cache_ttl_days)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(cache_ttl_days)
     value: 7
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9049,10 +9139,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to the FOMC provider's
       cache TTL (7) in the same module.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(max_retries)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(max_retries)
     value: 2
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9060,10 +9150,10 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.MAX_RETRIES` (2).
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(request_timeout_s)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(request_timeout_s)
     value: 15
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9072,10 +9162,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. One FRED release-dates request;
       longer than the FOMC provider's 10s because the breaker above gives up after a single failure.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_base_s)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(retry_backoff_base_s)
     value: 2
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9083,10 +9173,10 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.BACKOFF_BASE_S`.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_jitter_s)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(retry_backoff_jitter_s)
     value: 1
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9095,10 +9185,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Same one-second jitter spread as
       the FOMC provider in this module.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_max_s)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(retry_backoff_max_s)
     value: 8
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9106,10 +9196,10 @@ numbers:
       never whether or how much is traded. Same classification and same
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.BACKOFF_MAX_S`.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(total_fetch_deadline_s)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.__init__(total_fetch_deadline_s)
     value: 20
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       Network deadline, timeout, retry or cache-freshness parameter default on
       the event-calendar fetcher. It decides how long the desk waits for the
@@ -9118,10 +9208,10 @@ numbers:
       reasoning as the `src.config.EventRiskConfig.*` network rows in this
       file, which this constructor default mirrors field for field. Equal to
       `src.config.risk_adjuncts.EventRiskConfig.calendar_deadline_s` (20), the configured whole-calendar deadline.
-  - id: src.data.event_calendar.FOMCCalendarProvider.get_meetings(horizon_days)
+  - id: src.data.event_calendar.fomc_provider.FOMCCalendarProvider.get_meetings(horizon_days)
     value: 10
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/fomc_provider.py
     note: >-
       How many days ahead of today a scheduled FOMC meeting is returned to a
       caller. It selects which already-fetched meetings appear in a seat's
@@ -9131,21 +9221,21 @@ numbers:
       measurement behind it, and because a seat reads the resulting text it can
       still colour a verdict. Recorded as informational rather than `arbitrary`
       only because nothing mechanical branches on it.
-  - id: src.data.event_calendar.MacroEventCalendarProvider.get_upcoming_events(horizon_days)
+  - id: src.data.event_calendar.macro_provider.MacroEventCalendarProvider.get_upcoming_events(horizon_days)
     value: 10
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/macro_provider.py
     note: >-
       The macro-release equivalent of the FOMC horizon above, and the same
       value. Selects which upcoming FRED releases are shown to a seat; see
-      `src.data.event_calendar.FOMCCalendarProvider.get_meetings(horizon_days)`
+      `src.data.event_calendar.fomc_provider.FOMCCalendarProvider.get_meetings(horizon_days)`
       in this file for the full reasoning and the same honest caveat about the
       value being unmeasured (not repeated, to avoid two owners of one
       explanation).
-  - id: src.data.event_calendar.fetch_earnings_proximity(per_symbol_timeout_s)
+  - id: src.data.event_calendar.earnings.fetch_earnings_proximity(per_symbol_timeout_s)
     value: 8.0
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/earnings.py
     note: >-
       Per-symbol network deadline for one earnings-date lookup inside the
       proximity sweep. It decides how long the desk waits on one symbol
@@ -9155,10 +9245,10 @@ numbers:
       configured value that overrides it in production; same
       classification and same reasoning as the other
       `src.config.EventRiskConfig.*` network rows in this file.
-  - id: src.data.event_calendar.fetch_earnings_proximity(total_deadline_s)
+  - id: src.data.event_calendar.earnings.fetch_earnings_proximity(total_deadline_s)
     value: 20.0
     status: not-trade-governing
-    site: src/data/event_calendar.py
+    site: src/data/event_calendar/earnings.py
     note: >-
       Whole-sweep network deadline for the earnings-proximity pass: when it
       is exceeded the remaining symbols are reported unavailable rather

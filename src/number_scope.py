@@ -21,6 +21,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
     "src/portfolio_constructor",
     "src/rotation.py",
+    "src/rotation_parts/types.py",
+    "src/rotation_parts/constraints.py",
+    "src/rotation_parts/wording.py",
+    "src/rotation_parts/reporting.py",
+    "src/rotation_parts/reporting_lines.py",
     "src/infra_retry_policy.py",
     "src/nominations.py",
     "src/evidence_gate.py",
@@ -84,6 +89,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
     "src/coverage_watchdog.py", "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
+    "src/coverage_watchdog_parts",  # verbatim lifts out of coverage_watchdog.py
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
     # since 2026-09-19; rule (c) (function-parameter defaults) was added the
@@ -136,7 +142,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The event-risk GATES already sit in scope via `EventRiskConfig`; this
     # brings the fetch windows, parse sanity bounds and the 3-session
     # earnings window under the same ledger instead of beside it.
-    "src/data/event_calendar.py",
+    "src/data/event_calendar",
     # 2026-10-05: three modules whose numbers were never classified; each is
     # scoped so every site must be ledgered, including the ones it hides.
     "src/data/news_dedup.py",

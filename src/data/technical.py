@@ -20,7 +20,7 @@ ATR_PERIOD = 14
 #: rather than repeated (same reason as `ATR_PERIOD`) so the indicator path
 #: and the exit guard's trend-context read can never end up on different
 #: periods. The strong-trend threshold read against it
-#: (`src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD`, 25) is Wilder's too.
+#: (`src.risk.exit_guard_trend.ADX_STRONG_TREND_THRESHOLD`, 25) is Wilder's too.
 ADX_PERIOD = 14
 
 

@@ -322,11 +322,11 @@ described:
       being threatened with a gate that no longer exists, which changes how
       it writes every exit reason.
     symbols:
-      - file: src/risk/exit_guard.py
+      - file: src/risk/exit_guard_deltas.py
         symbol: veto_contradicted_exit
-      - file: src/risk/exit_guard.py
+      - file: src/risk/exit_guard_deltas.py
         symbol: is_deterioration_claim
-      - file: src/risk/exit_guard.py
+      - file: src/risk/exit_guard_deltas.py
         symbol: MetricDeltas.net_improved
     described_in:
       - file: src/agents/position_reviewer.py
