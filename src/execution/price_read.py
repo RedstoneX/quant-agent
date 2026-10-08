@@ -22,8 +22,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Callable, Iterator
 
-from src.execution.broker_parts.http_timeout import _BROKER_HTTP_TIMEOUT
-from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S, MAX_RETRIES
+from src.infra_retry_policy import (  # noqa: F401 (re-exported for callers and tests)
+    BACKOFF_BASE_S, BACKOFF_MAX_S, MAX_RETRIES, _backoff_s, read_worst_case_s,
+)
 from src.refusal_errors import PriceReadFailed
 
 logger = logging.getLogger(__name__)
@@ -45,18 +46,6 @@ def single_attempt_reads() -> Iterator[None]:
         yield
     finally:
         _SINGLE_ATTEMPT.reset(token)
-
-
-def _backoff_s(attempt: int) -> float:
-    return min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
-
-
-def read_worst_case_s() -> float:
-    """Longest one `read_price_with_retry` call can take: every attempt runs
-    to the broker's ledgered HTTP timeout, plus the policy's backoff between
-    attempts. Built only from ledgered numbers; it adds none of its own."""
-    attempts = 1 + MAX_RETRIES
-    return attempts * _BROKER_HTTP_TIMEOUT + sum(_backoff_s(a) for a in range(1, attempts))
 
 
 def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,

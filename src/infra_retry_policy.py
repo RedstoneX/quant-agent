@@ -17,3 +17,24 @@ skipped: trade-governing, and ledgered as such with the owner's pacing ruling.
 MAX_RETRIES = 2
 BACKOFF_BASE_S = 2.0
 BACKOFF_MAX_S = 8.0
+
+# Default HTTP timeout for ALL Alpaca SDK calls (connect, read).
+# Without this, a stalled TCP connection to the broker can hang the process
+# for hours under launchd — observed 2026-04-17 when the evening job sat for
+# 13+ hours at the very first broker call.
+_BROKER_HTTP_TIMEOUT = 30.0
+# Lives here, not in src.execution, since 2026-10-08: the price-feed preflight
+# needs the worst case of one read, and the broker seam forbids it importing
+# src.execution. src/execution/broker_parts/http_timeout.py re-exports it.
+
+
+def _backoff_s(attempt: int) -> float:
+    return min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+
+
+def read_worst_case_s() -> float:
+    """Longest one `read_price_with_retry` call can take: every attempt runs
+    to the broker's ledgered HTTP timeout, plus the policy's backoff between
+    attempts. Built only from ledgered numbers; it adds none of its own."""
+    attempts = 1 + MAX_RETRIES
+    return attempts * _BROKER_HTTP_TIMEOUT + sum(_backoff_s(a) for a in range(1, attempts))

@@ -29,8 +29,7 @@ from datetime import timedelta
 
 from src.config.llm_cost import INTRA_CHECK_TICK_MINUTES
 from src.config.risk_adjuncts import CashSweepConfig
-from src.execution.price_read import read_worst_case_s
-from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S
+from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S, read_worst_case_s
 from src.pipeline_candidate_records import _record_execution_skip
 from src.refusal_errors import PriceReadFailed
 from src.sizing_refusal import (

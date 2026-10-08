@@ -5634,10 +5634,10 @@ numbers:
       to Alpaca's published one-minute rate-limit window
       (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker_parts.http_timeout._BROKER_HTTP_TIMEOUT
+  - id: src.infra_retry_policy._BROKER_HTTP_TIMEOUT
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker_parts/http_timeout.py
+    site: src/infra_retry_policy.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
