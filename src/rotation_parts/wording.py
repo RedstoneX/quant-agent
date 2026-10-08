@@ -199,6 +199,11 @@ def _ranked_margin_sell_reason(
         "CONTINGENT on the replacement BUY clearing its gates; withdrawn "
         "with it if it does not."
     )
+    constraint_clause = rotation_constraint_clause(
+        binding=binding, headroom_pct=headroom_pct, ceiling_pct=ceiling_pct,
+        floor_pct=floor_pct, entry_budget_usd=entry_budget_usd,
+        min_order_usd=min_order_usd,
+    )
     reason = (
         f"ROTATION (ranked margin, src/rotation.py): {opportunity.held_symbol}"
         f" is the weakest still-eligible holding (score "
@@ -207,7 +212,7 @@ def _ranked_margin_sell_reason(
         f"{opportunity.margin_pct * 100:.0f}% margin on the seats covering "
         f"both ({seats}: {held_shared} vs {new_shared}). Protection not "
         f"intact ({protection_basis}: {protection_detail[:40]}). "
-        f"{rotation_constraint_clause(binding=binding, headroom_pct=headroom_pct, ceiling_pct=ceiling_pct, floor_pct=floor_pct, entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd)} {tail}"
+        f"{constraint_clause} {tail}"
     )
     # `PortfolioConstructor._build_sell` appends the thesis condition and
     # truncates the order's reasoning at 500 characters, and the clause
