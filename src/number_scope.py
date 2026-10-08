@@ -134,7 +134,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The event-risk GATES already sit in scope via `EventRiskConfig`; this
     # brings the fetch windows, parse sanity bounds and the 3-session
     # earnings window under the same ledger instead of beside it.
-    "src/data/event_calendar.py",
+    "src/data/event_calendar",
     # 2026-10-05: three modules whose numbers were never classified; each is
     # scoped so every site must be ledgered, including the ones it hides.
     "src/data/news_dedup.py",
