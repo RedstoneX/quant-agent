@@ -13,6 +13,7 @@ import logging
 
 from src.execution.broker_parts.trade_stream import _OnState
 from src.sentinel.counted import record_swallowed
+from src.execution.price_read import read_price_with_retry
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
@@ -402,71 +403,71 @@ class MarketData:
         is new is that the answer says which one it was and whether the trade
         print is from today's ET date, so a caller about to place or move an
         order can refuse a stale number instead of silently acting on it.
+        `None` is MEASURED absence; a read that FAILS is retried by
+        `src.execution.price_read` and then raises `PriceReadFailed`.
         """
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
+        return read_price_with_retry(self._read_latest_price_stamped_once, symbol, log=logger)
 
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
+    def _read_latest_price_stamped_once(self, symbol: str) -> "LivePrice | None":
+        if self._data_client is None:
+            from alpaca.data.historical.stock import StockHistoricalDataClient
 
-            from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+            self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+            _install_http_timeout(self._data_client)
 
-            alpaca_symbol = _alpaca_symbol(symbol)
+        from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
 
-            trade_data = self._data_client.get_stock_latest_trade(
-                StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
-            trade_price = float(getattr(trade, "price", 0) or 0)
-            if trade_price > 0:
-                trade_at = getattr(trade, "timestamp", None)
-                from src.trading_calendar import live_price_is_today
+        alpaca_symbol = _alpaca_symbol(symbol)
 
-                fresh = bool(live_price_is_today(trade_at))
-                return LivePrice(
-                    price=trade_price, source="last_trade", trade_at=trade_at,
-                    is_today=fresh, is_today_print=fresh,
-                )
-
-            quote_data = self._data_client.get_stock_latest_quote(
-                StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
-            ask_price = float(getattr(quote, "ask_price", 0) or 0)
-            bid_price = float(getattr(quote, "bid_price", 0) or 0)
-            quote_at = getattr(quote, "timestamp", None)
+        trade_data = self._data_client.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
+        )
+        trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
+        trade_price = float(getattr(trade, "price", 0) or 0)
+        if trade_price > 0:
+            trade_at = getattr(trade, "timestamp", None)
             from src.trading_calendar import live_price_is_today
 
-            quote_today = bool(live_price_is_today(quote_at))
-            if ask_price > 0 and bid_price > 0:
-                return LivePrice(
-                    price=(ask_price + bid_price) / 2, source="quote_mid",
-                    trade_at=quote_at, is_today=quote_today, is_today_print=False,
-                )
-            if ask_price > 0:
-                return LivePrice(
-                    price=ask_price, source="quote_ask", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-            if bid_price > 0:
-                return LivePrice(
-                    price=bid_price, source="quote_bid", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-        except Exception as exc:
-            logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
+            fresh = bool(live_price_is_today(trade_at))
+            return LivePrice(
+                price=trade_price, source="last_trade", trade_at=trade_at,
+                is_today=fresh, is_today_print=fresh,
+            )
 
+        quote_data = self._data_client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
+        )
+        quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
+        ask_price = float(getattr(quote, "ask_price", 0) or 0)
+        bid_price = float(getattr(quote, "bid_price", 0) or 0)
+        quote_at = getattr(quote, "timestamp", None)
+        from src.trading_calendar import live_price_is_today
+
+        quote_today = bool(live_price_is_today(quote_at))
+        if ask_price > 0 and bid_price > 0:
+            return LivePrice(
+                price=(ask_price + bid_price) / 2, source="quote_mid",
+                trade_at=quote_at, is_today=quote_today, is_today_print=False,
+            )
+        if ask_price > 0:
+            return LivePrice(
+                price=ask_price, source="quote_ask", trade_at=quote_at,
+                is_today=quote_today, is_today_print=False,
+            )
+        if bid_price > 0:
+            return LivePrice(
+                price=bid_price, source="quote_bid", trade_at=quote_at,
+                is_today=quote_today, is_today_print=False,
+            )
         return None
 
     def get_latest_price(self, symbol: str) -> float | None:
-        """Latest price as a bare number — unchanged behaviour.
+        """Latest price as a bare number; a FAILED read raises `PriceReadFailed`.
 
         Reporting and grading callers ("how far has this moved since we sold
-        it") do not care where the number came from, and they already degrade
-        to a last close when it is missing. They keep this. Anything that
-        places or moves an order should call `get_latest_price_stamped` and
-        check `is_today_print`.
+        it") do not care where the number came from; each wraps this call and
+        degrades to a last close. Anything that places or moves an order
+        should call `get_latest_price_stamped` and check `is_today_print`.
         """
         stamped = self.get_latest_price_stamped(symbol)
         return stamped.price if stamped is not None else None

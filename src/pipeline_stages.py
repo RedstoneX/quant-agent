@@ -45,7 +45,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
-from src.refusal_errors import SizingPriceUnavailable
+from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
 from src.soft_exit_never_blank import (
     record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
 )
@@ -285,7 +285,7 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
                 stamped_is_real = True
                 if candidate.price and candidate.price > 0 and candidate.is_today_print:
                     return float(candidate.price)
-        except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no print"
+        except PriceReadFailed as exc:  # a FAILED read, not "no print"
             raise SizingPriceUnavailable(f"{symbol}: stamped read failed") from exc
 
     # 2. No today print: accept today's forming SESSION/minute bar through the
@@ -301,7 +301,7 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
                 resolved = resolve_live_price(snaps.get(symbol))
                 if resolved.is_today_print:
                     return float(resolved.price)
-        except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no bar"
+        except PriceReadFailed as exc:  # a FAILED read, not "no bar"
             raise SizingPriceUnavailable(f"{symbol}: snapshot read failed") from exc
         # A REAL stamped price (real broker) that was a quote mid or stale,
         # and no usable today bar either: refuse rather than fall through to
@@ -324,7 +324,7 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
         return None
     try:
         live = getter(symbol)
-    except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no price"
+    except PriceReadFailed as exc:  # a FAILED read, not "no price"
         raise SizingPriceUnavailable(f"{symbol}: bare price read failed") from exc
     if isinstance(live, (int, float)) and not isinstance(live, bool) and live > 0:
         return float(live)

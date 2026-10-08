@@ -17,7 +17,8 @@ from src.entry_evidence import (
 )
 from src.entry_record import insert_pending_entry
 from src.entry_slippage_bound import entry_bound
-from src.sizing_refusal import sizing_price_or_refusal
+from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
+from src.sizing_refusal import no_price_skip, sizing_price_or_refusal
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -91,7 +92,7 @@ class ExecutionStage:
 
     def run(self, ctx: RunContext) -> list[dict]:
         try:
-            return self._run_session(ctx)
+            return self._run_session(price_feed_session_start(self._pipeline, ctx))
         finally:
             _stop_trade_updates(self._pipeline)
 
@@ -514,7 +515,7 @@ class ExecutionStage:
         # TODAY for failing its own entry bar is not bought back in the
         # same session. No new number — same exchange-day window.
         buy_decisions = _drop_buys_sold_today_below_bar(
-            pipeline, ctx, buy_decisions,
+            pipeline, ctx, preflight_price_feed(pipeline, ctx, buy_decisions),
         )
 
         # Run the cheap deterministic entry-viability checks BEFORE selling
@@ -532,8 +533,7 @@ class ExecutionStage:
                 price_map[decision.symbol] = market_price
             if not isinstance(market_price, (int, float)) or market_price <= 0:
                 _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "no_price",
-                    "no verifiable live price (daily bar close is not a fill reference)",
+                    pipeline, ctx, decision.symbol, *no_price_skip(pipeline, decision.symbol),
                 )
                 continue
             if decision.entry_price > 0:
@@ -828,9 +828,9 @@ class ExecutionStage:
                         decision.action, decision.symbol, decision.entry_price,
                     )
                     _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "no_price",
-                        "no verifiable price reference (broker + bars "
-                        "unavailable)",
+                        pipeline, ctx, decision.symbol, *no_price_skip(
+                            pipeline, decision.symbol,
+                            "no verifiable price reference (broker + bars unavailable)"),
                     )
                     continue
 
