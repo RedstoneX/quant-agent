@@ -40,7 +40,7 @@ def _detail(db, where: str) -> str:
 
 def test_a_swallowed_programming_error_in_the_broker_is_loud(tmp_path, caplog):
     broker, db = _broker(tmp_path)
-    assert _status(db, "cancel_stray_protective_stops.list") == NOT_RUN
+    assert _status(db, "broker_parts.cancel_stray_protective_stops.list") == NOT_RUN
 
     def _duplicate_argument(symbol, side=None):
         return dict(a=1, **{"a": 2})       # a real duplicate-argument TypeError
@@ -52,17 +52,17 @@ def test_a_swallowed_programming_error_in_the_broker_is_loud(tmp_path, caplog):
     loud = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert loud, "a swallowed programming error must log at ERROR"
     assert any(r.exc_info is not None for r in loud), "the full traceback must be attached"
-    assert _status(db, "cancel_stray_protective_stops.list") == DISAGREED
-    assert "TypeError" in _detail(db, "cancel_stray_protective_stops.list")
-    assert "AAPL" in _detail(db, "cancel_stray_protective_stops.list")
+    assert _status(db, "broker_parts.cancel_stray_protective_stops.list") == DISAGREED
+    assert "TypeError" in _detail(db, "broker_parts.cancel_stray_protective_stops.list")
+    assert "AAPL" in _detail(db, "broker_parts.cancel_stray_protective_stops.list")
 
 
 def test_a_clean_broker_pass_writes_its_own_row(tmp_path):
     broker, db = _broker(tmp_path)
-    assert _status(db, "cancel_stray_protective_stops.list") == NOT_RUN
+    assert _status(db, "broker_parts.cancel_stray_protective_stops.list") == NOT_RUN
     broker.snapshot_protective_stops = lambda symbol, side=None: (True, [])
     assert broker.cancel_stray_protective_stops("AAPL", side="sell") == 0
-    assert _status(db, "cancel_stray_protective_stops.list") == AGREED, (
+    assert _status(db, "broker_parts.cancel_stray_protective_stops.list") == AGREED, (
         "a clean pass must be distinguishable from a site never reached"
     )
 
