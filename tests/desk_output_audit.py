@@ -94,6 +94,25 @@ def finding_key(f: Finding) -> str:
     return f"{f.path} | {f.signal} | {digest}"
 
 
+def _stale_entries(allowed, tracked: set[str], counts: dict[str, int], gone: Counter) -> dict[str, str]:
+    """Allow-list entries, list lines and LARGE_BLOBS entries that no longer earn their place."""
+    stale: dict[str, str] = {}
+    for rel in allowed:
+        if rel not in tracked:
+            stale[rel] = "the file is no longer tracked — delete this allow-list entry"
+        elif counts.get(rel, 0) == 0:
+            stale[rel] = (
+                "the file no longer trips the guard (redacted?) — delete this "
+                "allow-list entry so the file is protected again"
+            )
+    for key in sorted(gone.elements()):
+        stale[key] = "this list line no longer occurs in the file — delete it from struct_desk_output.txt"
+    for rel in LARGE_BLOBS:
+        if rel not in tracked:
+            stale[rel] = "the file is no longer tracked — delete this LARGE_BLOBS entry"
+    return stale
+
+
 def audit_repo(root: Path = PROJECT_ROOT, directory: Path | None = None) -> Audit:
     allowed = allow_list()
     listed = Counter(struct_allowlist.load("desk_output", directory))
@@ -129,21 +148,7 @@ def audit_repo(root: Path = PROJECT_ROOT, directory: Path | None = None) -> Audi
             grown[rel] = (sum(n for k, n in listed.items() if k.split(" | ")[0] == rel), len(found))
             grown_findings.extend(f for f in found if finding_key(f) in new_ids)
 
-    stale: dict[str, str] = {}
-    for rel in allowed:
-        if rel not in tracked:
-            stale[rel] = "the file is no longer tracked — delete this allow-list entry"
-        elif counts.get(rel, 0) == 0:
-            stale[rel] = (
-                "the file no longer trips the guard (redacted?) — delete this "
-                "allow-list entry so the file is protected again"
-            )
-    for key in sorted((listed - now_keys).elements()):
-        stale[key] = "this list line no longer occurs in the file — delete it from struct_desk_output.txt"
-    for rel in LARGE_BLOBS:
-        if rel not in tracked:
-            stale[rel] = "the file is no longer tracked — delete this LARGE_BLOBS entry"
-
+    stale = _stale_entries(allowed, tracked, counts, listed - now_keys)
     return Audit(new_files, grown, grown_findings, stale, oversize_unlisted)
 
 

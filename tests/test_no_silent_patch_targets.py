@@ -83,7 +83,8 @@ def test_guard_bites_new_listed_and_stale(tmp_path):
     report = _report_with(("", "src.fake_module"))
     assert found_leaks(report) == [entry]
     struct_allowlist.write("silent_patch_targets", [], tmp_path)
-    assert any("NEW" in b for b in struct_allowlist.problems("silent_patch_targets", found_leaks(report), FIX, tmp_path))
+    problems = struct_allowlist.problems("silent_patch_targets", found_leaks(report), FIX, tmp_path)
+    assert any("NEW" in b for b in problems)
     struct_allowlist.write("silent_patch_targets", [entry], tmp_path)
     assert struct_allowlist.problems("silent_patch_targets", found_leaks(report), FIX, tmp_path) == []
     stale = struct_allowlist.problems("silent_patch_targets", found_leaks({"findings": []}), FIX, tmp_path)
