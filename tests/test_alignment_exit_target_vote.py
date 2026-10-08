@@ -11,9 +11,8 @@ import types
 from datetime import date, timedelta
 
 from src.exits.alignment_exit import AlignmentExit
-from src.risk.alignment_exit import (
-    CODE_EXIT, CODE_HOLD, check_alignment_exit, target_reached,
-)
+from src.risk.alignment_exit import CODE_EXIT, CODE_HOLD, check_alignment_exit
+from src.risk.target_vote import target_reached
 from src.storage.target_revisions import build_target_revision_records
 
 ATR = 1.0
