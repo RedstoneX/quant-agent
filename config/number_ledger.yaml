@@ -5259,7 +5259,7 @@ numbers:
         is reported at
     value: 0.25
     status: arbitrary
-    site: src/rotation.py
+    site: src/rotation_parts/types.py
     note: >-
       How much better a candidate must be before the desk rotates out of a
       holding. A round quarter percent with no source. Auto-rotation is the
@@ -8144,7 +8144,7 @@ numbers:
   - id: src.rotation.ROTATION_REASON_MAX_CHARS
     value: 500
     status: not-trade-governing
-    site: src/rotation.py
+    site: src/rotation_parts/types.py
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
