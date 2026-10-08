@@ -11,489 +11,58 @@ so it builds with no Database/TradingPipeline behind it
 (tests/boundary_harness.py). Database keeps same-named thin shims that
 construct this per call.
 
-The module-level helpers and constants below (position-id assignment, exit
+The module-level helpers and constants (position-id assignment, exit
 vocabulary, exit-reason categorisation, decision-id resolution, PM-target
-extraction) moved with the cluster; src/storage/db.py re-imports them so
+extraction) now live in position_chain.py and are re-imported here, so
 `from src.storage.db import _assign_position_ids` keeps working (one
-definition, here).
+definition, there). The backfills, the restore/repeg recovery queues and the
+excursion/gap/positions bodies live in backfills.py, recovery_queues.py and
+excursions.py; the same-named methods below are thin shims over them.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import threading
-import uuid
 from collections.abc import Callable
 from datetime import datetime
 
-from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS, _is_filled_trail_stop
+from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS
 from src.stop_price_classification import entry_stop_for_insert
 from src.storage.trades import trade_refusals_store as _refusals_store
+from src.storage.trades import backfills as _backfills
+from src.storage.trades import recovery_queues as _recovery_queues
+from src.storage.trades import excursions as _excursions
 from src.util.time import UTC
+from src.storage.trades.position_chain import (  # noqa: F401  re-export: defined there
+    _trail_stop_reduced_position,
+    _new_position_id,
+    _LONG_EXIT_ACTIONS,
+    _LONG_EXIT_PREFIXES,
+    _SHORT_EXIT_ACTIONS,
+    _SHORT_EXIT_PREFIXES,
+    _EITHER_SIDE_EXIT_ACTIONS,
+    _POSITION_EXIT_ACTIONS,
+    _POSITION_EXIT_PREFIXES,
+    _is_position_exit_action,
+    _exit_action_side,
+    _row_counts_as_executed,
+    _assign_position_ids,
+)
+from src.storage.trades.exit_reasons import (  # noqa: F401  re-export: defined there
+    _EXIT_TRIGGER_CATEGORIES,
+    _UNCATEGORISED_EXIT,
+    _categorize_exit_reason,
+    _NON_POSITIONAL_ACTIONS,
+    _is_exit_family_for_decision_linking,
+    _resolve_decision_id_status,
+    _extract_pm_targets,
+    _find_pm_target_for_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _trail_stop_reduced_position(row, action: str) -> bool:
-    """True when a TRAIL_STOP row actually took shares OUT of the book.
-
-    Share-count answer to `_is_filled_trail_stop`'s realized-exit question,
-    and deliberately the WIDER of the two — they are different questions,
-    so do NOT collapse them. `_is_filled_trail_stop` asks "is this a
-    priceable realized exit" and therefore requires fill_status='filled'
-    (or a legacy NULL status with a recorded fill_qty). A stop that filled
-    PARTIALLY and was then canceled or expired carries a terminal status
-    that is not 'filled' while still holding `fill_qty > 0`: there is no
-    clean round trip to price, but those shares are genuinely gone from
-    the broker's book, so a pure quantity ledger must subtract them or it
-    will believe it holds stock it has already sold.
-
-    Anything else — fill_status NULL / 'submitted' / 'pending_submit' with
-    no fill, or a cancel or expiry that never traded — is protection
-    resting at the broker and moves no shares.
-
-    `action` is required and checked: this answers a question only about
-    TRAIL_STOP rows, and every other action's quantity effect is decided
-    by the signing rule in `get_symbols_with_open_ledger_qty`, not here.
-    """
-    if (action or "").upper() != "TRAIL_STOP":
-        return False
-    try:
-        executed = float(row["fill_qty"] or 0)
-    except (KeyError, IndexError, TypeError, ValueError):
-        executed = 0.0
-    if executed > 0:
-        return True
-    return _is_filled_trail_stop(row, "TRAIL_STOP")
-
-
-def _new_position_id() -> str:
-    """Opaque, stable identifier minted when a BUY opens a position from
-    flat. Same shape as this codebase's run/decision ids
-    (`RunContext.start`, `decision_id` in pipeline_stages.py) — a short
-    prefix plus a uuid4 hex fragment — so it reads the same way in logs
-    and URLs, without claiming to BE a run or decision id."""
-    return f"pos-{uuid.uuid4().hex[:12]}"
-
-
-#: Actions that (fully or partially) REDUCE a held position once executed,
-#: split by WHICH side they can retire. SWEEP_BUY / SWEEP_SELL are
-#: deliberately absent from all three: the cash-sweep vehicle is stopless and
-#: excluded from calibration for the same reason — it has no entry thesis or
-#: stop to chain a position around.
-#:
-#: The COVER family was added on 2026-08-31 (owner decision: short trades are
-#: recorded and scored exactly as longs are). Before that a short opened no
-#: chain and a cover retired nothing, so no short round trip existed to score.
-#: `EMERGENCY_COVER` was already recognized — the short-side twin of
-#: EMERGENCY_SELL, see src/pipeline.py's `_forced_close_side_and_qty` — but
-#: with no short chain to attach to it could never actually close one.
-_LONG_EXIT_ACTIONS: frozenset[str] = frozenset({"EMERGENCY_SELL"})
-_LONG_EXIT_PREFIXES: tuple[str, ...] = ("SELL", "PARTIAL_SELL")
-_SHORT_EXIT_ACTIONS: frozenset[str] = frozenset({"EMERGENCY_COVER"})
-_SHORT_EXIT_PREFIXES: tuple[str, ...] = ("COVER", "PARTIAL_COVER")
-#: Exits that can retire EITHER side: a stop, a trail, a take-profit, a
-#: deterministic de-lever or a reviewer REDUCE all fire against whatever
-#: position is open, and the trades row records no side of its own.
-_EITHER_SIDE_EXIT_ACTIONS: frozenset[str] = frozenset({
-    "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
-    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
-    # back but whose order_type it could NOT prove was a protective stop —
-    # an honest "the broker closed this, cause unattributed" marker, never
-    # a STOP_OUT it can't stand behind. It retires a real position exactly
-    # like a filled STOP_OUT, so it belongs to the exit-side chain here for
-    # position_id assignment and calibration to count it as a closed lot.
-    "RECONCILED_EXIT",
-})
-
-#: Kept as the flat union for every caller that only asks "is this row on the
-#: exit side at all" (`backfill_position_ids`, `_categorize_exit_reason`).
-_POSITION_EXIT_ACTIONS: frozenset[str] = (
-    _LONG_EXIT_ACTIONS | _SHORT_EXIT_ACTIONS | _EITHER_SIDE_EXIT_ACTIONS
-)
-_POSITION_EXIT_PREFIXES: tuple[str, ...] = _LONG_EXIT_PREFIXES + _SHORT_EXIT_PREFIXES
-
-
-def _is_position_exit_action(action: str | None) -> bool:
-    """True for any action that belongs to an open position's chain on the
-    exit side — SELL/PARTIAL_SELL* and COVER/PARTIAL_COVER* by prefix (
-    PARTIAL_SELL(15%) etc. carry the trim fraction in the action string
-    itself) plus the fixed sets above.
-    A TRAIL_STOP row is included even when it is only a stop *placement*
-    (not yet filled) — Phase 6 spec: a chain inherits TRAIL_STOP rows
-    unconditionally; only the qty math below cares whether one actually
-    fired."""
-    act = (action or "").upper()
-    return act.startswith(_POSITION_EXIT_PREFIXES) or act in _POSITION_EXIT_ACTIONS
-
-
-def _exit_action_side(action: str | None) -> str | None:
-    """Which direction of chain this exit can retire — "long", "short", or
-    None for the either-side exits (stops, trails, take-profits, de-levers).
-
-    Used only by `_assign_position_ids`, so a SELL can never be mistaken for
-    the close of a short chain (or a COVER for the close of a long one). A
-    row whose side does not match the chain that is open is left unattached
-    rather than guessed at, exactly as an exit arriving with nothing open is.
-    """
-    act = (action or "").upper()
-    if act.startswith(_SHORT_EXIT_PREFIXES) or act in _SHORT_EXIT_ACTIONS:
-        return "short"
-    if act.startswith(_LONG_EXIT_PREFIXES) or act in _LONG_EXIT_ACTIONS:
-        return "long"
-    return None
-
-
-
-
-def _row_counts_as_executed(action: str | None, fill_status, fill_qty) -> bool:
-    """Python-side mirror of `Database._executed_trade_predicate()`,
-    usable on values pulled out of a row (rather than in a WHERE clause).
-    Kept in sync deliberately — see that method's docstring."""
-    status = fill_status or ""
-    if status == "" and (action or "").upper() != "HOLD":
-        return True
-    if status == "filled":
-        return True
-    try:
-        return float(fill_qty or 0) > 0
-    except (TypeError, ValueError):
-        return False
-
-
-def _assign_position_ids(rows: list[dict]) -> dict[int, str | None]:
-    """Walk one symbol's trades chronologically and derive position_id for
-    every row. `rows` must already be ordered oldest-first (timestamp, id)
-    and each dict needs at least id/action/qty/fill_qty/fill_status/
-    position_id.
-
-    Rule: a BUY (long) or a SHORT (short) from flat mints a fresh id; every
-    subsequent entry on the same side (scale-in) and every recognized
-    exit-family action for that side (see `_is_position_exit_action` and
-    `_exit_action_side`) inherits it until the running executed-qty net
-    returns to ~0, at which point the chain is closed and the next entry
-    mints a new one. A row with no open chain to attach to (an exit that
-    arrives while nothing is open — typically the ledger's oldest record for
-    a symbol whose real position predates this system, or a stray SELL after
-    the book already went flat) is left unassigned rather than guessed, per
-    spec.
-
-    **Shorts chain identically to longs** (owner decision, 2026-08-31). A
-    SHORT opens, a COVER/PARTIAL_COVER/EMERGENCY_COVER retires, and a stop or
-    trail retires either side. `qty` is the magnitude of shares moved on both
-    sides — a short's net counts UP as it is opened and DOWN as it is
-    covered, the same arithmetic as a long — so nothing here is negated or
-    special-cased for direction. Before this, `is_open` was `action == "BUY"`
-    alone: no SHORT ever received a position_id, so no short round trip
-    existed for §9.5's ledger to score. That was the whole of the gap.
-
-    Two guards keep the long side's existing chains untouched, both for
-    histories the desk does not currently produce:
-      - an entry on the OPPOSITE side while a chain is still open is passed
-        through untouched rather than flipping or closing that chain (you
-        cannot be long and short the same symbol at one broker, so this is a
-        malformed history, not a position);
-      - an exit whose side does not match the open chain (a SELL against a
-        short, a COVER against a long) is left unattached rather than
-        allowed to retire the wrong position.
-
-    Rows that ALREADY carry a position_id are treated as ground truth. That
-    is what makes this function safe to call from both the live per-insert
-    resolver (which only ever has one new, unassigned row) and the one-time
-    historical backfill (which may run against a database where live
-    trading has already assigned some rows and older history is still
-    NULL) without the two ever disagreeing or re-minting an id that already
-    exists — including when the ALREADY-assigned row is not the first row
-    in its chain (e.g. a legacy BUY with no id, followed by a live-inserted
-    TRAIL_STOP that already minted one): grouping happens in a first,
-    id-blind structural pass, and only THEN does a second pass pick, per
-    group, whichever id (if any) already exists in it — never one id for
-    the earlier rows and a different one for the later rows of what is
-    structurally the same chain.
-    """
-    # Pass 1 — partition into chain groups using ONLY the net-qty rule,
-    # ignoring any already-persisted id. Which rows belong to the same
-    # chain is a purely structural fact (ends the moment net qty returns to
-    # ~0); it does not depend on which of those rows happens to carry an id
-    # already.
-    groups: list[list[dict]] = []
-    passthrough: dict[int, str | None] = {}
-    current_group: list[dict] | None = None
-    current_net = 0.0
-    current_direction: str | None = None
-    for row in rows:
-        action = (row.get("action") or "").upper()
-        open_direction = _POSITION_OPEN_ACTIONS.get(action)
-        is_open = open_direction is not None
-        is_exit = _is_position_exit_action(action)
-        if not is_open and not is_exit:
-            # HOLD / SWEEP_BUY / SWEEP_SELL / anything unrecognized: never
-            # part of a position chain, and never disturbs one in progress.
-            passthrough[row["id"]] = row.get("position_id")
-            continue
-
-        executed = _row_counts_as_executed(action, row.get("fill_status"), row.get("fill_qty"))
-        qty = float(row.get("fill_qty") if row.get("fill_qty") else row.get("qty") or 0)
-        filled_trail = action == "TRAIL_STOP" and _is_filled_trail_stop(row, action)
-        chain_open = current_group is not None and current_net > 1e-6
-
-        if is_open:
-            if chain_open and open_direction != current_direction:
-                # A SHORT while a long chain is still open (or the reverse).
-                # Not producible by this desk and not a position either way:
-                # passed through so the open chain is left exactly as it was.
-                passthrough[row["id"]] = row.get("position_id")
-                continue
-            if not chain_open:
-                current_group = []
-                groups.append(current_group)
-                current_net = 0.0
-                current_direction = open_direction
-            current_group.append(row)
-            if executed:
-                current_net += qty
-        else:
-            if not chain_open:
-                # An exit with nothing open — its own singleton group,
-                # which pass 2 resolves to None unless it happens to
-                # already carry an id (a hand-corrected row: trust it,
-                # still never mint a NEW one for an unattached exit).
-                groups.append([row])
-                current_group = None
-                current_direction = None
-                continue
-            exit_side = _exit_action_side(action)
-            if exit_side is not None and exit_side != current_direction:
-                # A SELL against an open short, or a COVER against an open
-                # long. It cannot be this chain's exit; unattached, and the
-                # chain it does not belong to is left running.
-                groups.append([row])
-                continue
-            current_group.append(row)
-            if action == "TRAIL_STOP":
-                if executed and filled_trail:
-                    current_net -= qty
-            elif executed:
-                current_net -= qty
-            if current_net <= 1e-6:
-                current_group = None
-                current_net = 0.0
-                current_direction = None
-
-    # Pass 2 — resolve one id per group. An id already present ANYWHERE in
-    # the group wins (ground truth, whichever row in the chain happened to
-    # carry it first); otherwise mint one fresh id for the whole group, but
-    # only for a group that actually opened with a BUY or a SHORT — a lone
-    # unattached exit (no entry, no existing id) stays unassigned rather
-    # than guessed.
-    assignments: dict[int, str | None] = dict(passthrough)
-    for group in groups:
-        existing_ids = [r.get("position_id") for r in group if r.get("position_id")]
-        opened = any(
-            (r.get("action") or "").upper() in _POSITION_OPEN_ACTIONS for r in group
-        )
-        if existing_ids:
-            resolved = existing_ids[0]
-        elif opened:
-            resolved = _new_position_id()
-        else:
-            resolved = None
-        for r in group:
-            assignments[r["id"]] = r.get("position_id") or resolved
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Exit-reason categorization (Phase 6, spec §6.2e) — derived from the SAME
-# trigger vocabulary `_HARD_TRIGGER_KEYWORDS` (src/pipeline.py) already
-# requires every SELL/REDUCE to name, grouped exactly as that module's own
-# comments group it. Duplicated rather than imported: src/storage/db.py must
-# stay import-free of src/pipeline.py (pipeline.py is the one that imports
-# Database, not the other way — importing back would be circular), matching
-# how this module already duplicates `_executed_trade_predicate`-shaped
-# logic instead of reaching into the trading orchestrator.
-# ---------------------------------------------------------------------------
-
-#: (category, keyword-substrings). Case-insensitive substring match against
-#: `reasoning`, same tolerance-for-LLM-prose rationale as
-#: `_reason_cites_hard_trigger` in src/pipeline.py.
-_EXIT_TRIGGER_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("thesis_invalidated", (
-        "thesis_invalid", "thesis invalid", "invalidation triggered",
-        "broken thesis", "thesis broken",
-    )),
-    ("adverse_news_or_state_change", (
-        "high bearish", "high-conviction bearish", "high conviction bearish",
-        "adverse news", "material news", "sector shock",
-    )),
-    ("earnings_or_filing", (
-        "bearish earnings", "bearish filing", "earnings missed",
-        "earnings miss", "guidance cut",
-    )),
-    ("macro_regime_shift", (
-        "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
-    )),
-    ("risk_management_hard_stop", (
-        "daily loss", "daily-loss", "circuit breaker",
-        # The two correlation phrases stay HERE deliberately, even though
-        # they were removed from the live exit gate 2026-09-13 (WORK.md item
-        # 44). This function is descriptive, not a gate: it categorises rows
-        # that already exist, and dropping the phrases would silently
-        # re-label historical exits as "uncategorised". No NEW exit can carry
-        # them — `pipeline._HARD_TRIGGER_KEYWORDS` rejects the reason before
-        # a trades row is ever written.
-        "correlation breach", "correlation cluster breach",
-    )),
-    ("broker_stop_fill", ("stop hit", "stopped out")),
-    # Constructor-stamped funding-trim. Descriptive only — not a midday
-    # hard-trigger. Do NOT add this phrase to pipeline._HARD_TRIGGER_KEYWORDS
-    # (correlation-breach lesson: wording with no verifier).
-    ("mechanical_size_down", (
-        "mechanical size-down vs live book",
-    )),
-)
-
-#: Explicit fallback — never silently fold an exit-family row with no
-#: recognized trigger into one of the real categories above.
-_UNCATEGORISED_EXIT = "uncategorised"
-
-
-def _categorize_exit_reason(
-    action: str | None, reasoning: str | None, fill_status, fill_qty,
-) -> str | None:
-    """Deterministic exit_reason_category for one trades row, or None when
-    the row isn't an exit at all (BUY, HOLD, SWEEP_*).
-
-    Two axes, per spec: the EXIT PATH and the NAMED TRIGGER.
-      - STOP_OUT and a FILLED TRAIL_STOP are broker-side stop fills — the
-        broker executed the exit with no submitted decision reasoning to
-        read, so the category comes from the action alone, and only once
-        the fill is CONFIRMED (an unfilled TRAIL_STOP placement is
-        protection sitting there, not an exit — see `_is_filled_trail_stop`).
-      - TAKE_PROFIT was the deterministic auto trim's label (rule deleted
-        2026-09-12; only historical rows carry it), not a judgment call —
-        same confirmed-fill gate.
-      - Everything else in `_is_position_exit_action` (SELL*, PARTIAL_SELL*,
-        EMERGENCY_SELL, EMERGENCY_COVER, FORCE_DELEVER, REDUCE) is a reasoned
-        decision: its reasoning text is checked at submission time against
-        the same six trigger groups `_HARD_TRIGGER_KEYWORDS` gates behind
-        SELL/REDUCE, valid regardless of eventual fill outcome. No match
-        among rows that ARE exit-family gets the explicit "uncategorised"
-        fallback — never a fabricated real category.
-    """
-    act = (action or "").upper()
-    if act == "STOP_OUT":
-        return "broker_stop_fill"
-    if act == "RECONCILED_EXIT":
-        # A recovered broker exit whose order_type could not be proven to be
-        # a protective stop (item 173(a)): a distinct, honest category so
-        # owner-facing attribution never files it under a stop it can't
-        # substantiate, and never silently under an ordinary decided sale.
-        return "reconciled_unattributed_exit"
-    if act == "TRAIL_STOP":
-        row = {"fill_status": fill_status, "fill_qty": fill_qty}
-        return "broker_stop_fill" if _is_filled_trail_stop(row, act) else None
-    if act == "TAKE_PROFIT":
-        return (
-            "take_profit_target"
-            if _row_counts_as_executed(act, fill_status, fill_qty) else None
-        )
-    if not _is_position_exit_action(act):
-        return None
-    reason_l = (reasoning or "").lower()
-    for category, keywords in _EXIT_TRIGGER_CATEGORIES:
-        if any(kw in reason_l for kw in keywords):
-            return category
-    return _UNCATEGORISED_EXIT
-
-
-# ---------------------------------------------------------------------------
-# decision_id_status (conviction ledger, spec §7.2) — an honest label for
-# WHETHER an exit-family row is traceable to a PM decision, mirroring Phase
-# 3.1's pace/pace_status pattern: `pace` stays None and `pace_status` names
-# WHY rather than the reader having to guess. Here `decision_id` stays
-# whatever the caller passed (usually None for a broker/deterministic exit)
-# and `decision_id_status` says WHY: 'linked' when a real decision_id was
-# supplied (this exit was built from a PM/RM-reviewed TradeDecision the same
-# session — see the ordinary SELL/COVER loops in pipeline_stages.py's
-# ExecutionStage); 'no_originating_decision' when the row is exit-family but
-# the code path that wrote it never had ANY decision to attach (broker stop
-# fills, historical TAKE_PROFIT auto trims, deterministic trailing, emergency liquidation,
-# force-delever/sweep, the midday reviewer's own exits) — a labelled
-# absence, not a guess. None for BUY/SHORT/HOLD/SWEEP_* rows: the field
-# does not apply to them at all (mirrors `_categorize_exit_reason`
-# returning None for the same non-exit rows).
-#
-# Still a BROADER predicate than `_is_position_exit_action`, though the gap
-# it was written for has closed: COVER/PARTIAL_COVER now DO belong to the
-# position_id / exit_reason_category chain (2026-08-31 — shorts are chained
-# and scored exactly as longs are). What remains is the set difference for
-# anything outside both lists: this predicate labels every non-entry,
-# non-HOLD, non-sweep row, so a future exit action is labelled 'linked' from
-# the day it exists rather than silently returning None.
-_NON_POSITIONAL_ACTIONS: frozenset[str] = frozenset({
-    "BUY", "SHORT", "HOLD", "SWEEP_BUY", "SWEEP_SELL",
-})
-
-
-def _is_exit_family_for_decision_linking(action: str | None) -> bool:
-    act = (action or "").upper()
-    return bool(act) and act not in _NON_POSITIONAL_ACTIONS
-
-
-def _resolve_decision_id_status(action: str | None, decision_id: str | None) -> str | None:
-    if not _is_exit_family_for_decision_linking(action):
-        return None
-    return "linked" if decision_id else "no_originating_decision"
-
-
-
-
-def _extract_pm_targets(full_response: str | None) -> list[dict]:
-    """Best-effort `targets` list out of a `portfolio_manager` agent_logs
-    row's `full_response`, for `Database.backfill_conviction_ledger`.
-
-    Real production history (verified 2026-08-30) stores this TWO ways
-    depending on which point in the prompt-format's history the row was
-    written: some rows fence the JSON in a ```json ... ``` code block,
-    others write the raw JSON object with no fence at all. Both are tried;
-    neither found or parseable returns [] rather than raising, so one
-    malformed historical row can't abort the whole backfill.
-    """
-    if not full_response:
-        return []
-    import json
-    import re
-    m = re.search(r"```json\s*(.*?)```", full_response, re.S)
-    body = m.group(1) if m else full_response
-    try:
-        data = json.loads(body)
-    except (ValueError, TypeError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    targets = data.get("targets")
-    return targets if isinstance(targets, list) else []
-
-
-def _find_pm_target_for_symbol(full_response: str | None, symbol: str) -> dict | None:
-    """The one target (if any) in a PM response matching `symbol`.
-
-    Case-insensitive / whitespace-tolerant match — the same normalization
-    `TargetPosition.normalize_symbol` applies going in, applied here going
-    back out, since the stored JSON is the raw pre-validation prose the
-    model wrote.
-    """
-    sym_norm = (symbol or "").strip().upper()
-    if not sym_norm:
-        return None
-    for target in _extract_pm_targets(full_response):
-        if not isinstance(target, dict):
-            continue
-        if str(target.get("symbol", "")).strip().upper() == sym_norm:
-            return target
-    return None
 
 
 class TradeLedger:
@@ -1271,104 +840,24 @@ class TradeLedger:
         position_qty_before_sell: float, specs_json: str,
         run_id: str | None = None, side: str | None = None,
     ) -> int:
-        """Persist an orphaned protection-restore intent.
-
-        Written when _finalize_protection_after_sell can't act now —
-        either cancel of the lingering SELL raised, or the order didn't
-        converge to terminal within the short post-cancel wait. Drained
-        at session start: the pending row's sell_order_id is re-queried
-        for terminal status, and if now terminal, the persisted specs
-        drive a fresh finalize attempt.
-
-        `side` is the PROTECTIVE-STOP / closing-order side, which coincide:
-        "sell" (default) for a LONG (its protective stop is a SELL below
-        entry, and a long is closed by selling) and "buy" for a SHORT (its
-        protective stop is a BUY above entry, and a short is closed by
-        covering). This is the REAL side, known at write time by whoever is
-        closing the position, and is read back by
-        `TradingPipeline._resolve_wal_row_side` under exactly this
-        convention. (An earlier version of this docstring stated the
-        mapping backwards — long→"buy", short→"sell" — which never matched
-        the writers or the reader; corrected here.) NULL only for a row
-        written before this column existed; the drain path treats NULL as
-        the long-assuming fallback (see
-        `TradingPipeline._derive_close_side_for_drain`).
-
-        SCALE-IN rows (sell_order_id == `scale_in.WAL_SCALE_IN_SENTINEL`)
-        follow the IDENTICAL convention, but they are dispatched to
-        `scale_in.drain_scale_in_row` by their sentinel BEFORE any generic
-        side reader runs, and that drain classifies long/short from the SIGN
-        of `position_qty_before_sell` rather than this column — so a scale-in
-        row is never interpreted with a generic reader's meaning either way.
-        """
-        def _do():
-            cur = self.conn.execute(
-                "INSERT INTO pending_protection_restores "
-                "(symbol, sell_order_id, position_qty_before_sell, specs_json, "
-                "run_id, side) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (symbol, sell_order_id, position_qty_before_sell, specs_json,
-                 run_id, side),
-            )
-            row_id = cur.lastrowid or 0
-            # Item 193: attribute the id before it can be forgotten. Best
-            # effort on purpose - an audit failure must never stop a
-            # protective-restore intent from being persisted.
-            try:
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO protection_restore_wal_audit "
-                    "(row_id, symbol, sell_order_id, "
-                    "position_qty_before_sell, side, run_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (row_id, symbol, sell_order_id,
-                     position_qty_before_sell, side, run_id),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "protection-restore WAL audit row %s not written: %s",
-                    row_id, exc,
-                )
-            self.conn.commit()
-            return row_id
-        return self._locked_write(_do, label="insert_pending_protection_restore")
+        return _recovery_queues.insert_pending_protection_restore(
+            self,
+            symbol=symbol,
+            sell_order_id=sell_order_id,
+            position_qty_before_sell=position_qty_before_sell,
+            specs_json=specs_json,
+            run_id=run_id,
+            side=side,
+        )
 
     def get_protection_restore_wal_audit(self) -> list[dict]:
-        """Every protection-restore WAL id ever handed out, oldest first.
-
-        Item 193's completeness check: join these against the
-        `scale_in|protective_sell_cancelled` events' own `wal_row_id`, and
-        an id present here but absent there was spent by the protected-sell
-        exit path or by a rolled-back preparation, not by an unrecorded
-        cancel.
-        """
-        with self._lock:
-            cur = self.conn.execute(
-                "SELECT row_id, symbol, sell_order_id, "
-                "position_qty_before_sell, side, run_id, created_at "
-                "FROM protection_restore_wal_audit ORDER BY row_id"
-            )
-            return [dict(r) for r in cur.fetchall()]
+        return _recovery_queues.get_protection_restore_wal_audit(self)
 
     def get_pending_protection_restores(self) -> list[dict]:
-        """All currently-pending protection-restore rows, oldest first."""
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT id, symbol, sell_order_id, position_qty_before_sell, "
-                "specs_json, created_at, run_id, side FROM pending_protection_restores "
-                "ORDER BY created_at ASC"
-            ).fetchall()
-        return [dict(r) for r in rows]
+        return _recovery_queues.get_pending_protection_restores(self)
 
     def delete_pending_protection_restore(self, row_id: int) -> int:
-        """Remove a row by its primary key (after successful drain)."""
-        def _do():
-            cur = self.conn.execute(
-                "DELETE FROM pending_protection_restores WHERE id = ?",
-                (row_id,),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
-        return self._locked_write(_do, label="delete_pending_protection_restore")
+        return _recovery_queues.delete_pending_protection_restore(self, row_id)
 
     def update_pending_protection_restore(
         self, row_id: int, *,
@@ -1377,145 +866,44 @@ class TradeLedger:
         specs_json: str | None = None,
         side: str | None = None,
     ) -> int:
-        """Partial-update a recovery row (only the provided fields).
-
-        audit F1 write-ahead lifecycle: a row is inserted BEFORE
-        cancel_protective_stops with a sentinel sell_order_id; this flips
-        it to the real broker order id once the SELL is accepted, and
-        finalize-on-bail uses it to UPDATE the existing row (instead of
-        INSERTing a duplicate alongside the write-ahead row).
-
-        ``side`` (Stage 3, shorts): re-affirms which side this row
-        protects — normally already set at the initial write-ahead
-        INSERT, this lets a caller correct/set it on UPDATE too.
-        """
-        sets: list[str] = []
-        params: list = []
-        if sell_order_id is not None:
-            sets.append("sell_order_id = ?")
-            params.append(sell_order_id)
-        if position_qty_before_sell is not None:
-            sets.append("position_qty_before_sell = ?")
-            params.append(position_qty_before_sell)
-        if specs_json is not None:
-            sets.append("specs_json = ?")
-            params.append(specs_json)
-        if side is not None:
-            sets.append("side = ?")
-            params.append(side)
-        if not sets:
-            return 0
-        params.append(row_id)
-        with self._lock:
-            cur = self.conn.execute(
-                f"UPDATE pending_protection_restores SET {', '.join(sets)} "
-                "WHERE id = ?",
-                tuple(params),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
+        return _recovery_queues.update_pending_protection_restore(
+            self,
+            row_id,
+            sell_order_id=sell_order_id,
+            position_qty_before_sell=position_qty_before_sell,
+            specs_json=specs_json,
+            side=side,
+        )
 
     def update_pending_protection_restore_specs(
         self, row_id: int, specs_json: str,
     ) -> int:
-        """Replace the specs_json of an existing recovery row.
-
-        Used by the drain path's partial-restore handling: when 1 of N
-        specs landed on this drain attempt, the next drain should only
-        retry the N-1 that failed (re-submitting the already-alive stop
-        either creates a duplicate or hits held_for_orders, neither
-        productive). Codex r10 #1.
-        """
-        with self._lock:
-            cur = self.conn.execute(
-                "UPDATE pending_protection_restores SET specs_json = ? WHERE id = ?",
-                (specs_json, row_id),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
+        return _recovery_queues.update_pending_protection_restore_specs(self, row_id, specs_json)
 
     def insert_pending_repeg(
         self, *, trade_row_id: int | None, symbol: str, old_order_id: str,
         new_order_id: str, run_id: str | None = None,
     ) -> int:
-        """Persist the intent to replace `old_order_id`.
-
-        `new_order_id` is the caller's sentinel until the broker answers.
-        """
-        def _do():
-            cur = self.conn.execute(
-                "INSERT INTO pending_repegs "
-                "(trade_row_id, symbol, old_order_id, new_order_id, run_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (trade_row_id, symbol, old_order_id, new_order_id, run_id),
-            )
-            self.conn.commit()
-            return cur.lastrowid or 0
-        return self._locked_write(_do, label="insert_pending_repeg")
+        return _recovery_queues.insert_pending_repeg(
+            self,
+            trade_row_id=trade_row_id,
+            symbol=symbol,
+            old_order_id=old_order_id,
+            new_order_id=new_order_id,
+            run_id=run_id,
+        )
 
     def get_pending_repegs(self) -> list[dict]:
-        """All currently-pending re-peg rows, oldest first."""
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT id, trade_row_id, symbol, old_order_id, new_order_id, "
-                "created_at, run_id FROM pending_repegs ORDER BY created_at ASC"
-            ).fetchall()
-        return [dict(r) for r in rows]
+        return _recovery_queues.get_pending_repegs(self)
 
     def resolve_pending_repeg(self, row_id: int, new_order_id: str) -> int:
-        """Record the id the broker actually minted for a pending re-peg."""
-        def _do():
-            cur = self.conn.execute(
-                "UPDATE pending_repegs SET new_order_id = ? WHERE id = ?",
-                (new_order_id, row_id),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
-        return self._locked_write(_do, label="resolve_pending_repeg")
+        return _recovery_queues.resolve_pending_repeg(self, row_id, new_order_id)
 
     def delete_pending_repeg(self, row_id: int) -> int:
-        """Remove a re-peg WAL row once the trades row is authoritative."""
-        def _do():
-            cur = self.conn.execute(
-                "DELETE FROM pending_repegs WHERE id = ?", (row_id,),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
-        return self._locked_write(_do, label="delete_pending_repeg")
+        return _recovery_queues.delete_pending_repeg(self, row_id)
 
     def prune_pending_repegs(self, keep_days: int = 30) -> int:
-        """Delete pending_repegs rows older than keep_days.
-
-        Same reasoning as `prune_pending_protection_restores`: the drain
-        re-attempts every session, so a row that survives 30 days is one the
-        broker can no longer resolve (order id aged out of history). Refuses
-        keep_days <= 0 rather than wiping a recovery queue.
-        """
-        if keep_days <= 0:
-            raise ValueError(
-                f"prune_pending_repegs: keep_days must be > 0, got {keep_days}"
-            )
-        with self._lock:
-            stale = self.conn.execute(
-                "SELECT id, symbol, old_order_id, created_at FROM pending_repegs "
-                "WHERE created_at < datetime('now', ?)",
-                (f"-{keep_days} days",),
-            ).fetchall()
-            if not stale:
-                return 0
-            for row in stale:
-                logger.info(
-                    "Pruning stale pending_repeg row %d: symbol=%s "
-                    "old_order_id=%s created_at=%s (>%dd old)",
-                    row["id"], row["symbol"], row["old_order_id"],
-                    row["created_at"], keep_days,
-                )
-            cursor = self.conn.execute(
-                "DELETE FROM pending_repegs WHERE created_at < datetime('now', ?)",
-                (f"-{keep_days} days",),
-            )
-            self.conn.commit()
-            return cursor.rowcount or 0
+        return _recovery_queues.prune_pending_repegs(self, keep_days)
 
     def get_trades(self, symbol: str | None = None, limit: int = 100,
                     today_only: bool = False,
@@ -1547,260 +935,19 @@ class TradeLedger:
         return [dict(row) for row in rows]
 
     def _accumulate_excursions(self, position) -> None:
-        """Widen the recorded worst- and best-against-entry excursions.
-
-        STOP-FLOOR EVIDENCE, RECORDING ONLY. These are the running half of
-        the facts the desk needs before it can ever check its ratified
-        minimum stop width against its own trades (the pinned half,
-        `entry_atr`, `initial_stop_loss` and `stop_basis`, is written at
-        entry by `insert_trade`; the resolved half, `realized_pnl` and
-        `exit_reason_category`, lands when the position closes). Read the
-        `max_adverse_excursion` migration note in `_migrate` for the hard
-        limit on its use: it may show whether the floor was ever VIOLATED in
-        practice, and it may NOT be optimised against to produce a new
-        multiplier. Doctrine bars fitting a number to this desk's history.
-
-        Monotonic: the stored figure only ever widens while the position is
-        open, so a recovery cannot erase the excursion that preceded it. It
-        is written onto the OPENING rows of the position (the rows carrying
-        `entry_atr`), which is where a later reader joins entry ATR, stop
-        basis, excursion and realised outcome together.
-
-        Side-agnostic: "against" is below entry for a long and above entry
-        for a short, decided from the sign of `qty` rather than from a
-        stored action, because that is the only side fact a broker position
-        snapshot carries. A zero or missing entry price is skipped rather
-        than guessed.
-
-        Assumes the caller holds `self._lock` and an open transaction —
-        `sync_positions` is the only caller and does both.
-        """
-        try:
-            entry = float(getattr(position, "avg_entry", 0) or 0)
-            last = float(getattr(position, "current_price", 0) or 0)
-            qty = float(getattr(position, "qty", 0) or 0)
-        except (TypeError, ValueError):
-            return
-        if entry <= 0 or last <= 0 or qty == 0:
-            return
-        # Excursion AGAINST the position, in price units. Never negative:
-        # a position in profit contributes nothing. The favourable leg is
-        # its exact mirror, and at most one of the two is positive at any
-        # snapshot, so each column widens only on the snapshots that
-        # actually evidence it.
-        adverse = (entry - last) if qty > 0 else (last - entry)
-        favourable = -adverse
-        for column, excursion in (
-            ("max_adverse_excursion", adverse),
-            ("max_favourable_excursion", favourable),
-        ):
-            if excursion <= 0:
-                continue
-            self.conn.execute(
-                f"UPDATE trades SET {column} = ? "  # noqa: S608 - literal, not input
-                "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
-                "AND entry_atr IS NOT NULL "
-                f"AND ({column} IS NULL OR {column} < ?) "
-                "AND position_id IN ("
-                "  SELECT position_id FROM trades WHERE symbol = ? "
-                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
-                (excursion, position.symbol, excursion, position.symbol),
-            )
+        return _excursions._accumulate_excursions(self, position)
 
     def record_overnight_gap(
         self, symbol: str, prev_close: float, open_price: float,
         session_date: str,
     ) -> bool:
-        """Record one session's ADVERSE overnight gap against an open SHORT.
-
-        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY. Read the
-        `max_adverse_overnight_gap` migration note in `_migrate` for why
-        this exists (item 186 — the sizing haircut cannot be read off the
-        instrument because the evidence was never kept) and for the hard
-        limit on its use: nothing may read it back into a sizing, stop or
-        exit decision, and it may not be swept for an optimal multiple.
-
-        The stored figure is the WORST (largest) adverse gap seen on any
-        session the short was held, `open - prev_close` in price units,
-        positive when the name gapped UP against the short. It is stored
-        SIGNED and unfiltered: a short every one of whose gaps ran in its
-        favour records a negative worst, which is a real and different fact
-        from "never observed". `overnight_gap_sessions` counts the sessions
-        observed so the two stay distinguishable.
-
-        Written onto the OPENING rows of the position (the `SHORT` rows
-        carrying `entry_atr`), which is where a later reader joins the gap
-        to the volatility read and the stop distance pinned at entry —
-        `entry_atr` and `initial_stop_loss` on the same row — and, once the
-        position closes, to its realised outcome.
-
-        Idempotent per session: `last_overnight_gap_date` gates the write,
-        so a second position sync on the same date cannot count one gap
-        twice. Returns True when a row was updated.
-        """
-        try:
-            prev_close = float(prev_close)
-            open_price = float(open_price)
-        except (TypeError, ValueError):
-            return False
-        if prev_close <= 0 or open_price <= 0 or not session_date:
-            return False
-        gap = open_price - prev_close
-        with self._lock:
-            cur = self.conn.execute(
-                "UPDATE trades SET "
-                "  max_adverse_overnight_gap = CASE "
-                "    WHEN max_adverse_overnight_gap IS NULL "
-                "      OR max_adverse_overnight_gap < ? THEN ? "
-                "    ELSE max_adverse_overnight_gap END, "
-                "  overnight_gap_sessions = COALESCE(overnight_gap_sessions, 0) + 1, "
-                "  last_overnight_gap_date = ? "
-                "WHERE symbol = ? AND action = 'SHORT' "
-                "AND entry_atr IS NOT NULL "
-                "AND (last_overnight_gap_date IS NULL OR last_overnight_gap_date < ?) "
-                "AND position_id IN ("
-                "  SELECT position_id FROM trades WHERE symbol = ? "
-                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
-                (gap, gap, session_date, symbol, session_date, symbol),
-            )
-            self.conn.commit()
-            return cur.rowcount > 0
+        return _excursions.record_overnight_gap(self, symbol, prev_close, open_price, session_date)
 
     def _accumulate_level_distances(self, position) -> None:
-        """Widen what the market has done to the stop's structural level.
-
-        ITEM 55 RECORDING, FALSIFICATION ONLY, and it decides nothing. The
-        pinned half (`stop_level_basis`) says what the stop stood on; this
-        is the running half that says what price then did to it, so that
-        "is this a real level" becomes answerable from the desk's own
-        record instead of from argument. Read the `stop_level_basis`
-        migration note for the hard limit on its use: it may show the
-        current definition of a level is WRONG, and it may NEVER be swept
-        for a better pivot window or zone width.
-
-        TWO RAW DISTANCES, NO VERDICT. `level_max_penetration` is how far
-        beyond the zone's FAR edge price has travelled (monotonic upward,
-        never negative); `level_closest_approach` is the smallest gap ever
-        seen to the zone's NEAR edge (monotonic downward, signed, negative
-        once price is inside). Nothing here calls an outcome "respected",
-        "pierced" or "broken", because each of those needs a cutoff nobody
-        can source; a later reader states its own cutoff and applies it to
-        these numbers, which were never rounded to one.
-
-        Side-agnostic in the same way as `_accumulate_excursions`, and for
-        the same reason: the side is read off the sign of `qty`, the only
-        side fact a broker position snapshot carries. A row with no
-        `stop_level_basis`, or one whose record had no level behind the
-        stop, is skipped and stays NULL rather than being given a
-        substitute.
-
-        Assumes the caller holds `self._lock` and an open transaction —
-        `sync_positions` is the only caller and does both.
-        """
-        try:
-            last = float(getattr(position, "current_price", 0) or 0)
-            qty = float(getattr(position, "qty", 0) or 0)
-        except (TypeError, ValueError):
-            return
-        if last <= 0 or qty == 0:
-            return
-        row = self.conn.execute(
-            "SELECT id, stop_level_basis FROM trades "
-            "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
-            "AND stop_level_basis IS NOT NULL "
-            "AND position_id IN ("
-            "  SELECT position_id FROM trades WHERE symbol = ? "
-            "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1) "
-            "ORDER BY id DESC LIMIT 1",
-            (position.symbol, position.symbol),
-        ).fetchone()
-        if row is None:
-            return
-        try:
-            basis = json.loads(row[1])
-        except (TypeError, ValueError):
-            return
-        if not isinstance(basis, dict) or not basis.get("level_backed"):
-            return
-        low, high = basis.get("zone_low"), basis.get("zone_high")
-        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
-            return
-        if qty > 0:
-            # Long: the level is support below, so the far edge is the
-            # bottom of the zone and the near edge is the top of it.
-            penetration = float(low) - last
-            approach = last - float(high)
-        else:
-            penetration = last - float(high)
-            approach = float(low) - last
-        if penetration > 0:
-            self.conn.execute(
-                "UPDATE trades SET level_max_penetration = ? WHERE id = ? "
-                "AND (level_max_penetration IS NULL OR level_max_penetration < ?)",
-                (penetration, row[0], penetration),
-            )
-        self.conn.execute(
-            "UPDATE trades SET level_closest_approach = ? WHERE id = ? "
-            "AND (level_closest_approach IS NULL OR level_closest_approach > ?)",
-            (approach, row[0], approach),
-        )
+        return _excursions._accumulate_level_distances(self, position)
 
     def sync_positions(self, positions) -> None:
-        """Replace positions table with a fresh broker snapshot.
-
-        Upserts rows for currently-held symbols and deletes rows for any symbol
-        no longer present. Prevents stale closed positions from lingering in the DB.
-
-        Wraps DELETE + INSERT loop in an explicit BEGIN/COMMIT transaction so
-        a crash between the DELETE and the first INSERT cannot leave the table
-        in a half-state (would otherwise leave the next session's reviewer
-        reading an empty positions snapshot while the broker still holds them).
-        Mirrors the atomic-write discipline used in `save_evening_snapshot`.
-        """
-        current_symbols = {p.symbol for p in positions}
-        with self._lock:
-            try:
-                self.conn.execute("BEGIN")
-                if current_symbols:
-                    placeholders = ",".join("?" for _ in current_symbols)
-                    self.conn.execute(
-                        f"DELETE FROM positions WHERE symbol NOT IN ({placeholders})",
-                        tuple(current_symbols),
-                    )
-                else:
-                    self.conn.execute("DELETE FROM positions")
-                for p in positions:
-                    self.conn.execute(
-                        """INSERT INTO positions (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                           ON CONFLICT(symbol) DO UPDATE SET
-                             qty=excluded.qty, avg_entry=excluded.avg_entry,
-                             current_price=excluded.current_price, market_value=excluded.market_value,
-                             unrealized_pnl=excluded.unrealized_pnl, sector=excluded.sector,
-                             updated_at=datetime('now')""",
-                        (p.symbol, p.qty, p.avg_entry, p.current_price, p.market_value,
-                         p.unrealized_pnl, p.sector),
-                    )
-                    # Stop-floor evidence, RECORDING ONLY — see the
-                    # `max_adverse_excursion` migration note for what this
-                    # data may and may NOT be used for. Nothing reads it back
-                    # into a trading decision; it cannot change sizing, stop
-                    # placement or an exit. Inside the same transaction as
-                    # the snapshot it is derived from, so the two can never
-                    # disagree, and swallowed on error so a recording problem
-                    # can never fail a position sync.
-                    try:
-                        self._accumulate_excursions(p)
-                        self._accumulate_level_distances(p)
-                    except Exception:
-                        logger.debug(
-                            "excursion recording skipped for %s",
-                            getattr(p, "symbol", "?"), exc_info=True,
-                        )
-                self.conn.commit()
-            except Exception:
-                self.conn.rollback()
-                raise
+        return _excursions.sync_positions(self, positions)
 
     def update_open_take_profit(
         self, symbol: str, new_target: float, *, action: str | None = None,
@@ -1876,271 +1023,10 @@ class TradeLedger:
             return cursor.rowcount or 0
 
     def prune_pending_protection_restores(self, keep_days: int = 30) -> int:
-        """Delete pending_protection_restores rows older than keep_days.
-
-        Drain re-attempts these rows every session; a row that survives
-        ~30 calendar days (~20 trading sessions) means either:
-          - broker forgot the sell_order_id (deep history GC),
-          - the underlying position is gone via other paths (manual
-            close, EMERGENCY_SELL during a separate session), or
-          - the row's specs_json is malformed in a way drain can't
-            recover from automatically.
-        In any of these cases, indefinite retention is just operational
-        noise — drain can't help. Logs the symbols pruned at INFO so
-        manual review remains possible. Returns count deleted.
-        """
-        if keep_days <= 0:
-            # `datetime('now', '-0 days')` == 'now' → deletes EVERYTHING.
-            # Caller almost certainly passed a typo / config bug. Refuse
-            # rather than silently wipe a recovery queue.
-            raise ValueError(
-                f"prune_pending_protection_restores: keep_days must be > 0, got {keep_days}"
-            )
-        with self._lock:
-            stale = self.conn.execute(
-                "SELECT id, symbol, sell_order_id, created_at "
-                "FROM pending_protection_restores "
-                "WHERE created_at < datetime('now', ?)",
-                (f"-{keep_days} days",),
-            ).fetchall()
-            if not stale:
-                return 0
-            for row in stale:
-                logger.info(
-                    "Pruning stale pending_protection_restore row %d: "
-                    "symbol=%s sell_order_id=%s created_at=%s (>%dd old)",
-                    row["id"], row["symbol"], row["sell_order_id"],
-                    row["created_at"], keep_days,
-                )
-            cursor = self.conn.execute(
-                "DELETE FROM pending_protection_restores "
-                "WHERE created_at < datetime('now', ?)",
-                (f"-{keep_days} days",),
-            )
-            self.conn.commit()
-            return cursor.rowcount or 0
+        return _recovery_queues.prune_pending_protection_restores(self, keep_days)
 
     def backfill_position_ids(self, *, dry_run: bool = False) -> dict:
-        """One-time reconstruction of `position_id` chains for trades rows
-        written before this column existed (Phase 6, §6.2a).
-
-        Uses the exact same FIFO logic `_assign_position_ids` derives
-        (matched by symbol, oldest-first, a BUY or a SHORT opens/adds, a
-        recognized exit-family action for that side reduces — mirroring the
-        accounting `compute_trade_calibration` already trusts for win-rate /
-        avg-hold-days) so the backfilled chains never disagree with those
-        numbers. Re-running this after 2026-08-31 assigns chains to short
-        history that could not receive one before; a row that already carries
-        an id is still never reassigned.
-
-        Never guesses: a row this can't confidently attach to an open chain
-        — typically the ledger's very first record for a symbol whose real
-        position predates this system (a SELL/exit with no prior BUY on
-        record), or a stray exit after the book had already gone flat — is
-        left NULL rather than assigned a fabricated chain.
-
-        Idempotent and safe to run against a database where live trading has
-        already assigned SOME rows (because this migration shipped and
-        started minting ids for new trades before the backfill got run
-        against older history): a row that already carries a position_id is
-        never reassigned, and the chain state used to fill in the gaps
-        around it treats that id as ground truth.
-
-        `dry_run=True` computes and reports without writing anything.
-
-        Returns:
-            {"total": int,            # every trades row in the database
-             "already_assigned": int, # had a position_id before this ran
-             "assigned": int,         # newly assigned by this run
-             "left_null_ambiguous": int,  # BUY/exit-family, but no chain
-                                           # to confidently attach to
-             "not_applicable": int}   # HOLD / SWEEP_BUY / SWEEP_SELL /
-                                       # anything not part of a position
-                                       # chain by design, not by ambiguity
-        """
-        def _do():
-            rows = self.conn.execute(
-                "SELECT id, symbol, action, qty, fill_qty, fill_status, "
-                "position_id FROM trades ORDER BY symbol, timestamp, id"
-            ).fetchall()
-            rows = [dict(r) for r in rows]
-            by_symbol: dict[str, list[dict]] = {}
-            for r in rows:
-                by_symbol.setdefault(r["symbol"], []).append(r)
-
-            total = len(rows)
-            already_assigned = sum(1 for r in rows if r.get("position_id"))
-            assigned = 0
-            left_null_ambiguous = 0
-            not_applicable = 0
-            updates: list[tuple[str, int]] = []
-
-            for symbol_rows in by_symbol.values():
-                new_assignments = _assign_position_ids(symbol_rows)
-                for r in symbol_rows:
-                    if r.get("position_id"):
-                        continue  # ground truth — never reassigned
-                    action = (r.get("action") or "").upper()
-                    is_positionable = (
-                        action in _POSITION_OPEN_ACTIONS
-                        or _is_position_exit_action(action)
-                    )
-                    new_id = new_assignments.get(r["id"])
-                    if new_id:
-                        assigned += 1
-                        updates.append((new_id, r["id"]))
-                    elif is_positionable:
-                        left_null_ambiguous += 1
-                    else:
-                        not_applicable += 1
-
-            if not dry_run and updates:
-                self.conn.executemany(
-                    "UPDATE trades SET position_id = ? WHERE id = ?", updates,
-                )
-                self.conn.commit()
-            return {
-                "total": total,
-                "already_assigned": already_assigned,
-                "assigned": assigned,
-                "left_null_ambiguous": left_null_ambiguous,
-                "not_applicable": not_applicable,
-            }
-        return self._locked_write(_do, label="backfill_position_ids")
+        return _backfills.backfill_position_ids(self, dry_run=dry_run)
 
     def backfill_conviction_ledger(self, *, dry_run: bool = False) -> dict:
-        """One-time reconstruction of the conviction-ledger columns (spec
-        §7.2) for `trades` rows written before they existed.
-
-        Two INDEPENDENT repairs, run together because both read `trades` in
-        one pass (mirrors `backfill_position_ids`'s shape and safety
-        posture — dry-run by default, idempotent, never guesses):
-
-        1. `decision_id_status` on every exit-family row (see
-           `_is_exit_family_for_decision_linking`) that predates the
-           column. This is NEVER ambiguous, unlike `position_id`'s
-           `left_null_ambiguous` case: every `insert_trade` / `insert_
-           stop_out_trade` call site in this codebase is enumerated, and an
-           exit row's `decision_id` is NULL if and only if the code path
-           that wrote it never had one to attach. So every eligible row
-           gets EITHER 'linked' or 'no_originating_decision' — there is no
-           third "can't tell" bucket the way position_id has.
-
-        2. `conviction` / `requested_risk_pct` / `decision_model` on BUY/
-           SHORT rows that already carry a real `decision_id`: recovered by
-           joining `agent_logs` (agent_name='portfolio_manager', matching
-           decision_id) and reading the `targets` entry matching this
-           trade's symbol out of `full_response` (see
-           `_find_pm_target_for_symbol` — handles both the fenced-```json
-           and raw-JSON formats seen in real history).
-
-           `allocated_risk_pct` (the POST-clamp figure the constructor's
-           RiskPlan actually granted) is DELIBERATELY NEVER backfilled —
-           it was never persisted anywhere retroactively readable (only
-           the PM's pre-clamp ask survives, inside `full_response`), and
-           reconstructing the granted figure would mean re-running the
-           constructor's budget rationing against point-in-time book state
-           this database does not fully preserve. Every backfilled row
-           gets `allocated_risk_pct = NULL`, always, and the returned dict
-           reports that as `allocated_risk_pct_recoverable: 0` rather than
-           letting a caller assume the gap was closed.
-
-        Idempotent: an exit row is only touched while `decision_id_status
-        IS NULL`; an entry row only while `conviction IS NULL AND
-        decision_model IS NULL` (a row already touched by this backfill,
-        or by live trading after this column existed, is never
-        reprocessed). `dry_run=True` (default) computes and returns counts
-        without writing.
-        """
-        def _do():
-            # ---- 1. exit rows: decision_id_status (fully recoverable) ----
-            exit_rows = self.conn.execute(
-                "SELECT id, action, decision_id FROM trades "
-                "WHERE decision_id_status IS NULL",
-            ).fetchall()
-            exit_updates: list[tuple[str, int]] = []
-            exit_linked = 0
-            exit_no_originating_decision = 0
-            exit_not_applicable = 0
-            for r in exit_rows:
-                status = _resolve_decision_id_status(r["action"], r["decision_id"])
-                if status is None:
-                    exit_not_applicable += 1
-                    continue
-                exit_updates.append((status, r["id"]))
-                if status == "linked":
-                    exit_linked += 1
-                else:
-                    exit_no_originating_decision += 1
-
-            # ---- 2. entry rows: conviction / requested_risk_pct / decision_model ----
-            entry_rows = self.conn.execute(
-                "SELECT id, symbol, decision_id FROM trades "
-                "WHERE action IN ('BUY', 'SHORT') AND decision_id IS NOT NULL "
-                "AND conviction IS NULL AND decision_model IS NULL",
-            ).fetchall()
-            decision_ids = sorted({r["decision_id"] for r in entry_rows if r["decision_id"]})
-            pm_logs: dict[str, dict] = {}
-            if decision_ids:
-                placeholders = ",".join("?" for _ in decision_ids)
-                for row in self.conn.execute(
-                    "SELECT decision_id, model, full_response FROM agent_logs "
-                    f"WHERE agent_name = 'portfolio_manager' AND decision_id IN ({placeholders})",
-                    tuple(decision_ids),
-                ).fetchall():
-                    # First row wins on a duplicate decision_id (retries are
-                    # not expected to share an id, but never overwrite a
-                    # resolved match with a later, possibly-unrelated one).
-                    pm_logs.setdefault(row["decision_id"], dict(row))
-
-            entry_updates: list[tuple] = []  # (conviction, requested_risk_pct, decision_model, id)
-            entry_recovered = 0
-            entry_unrecoverable_no_agent_log = 0
-            entry_unrecoverable_no_matching_target = 0
-            for r in entry_rows:
-                log_row = pm_logs.get(r["decision_id"])
-                if log_row is None:
-                    entry_unrecoverable_no_agent_log += 1
-                    continue
-                target = _find_pm_target_for_symbol(log_row.get("full_response"), r["symbol"])
-                if target is None:
-                    entry_unrecoverable_no_matching_target += 1
-                    continue
-                entry_updates.append((
-                    target.get("conviction"),
-                    target.get("risk_allocation_pct"),
-                    log_row.get("model"),
-                    r["id"],
-                ))
-                entry_recovered += 1
-
-            if not dry_run:
-                if exit_updates:
-                    self.conn.executemany(
-                        "UPDATE trades SET decision_id_status = ? WHERE id = ?",
-                        exit_updates,
-                    )
-                if entry_updates:
-                    self.conn.executemany(
-                        "UPDATE trades SET conviction = ?, requested_risk_pct = ?, "
-                        "decision_model = ? WHERE id = ?",
-                        entry_updates,
-                    )
-                self.conn.commit()
-
-            return {
-                "exit_rows_considered": len(exit_rows),
-                "exit_linked": exit_linked,
-                "exit_no_originating_decision": exit_no_originating_decision,
-                "exit_not_applicable": exit_not_applicable,
-                "entry_rows_considered": len(entry_rows),
-                "entry_recovered": entry_recovered,
-                "entry_unrecoverable_no_agent_log": entry_unrecoverable_no_agent_log,
-                "entry_unrecoverable_no_matching_target": entry_unrecoverable_no_matching_target,
-                # Always 0 — see docstring. Never silently "improves" as a
-                # side effect of a future change without this comment being
-                # revisited: allocated_risk_pct becoming recoverable would
-                # require a NEW data source, not a smarter backfill.
-                "allocated_risk_pct_recoverable": 0,
-            }
-        return self._locked_write(_do, label="backfill_conviction_ledger")
+        return _backfills.backfill_conviction_ledger(self, dry_run=dry_run)
