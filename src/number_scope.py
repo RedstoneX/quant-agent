@@ -81,6 +81,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
     "src/coverage_watchdog.py", "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
+    "src/coverage_watchdog_parts",  # verbatim lifts out of coverage_watchdog.py
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
     # since 2026-09-19; rule (c) (function-parameter defaults) was added the
