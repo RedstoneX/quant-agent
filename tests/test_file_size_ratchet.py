@@ -138,13 +138,15 @@ def _one_file(monkeypatch, trunk_text: str, working_text: str) -> list[str]:
 
 def test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped(monkeypatch):
     """The 2026-10-04 route: same code, wider lines, line count unchanged."""
-    width = file_size_guard.width_fence(
-        list(guard_reference.trunk_blobs(guard_reference.trunk_paths(".py")).values())
-    )
+    trunk = "\n".join(["x = 1", "pass", "pass", "pass"]) + "\n"  # same line count
+    # The fence is derived from the population the guard sees: trunk with the
+    # one substituted file swapped in, not the untouched trunk.
+    blobs = guard_reference.trunk_blobs(guard_reference.trunk_paths(".py"))
+    blobs[min(file_size_guard.working_paths("*.py"))] = trunk
+    width = file_size_guard.width_fence(list(blobs.values()))
     wrapped = ["x = 1", "log.warning(", "    'stop placement failed: %s', exc,", ")"]
     widened = ["x = 1", "log.warning(" + "'stop placement failed: %s', exc".ljust(width) + ")"]
     assert len(widened[1]) > width and all(len(ln) <= width for ln in wrapped)
-    trunk = "\n".join(["x = 1", "pass", "pass", "pass"]) + "\n"  # same line count
 
     bad = _one_file(monkeypatch, trunk, "\n".join(widened) + "\n")
     assert any(f"wider than the derived {width}" in b for b in bad), bad
