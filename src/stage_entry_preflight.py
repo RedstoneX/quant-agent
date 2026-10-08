@@ -55,6 +55,64 @@ def entry_viability_preflight(pipeline, ctx, buy_decisions: list, *, total_value
     return survivors
 
 
+def _unpriced(pipeline, ctx, symbol: str, market_price) -> bool:
+    """Record the no-price skip (classified when the read was) and say so."""
+    if isinstance(market_price, (int, float)) and market_price > 0:
+        return False
+    classified = classified_no_price(pipeline, symbol)
+    if classified:
+        _record_execution_skip(pipeline, ctx, symbol, *classified)
+    else:
+        _record_execution_skip(
+            pipeline, ctx, symbol, "no_price",
+            "no verifiable live price (daily bar close is not a fill reference)",
+        )
+    return True
+
+
+def _stale_entry_detail(decision, market_price: float) -> str | None:
+    """The stale-entry refusal detail when the decision's entry is more than
+    5% from the market, else None (same threshold as before the lift)."""
+    if decision.entry_price <= 0:
+        return None
+    deviation = abs(decision.entry_price - market_price) / market_price
+    if deviation <= 0.05:
+        return None
+    return (f"entry ${decision.entry_price:.2f} is "
+            f"{deviation * 100:.1f}% from market "
+            f"${market_price:.2f} (threshold 5%)")
+
+
+def _preflight_price(pipeline, ctx, decision, price_map: dict, waiting: list) -> float | None:
+    """The price the funding preflight sizes this name at, or None when it waits or is skipped."""
+    market_price = _live_fill_price(pipeline, decision.symbol)
+    if market_price is not None:
+        price_map[decision.symbol] = market_price
+    if _unpriced(pipeline, ctx, decision.symbol, market_price):
+        return None
+    stale = _stale_entry_detail(decision, market_price)
+    if stale:
+        _record_execution_skip(pipeline, ctx, decision.symbol, "stale_entry", stale)
+        return None
+    # docs/WORK.md item 120: the funding preflight must size off the
+    # same TODAY PRINT the submit loop will, never the fill-reference
+    # mid. No print -> the submit loop will refuse this name, so the
+    # sweep must not sell SGOV to fund it.
+    sizing_print, why, detail = sizing_price_or_refusal(
+        _today_sizing_price, pipeline, decision.symbol, "buy",
+    )
+    if sizing_print is None and why == NO_SIZING_PRINT:
+        # No today print YET: the name waits for the batched re-ask
+        # below, it is not refused (owner ruling 2026-10-08: a swing
+        # desk keeps asking until a price is received).
+        waiting.append(decision)
+        return None
+    if sizing_print is None:
+        _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
+        return None
+    return max(sizing_print, decision.entry_price or 0)
+
+
 def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
                     price_map: dict, fundable_notional: dict, waiting: list) -> list:
     # Run the cheap deterministic entry-viability checks BEFORE selling
@@ -66,46 +124,9 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
     # notional that funding should cover.
     preflight_survivors = []
     for decision in buy_decisions:
-        market_price = _live_fill_price(pipeline, decision.symbol)
-        if market_price is not None:
-            price_map[decision.symbol] = market_price
-        if not isinstance(market_price, (int, float)) or market_price <= 0:
-            classified = classified_no_price(pipeline, decision.symbol)
-            if classified:
-                _record_execution_skip(pipeline, ctx, decision.symbol, *classified)
-            else:
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "no_price",
-                    "no verifiable live price (daily bar close is not a fill reference)",
-                )
+        preflight_price = _preflight_price(pipeline, ctx, decision, price_map, waiting)
+        if preflight_price is None:
             continue
-        if decision.entry_price > 0:
-            deviation = abs(decision.entry_price - market_price) / market_price
-            if deviation > 0.05:
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "stale_entry",
-                    f"entry ${decision.entry_price:.2f} is "
-                    f"{deviation * 100:.1f}% from market "
-                    f"${market_price:.2f} (threshold 5%)",
-                )
-                continue
-        # docs/WORK.md item 120: the funding preflight must size off the
-        # same TODAY PRINT the submit loop will, never the fill-reference
-        # mid. No print -> the submit loop will refuse this name, so the
-        # sweep must not sell SGOV to fund it.
-        sizing_print, why, detail = sizing_price_or_refusal(
-            _today_sizing_price, pipeline, decision.symbol, "buy",
-        )
-        if sizing_print is None and why == NO_SIZING_PRINT:
-            # No today print YET: the name waits for the batched re-ask
-            # below, it is not refused (owner ruling 2026-10-08: a swing
-            # desk keeps asking until a price is received).
-            waiting.append(decision)
-            continue
-        if sizing_print is None:
-            _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
-            continue
-        preflight_price = max(sizing_print, decision.entry_price or 0)
         # Spec §11.1: quantized the SAME way the submit loop below will,
         # or the sweep funds a whole-share notional for an order that is
         # about to be placed fractionally — under-funding it, and letting

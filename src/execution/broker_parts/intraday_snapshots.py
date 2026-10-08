@@ -14,6 +14,41 @@ from src.sentinel.counted import record_swallowed
 logger = logging.getLogger("src.execution.broker")
 
 
+def _fetch_batch(data_client, snapshot_request, batch: list[str], ok_batches: list) -> dict:
+    """Bulk first; isolate a bad symbol only when Alpaca rejects a batch."""
+    if not batch:
+        return {}
+    try:
+        result = data_client.get_stock_snapshot(
+            snapshot_request(symbol_or_symbols=batch)
+        )
+        ok_batches[0] += 1
+        return result if isinstance(result, dict) else {}
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        symbol_error = (
+            status_code in (400, 404, 422)
+            or "invalid symbol" in str(exc).lower()
+        )
+        if len(batch) == 1:
+            record_swallowed("broker.intraday_snapshots_single", exc,
+                             log=logger, symbol=batch[0])
+            return {}
+        if not symbol_error:
+            record_swallowed("broker.intraday_snapshots_bulk", exc,
+                             log=logger, symbols=len(batch))
+            return {}
+        midpoint = len(batch) // 2
+        logger.warning(
+            "get_intraday_snapshots: batch of %d rejected; isolating bad symbol(s): %s",
+            len(batch), exc,
+        )
+        return {
+            **_fetch_batch(data_client, snapshot_request, batch[:midpoint], ok_batches),
+            **_fetch_batch(data_client, snapshot_request, batch[midpoint:], ok_batches),
+        }
+
+
 def snapshots_from_client(data_client, symbols: list[str], snapshot_request) -> dict[str, dict]:
     """Bulk current-session move data for the intraday opportunity scan.
 
@@ -60,45 +95,10 @@ def snapshots_from_client(data_client, symbols: list[str], snapshot_request) -> 
         return {}
     requested = [(symbol, _alpaca_symbol(symbol)) for symbol in symbols]
     alpaca_symbols = list(dict.fromkeys(mapped for _, mapped in requested))
-    successful_batches = 0
 
-    def _fetch_batch(batch: list[str]) -> dict:
-        """Bulk first; isolate a bad symbol only when Alpaca rejects a batch."""
-        nonlocal successful_batches
-        if not batch:
-            return {}
-        try:
-            result = data_client.get_stock_snapshot(
-                snapshot_request(symbol_or_symbols=batch)
-            )
-            successful_batches += 1
-            return result if isinstance(result, dict) else {}
-        except Exception as exc:
-            status_code = getattr(exc, "status_code", None)
-            symbol_error = (
-                status_code in (400, 404, 422)
-                or "invalid symbol" in str(exc).lower()
-            )
-            if len(batch) == 1:
-                record_swallowed("broker.intraday_snapshots_single", exc,
-                                 log=logger, symbol=batch[0])
-                return {}
-            if not symbol_error:
-                record_swallowed("broker.intraday_snapshots_bulk", exc,
-                                 log=logger, symbols=len(batch))
-                return {}
-            midpoint = len(batch) // 2
-            logger.warning(
-                "get_intraday_snapshots: batch of %d rejected; isolating bad symbol(s): %s",
-                len(batch), exc,
-            )
-            return {
-                **_fetch_batch(batch[:midpoint]),
-                **_fetch_batch(batch[midpoint:]),
-            }
-
-    snapshots = _fetch_batch(alpaca_symbols)
-    if successful_batches == 0:
+    ok_batches = [0]
+    snapshots = _fetch_batch(data_client, snapshot_request, alpaca_symbols, ok_batches)
+    if ok_batches[0] == 0:
         return {}
 
     def _num(obj, attr):

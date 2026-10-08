@@ -121,6 +121,41 @@ def _no_batched_reader(pending: dict) -> list:
     ]
 
 
+def _after_failed_ask(pipeline, exc, asked: list, single: bool, pending: dict,
+                      failed: list, one_by_one: list) -> tuple[str | None, list]:
+    """``(fault, names_left_to_ask_alone)`` after an ask raised.
+
+    A single-name ask is classified like any single-name failure (the
+    reference decides name or feed); a skipped name joins ``failed``. A
+    failed BATCH declares the feed down only when the reference fails too;
+    otherwise every waiting name is queued to be re-asked alone."""
+    if single:
+        reason, detail = classify_price_read_failure(pipeline, exc, symbol=asked[0], what="buy")
+        if reason == PRICE_FEED_UNREADABLE:
+            return detail, one_by_one
+        failed.append((pending.pop(asked[0]), reason, detail))
+        return None, one_by_one
+    if reference_read_ok(pipeline) is False:
+        return declare_price_feed_fault(pipeline, "batched_reask", exc,
+                                        symbol=",".join(asked)), one_by_one
+    # The feed answers: the batch failed on something in it. Re-ask each
+    # waiting name alone, at the same pace, to find which.
+    logger.warning("batched today-print re-ask failed while the reference "
+                   "reads; re-asking %s one at a time: %s", sorted(pending), exc)
+    return None, list(pending)
+
+
+def _unprinted(pending: dict, fault: str | None, asks: int, budget_s: float) -> list:
+    """The skip rows for names still waiting when the re-ask stopped."""
+    if fault:
+        return [(d, PRICE_FEED_UNREADABLE, fault) for d in pending.values()]
+    return [(d, NO_PRINT_BY_WINDOW_END, (
+        f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {asks} "
+        f"ask(s) across this pass's slot ({budget_s:.0f}s); not sized -- the "
+        "desk's next pass re-decides the name"
+    )) for d in pending.values()]
+
+
 def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     """Re-ask for every waiting name in ONE batched request per ask until each
     has a today print or the slot ends. Returns ``(printed, skipped)``: the
@@ -174,25 +209,10 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
         try:
             prints = broker.read_latest_trade_prints(asked)
         except PriceReadFailed as exc:
-            if single:
-                # This name's own read failed: the reference decides whether
-                # it is the name or the feed, exactly as for a sizing read.
-                reason, detail = classify_price_read_failure(
-                    pipeline, exc, symbol=asked[0], what="buy")
-                if reason == PRICE_FEED_UNREADABLE:
-                    fault = detail
-                    break
-                failed.append((pending.pop(asked[0]), reason, detail))
-                continue
-            if reference_read_ok(pipeline) is False:
-                fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
-                                                 symbol=",".join(asked))
+            fault, one_by_one = _after_failed_ask(pipeline, exc, asked, single, pending,
+                                                  failed, one_by_one)
+            if fault:
                 break
-            # The feed answers: the batch failed on something in it. Re-ask
-            # each waiting name alone, at the same pace, to find which.
-            logger.warning("batched today-print re-ask failed while the reference "
-                           "reads; re-asking %s one at a time: %s", sorted(pending), exc)
-            one_by_one = list(pending)
             continue
         if not isinstance(prints, dict):
             return [], _no_batched_reader(pending)
@@ -205,14 +225,5 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
         asks, ask_ceiling, budget_s, sorted(printed) or "-",
         sorted(d.symbol for d, _r, _x in failed) or "-", sorted(pending) or "-",
     )
-    skipped = list(failed)
-    for decision in pending.values():
-        if fault:
-            skipped.append((decision, PRICE_FEED_UNREADABLE, fault))
-            continue
-        skipped.append((decision, NO_PRINT_BY_WINDOW_END, (
-            f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {asks} "
-            f"ask(s) across this pass's slot ({budget_s:.0f}s); not sized -- the "
-            "desk's next pass re-decides the name"
-        )))
+    skipped = failed + _unprinted(pending, fault, asks, budget_s)
     return [d for d in waiting if d.symbol in printed], skipped
