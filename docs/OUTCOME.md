@@ -588,10 +588,14 @@ outbound REST only, and the installed `alpaca-py` stream is built on
 `websockets.legacy`, which has no proxy support at all; separately, Alpaca
 authenticates the stream with an in-band websocket MESSAGE rather than a
 handshake header, which a header-injecting gateway cannot supply either.
-The socket is therefore OFF by configuration
-(`execution.fill_stream_enabled`) and the REST path is the mechanism, not
-the fallback. The code is dormant, not deleted — the owner deferred the
-credential decision that would revive it.
+The socket was therefore switched OFF by configuration
+(`execution.fill_stream_enabled`) and the REST path became the mechanism.
+
+**Superseded 2026-09-18:** the real credential was delivered and the socket
+was switched back ON in `config/settings.yaml` (commit a938e13ef, #517;
+recorded in `config/feature_flags.yaml`). The desk log shows it
+authenticating live (2026-09-30: "trade_updates websocket authenticated").
+The code default stays off as the fallback if credentials regress.
 
 **The lesson this adds to the one above, and it is the sharper of the two:
 the API's documented mechanism is the right answer only once it is
