@@ -25,7 +25,7 @@ def test_the_owner_alert_stays_put_and_the_sentence_names_the_real_rung():
     untrue. This test pins both halves — the trigger does not move, and the
     prose names the rung the ladder is actually on.
     """
-    import src.risk.rules as rules_mod
+    import src.risk.gross_ladder as rules_mod
     from src.risk.rules import GROSS_LADDER_ALERT_PCT, resolve_gross_ceiling
 
     # SOURCED 2026-09-30, not inferred off the table and not a round number
