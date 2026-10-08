@@ -11,16 +11,22 @@ kept as history and marked DONE where they describe a stored file that is gone.
 
 - Stored baselines: none. No baseline, snapshot or known-offender file exists
   under `scripts/` or `tests/`; the only JSON/TXT there are test fixtures.
+- SUPERSEDED 2026-10-08 (owner ruling: no limit re-measured against `origin/main`): seven structure
+  checks now use FIXED lists, `config/check_allowlists/struct_<check>.txt`, one identity per line,
+  shrink-only; a new entry needs a `Guard-rule-change:` commit line and a stale entry fails. They are
+  `pipeline_method_guard`, `pipeline_new_guard`, `replay_outbound_guard`, the module-accumulator test,
+  the patch-target test, the boundary harness test and the desk-output audit. Mentions of those
+  guards reading `origin/main` below are history.
 - Fixed limits, not trunk-derived (2026-10-08): file size and line width are no
   longer a trunk ratchet. ruff enforces line width 120 and per-function complexity
   10, statements 50 and branches 12, all written in `pyproject.toml` and run by
   `tests/test_ruff_clean.py`. Files that already broke a limit are listed there by
   path and rule; the list may only shrink. The old ratchet's limits moved whenever
   trunk moved, reddening unrelated changes and rewarding line-cramming.
-- Computed at check time against the trunk: 14 comparison guards
-  (`import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
+- Computed at check time against the trunk: 13 comparison guards
+  (`pipeline_new_guard`, `pipeline_method_guard`,
   `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
-  `unscoped_number_guard`, `board_rot_guard`, `board_item_guard`,
+  `unscoped_number_guard`,
   `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
   boundary harness, the patch-target audit) each reference `guard_reference` or
   `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
@@ -76,8 +82,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
     23-path list. `scripts/money_modules.py` derives it at check time from the installed SDK's
     exchange-writing methods and the call graph under `src/`; the derived surface is far larger
     (it caught modules the old list never named) and it refuses if the SDK cannot be read.
-  - DONE: the board is found by shape (`scripts/board_locator.py`) in `board_item_guard` and
-    `board_rot_guard`; the ledger is found by shape (`scripts/ledger_locator.py`: the one YAML
+  - DONE: the board is found by shape (`scripts/board_locator.py`) (the board item/rot guards were deleted 2026-10-08); the ledger is found by shape (`scripts/ledger_locator.py`: the one YAML
     with a top-level `numbers:` whose rows carry `site:`) in `ledger_prose_guard`,
     `ledger_substantiation_guard` and `settlement_fill_guard`. Zero or several matches REFUSE.
   - NOT converted, still named by path (open): `src/number_sources.load_ledger` (runtime config loader, not
@@ -329,3 +334,7 @@ Also done (2026-10-05, settlement route field identity check): The ledger route 
 **An import is not growth (2026-10-05, ninth proxy misfire).** The same guard refused the opposite half of a split. Lifting a helper out of a widely-used module adds one `import` line to each call site; when those sites are themselves over the 400-line floor -- 279 of 1,213 tracked `.py` files, measured -- the extraction reddens every one of them, in lines AND in statements, so the only green route is to leave a forwarding shim on the module being emptied: the cosmetic split the owner rejected, manufactured by the guard for the second distinct reason in one week. Reproduced before changing anything, by adding one `from ... import ...` line and nothing else to four real over-floor files (`earnings_analyst`, `evening_analyst`, `macro_analyst`, `news_analyst`): eight violations, four line and four statement, each `+1`, with no other delta in the tree. `scripts/file_size_guard.py` now excludes imports from both measures. THE MECHANISM, not the inconvenience: the ratchet refuses more CODE, and `ast.Import`/`ast.ImportFrom` carry only module names and aliases -- the grammar admits no expression, call or assignment inside one -- so no behaviour can be expressed in an import and none can be smuggled past by being spelled as a dependency. The exemption is by AST identity, never by what the author calls the change; there is no allow-list, no per-file table and no raised number. The line measure drops only lines holding an import AND NOTHING ELSE (`import_only_lines`), and the proxy errs STRICT: a multi-line parenthesised import and `from x import *` are exempt in full; an import inside an `if`/`try`/`def` is exempt on its own line while the block header it needs is charged in lines and statements; `import mod; mod.run()` is charged in full, line and statement. The width fence is NOT relaxed -- a new over-wide import line still fails and is wrapped. It still bites: a file gaining one real statement is still refused (`test_the_rule_still_bites_on_one_real_statement`, green only while the rule exists), and the ceiling population is measured in the same code-line unit, which can only lower it.
 
 **Superseded for four code-pattern guards (2026-10-08, owner ruling).** A limit re-derived from `origin/main` at check time reddened waiting changes whenever an unrelated merge moved the trunk. `silent_swallow_guard`, `settlement_fill_guard`, `unscoped_number_guard` and `local_day_guard` now compare with a FIXED committed list, `config/check_allowlists/code_<check>.txt` (helper: `scripts/check_allowlist.py`): one existing violation identity per line (never a count or line number), sorted, shrink-only. A violation not in the list fails, and a listed entry that no longer occurs fails. They read no git ref. The settlement guard is an absolute ban on a three-argument `getattr` or literal `None` for a built-route field; its list is empty. Any new line needs a `Guard-rule-change:` line in the commit. Where this section's earlier text says these guards compare against `origin/main`, this paragraph governs.
+
+## 2026-10-08 -- no check re-measures its limit against trunk
+
+The board-item and board-rot guards are deleted. `scripts/import_graph.py` no longer reads `origin/main`: the cycle rule is absolute (zero cycles), and the broker-seam pairs are the committed, sorted, shrink-only `config/check_allowlists/import_seam_pairs.txt` (fails on a new pair and on a stale pair). `guard_weakening_gate` keeps its trunk diff (it only identifies what the change edited) and now also demands the `Guard-rule-change:` line for any added line in `config/check_allowlists/*.txt` or in a `[tool.ruff*]` table of `pyproject.toml`; deletions need nothing.

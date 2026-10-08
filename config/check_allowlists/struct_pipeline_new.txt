@@ -1,0 +1,4 @@
+# Fixed allow-list for the pipeline_new check: one existing violation identity per line.
+# Shrink-only. Sorted. A new entry needs a Guard-rule-change: line in the commit.
+# A stale entry (no longer occurring) fails the check; delete it.
+tests/pipeline_factory.py | ``TradingPipeline.__new__(TradingPipeline)`` and then bolted collaborators on
