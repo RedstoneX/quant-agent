@@ -354,8 +354,16 @@ class AlignmentExit:
             closes = [float(b.close) for b in sorted_bars]
             atr = None
             broken_level = None
+            # The target is read ONLY when there are closes to judge it
+            # against: a book with no bars gets UNPARSEABLE before the vote
+            # is asked, and a hold-only review must buy no entry-context
+            # reads (`tests/test_holding_discipline_intraday.py`).
+            target, effective, version = None, None, "no completed closes to date a target"
             if sorted_bars:
                 from src.data.technical import compute_indicators
+                target, effective, version = self._target_for_holding(
+                    symbol=symbol, is_short=is_short,
+                )
                 atr = compute_indicators(symbol, bars).atr_14
                 protection = self._structural_protection_for_holding(
                     symbol=symbol, thesis_invalid_if=thesis_invalid_if,
@@ -373,9 +381,6 @@ class AlignmentExit:
                     # the check does not name a level there is no
                     # structural mark.
                     broken_level = getattr(protection, "broken_level", None)
-            target, effective, version = self._target_for_holding(
-                symbol=symbol, is_short=is_short,
-            )
             return check_alignment_exit(
                 thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
                 broken_structural_level=broken_level, is_short=is_short,
