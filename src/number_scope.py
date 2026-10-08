@@ -150,6 +150,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "ops/model_policy/scenarios_midday_exit.py",
     "ops/model_policy/deterministic_selection.py",
     "scripts/ci_shard.py",
+    # 2026-10-08: the restored trend-alignment research harness (board item 75); offline, reaches no order.
+    "scripts/trend_alignment/analysis.py", "scripts/trend_alignment/data.py",
     # 2026-10-05 numbers sweep 3: the news-verdict model and the company-profile
     # and market-data fetch modules. Scoped so each number is ledgered with the evidence
     # of whether it reaches a trade decision.

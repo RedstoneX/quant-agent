@@ -11749,3 +11749,28 @@ numbers:
         the cap is derived arithmetically from an explicit prompt-token budget,
         removed when the full list fits, or replaced by a rendering proven
         invariant in controlled replay without consulting trade outcomes
+  - id: scripts.trend_alignment.analysis.FWD
+    value: 14
+    status: not-trade-governing
+    site: scripts/trend_alignment/analysis.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (the only reference is the unrelated exit-reason enum name), so no order, size, stop or exit reads it. Forward-change window in sessions for the trend-alignment measurement; an alias of the desk's ATR_PERIOD (src/data/technical.py::ATR_PERIOD), not a separate pick. Value defined at scripts/trend_alignment/analysis.py::FWD."
+  - id: scripts.trend_alignment.analysis.REF
+    value: 60
+    status: not-trade-governing
+    site: scripts/trend_alignment/analysis.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (the only reference is the unrelated exit-reason enum name), so no order, size, stop or exit reads it. Reference high window and false-exit look-ahead in sessions; an alias of the desk's MAX_HORIZON_SESSIONS (src/data/levels.py::MAX_HORIZON_SESSIONS), not a separate pick. Value defined at scripts/trend_alignment/analysis.py::REF."
+  - id: scripts.trend_alignment.analysis.WARMUP
+    value: 60
+    status: not-trade-governing
+    site: scripts/trend_alignment/analysis.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (the only reference is the unrelated exit-reason enum name), so no order, size, stop or exit reads it. Warm-up bars before the first measurable close (50-bar average plus pivots); a picked research parameter, not measured, and it only trims the measurement window. Value defined at scripts/trend_alignment/analysis.py::WARMUP."
+  - id: scripts.trend_alignment.data.MIN_BARS
+    value: 400
+    status: not-trade-governing
+    site: scripts/trend_alignment/data.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (the only reference is the unrelated exit-reason enum name), so no order, size, stop or exit reads it. Completeness floor: a fetch under 400 bars (two years is about 500) is refused as partial rather than measured; a picked research parameter, not measured. Value defined at scripts/trend_alignment/data.py::MIN_BARS."
+  - id: scripts.trend_alignment.data.fetch_bars(attempts)
+    value: 3
+    status: not-trade-governing
+    site: scripts/trend_alignment/data.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (the only reference is the unrelated exit-reason enum name), so no order, size, stop or exit reads it. How many times one ticker's history fetch is tried before a short history is fatal; a picked research parameter, not measured. Value defined at scripts/trend_alignment/data.py::fetch_bars."
