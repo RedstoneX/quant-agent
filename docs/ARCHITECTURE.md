@@ -459,6 +459,9 @@ levels-coverage / protection-alert block (`_check_levels_coverage`,
 `_alert_owner_protection_failed`, `_alert_holding_discipline_block`, ~255 lines) and
 the sizing-price / book-risk helpers (`_book_risk_inputs`, `_today_sizing_price`,
 `_session_gross_ceiling`, ~180 lines), plus imports, the re-export table and mirror.
+`_today_sizing_price` returns None only for a MEASURED absence; a read that fails raises
+`SizingPriceUnavailable` (`src/refusal_errors.py`), and every caller goes through
+`src/sizing_refusal.py`, which refuses the entry as `sizing_price_unreadable`.
 Also since 2026-10-04 it passes `src/pipeline_candidate_records.py` (6 names, 331 lines:
 the execution-skip row, the typed pipeline-event row, the PM candidate accounting with
 its one paid re-ask, and the never-fatal heal record) and `src/pipeline_soft_exit_records.py`
