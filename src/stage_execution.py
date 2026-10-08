@@ -17,6 +17,7 @@ from src.entry_evidence import (
 )
 from src.entry_record import insert_pending_entry
 from src.entry_slippage_bound import entry_bound
+from src.sizing_refusal import sizing_price_or_refusal
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -549,14 +550,11 @@ class ExecutionStage:
             # same TODAY PRINT the submit loop will, never the fill-reference
             # mid. No print -> the submit loop will refuse this name, so the
             # sweep must not sell SGOV to fund it.
-            sizing_print = _today_sizing_price(pipeline, decision.symbol)
-            if not isinstance(sizing_print, (int, float)) or sizing_print <= 0:
-                _record_execution_skip(
-                    pipeline, ctx, decision.symbol, "no_sizing_print",
-                    "no today trade print to size the buy against (a quote "
-                    "mid or a prior-session price is not a sizing reference) "
-                    "— refused rather than sized on a bad price",
-                )
+            sizing_print, why, detail = sizing_price_or_refusal(
+                _today_sizing_price, pipeline, decision.symbol, "buy",
+            )
+            if sizing_print is None:
+                _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
                 continue
             preflight_price = max(sizing_print, decision.entry_price or 0)
             # Spec §11.1: quantized the SAME way the submit loop below will,
@@ -845,14 +843,11 @@ class ExecutionStage:
                 # print, bounded conservatively by the already-approved entry
                 # (which passed the 5% freshness check above); refuse the name
                 # when no print is available rather than size on a bad price.
-                sizing_print = _today_sizing_price(pipeline, decision.symbol)
-                if sizing_print is None or sizing_print <= 0:
-                    _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "no_sizing_print",
-                        "no today trade print to size the order against (a "
-                        "quote mid or a prior-session price is not a sizing "
-                        "reference) — refused rather than sized on a bad price",
-                    )
+                sizing_print, why, detail = sizing_price_or_refusal(
+                    _today_sizing_price, pipeline, decision.symbol, "order",
+                )
+                if sizing_print is None:
+                    _record_execution_skip(pipeline, ctx, decision.symbol, why, detail)
                     continue
                 if decision.entry_price and decision.entry_price > 0:
                     # Size off a today print, bounded by the approved entry.
