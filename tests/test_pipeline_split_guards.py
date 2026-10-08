@@ -106,13 +106,19 @@ def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
     assert f"{victim}_renamed" in renamed_inventory["classes"]["RiskStage"]
     assert renamed_inventory != baseline
 
-    first_module_function = baseline["module_functions"][0]
-    assert first_module_function in inventory_of(source)["module_functions"]
-    dropped = inventory_of(source)
+    # The module-level helpers were lifted verbatim to `src/stage_risk_helpers.py`
+    # (stage_risk split), so the module-function mutation reads them there.
+    helpers_path = REPO_ROOT / "src" / "stage_risk_helpers.py"
+    helpers_baseline = module_inventory(helpers_path)
+    first_module_function = helpers_baseline["module_functions"][0]
+    assert first_module_function in inventory_of(
+        helpers_path.read_text(encoding="utf-8")
+    )["module_functions"]
+    dropped = inventory_of(helpers_path.read_text(encoding="utf-8"))
     dropped["module_functions"] = [
         n for n in dropped["module_functions"] if n != first_module_function
     ]
-    assert dropped != baseline, "removing a module function must be visible"
+    assert dropped != helpers_baseline, "removing a module function must be visible"
 
 
 # --------------------------------------------------------------------------
