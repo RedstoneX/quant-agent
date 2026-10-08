@@ -15,7 +15,6 @@ from src.notifier.owner_alert_funnel import (  # noqa: F401  (re-exported)
 from src.notifier.transport import (  # noqa: F401
     TelegramNotifier,  # the funnel's default notifier; patched by tests HERE
 )
-from src.sentinel.counted import record_swallowed_here
 
 # === Out-of-band owner alert ===
 
@@ -46,6 +45,7 @@ def send_owner_alert(
     try:
         notifier = build_default_notifier(factory=TelegramNotifier)
     except Exception:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed_here
         record_swallowed_here("notifier.owner_alert.send_owner_alert", log=logger)
         logger.exception("owner alert could not build its notifier")
         return False
