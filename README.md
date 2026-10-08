@@ -261,9 +261,9 @@ file different items under the same number or a merge would make a live item
 vanish.
 
 **Ratchet guards store nothing, so there is no baseline merge driver.** The
-file-size, silent-swallow, `__new__`-pipeline and import-cycle/layering guards
+silent-swallow, `__new__`-pipeline and import-cycle/layering guards
 each compare the working tree with `origin/main` at check time
-(`scripts/file_size_guard.py`, `scripts/silent_swallow_guard.py`,
+(`scripts/silent_swallow_guard.py`,
 `scripts/pipeline_new_guard.py`, `scripts/import_graph.py --check`,
 docs/GUARDS_WITHOUT_STORED_STATE.md). `scripts/install_git_merge_drivers.sh`
 registers the one remaining driver (`docsmerge`), once per clone.

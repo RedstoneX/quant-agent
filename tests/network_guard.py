@@ -1,7 +1,7 @@
 """Socket-level network guard and the offline-provider fixtures that keep it green.
 
-Imported into tests/conftest.py by name; this file is where they LIVE because
-conftest.py may not grow against origin/main (tests/test_file_size_ratchet.py).
+Imported into tests/conftest.py by name; this file is where they LIVE so that
+conftest.py stays small.
 """
 import os
 import socket
