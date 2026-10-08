@@ -20,10 +20,12 @@ baseline: `dead` or `no_mention` there fails outright, because `source` is the
 row's own claim of where its number is settled and a pin that never carries the
 number cannot be that. `note` pins are ratcheted:
 
-Stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md): the same classification
-runs over the working tree and over `origin/main`'s ledger and cited files,
-and only a (row, citation, verdict) the trunk does not already hold fails.
-`ReferenceUnavailable` is raised, never swallowed, when the trunk is unreadable.
+The limit is FIXED in the repo, never re-derived from the trunk: every bad `note`
+pin that exists today is pinned by identity (row, citation, verdict) in
+`config/check_allowlists/ledger_substantiation.txt`, and every uncited row in
+`ledger_substantiation_uncited.txt`. A bad pin or uncited row not on its list
+fails; a listed entry that no longer occurs is stale and fails (shrink-only; a
+new entry needs a Guard-rule-change line).
 
 Run: ``python -m scripts.ledger_substantiation_guard``.
 """
@@ -38,14 +40,8 @@ from typing import Any, Callable, NamedTuple
 
 import yaml
 
-from scripts.ledger_locator import trunk_ledger, working_ledger
-from scripts.guard_reference import (
-    ROOT,
-    ReferenceUnavailable,
-    TRUNK,
-    added_sites,
-    trunk_blobs,
-)
+from scripts.ledger_locator import working_ledger
+from scripts.guard_reference import ROOT, ReferenceUnavailable
 from src.ledger_citations import (
     _CITATION_RE,
     _cannot_substantiate_text,
@@ -245,15 +241,20 @@ def working_pins(root: Path = ROOT) -> list[Pin]:
     return classify(ledger, read)
 
 
-def trunk_pins() -> list[Pin]:
-    """The same classification over `origin/main`'s ledger and cited files."""
-    rel = trunk_ledger()  # found by shape on trunk; refuses unless exactly one
-    blob = trunk_blobs([rel]).get(rel)
-    if blob is None:
-        raise ReferenceUnavailable(f"{rel} is not readable on {TRUNK}")
-    ledger = _entries(blob)
-    blobs = trunk_blobs(_cited_paths(ledger))
-    return classify(ledger, blobs.get)
+ALLOWLIST_DIR = ROOT / "config" / "check_allowlists"
+PINS_ALLOWLIST = ALLOWLIST_DIR / "ledger_substantiation.txt"
+UNCITED_ALLOWLIST = ALLOWLIST_DIR / "ledger_substantiation_uncited.txt"
+
+
+def read_allowlist(path: Path) -> set[str]:
+    """Entries of a committed allow-list; `#` lines and blanks are comments."""
+    return {ln.strip("\n") for ln in path.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")}
+
+
+def pin_key(p: Pin) -> str:
+    """Identity of a bad pin: row, citation, verdict (tab-joined; no line numbers)."""
+    return "\t".join((p.site_id, p.cite, p.verdict))
 
 
 BAD = ("dead", "no_mention")
@@ -275,18 +276,18 @@ def source_violations(pins: list[Pin] | None = None) -> list[str]:
             for p in pins if p.verdict in BAD]
 
 
-def violations(now: list[Pin] | None = None, before: list[Pin] | None = None,
+def violations(now: list[Pin] | None = None, allowed: set[str] | None = None,
                sources: list[Pin] | None = None) -> list[str]:
-    """Bad `note` pins the working tree holds that `origin/main` does not, plus every bad `source` pin."""
+    """Bad pins not on the committed allow-list, stale list entries, plus every bad `source` pin."""
     now = working_pins() if now is None else now
-    before = trunk_pins() if before is None else before
+    allowed = read_allowlist(PINS_ALLOWLIST) if allowed is None else allowed
     absolute = source_violations(sources)
-    key = lambda p: (p.site_id, p.cite, p.verdict)  # noqa: E731
-    why = {key(p): p.why for p in now}
-    new = added_sites([key(p) for p in now if p.verdict in BAD], [key(p) for p in before if p.verdict in BAD])
-    ratcheted = [f"{k[0]}: {k[2]} citation {k[1]} ({why[k]}); it resolves but cannot substantiate"
-                 for k, _, _ in new]
-    return absolute + ratcheted
+    bad = {pin_key(p): p for p in now if p.verdict in BAD}
+    new = [f"{p.site_id}: {p.verdict} citation {p.cite} ({p.why}); it resolves but cannot substantiate"
+           for k, p in sorted(bad.items()) if k not in allowed]
+    stale = [f"{k.replace(chr(9), ' | ')}: on ledger_substantiation.txt but no longer a bad pin; delete the entry"
+             for k in sorted(allowed - set(bad))]
+    return absolute + new + stale
 
 
 def _has_citation(row: dict[str, Any]) -> bool:
@@ -299,29 +300,26 @@ def uncited_ids(ledger: dict[str, dict[str, Any]]) -> set[str]:
 
 
 def uncited_violations(now: dict[str, dict[str, Any]] | None = None,
-                       before: dict[str, dict[str, Any]] | None = None) -> list[str]:
-    """DOWN-ONLY ratchet: a row uncited now that trunk does not already hold uncited fails.
+                       allowed: set[str] | None = None) -> list[str]:
+    """Uncited rows must be on the committed list; a listed row that gained a citation is stale.
 
-    Catches both a citation deleted from a cited row and a new row added bare. A row
-    trunk already holds uncited is not blamed; fixing it only ever shrinks the set.
+    Catches both a citation deleted from a cited row and a new row added bare; fixing
+    a listed row only ever shrinks the list.
     """
     if now is None:
         now = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
-    if before is None:
-        rel = trunk_ledger()
-        blob = trunk_blobs([rel]).get(rel)
-        if blob is None:
-            raise ReferenceUnavailable(f"{rel} is not readable on {TRUNK}")
-        before = _entries(blob)
-    return [f"{k}: carries no citation but trunk's row {'had one' if k in before else 'does not exist'}; "
-            f"deleting or omitting a citation is not substantiation"
-            for k in sorted(uncited_ids(now) - uncited_ids(before))]
+    allowed = read_allowlist(UNCITED_ALLOWLIST) if allowed is None else allowed
+    bare = uncited_ids(now)
+    return ([f"{k}: carries no citation and is not on ledger_substantiation_uncited.txt; "
+             f"deleting or omitting a citation is not substantiation" for k in sorted(bare - allowed)]
+            + [f"{k}: on ledger_substantiation_uncited.txt but now cites something or is gone; delete the entry"
+               for k in sorted(allowed - bare)])
 
 
 def main() -> int:
     try:
-        now, before = working_pins(), trunk_pins()
-        bad = violations(now, before) + uncited_violations()
+        now = working_pins()
+        bad = violations(now) + uncited_violations()
     except ReferenceUnavailable as exc:
         print(f"REFUSED: {exc}")
         return 2
@@ -329,7 +327,7 @@ def main() -> int:
     ts = tally(source_pins())
     print(f"source-field pins: dead+no_mention={ts['dead'] + ts['no_mention']} of {sum(ts.values())} (absolute)")
     print(f"pins={len(now)} " + " ".join(f"{k}={t[k]}" for k in ("unresolved", "dead", "no_mention", "mentions"))
-          + f" | on trunk: dead+no_mention={sum(1 for p in before if p.verdict in BAD)}")
+          + f" | allow-listed: {len(read_allowlist(PINS_ALLOWLIST))}")
     led = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
     print(f"uncited rows: {len(uncited_ids(led))} of {len(led)} (down-only ratchet)")
     for line in bad:

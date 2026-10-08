@@ -15,8 +15,7 @@ segment of a claimed name must appear as a word in tracked source (src, scripts,
 config minus the ledger itself, frontend/src); when the leading segments name a
 module (`src.rotation.x`, `src/rotation.py::x`) the rest must appear in THAT file.
 
-Stores nothing. It reads the working tree and REFUSES (exit 2) when
-`origin/main` cannot be read, like every guard on the shared reference module.
+Stores nothing. It reads the working tree only; no trunk read.
 No tolerance, no allowed count: every violation is listed, any is a failure.
 """
 from __future__ import annotations
@@ -73,7 +72,6 @@ def _source_files(root: Path) -> list[str]:
 
 def violations(ledger: dict | None = None, root: Path | None = None) -> list[str]:
     """Every stale name in the ledger's prose, as `row | name | why`."""
-    guard_reference.require_trunk()  # refuse, never pass, without the reference
     root = root or ROOT
     ledger = load_ledger() if ledger is None else ledger
     words: dict[str, set[str]] = {}

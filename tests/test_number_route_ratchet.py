@@ -1,48 +1,33 @@
-"""The settlement-route ratchet: identity-keyed against the trunk, no stored file."""
+"""The settlement-route ratchet: identity-keyed against a committed allow-list."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
+from src import number_ledger_counts as counts
 from src.number_sources import audit
 
 
-def test_the_settlement_route_ratchet_is_identity_keyed_against_the_trunk() -> None:
-    """The route ratchet stores nothing: no history file, no summed deltas.
-
-    A routeless row must be routeless on the trunk too. The live tree passes;
-    each way of cheating (a new routeless row, a sourced row regressed to
-    routeless) still fails, and a missing trunk REFUSES rather than passes.
-    """
-
-    from scripts.guard_reference import ReferenceUnavailable
-    from src import number_ledger_counts as counts
-
+def test_the_live_tree_passes_and_no_history_file_exists() -> None:
     root = Path(__file__).resolve().parent.parent
     assert not (root / "config" / "number_ledger_route_history.yaml").exists()
     assert not [p for p in audit() if p.kind == "route-ratchet"]
+    from src.number_sources import load_ledger
 
+    allowed = counts.read_allowlist(counts.ROUTELESS_ALLOWLIST)
+    assert counts.route_ratchet_violations(load_ledger(), allowed) == []
+
+
+def test_new_listed_and_stale_cases() -> None:
     bare = {"status": "arbitrary"}
     routed = {"status": "arbitrary", "settles_by": {"kind": "recording"}}
-    trunk = {"old_bare": True, "was_routed": False, "was_sourced": False}
     ledger = {
-        "old_bare": bare,
-        "was_routed": bare,  # route removed -> refused
-        "was_sourced": bare,  # dodged down -> refused
-        "brand_new": bare,  # discovery with no route -> refused
-        "new_routed": routed,  # discovery with a route -> allowed
+        "old_bare": bare,  # listed -> allowed
+        "was_routed": bare,  # route removed, unlisted -> refused
+        "was_sourced": bare,  # dodged down, unlisted -> refused
+        "new_routed": routed,  # has a route -> allowed
+        "gained_route": routed,  # listed but now routed -> stale
     }
-    refused = {i for i, _ in counts.route_ratchet_violations(ledger, trunk)}
-    assert refused == {"was_routed", "was_sourced", "brand_new"}
-
-    import scripts.guard_reference as ref
-
-    original = ref.trunk_blobs
-    ref.trunk_blobs = lambda paths: {}
-    try:
-        with pytest.raises(ReferenceUnavailable):
-            counts.trunk_routeless()
-    finally:
-        ref.trunk_blobs = original
+    allowed = {"old_bare", "gained_route", "deleted_row"}
+    refused = {i for i, _ in counts.route_ratchet_violations(ledger, allowed)}
+    assert refused == {"was_routed", "was_sourced", "gained_route", "deleted_row"}

@@ -20,9 +20,32 @@ from pathlib import Path
 
 import pytest
 
-from scripts import file_size_guard, guard_reference
+from scripts import guard_reference
 
 AUTHOR = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+
+
+FLOOR = 400  # a file at or under this many lines may grow freely
+
+
+def size_growth() -> list[str]:
+    """A minimal line-count ratchet built on ``guard_reference`` alone.
+
+    These tests are about the trunk REFERENCE, not any one guard. The file-size
+    ratchet they once drove was replaced by fixed ruff limits (pyproject.toml), so
+    this vehicle keeps the reference under test: it charges a changed .py file
+    only for growth past the reference's copy of it.
+    """
+    root = guard_reference.ROOT
+    texts = {p: (root / p).read_text() for p in guard_reference.working_paths("*.py")}
+    skip = guard_reference.untouched_paths(texts)
+    now = {p: len(t.splitlines()) for p, t in texts.items() if p not in skip}
+    was = {p: len(t.splitlines()) for p, t in guard_reference.trunk_blobs(sorted(now)).items()}
+    return [
+        f"{p}: grew from {was[p]} to {n} lines"
+        for p, n in sorted(now.items())
+        if p in was and n > max(was[p], FLOOR)
+    ]
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -73,7 +96,6 @@ def stale_merge_ref(tmp_path, monkeypatch):
         return head
 
     monkeypatch.setattr(guard_reference, "ROOT", repo)
-    monkeypatch.setattr(file_size_guard, "ROOT", repo)
     yield repo, finish
 
 
@@ -92,7 +114,7 @@ def test_mains_own_later_commits_are_not_charged_to_the_branch(
     _arm_pr_event(monkeypatch, tmp_path, head)
 
     assert guard_reference.trunk_rev() == _git(repo, "rev-parse", "HEAD^1")
-    assert file_size_guard.violations() == []
+    assert size_growth() == []
 
 
 def test_the_guard_still_refuses_a_branch_that_really_grows_a_file(
@@ -103,7 +125,7 @@ def test_the_guard_still_refuses_a_branch_that_really_grows_a_file(
     head = finish(branch_file_lines=700)  # 500 -> 700 against the main it merged
     _arm_pr_event(monkeypatch, tmp_path, head)
 
-    bad = file_size_guard.violations()
+    bad = size_growth()
     assert any("big.py" in line and "grew from 500 to 700" in line for line in bad), bad
 
 
@@ -121,7 +143,7 @@ def test_an_unverified_merge_ref_falls_back_to_the_current_trunk(
     _arm_pr_event(monkeypatch, tmp_path, "0" * 40)
 
     assert guard_reference.trunk_rev() == _git(repo, "rev-parse", "origin/main")
-    assert any("big.py" in line for line in file_size_guard.violations())
+    assert any("big.py" in line for line in size_growth())
 
 
 def test_a_push_build_is_judged_against_the_current_trunk(

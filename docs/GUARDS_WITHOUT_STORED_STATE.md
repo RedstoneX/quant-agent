@@ -17,8 +17,14 @@ kept as history and marked DONE where they describe a stored file that is gone.
   `pipeline_method_guard`, `pipeline_new_guard`, `replay_outbound_guard`, the module-accumulator test,
   the patch-target test, the boundary harness test and the desk-output audit. Mentions of those
   guards reading `origin/main` below are history.
-- Computed at check time against the trunk: 15 comparison guards
-  (`file_size_guard`, `import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
+- Fixed limits, not trunk-derived (2026-10-08): file size and line width are no
+  longer a trunk ratchet. ruff enforces line width 120 and per-function complexity
+  10, statements 50 and branches 12, all written in `pyproject.toml` and run by
+  `tests/test_ruff_clean.py`. Files that already broke a limit are listed there by
+  path and rule; the list may only shrink. The old ratchet's limits moved whenever
+  trunk moved, reddening unrelated changes and rewarding line-cramming.
+- Computed at check time against the trunk: 14 comparison guards
+  (`import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
   `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
   `unscoped_number_guard`, `board_rot_guard`, `board_item_guard`,
   `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
