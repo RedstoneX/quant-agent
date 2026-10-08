@@ -305,10 +305,10 @@ def _offline_urlopen(record: list[str], recording: dict | None):
 # The modules that import `urlopen` into their own namespace and call it on a
 # session path. Patching the name where it is BOUND is the same choice
 # `recorded_sector_lookup` makes for `yf`: everything above the transport
-# stays real.
+# stays real. The event calendar has no binding of its own: its providers
+# call `urlopen` through `src.data.news`, so patching news covers them.
 _URLOPEN_MODULES = (
     "src.data.news",
-    "src.data.event_calendar",
     "src.data.earnings",
 )
 
