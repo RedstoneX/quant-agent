@@ -882,7 +882,8 @@ def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
 def test_protective_fill_wait_is_the_bounded_terminal_wait():
     """place_entry_protection has no private stream wait. Its fill wait
     is wait_for_order_terminal, so the REST ceiling applies to stops."""
-    src = inspect.getsource(AlpacaBroker.place_entry_protection)
+    from src.execution.broker_parts.entry_protection import place_entry_protection
+    src = inspect.getsource(place_entry_protection)
     assert "wait_for_order_terminal" in src
     assert "TradingStream(" not in src
     assert "_wait_for_order_status_via_stream_locked" not in src
