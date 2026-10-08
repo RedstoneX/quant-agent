@@ -171,10 +171,10 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
         "src.stage_execution.ExecutionStage._run_session:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]": exit_offset,
-        "src.pipeline_rotation_exec._projected_post_sale_cash:factor[0]": exit_offset,
-        "src.pipeline_rotation_exec._projected_post_sale_cash:factor[1]": exit_offset,
-        "src.pipeline_rotation_exec._projected_post_sale_book:factor[0]": exit_offset,
-        "src.pipeline_rotation_exec._projected_post_sale_book:factor[1]": exit_offset,
+        "src.rotation_projection._projected_post_sale_cash:factor[0]": exit_offset,
+        "src.rotation_projection._projected_post_sale_cash:factor[1]": exit_offset,
+        "src.rotation_projection._projected_post_sale_book:factor[0]": exit_offset,
+        "src.rotation_projection._projected_post_sale_book:factor[1]": exit_offset,
     }
     for site_id, base in derived_from_base.items():
         assert ledger[site_id]["status"] == "derived", site_id

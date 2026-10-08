@@ -150,7 +150,8 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     # with the rotation-execution block. Every half is asserted so the total
     # cannot quietly shrink.
     assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 4
-    assert len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 4
+    assert len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 0 and \
+        len(ledger_ids_for_module("src.rotation_projection", ledger)) == 4  # moved verbatim to its part 2026-10-08
     assert len(ledger_ids_for_module("src.pipeline_entry_orders", ledger)) == 0
     assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_sizing", ledger)) == 1

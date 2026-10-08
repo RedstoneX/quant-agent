@@ -78,6 +78,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # the entry order-placement/re-peg block moved out of
     # `src/pipeline_stages.py` verbatim. Same code, same scope.
     "src/pipeline_rotation_exec.py",
+    # 2026-10-08: lifted verbatim out of pipeline_rotation_exec; same code, same scope.
+    "src/rotation_projection.py",
+    "src/rotation_buy_leg_post.py",
     "src/pipeline_entry_orders.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
