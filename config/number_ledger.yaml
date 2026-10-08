@@ -5471,10 +5471,10 @@ numbers:
   # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
   # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
   # src/execution/stop_repair.py. No value changed. ---
-  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MIN_S
+  - id: src.execution.broker_parts.trade_stream_bounds._ALPACA_STREAM_RECONNECT_MIN_S
     value: 1.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_bounds.py
     note: >-
       Fallback reconnect floor for the trade_updates fill-notification
       socket, used only when the installed alpaca-py TradingStream does not
@@ -5484,48 +5484,48 @@ numbers:
       notification socket retries, never whether or how much to trade; the
       bounded REST fill-confirmation path is unaffected when this socket is
       off entirely.
-  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MAX_S
+  - id: src.execution.broker_parts.trade_stream_bounds._ALPACA_STREAM_RECONNECT_MAX_S
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_bounds.py
     note: >-
       Fallback reconnect ceiling for the same trade_updates socket, same
       alpaca-py default (site-packages/alpaca/trading/stream.py:54,
       alpaca-py 0.43.5). Same reasoning as
       src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
       optional notification socket's retry speed, not a trade decision.
-  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_SESSION
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_SESSION
     value: 6
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
-      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
       One of three constants added 2026-09-18 to close an unbounded retry
       loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
-      (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY); none of the three decides, sizes,
+      (the `_STREAM_ATTEMPT_CEILING_PER_DAY` constant beside it); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
-  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY
     value: 200
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
-      requests/minute (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
+      requests/minute (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker_parts.trade_stream._STREAM_RATE_LIMIT_STAND_DOWN_S
+  - id: src.execution.broker_parts.trade_stream_reconnect._STREAM_RATE_LIMIT_STAND_DOWN_S
     value: 60.0
     status: not-trade-governing
-    site: src/execution/broker_parts/trade_stream.py
+    site: src/execution/broker_parts/trade_stream_reconnect.py
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
-      (src/execution/broker_parts/trade_stream.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
+      (src/execution/broker_parts/trade_stream_reconnect.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
   - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
