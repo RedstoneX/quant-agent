@@ -300,11 +300,11 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
     LEDGER_RELATIVE,
     count_arbitrary,
+    ARBITRARY_ALLOWLIST,
+    ROUTELESS_ALLOWLIST,
     ratchet_violations,
+    read_allowlist,
     route_ratchet_violations,
-    trunk_arbitrary_count,
-    trunk_routeless,
-    trunk_statuses,
 )
 
 
@@ -888,7 +888,7 @@ def audit(
     #    route to settlement. Leaving `arbitrary` is always allowed, and a
     #    net-zero swap -- one row dodging down while another is sourced up --
     #    no longer passes, because the dodging row is named.
-    for site_id, detail in ratchet_violations(ledger, trunk_statuses()):
+    for site_id, detail in ratchet_violations(ledger, read_allowlist(ARBITRARY_ALLOWLIST)):
         problems.append(LedgerProblem("ratchet", site_id, detail))
 
     # 8. SETTLEMENT ROUTE, board item 90's half two. An `arbitrary` row is
@@ -926,8 +926,8 @@ def audit(
                 f"because the count stops showing the work as outstanding.",
             )
         )
-    # Identity-keyed against the trunk at check time; stores nothing.
-    for site_id, detail in route_ratchet_violations(ledger, trunk_routeless()):
+    # Identity-keyed against a committed shrink-only allow-list; no trunk read.
+    for site_id, detail in route_ratchet_violations(ledger, read_allowlist(ROUTELESS_ALLOWLIST)):
         problems.append(LedgerProblem("route-ratchet", site_id, detail))
 
     # 7. CITATIONS RESOLVE. Cheap, and aimed squarely at the failure that

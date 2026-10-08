@@ -122,7 +122,7 @@ def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
         "a stored ceiling is what open change 1430 raised by +4 to go green"
     )
     counts = (root / "src" / "number_ledger_counts.py").read_text(encoding="utf-8")
-    assert "def trunk_statuses" in counts and "def ratchet_violations" in counts
+    assert "def read_allowlist" in counts and "def ratchet_violations" in counts
 
 
 def test_a_mirrored_constant_is_one_number_not_two() -> None:

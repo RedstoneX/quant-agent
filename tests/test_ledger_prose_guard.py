@@ -3,11 +3,7 @@
 Separate from tests/test_ledger_citations.py, which resolves citations, and
 from any check that a citation substantiates its number.
 """
-from pathlib import Path
-
-import pytest
-
-from scripts import guard_reference, ledger_prose_guard
+from scripts import ledger_prose_guard
 
 
 def _row(note: str) -> dict:
@@ -38,13 +34,3 @@ def test_names_that_exist_and_plain_words_pass() -> None:
     assert ledger_prose_guard.violations(
         _row("`load_ledger` in `src.number_sources.load_ledger` and the `funding` word")
     ) == []
-
-
-def test_it_refuses_when_the_trunk_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    def gone() -> str:
-        raise guard_reference.ReferenceUnavailable("no trunk")
-
-    monkeypatch.setattr(guard_reference, "require_trunk", gone)
-    with pytest.raises(guard_reference.ReferenceUnavailable):
-        ledger_prose_guard.violations(_row("x"))
-    assert ledger_prose_guard.main() == 2

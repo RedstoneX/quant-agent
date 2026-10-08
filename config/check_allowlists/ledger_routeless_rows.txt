@@ -1,0 +1,4 @@
+# Ledger `arbitrary` rows with no `settles_by` route (identity = row id).
+# Shrink-only: delete an entry when it no longer qualifies (stale entries fail).
+# A new entry needs a Guard-rule-change line in the commit message.
+

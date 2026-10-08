@@ -1,13 +1,11 @@
 """Board item 232: a citation that resolves is not thereby one that substantiates."""
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
 
-from scripts import guard_reference, ledger_substantiation_guard as g
-from scripts.guard_reference import ReferenceUnavailable
+from scripts import ledger_substantiation_guard as g
 
 SRC = '''"""doc"""
 from os import path
@@ -49,48 +47,49 @@ def test_a_symbol_that_never_mentions_the_row_is_not_substantiating():
     assert _verdicts("src/m.py::unrelated", value=99, site="src.m.WINDOW") == ["no_mention"]
 
 
-def test_the_working_tree_adds_nothing_against_the_trunk():
+def test_the_working_tree_matches_the_committed_allow_lists():
     bad = g.violations()
     assert not bad, "\n  ".join(bad)
 
 
 def test_the_ledger_is_actually_measured():
-    assert len(g.working_pins()) > 100 and len(g.trunk_pins()) > 100
+    assert len(g.working_pins()) > 100
 
 
-def test_a_new_bad_pin_is_caught_as_an_identity_not_a_total():
-    pins = g.working_pins()
-    base = [p for p in pins if p.verdict in g.BAD]
+def test_a_new_bad_pin_not_on_the_list_fails_and_a_listed_one_passes():
     extra = g.Pin("src.x.NEW", "src/x.py::nothing", "no_mention", "definition names neither")
-    swapped = [p for p in pins if p is not base[0]] + [extra]
-    bad = g.violations(now=swapped, before=pins)
-    assert len(bad) == 1 and "src.x.NEW" in bad[0]  # one removed, one added: net zero, still caught
+    assert g.violations(now=[extra], allowed={g.pin_key(extra)}, sources=[]) == []
+    bad = g.violations(now=[extra], allowed=set(), sources=[])
+    assert len(bad) == 1 and "src.x.NEW" in bad[0]
 
 
-def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
-    repo = tmp_path / "norepo"
-    (repo / "config").mkdir(parents=True)
-    (repo / "config" / "number_ledger.yaml").write_text("numbers: []\n")
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
-    subprocess.run(["git", "add", "config/number_ledger.yaml"], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
-                    "commit", "-qm", "base"], cwd=repo, check=True)
-    monkeypatch.setattr(guard_reference, "ROOT", Path(repo))
-    monkeypatch.setattr(g, "ROOT", Path(repo))
-    with pytest.raises(ReferenceUnavailable) as exc:
-        g.violations(now=[])
-    assert "origin/main" in str(exc.value)
-    assert g.main() == 2
+def test_a_stale_pin_entry_fails():
+    listed = g.Pin("src.x.OLD", "src/x.py::old", "dead", "import")
+    bad = g.violations(now=[], allowed={g.pin_key(listed)}, sources=[])
+    assert len(bad) == 1 and "src.x.OLD" in bad[0] and "delete the entry" in bad[0]
 
 
-def test_a_known_wrong_source_row_fails_absolutely_even_if_the_trunk_holds_it():
+def test_a_swap_is_caught_as_an_identity_not_a_total(tmp_path):
+    old = g.Pin("src.x.OLD", "src/x.py::old", "dead", "import")
+    new = g.Pin("src.x.NEW", "src/x.py::nothing", "no_mention", "names neither")
+    bad = g.violations(now=[new], allowed={g.pin_key(old)}, sources=[])
+    assert len(bad) == 2  # one new, one stale: net zero, still caught
+
+
+def test_the_allow_list_file_is_sorted_and_names_no_line_numbers():
+    lines = [ln for ln in g.PINS_ALLOWLIST.read_text().splitlines() if ln and not ln.startswith("#")]
+    assert lines == sorted(lines)
+    assert all(ln.count("\t") == 2 for ln in lines)
+
+
+def test_a_known_wrong_source_row_fails_absolutely_even_if_the_list_holds_it():
     """The MIN_TOUCHES shape as it stood on the trunk: `source` pinned a real function that
     never mentions MIN_TOUCHES or 2. Red before the ledger fix, independent of the trunk."""
     row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
            "source": "src/data/levels.py::stop_rests_on_level carries the measurement"}
     pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
     assert [p.verdict for p in pins] == ["no_mention"]
-    bad = g.violations(now=[], before=pins, sources=pins)
+    bad = g.violations(now=[], allowed=set(), sources=pins)
     assert len(bad) == 1 and "source citation" in bad[0]
 
 
@@ -98,14 +97,14 @@ def test_the_corrected_source_row_is_green():
     row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
            "source": "src/data/levels.py::MIN_TOUCHES carries the measurement"}
     pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
-    assert g.violations(now=[], before=[], sources=pins) == []
+    assert g.violations(now=[], allowed=set(), sources=pins) == []
 
 
-def test_a_note_pin_stays_ratcheted_not_absolute():
+def test_a_note_pin_is_listed_not_absolute():
     row = {"id": "src.m.CEILING", "value": 7, "note": "see src/m.py::unrelated"}
     pins = g.classify({row["id"]: row}, lambda rel: SRC if rel == "src/m.py" else None)
     assert [p.verdict for p in pins] == ["no_mention"]
-    assert g.violations(now=pins, before=pins, sources=[]) == []
+    assert g.violations(now=pins, allowed={g.pin_key(p) for p in pins}, sources=[]) == []
 
 
 def test_every_source_pin_in_the_real_ledger_carries_its_number():
@@ -140,19 +139,24 @@ _BARE = {"id": "a.b", "value": 1, "note": "prose only"}
 
 
 def test_deleting_a_citation_from_a_cited_row_fails():
-    assert g.uncited_violations({"a.b": _BARE}, {"a.b": _CITED})
+    assert g.uncited_violations({"a.b": _BARE}, set())
 
 
-def test_a_new_bare_row_fails_but_an_already_bare_row_is_not_blamed():
-    assert g.uncited_violations({"a.b": _BARE, "c.d": _BARE}, {"a.b": _BARE})
-    assert not g.uncited_violations({"a.b": _BARE}, {"a.b": _BARE})
+def test_a_new_bare_row_fails_but_a_listed_bare_row_passes():
+    assert g.uncited_violations({"a.b": _BARE, "c.d": _BARE}, {"a.b"})
+    assert not g.uncited_violations({"a.b": _BARE}, {"a.b"})
 
 
-def test_adding_a_citation_is_green():
-    assert not g.uncited_violations({"a.b": _CITED}, {"a.b": _BARE})
+def test_a_stale_uncited_entry_fails():
+    assert g.uncited_violations({"a.b": _CITED}, {"a.b"})
+    assert g.uncited_violations({}, {"gone.row"})
 
 
-def test_real_ledger_uncited_set_does_not_grow_past_trunk():
+def test_adding_a_citation_to_an_unlisted_row_is_green():
+    assert not g.uncited_violations({"a.b": _CITED}, set())
+
+
+def test_real_ledger_uncited_set_matches_the_list():
     assert g.uncited_violations() == []
 
 

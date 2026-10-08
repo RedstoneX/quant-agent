@@ -453,8 +453,8 @@ stash, the risk seat's per-symbol event and edit snapshot, the advisory-only
 arguments, re-exported through the one lazy table in `pipeline_stages` so every old
 import path and patch target still resolves to the same object;
 `tests/test_boundary_pipeline_seat_evidence.py` drives them from stubs. The new file
-is exactly 400 lines because `scripts/file_size_guard.py` refuses any NEW file over
-400 lines — that guard is why this block was taken alone and not combined with another.
+is exactly 400 lines because `scripts/file_size_guard.py` (replaced 2026-10-08 by fixed ruff
+limits in `pyproject.toml`) refused any NEW file over 400 lines — that guard is why this block was taken alone and not combined with another.
 It is deliberately NOT in `SCOPED_PATHS` (no ledgered number site in the block). What
 remains in `pipeline_stages.py` after this and the candidate-records split is the
 levels-coverage / protection-alert block (`_check_levels_coverage`,

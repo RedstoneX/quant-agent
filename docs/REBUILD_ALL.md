@@ -52,8 +52,9 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
 - **Build a package, never siblings.** the `broker-seam` layer rule (`LAYER_RULES` in
   `scripts/import_graph.py`) matches importers by prefix, so `src/x/y.py` stays inside `src/x`'s existing
   allowance while `src/x_y.py` does not.
-- **`FLOOR = 400` in `scripts/file_size_guard.py` is the cap on a file that is
-  not on `origin/main`.** Files already on the trunk are judged only by whether
+- **(Retired 2026-10-08: the size ratchet was replaced by fixed ruff limits in
+  `pyproject.toml`.)** `FLOOR = 400` in `scripts/file_size_guard.py` was the cap on a file that is
+  not on `origin/main`. Files already on the trunk are judged only by whether
   they GREW against it; there is no recorded baseline to edit any more, and
   nothing to regenerate.
 - **Baselines may only shrink for existing keys.** Verify in Python against
