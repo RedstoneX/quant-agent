@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 
+from src.execution.broker_parts.cancel_confirm import _confirm_cancels_status
 from src.execution.broker_parts.stop_window import UnprotectedWindow
 from src.execution.order_gates import _FRACTIONAL_QTY_EPSILON, _split_protective_qty
 from src.sentinel.guarded import record_guarded_pass
@@ -228,7 +229,6 @@ class _Invariant:
         """Cancel `legs` and CONFIRM each with the existing cancel-status reader
         (confirmed / filled / unconfirmed); an unconfirmed answer is asked once
         more. The window opens on the first cancel and records `exposed`."""
-        from src.execution.scale_in import _confirm_cancels_status
         if self.window is None:
             self.window = UnprotectedWindow(self.symbol, "fractional_quantity_change",
                                             self.p._window_log, path=PATH,

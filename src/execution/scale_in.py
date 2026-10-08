@@ -60,6 +60,9 @@ import json
 from src.stop_cancel_outcome import handle_add_cancel
 from src.alert_claims import claim_typed_alert
 from src.execution.scale_in_loud import record_scale_in, record_scale_in_fault
+from src.execution.broker_parts.cancel_confirm import (  # noqa: F401 (re-export; patch targets)
+    _CANCEL_CONFIRMED, _STOP_FILLED, _confirm_cancels_status, cancelled_stop_specs,
+)
 from src.execution.held_qty import (  # noqa: F401 (re-export; patch targets)
     _SESSION_LOCK_DIR, broker_position_qty, cover_qty_for_rearm, held_signed_qty,
     list_open_entry_ids, trading_session_lock_held,
@@ -75,14 +78,6 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-#: Terminal statuses that mean the protective sell is gone and did not
-#: sell shares. `filled` is deliberately NOT here: a stop that fires
-#: during cancel is a real exit and the BUY add must not proceed.
-_CANCEL_CONFIRMED = frozenset({
-    "canceled", "cancelled", "expired", "rejected", "replaced",
-})
-_STOP_FILLED = frozenset({"filled"})
 
 
 @dataclass
@@ -129,15 +124,6 @@ def most_protective_short_stop(prices: list[float]) -> float:
     return min(usable) if usable else 0.0
 
 
-def cancelled_stop_specs(specs: list[dict] | None) -> list[dict]:
-    """Specs that were actually at the broker (have an id)."""
-    out: list[dict] = []
-    for spec in specs or []:
-        if spec.get("id"):
-            out.append(spec)
-    return out
-
-
 def intended_specs(cancelled: list[dict], intended_stop: float) -> list[dict]:
     """Cancelled snapshots plus the add's own stop, for drain most-protective."""
     specs = [dict(s) for s in cancelled]
@@ -151,47 +137,6 @@ def intended_specs(cancelled: list[dict], intended_stop: float) -> list[dict]:
         })
     return specs
 
-
-def _confirm_cancels_status(broker: Any, specs: list[dict]) -> tuple[str, str]:
-    """Terminal state of the cancelled protective stops, as a status token.
-
-    Returns ``(status, detail)`` where status is one of:
-
-      * ``"confirmed"`` — every spec with an id reached a cancelled-like
-        terminal state; the add may proceed.
-      * ``"filled"``    — a protective stop FIRED during the cancel. The
-        position was EXITED. A long's sell-stop firing sold the long; a
-        short's buy-stop firing COVERED the short. Either way the add must
-        abort, and a short must NOT restore a stop onto a now-flat name.
-      * ``"unconfirmed"`` — no id to confirm, the wait raised, or the broker
-        did not report a cancelled-like terminal state in the window.
-
-    Wait is `wait_for_order_terminal` (websocket-first with the fill stream
-    on since 2026-09-18, bounded REST otherwise) — unchanged either way.
-    """
-    for spec in cancelled_stop_specs(specs):
-        order_id = str(spec.get("id") or "")
-        if not order_id:
-            return "unconfirmed", "a cancelled stop had no id to confirm"
-        try:
-            status = broker.wait_for_order_terminal(order_id)
-        except Exception as exc:  # noqa: BLE001
-            record_scale_in(broker, "confirm_cancels", exc, order=order_id)
-            return "unconfirmed", f"cancel confirm raised for {order_id}: {exc}"
-        else:
-            record_scale_in(broker, "confirm_cancels")
-        status = str(status or "").lower()
-        if status in _STOP_FILLED:
-            return "filled", (
-                f"protective stop {order_id} FILLED during cancel — "
-                "the add is aborted rather than adding into an exit"
-            )
-        if status not in _CANCEL_CONFIRMED:
-            return "unconfirmed", (
-                f"protective stop {order_id} not confirmed cancelled "
-                f"(status={status or 'unknown'})"
-            )
-    return "confirmed", ""
 
 
 def confirm_protective_cancels(broker: Any, specs: list[dict]) -> tuple[bool, str]:
