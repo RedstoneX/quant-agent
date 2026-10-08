@@ -8,6 +8,7 @@ keyword-only constructor argument, so this builds and runs with no pipeline behi
 import logging
 
 from src.risk.rules import peak_to_trough_pct
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class ReviewCalibration:
         try:
             stats = self.db.compute_trade_calibration(lookback_days=lookback_days)
         except Exception as e:
-            logger.warning("calibration_note: stats failed: %s", e)
+            record_swallowed("prompt_facts.review.calibration._build_calibration_note", e, log=logger)
             return ""
         if not isinstance(stats, dict) or not stats:
             return ""
@@ -256,7 +257,7 @@ class ReviewCalibration:
         try:
             rows = self.db.get_daily_pnl(limit=25)
         except Exception as e:
-            logger.warning("Failed to read daily_pnl for drawdown context: %s", e)
+            record_swallowed("prompt_facts.review.calibration._compute_recent_performance", e, log=logger)
             return {}
         if not rows:
             return {

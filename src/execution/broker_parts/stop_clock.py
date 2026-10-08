@@ -19,6 +19,7 @@ out of hours, cancel nothing, say the level is owed, apply it at the open.
 from __future__ import annotations
 
 import logging
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger("src.execution.broker")
 
@@ -38,7 +39,7 @@ def market_is_closed(client) -> bool | None:
     try:
         clock = client.get_clock()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("could not read the broker clock before a stop change: %s", exc)
+        record_swallowed("execution.broker_parts.stop_clock.market_is_closed", exc, log=logger)
         return None
     is_open = getattr(clock, "is_open", None)
     if is_open is None:

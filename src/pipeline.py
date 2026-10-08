@@ -117,6 +117,7 @@ from src.pipeline_stages import (
     RiskStage,
     _persist_evidence,
     _record_pipeline_event,
+    record_stage,
 )
 # RE-EXPORT MIRROR (pipeline split, run gates): the paid-analysis gate and the
 # two pre-decision halt gates moved VERBATIM to function-only modules.
@@ -1676,7 +1677,7 @@ class TradingPipeline(
                 total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("evening earnings-proximity sweep failed: %s", exc)
+            record_stage(self, "evening_earnings_proximity", exc)
             return []
         return [
             {
@@ -1714,7 +1715,7 @@ class TradingPipeline(
             try:
                 is_last = self.broker.is_last_trading_day_of_quarter(on_date=today)
             except Exception as e:
-                logger.warning("Evening: meta quarter-end check failed: %s", e)
+                record_stage(self, "meta_quarter_end_check", e)
                 return None
             if not is_last:
                 return None

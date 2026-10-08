@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from typing import Callable
+from src.sentinel.counted import record_swallowed_here
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def retired_cash_park_symbol(get_sweeper: SweeperGetter) -> str | None:
             return None
         sym = sweeper.symbol
     except Exception:  # noqa: BLE001
+        record_swallowed_here("cash_park_retired.retired_cash_park_symbol", log=logger)
         return None
     return sym if isinstance(sym, str) and sym.strip() else None
 
