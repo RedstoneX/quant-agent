@@ -75,8 +75,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", required=True)
     args = ap.parse_args(argv)
 
-    out = _gh("pr", "list", "-R", args.repo, "--state", "open", "--base", "main", "--limit", "100",
-              "--json", "number,createdAt,isDraft,autoMergeRequest,mergeStateStatus,headRefName,headRefOid,statusCheckRollup")
+    fields = ("number,createdAt,isDraft,autoMergeRequest,mergeStateStatus,"
+              "headRefName,headRefOid,statusCheckRollup")
+    out = _gh("pr", "list", "-R", args.repo, "--state", "open", "--base", "main",
+              "--limit", "100", "--json", fields)
     if out.returncode:
         print(f"::error::cannot list pull requests: {out.stderr.strip()}")
         return 1
