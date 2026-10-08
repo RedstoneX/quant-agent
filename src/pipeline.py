@@ -158,25 +158,8 @@ from src.models import (
 
 logger = logging.getLogger(__name__)
 
-class SessionTerminated(BaseException):
-    """The wrapper's `timeout` sent SIGTERM; unwind so `finally` blocks run.
-
-    `scripts/run_if_et_window.sh` runs each mode under
-    `timeout --kill-after=30 1200`, so a hung session gets SIGTERM and then,
-    thirty seconds later, SIGKILL. Python's default SIGTERM handling ends the
-    process on the spot and NO `finally` runs — which is how a morning tick
-    killed at the PM→RM boundary (the observed death mode: 61/61 BUY-proposal
-    days during the 6/30-7/15 relay outage) could leave the deferred §11.2
-    gross ceiling unenforced.
-
-    Raised from a handler installed only for the duration of the morning
-    body, it converts that silent death into an ordinary unwind that spends
-    part of the thirty-second grace window paying the session's outstanding
-    safety debts. A `BaseException` on purpose: the body is full of
-    `except Exception` guards that would otherwise swallow it and carry on
-    inside a process that is about to be killed.
-    """
-
+# Lives in a leaf module so a session can catch it; re-exported here.
+from src.sessions.termination import SessionTerminated  # noqa: E402,F401
 
 
 # `HARD_BLOCK_RULES` now lives in `src/risk/rules.py`, beside the engine that
@@ -1141,6 +1124,38 @@ class TradingPipeline(
             logger.debug("SIGTERM unwind not installed for %s: %s", context, exc)
             return None
 
+    def _repair_stops_on_kill(self, context: str) -> None:
+        """FIRST act of a SIGTERM unwind: close any stop gap the kill left.
+
+        Execution sends every buy, then places stops in a second loop, so a
+        kill between the two leaves a filled buy with no stop until the next
+        scheduled coverage check, ~25-30 minutes later. This runs the same
+        broker-truth repair the session runs at its start: it reads the
+        broker's resting stops and covers only what is held beyond them, so
+        a stop already resting is never placed twice. Its clean passes took
+        at most ~5s in production, inside the wrapper's 30s grace. A failure
+        is logged with its traceback and the rest of the unwind still runs.
+        """
+        logger.warning("%s: SIGTERM unwind — repairing stop coverage first", context)
+        try:
+            self._reconcile_stop_coverage()
+        except Exception:  # noqa: BLE001 — logged with traceback; the unwind must go on
+            logger.exception(
+                "%s: SIGTERM unwind stop-coverage repair FAILED — continuing the unwind", context,
+            )
+
+    def run_intra_check(self, *args, **kwargs):
+        """The intraday scan buys through the same execution step as the
+        morning, so it gets the same SIGTERM unwind: stops repaired first."""
+        prior = self._install_sigterm_unwind("intra_check")
+        try:
+            return IntradayMixin.run_intra_check(self, *args, **kwargs)
+        except SessionTerminated:
+            self._repair_stops_on_kill("intra_check")
+            raise
+        finally:
+            self._restore_sigterm(prior)
+
     def _restore_sigterm(self, previous) -> None:
         if previous is None:
             return
@@ -1376,6 +1391,7 @@ class TradingPipeline(
             reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
             reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
             reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
+            repair_stops_on_kill=self._collab("_repair_stops_on_kill"),
             record_account_snapshot=self._collab("_record_account_snapshot"),
             release_retired_cash_park=self._collab("_release_retired_cash_park"),
             require_paid_analysis=self._collab("_require_paid_analysis"),

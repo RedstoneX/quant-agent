@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from src.cost_circuit import PaidAnalysisSuspended
 from src.pipeline_context import RunContext
+from src.sessions.termination import SessionTerminated
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class MorningSession:
         reconcile_orphan_pending_submits,
         reconcile_stop_coverage,
         reconcile_stop_out_fills,
+        repair_stops_on_kill,
         record_account_snapshot,
         release_retired_cash_park,
         require_paid_analysis,
@@ -68,6 +70,7 @@ class MorningSession:
         self._reconcile_orphan_pending_submits = reconcile_orphan_pending_submits
         self._reconcile_stop_coverage = reconcile_stop_coverage
         self._reconcile_stop_out_fills = reconcile_stop_out_fills
+        self._repair_stops_on_kill = repair_stops_on_kill
         self._record_account_snapshot = record_account_snapshot
         self._release_retired_cash_park = release_retired_cash_park
         self._require_paid_analysis = require_paid_analysis
@@ -477,6 +480,11 @@ class MorningSession:
                 "stop_coverage_gaps": coverage_gaps,
                 "execution_skips": list(ctx.execution_skips),
             }
+        except SessionTerminated:
+            # A kill between the buys and their stops leaves a filled buy
+            # naked; repairing coverage comes before every settle step below.
+            self._repair_stops_on_kill("morning")
+            raise
         finally:
             # Item 112 — pay the deferred ordinary §11.2 ceiling. The preamble
             # scoped itself to the margin floor so the cut could be ordered by
