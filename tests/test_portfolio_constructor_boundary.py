@@ -47,10 +47,10 @@ def test_every_lifted_module_passes_the_boundary_check(module):
 
 
 def test_each_module_is_under_the_new_file_floor():
-    from scripts.file_size_guard import FLOOR, _count
     from tests.boundary_harness import _mod_path
+    floor = 400  # the new-file cap these lifted modules were built under
     for module in MODULES:
-        assert _count(_mod_path(module).read_text()) <= FLOOR, module
+        assert len(_mod_path(module).read_text().splitlines()) <= floor, module
 
 
 @pytest.mark.parametrize("cls", ENTRY)
