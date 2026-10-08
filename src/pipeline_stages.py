@@ -45,6 +45,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
+from src.refusal_errors import SizingPriceUnavailable
 from src.soft_exit_never_blank import (
     record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
 )
@@ -252,8 +253,8 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
     reference mid-session (owner 2026-09-12) — bounding an order you are
     about to cross against the current book is a different act from setting
     how many shares to buy. `_today_order_price` accepts a quote mid; this
-    refuses it. When this returns None the caller must refuse the name as
-    unmeasurable rather than size it on a bad price.
+    refuses it. None is MEASURED absence; a read that FAILED raises
+    `SizingPriceUnavailable` -- callers go through `src.sizing_refusal`.
 
     It accepts the SAME today prices the constructor sizes off, so the two
     stages agree: a real last-trade print, and — when there is none — today's
@@ -284,8 +285,8 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
                 stamped_is_real = True
                 if candidate.price and candidate.price > 0 and candidate.is_today_print:
                     return float(candidate.price)
-        except Exception:  # noqa: BLE001
-            return None
+        except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no print"
+            raise SizingPriceUnavailable(f"{symbol}: stamped read failed") from exc
 
     # 2. No today print: accept today's forming SESSION/minute bar through the
     #    same resolver the constructor uses (never a quote mid), so both
@@ -300,8 +301,8 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
                 resolved = resolve_live_price(snaps.get(symbol))
                 if resolved.is_today_print:
                     return float(resolved.price)
-        except Exception:  # noqa: BLE001
-            snap_is_real = False
+        except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no bar"
+            raise SizingPriceUnavailable(f"{symbol}: snapshot read failed") from exc
         # A REAL stamped price (real broker) that was a quote mid or stale,
         # and no usable today bar either: refuse rather than fall through to
         # the mid-capable bare getter.
@@ -323,8 +324,8 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
         return None
     try:
         live = getter(symbol)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001 -- a FAILED read, not "no price"
+        raise SizingPriceUnavailable(f"{symbol}: bare price read failed") from exc
     if isinstance(live, (int, float)) and not isinstance(live, bool) and live > 0:
         return float(live)
     return None

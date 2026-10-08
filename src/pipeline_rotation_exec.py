@@ -10,6 +10,7 @@ patch target keeps working.
 from __future__ import annotations
 
 from src.sentinel.guarded import record_guarded_pass
+from src.sizing_refusal import sizing_price_or_refusal
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     _IN_FLIGHT_FILL_STATUSES,
     _entry_deployment_budget,
@@ -864,16 +865,13 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # or a prior-session trade. `market_price` above (the fill reference) may
     # be a quote mid by design; the sizing divisor may not. Folded into the
     # `no_price` gate so `REQUIRED_BUY_LEG_GATES` coverage is unchanged.
-    sizing_print = _today_sizing_price(pipeline, symbol)
-    if not isinstance(sizing_print, (int, float)) or isinstance(
-        sizing_print, bool,
-    ) or sizing_print <= 0:
-        return None, "no_price", (
-            "no today trade print to size the replacement buy against (a "
-            "quote mid or a prior-session price is not a sizing reference) — "
-            "refused rather than sized on a bad price"
-        )
-    sizing_print = float(sizing_print)
+    # An UNREADABLE price is refused too, its detail naming
+    # `sizing_price_unreadable` so it never reads as a measured absence.
+    sizing_print, _why, detail = sizing_price_or_refusal(
+        _today_sizing_price, pipeline, symbol, "replacement buy",
+    )
+    if sizing_print is None:
+        return None, "no_price", detail
 
     checked.append("stale_entry")
     try:
