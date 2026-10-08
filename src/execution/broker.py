@@ -1235,7 +1235,7 @@ class AlpacaBroker:
             cancel_snapshotted_stops=self.cancel_snapshotted_stops,
             get_positions=self.get_positions,
             kill_switch_active=self._kill_switch_active,
-            kill_switch_path=self._kill_switch_path,
+            kill_switch_path=self._kill_switch_path, wait_for_order_terminal=self.wait_for_order_terminal,
             protective_stop_block_recorder=self.protective_stop_block_recorder,
             stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT, window_log=self.__dict__.setdefault("_unprotected_windows", []),
             # Six collaborators below are themselves moved bodies, so the
