@@ -27,10 +27,10 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 ROUTINE_REPORT_SENDS = {"scheduler.py": 1}
 
 
-def _bare_sends() -> dict[str, int]:
+def _bare_sends(root: Path = SRC) -> dict[str, int]:
     found: dict[str, int] = {}
-    for path in SRC.rglob("*.py"):
-        rel = path.relative_to(SRC)
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root)
         if rel.parts[0] == "notifier":
             continue
         for node in ast.walk(ast.parse(path.read_text())):
@@ -44,11 +44,11 @@ def _bare_sends() -> dict[str, int]:
     return found
 
 
-def _delivery_layer_calls() -> dict[str, int]:
+def _delivery_layer_calls(root: Path = SRC) -> dict[str, int]:
     """Direct uses of the delivery layer from outside the notifier package."""
     found: dict[str, int] = {}
-    for path in SRC.rglob("*.py"):
-        rel = path.relative_to(SRC)
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root)
         if rel.parts[0] == "notifier":
             continue
         for node in ast.walk(ast.parse(path.read_text())):
@@ -69,11 +69,11 @@ DELIVERY_LAYER = {"deliver_with_retry", "deliver_with_outcome"}
 FUNNEL_MODULE = Path("notifier") / "owner_alert_funnel.py"
 
 
-def _direct_constructions() -> list[str]:
+def _direct_constructions(root: Path = SRC) -> list[str]:
     """Every `TelegramNotifier(...)` call in src/ outside the funnel module."""
     found: list[str] = []
-    for path in SRC.rglob("*.py"):
-        rel = path.relative_to(SRC)
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root)
         if rel == FUNNEL_MODULE:
             continue
         for node in ast.walk(ast.parse(path.read_text())):
@@ -90,18 +90,17 @@ def test_only_the_funnel_module_constructs_a_notifier():
     assert _direct_constructions() == []
 
 
-def test_a_direct_construction_is_refused():
-    """Failing case: plant a direct construction and watch it be caught."""
-    probe = SRC / "_guard_probe_construct.py"
-    probe.write_text(
+def test_a_direct_construction_is_refused(tmp_path):
+    """Failing case: plant a direct construction and watch it be caught.
+
+    The probe lives in a private tree, never in the shared src/, so a
+    parallel scanner can not see it appear and vanish.
+    """
+    (tmp_path / "_guard_probe_construct.py").write_text(
         "from src.notifier import TelegramNotifier\n"
         "def f():\n    return TelegramNotifier()\n"
     )
-    try:
-        assert _direct_constructions() == ["_guard_probe_construct.py:3"]
-    finally:
-        probe.unlink()
-    assert _direct_constructions() == []
+    assert _direct_constructions(tmp_path) == ["_guard_probe_construct.py:3"]
 
 
 def test_the_factory_builds_through_the_patched_class(monkeypatch):
@@ -120,28 +119,19 @@ def test_nothing_reaches_past_the_funnel_into_the_delivery_layer():
     assert _delivery_layer_calls() == {}
 
 
-def test_a_bare_direct_send_is_still_refused(tmp_path, monkeypatch):
+def test_a_bare_direct_send_is_still_refused(tmp_path):
     """The guard must still bite: plant a side door and watch it be caught."""
-    side_door = SRC / "_guard_probe_side_door.py"
-    side_door.write_text("def f(notifier):\n    return notifier.send('x')\n")
-    try:
-        assert _bare_sends() != ROUTINE_REPORT_SENDS
-    finally:
-        side_door.unlink()
-    assert _bare_sends() == ROUTINE_REPORT_SENDS
+    (tmp_path / "_guard_probe_side_door.py").write_text(
+        "def f(notifier):\n    return notifier.send('x')\n")
+    assert _bare_sends(tmp_path) == {"_guard_probe_side_door.py": 1}
 
 
-def test_delivery_layer_guard_bites_too():
-    probe = SRC / "_guard_probe_delivery.py"
-    probe.write_text(
+def test_delivery_layer_guard_bites_too(tmp_path):
+    (tmp_path / "_guard_probe_delivery.py").write_text(
         "from src.notifier.owner_alert_delivery import deliver_with_retry\n"
         "def f(n):\n    return deliver_with_retry(n, 'x')\n"
     )
-    try:
-        assert _delivery_layer_calls() != {}
-    finally:
-        probe.unlink()
-    assert _delivery_layer_calls() == {}
+    assert _delivery_layer_calls(tmp_path) == {"_guard_probe_delivery.py": 2}
 
 
 def test_a_send_that_never_lands_is_counted_and_durable(monkeypatch):
