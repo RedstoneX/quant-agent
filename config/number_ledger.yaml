@@ -4243,16 +4243,16 @@ numbers:
       Whether a support level counts as broken -- and therefore whether the
       desk lifts protection and sells -- turns on a distance that no published
       work measures in these units.
-  - id: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
+  - id: src.risk.exit_guard_trend.TREND_CONFIRMING_CLOSES
     value: 2
     status: sourced
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_trend.py
     source: >-
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition: src/risk/exit_guard.py@`TREND_CONFIRMING_CLOSES = 2`
-      and the module note at src/risk/exit_guard.py::TREND_CONFIRMING_CLOSES.
+      (a Wyckoff spring). Definition: src/risk/exit_guard_trend.py@`TREND_CONFIRMING_CLOSES = 2`
+      and the module note at src/risk/exit_guard_trend.py::TREND_CONFIRMING_CLOSES.
     note: >-
       Consecutive confirmed closes required to treat ANY break as real, in BOTH
       regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
@@ -4264,16 +4264,16 @@ numbers:
       70) made a distinct constant from NOISE_BAND_ATR_MULTIPLE; the two share
       a value of 1.0 but not a source, and may not be re-collapsed. This note
       said NOISE_BAND_ATR_MULTIPLE until 2026-10-04 — it predated the split
-      and contradicted src/risk/exit_guard.py::check_structural_protection.
-  - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
+      and contradicted src/risk/exit_guard_trend.py::_break_confirmation_settings.
+  - id: src.risk.exit_guard_trend.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_trend.py
     source: >-
       Wilder's own ADX threshold for a strong trend, as published in J. Welles
       Wilder, New Concepts in Technical Trading Systems (1978), the standard
       convention (ADX above 25 = trend strong enough to trade with). Definition
-      and use: src/risk/exit_guard.py::ADX_STRONG_TREND_THRESHOLD.
+      and use: src/risk/exit_guard_trend.py::ADX_STRONG_TREND_THRESHOLD.
     note: >-
       Trade-governing: at or above this ADX a with-trend structural break enters
       the patient strong-with-trend regime (two confirmed closes AND the prior
@@ -4287,7 +4287,7 @@ numbers:
     note: >-
       A character window for string matching inside the exit-reason phrase
       check. It parses English, not price.
-  - id: src.risk.exit_guard._NOISE_FLOOR['distance_to_stop_pct']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['distance_to_stop_pct']
     settles_by:
       kind: measurement
       state: specified
@@ -4302,7 +4302,7 @@ numbers:
         this metric is recorded at, the floor is indistinguishable from zero and the key is deleted
     value: 0.1
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4315,7 +4315,7 @@ numbers:
     cost_while_unanswered: >-
       An exit is either taken on noise or suppressed while the position
       genuinely deteriorates.
-  - id: src.risk.exit_guard._NOISE_FLOOR['pace']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['pace']
     settles_by:
       kind: measurement
       state: specified
@@ -4332,7 +4332,7 @@ numbers:
         doing nothing and the key is deleted
     value: 0.05
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4345,7 +4345,7 @@ numbers:
       digit.
     cost_while_unanswered: >-
       As above, on the pace input.
-  - id: src.risk.exit_guard._NOISE_FLOOR['r_multiple']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['r_multiple']
     settles_by:
       kind: measurement
       state: specified
@@ -4360,7 +4360,7 @@ numbers:
         anything and the key is deleted
     value: 0.05
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4371,7 +4371,7 @@ numbers:
       Below what change in R-multiple is the signal noise?
     cost_while_unanswered: >-
       As above, on the R input.
-  - id: src.risk.exit_guard._NOISE_FLOOR['thesis_progress_pct']
+  - id: src.risk.exit_guard_deltas._NOISE_FLOOR['thesis_progress_pct']
     settles_by:
       kind: measurement
       state: specified
@@ -4385,7 +4385,7 @@ numbers:
         floor finer than one step is inert and the key is deleted
     value: 0.5
     status: arbitrary
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_deltas.py
     note: >-
       How far a position metric must move before the exit guard treats it as a
       real change rather than rounding noise. Four round numbers in four
@@ -4396,30 +4396,30 @@ numbers:
       Below what change in stated thesis progress is the signal noise?
     cost_while_unanswered: >-
       As above, on the thesis-progress input.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[0]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[0]
     value: 20
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
       the periods universally published on price charts; the list bounds what
       a condition may name, and no value here sizes, stops or refuses
       anything.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[1]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[1]
     value: 50
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
       the periods universally published on price charts; the list bounds what
       a condition may name, and no value here sizes, stops or refuses
       anything.
-  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[2]
+  - id: src.risk.exit_guard_thesis._SUPPORTED_MA_PERIODS[2]
     value: 200
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_thesis.py
     note: >-
       The set of moving averages the desk is able to PARSE out of a written
       exit condition (20/50/200-day), not a threshold it applies. These are
