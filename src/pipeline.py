@@ -1194,18 +1194,6 @@ class TradingPipeline(
             ),
         )
 
-    def run_intra_check(self, *args, **kwargs):
-        """The intraday scan buys through the same execution step as the
-        morning, so it gets the same SIGTERM unwind: stops repaired first."""
-        prior = self._install_sigterm_unwind("intra_check")
-        try:
-            return IntradayMixin.run_intra_check(self, *args, **kwargs)
-        except SessionTerminated:
-            self._repair_stops_on_kill("intra_check")
-            raise
-        finally:
-            self._restore_sigterm(prior)
-
     def _restore_sigterm(self, previous) -> None:
         if previous is None:
             return

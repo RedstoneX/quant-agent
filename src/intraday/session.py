@@ -13,6 +13,7 @@ from src.cost_circuit import PaidAnalysisSuspended
 from src.evidence_gate import EvidenceGateEvaluationError
 from src.intraday_scan_outcome import failed_scan_result
 from src.pipeline_context import RunContext
+from src.sessions.termination import SessionTerminated
 from src.intraday.session_gate import session_has_ended
 from src.intraday.tick_trail import trail_on_tick
 from src.sentinel.guarded_site import record_site as _site
@@ -48,6 +49,9 @@ class IntradaySession:
         state=None,
         now=None,
         trail_collaborators=None,
+        install_sigterm_unwind=None,
+        repair_stops_on_kill=None,
+        restore_sigterm=None,
     ) -> None:
         self.db = db
         self.broker = broker
@@ -68,6 +72,9 @@ class IntradaySession:
             self._run_intra_check_body = run_intra_check_body  # else: this part's own body
         self._state, self._now = state, now
         self._trail_collaborators = trail_collaborators
+        self._install_sigterm_unwind = install_sigterm_unwind
+        self._repair_stops_on_kill = repair_stops_on_kill
+        self._restore_sigterm = restore_sigterm
 
     @property
     def _intra_preamble_deferred(self):
@@ -104,6 +111,25 @@ class IntradaySession:
         roughly every 30 minutes, so a date-keyed row would keep only the
         last tick; see `Database.save_intra_check_report`). Fail-soft.
         """
+        # The intraday scan buys through the same execution step as the
+        # morning, so a wrapper kill between its buys and their stops leaves
+        # a buy naked. Same unwind as the morning: add owed stops first.
+        prior = (
+            self._install_sigterm_unwind("intra_check")
+            if self._install_sigterm_unwind is not None else None
+        )
+        try:
+            return self._run_intra_check_recorded()
+        except SessionTerminated:
+            if self._repair_stops_on_kill is not None:
+                self._repair_stops_on_kill("intra_check")
+            raise
+        finally:
+            if self._restore_sigterm is not None:
+                self._restore_sigterm(prior)
+
+    def _run_intra_check_recorded(self) -> dict:
+        """The tick's body plus the durable record of its output."""
         self._last_evidence_freshness = None
         self._last_account_snapshot = None
         self._intra_preamble_deferred = ""

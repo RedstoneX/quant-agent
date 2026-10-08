@@ -591,6 +591,9 @@ class IntradayMixin:
         return IntradaySession(
             db=getattr(self, "db", None),
             broker=getattr(self, "broker", None),
+            install_sigterm_unwind=getattr(self, "_install_sigterm_unwind", None),
+            repair_stops_on_kill=getattr(self, "_repair_stops_on_kill", None),
+            restore_sigterm=getattr(self, "_restore_sigterm", None),
             is_trading_day=getattr(self, "_is_trading_day", None),
             kill_switch_halt_result=getattr(self, "_kill_switch_halt_result", None),
             run_intra_safety_preamble=getattr(self, "_run_intra_safety_preamble", None),

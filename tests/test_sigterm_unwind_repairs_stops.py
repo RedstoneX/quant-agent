@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.sessions.termination import SessionTerminated
-from src.pipeline_intraday import IntradayMixin
+from src.intraday.session import IntradaySession
 from tests.pipeline_factory import build_pipeline
 
 
@@ -113,19 +113,40 @@ def test_the_kill_repair_reads_the_broker_and_never_duplicates(resting, placed):
     assert not owed_levels.called
 
 
-def test_the_intraday_scan_installs_the_unwind_and_repairs_on_a_real_sigterm(monkeypatch):
+def test_the_intraday_scan_installs_the_unwind_and_repairs_on_a_real_sigterm():
     calls: list[str] = []
     p = build_pipeline()
     p._add_missing_stops = lambda: calls.append("repair") or []
 
-    def body(self, *args, **kwargs):
+    def body():
         calls.append("body")
         signal.raise_signal(signal.SIGTERM)
         calls.append("survived")  # pragma: no cover — the handler raises
 
+    p._run_intra_check_body = body
     before = signal.getsignal(signal.SIGTERM)
-    monkeypatch.setattr(IntradayMixin, "run_intra_check", body)
     with pytest.raises(SessionTerminated):
         p.run_intra_check()
     assert calls == ["body", "repair"]
     assert signal.getsignal(signal.SIGTERM) == before, "prior handler restored"
+
+
+def test_the_intraday_session_itself_installs_repairs_and_restores():
+    calls: list[str] = []
+
+    def body():
+        calls.append("body")
+        raise SessionTerminated("intra_check: SIGTERM from the run wrapper")
+
+    session = IntradaySession(
+        run_intra_check_body=body,
+        install_sigterm_unwind=lambda ctx: calls.append(f"install:{ctx}") or "prior",
+        repair_stops_on_kill=lambda ctx: calls.append(f"repair:{ctx}"),
+        restore_sigterm=lambda prior: calls.append(f"restore:{prior}"),
+        state=MagicMock(),
+    )
+    with pytest.raises(SessionTerminated):
+        session.run_intra_check()
+    assert calls == [
+        "install:intra_check", "body", "repair:intra_check", "restore:prior",
+    ]
