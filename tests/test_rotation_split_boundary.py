@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 import src.rotation as rotation
+from src.rotation_parts import constraints
 from tests.boundary_harness import check_boundary
 
 MODULES = (
@@ -38,3 +39,4 @@ def test_moved_names_still_resolve_on_the_rotation_module():
     assert rotation.precheck_record is reporting.precheck_record
     assert rotation.owner_precheck_lines is reporting_lines.owner_precheck_lines
     assert rotation._tier_two_line is reporting_lines._tier_two_line
+    assert rotation.rotation_binding_constraints is constraints.rotation_binding_constraints
