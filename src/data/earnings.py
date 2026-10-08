@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
 from src.util.time import et_now, et_today
 from pathlib import Path
+from urllib.error import HTTPError, URLError  # noqa: F401 — handed to the SEC client
 from urllib.request import urlopen, Request
 
 from src.data.filing_text import extract_text
@@ -75,6 +76,8 @@ class EarningsDataProvider:
         # intercepts SEC traffic.
         self.sec = sec_client or build_sec_client(
             opener=lambda req, timeout: urlopen(req, timeout=timeout),
+            request=lambda *a, **k: Request(*a, **k),
+            http_error=HTTPError, url_error=URLError,
             lookback_days=lookback_days,
         )
 

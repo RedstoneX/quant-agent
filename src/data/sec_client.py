@@ -11,8 +11,6 @@ import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Callable
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from src.util.time import et_now
 
@@ -35,9 +33,13 @@ class FilingInfo:
 
 
 class SecClient:
-    def __init__(self, *, opener: Callable, sleep: Callable[[float], None],
+    def __init__(self, *, opener: Callable, request: Callable, http_error: type[Exception],
+                 url_error: type[Exception], sleep: Callable[[float], None],
                  clock: Callable[[], float], now: Callable, lookback_days: int):
         self._opener = opener
+        self._request = request
+        self._http_error = http_error
+        self._url_error = url_error
         self._sleep = sleep
         self._clock = clock
         self._now = now
@@ -74,7 +76,7 @@ class SecClient:
         per-symbol `try: except Exception` move on.
         """
         start = self._clock()
-        req = Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"})
+        req = self._request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"})
         last_exc: Exception | None = None
         for attempt in range(max_retries):
             elapsed = self._clock() - start
@@ -93,7 +95,7 @@ class SecClient:
             try:
                 with self._opener(req, timeout=15) as resp:
                     return resp.read()
-            except HTTPError as e:
+            except self._http_error as e:
                 last_exc = e
                 if e.code in (429, 503):
                     backoff = 1.0 * (2 ** attempt)  # 1s → 2s → 4s
@@ -105,7 +107,7 @@ class SecClient:
                     continue
                 # Non-transient HTTP error: don't retry, surface immediately.
                 raise
-            except URLError as e:
+            except self._url_error as e:
                 # Network blip (DNS / connection reset / timeout). Retry
                 # since these are typically transient.
                 last_exc = e
@@ -200,15 +202,11 @@ class SecClient:
 
 
 
-def _module_urlopen(req, timeout):
-    # Looked up in this module's namespace on every call, so a harness that
-    # rebinds `urlopen` here (the rehearsal recording) still intercepts it.
-    return urlopen(req, timeout=timeout)
-
-
-def build_sec_client(*, opener: Callable = _module_urlopen,
+def build_sec_client(*, opener: Callable, request: Callable, http_error: type[Exception],
+                     url_error: type[Exception],
                      sleep: Callable[[float], None] = time.sleep,
                      clock: Callable[[], float] = time.time,
                      now: Callable = et_now, lookback_days: int = 45) -> SecClient:
-    return SecClient(opener=opener, sleep=sleep, clock=clock, now=now,
+    return SecClient(opener=opener, request=request, http_error=http_error,
+                     url_error=url_error, sleep=sleep, clock=clock, now=now,
                      lookback_days=lookback_days)

@@ -3,6 +3,9 @@
 Never imports `src.data.earnings`; no network, no real sleeping.
 """
 
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
+
 import pytest
 
 from src.data.sec_client import SecClient, build_sec_client
@@ -12,7 +15,7 @@ def _client(opener, *, sleep=lambda _s: None, clock=None, lookback_days=45):
     kwargs = {"opener": opener, "sleep": sleep, "lookback_days": lookback_days}
     if clock is not None:
         kwargs["clock"] = clock
-    return build_sec_client(**kwargs)
+    return build_sec_client(request=Request, http_error=HTTPError, url_error=URLError, **kwargs)
 
 
 def test_collaborators_are_the_objects_handed_in():
@@ -28,7 +31,10 @@ def test_collaborators_are_the_objects_handed_in():
     def now():
         return None
 
-    client = SecClient(opener=opener, sleep=sleep, clock=clock, now=now, lookback_days=7)
+    client = SecClient(
+        opener=opener, request=Request, http_error=HTTPError, url_error=URLError,
+        sleep=sleep, clock=clock, now=now, lookback_days=7,
+    )
     assert client._opener is opener
     assert client._sleep is sleep
     assert client._clock is clock
