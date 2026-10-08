@@ -559,9 +559,12 @@ def test_is_last_trading_day_of_quarter_false_when_later_sessions_exist(mock_tc_
     from datetime import date as _date
 
     today = _date(2026, 3, 27)  # Friday — more sessions remain in March
-    e1 = MagicMock(); e1.date = _date(2026, 3, 27)
-    e2 = MagicMock(); e2.date = _date(2026, 3, 30)
-    e3 = MagicMock(); e3.date = _date(2026, 3, 31)
+    e1 = MagicMock()
+    e1.date = _date(2026, 3, 27)
+    e2 = MagicMock()
+    e2.date = _date(2026, 3, 30)
+    e3 = MagicMock()
+    e3.date = _date(2026, 3, 31)
     mock_client = MagicMock()
     mock_client.get_calendar.return_value = [e1, e2, e3]
     mock_tc_cls.return_value = mock_client
@@ -747,12 +750,20 @@ def test_cancel_protective_stops_cancels_each_stop_and_returns_specs(mock_tc_cls
     a TRAIL_STOP holding all 51 shares must be cleared before the
     reviewer's REDUCE/SELL has any chance of acceptance, AND the specs
     must come back so the residual after the trim isn't naked."""
-    stop_a = MagicMock(); stop_a.id = "stop-a"
-    stop_a.order_type = "stop"; stop_a.side = "sell"
-    stop_a.qty = "51"; stop_a.stop_price = "248.50"; stop_a.limit_price = "240.00"
-    stop_b = MagicMock(); stop_b.id = "stop-b"
-    stop_b.order_type = "trailing_stop"; stop_b.side = "sell"
-    stop_b.qty = "51"; stop_b.stop_price = "246.00"; stop_b.limit_price = "238.00"
+    stop_a = MagicMock()
+    stop_a.id = "stop-a"
+    stop_a.order_type = "stop"
+    stop_a.side = "sell"
+    stop_a.qty = "51"
+    stop_a.stop_price = "248.50"
+    stop_a.limit_price = "240.00"
+    stop_b = MagicMock()
+    stop_b.id = "stop-b"
+    stop_b.order_type = "trailing_stop"
+    stop_b.side = "sell"
+    stop_b.qty = "51"
+    stop_b.stop_price = "246.00"
+    stop_b.limit_price = "238.00"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [stop_a, stop_b]
@@ -776,9 +787,13 @@ def test_snapshot_protective_stops_lists_without_cancelling(mock_tc_cls):
     """audit F1 review #1: snapshot is a pure READ — it must NOT cancel
     anything (the pipeline persists the WAL row between snapshot and
     cancel)."""
-    stop_a = MagicMock(); stop_a.id = "stop-a"
-    stop_a.order_type = "stop"; stop_a.side = "sell"
-    stop_a.qty = "51"; stop_a.stop_price = "248.50"; stop_a.limit_price = "240.00"
+    stop_a = MagicMock()
+    stop_a.id = "stop-a"
+    stop_a.order_type = "stop"
+    stop_a.side = "sell"
+    stop_a.qty = "51"
+    stop_a.stop_price = "248.50"
+    stop_a.limit_price = "240.00"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [stop_a]
@@ -842,13 +857,23 @@ def test_cancel_protective_stops_partial_failure_rolls_back_and_returns_false(mo
     caller skips the SELL anyway — but we don't want to leave coverage
     REDUCED in the meantime, so we roll back. Same discipline as
     replace_stop_loss's partial-cancel rollback (P2 #1)."""
-    stop_a = MagicMock(); stop_a.id = "stop-a"
-    stop_a.order_type = "stop"; stop_a.side = "sell"
-    stop_a.qty = "10"; stop_a.stop_price = "180.0"; stop_a.limit_price = "175.0"
-    stop_b = MagicMock(); stop_b.id = "stop-b"
-    stop_b.order_type = "stop"; stop_b.side = "sell"
-    stop_b.qty = "10"; stop_b.stop_price = "180.0"; stop_b.limit_price = "175.0"
-    restore_a = MagicMock(); restore_a.id = "restored-a"; restore_a.status = "accepted"
+    stop_a = MagicMock()
+    stop_a.id = "stop-a"
+    stop_a.order_type = "stop"
+    stop_a.side = "sell"
+    stop_a.qty = "10"
+    stop_a.stop_price = "180.0"
+    stop_a.limit_price = "175.0"
+    stop_b = MagicMock()
+    stop_b.id = "stop-b"
+    stop_b.order_type = "stop"
+    stop_b.side = "sell"
+    stop_b.qty = "10"
+    stop_b.stop_price = "180.0"
+    stop_b.limit_price = "175.0"
+    restore_a = MagicMock()
+    restore_a.id = "restored-a"
+    restore_a.status = "accepted"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [stop_a, stop_b]
@@ -875,11 +900,17 @@ def test_cancel_protective_stops_ignores_non_stop_orders(mock_tc_cls):
     open SELL limits left by a previous reviewer SELL. The underlying
     _list_open_sell_stop_orders filter handles this; verify the wrapper
     doesn't accidentally widen the scope."""
-    buy_order = MagicMock(); buy_order.id = "buy-1"
-    buy_order.order_type = "limit"; buy_order.side = "buy"
-    stop_order = MagicMock(); stop_order.id = "stop-1"
-    stop_order.order_type = "stop"; stop_order.side = "sell"
-    stop_order.qty = "10"; stop_order.stop_price = "180.0"; stop_order.limit_price = "175.0"
+    buy_order = MagicMock()
+    buy_order.id = "buy-1"
+    buy_order.order_type = "limit"
+    buy_order.side = "buy"
+    stop_order = MagicMock()
+    stop_order.id = "stop-1"
+    stop_order.order_type = "stop"
+    stop_order.side = "sell"
+    stop_order.qty = "10"
+    stop_order.stop_price = "180.0"
+    stop_order.limit_price = "175.0"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [buy_order, stop_order]
@@ -1599,11 +1630,19 @@ def test_replace_stop_loss_uses_max_of_multiple_existing_stops(mock_tc_cls):
     ratchet must be measured against the HIGHEST existing — otherwise the
     LLM could squeeze a downgrade through by picking between two values."""
     stop_low = MagicMock()
-    stop_low.id = "s-low"; stop_low.order_type = "stop"; stop_low.side = "sell"
-    stop_low.qty = "5"; stop_low.stop_price = "180.0"; stop_low.limit_price = "175.0"
+    stop_low.id = "s-low"
+    stop_low.order_type = "stop"
+    stop_low.side = "sell"
+    stop_low.qty = "5"
+    stop_low.stop_price = "180.0"
+    stop_low.limit_price = "175.0"
     stop_high = MagicMock()
-    stop_high.id = "s-high"; stop_high.order_type = "stop"; stop_high.side = "sell"
-    stop_high.qty = "5"; stop_high.stop_price = "195.0"; stop_high.limit_price = "189.0"
+    stop_high.id = "s-high"
+    stop_high.order_type = "stop"
+    stop_high.side = "sell"
+    stop_high.qty = "5"
+    stop_high.stop_price = "195.0"
+    stop_high.limit_price = "189.0"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [stop_low, stop_high]
@@ -1627,15 +1666,23 @@ def test_replace_stop_loss_restores_partially_cancelled_stops_when_one_cancel_fa
     was wrong for this exact case (partial failure inside the loop)."""
     def _stop(id_, stop_price, qty=10):
         s = MagicMock()
-        s.id = id_; s.order_type = "stop"; s.side = "sell"
-        s.qty = str(qty); s.stop_price = str(stop_price); s.limit_price = str(stop_price * 0.97)
+        s.id = id_
+        s.order_type = "stop"
+        s.side = "sell"
+        s.qty = str(qty)
+        s.stop_price = str(stop_price)
+        s.limit_price = str(stop_price * 0.97)
         return s
 
     stop_a = _stop("stop-a", 180.0)
     stop_b = _stop("stop-b", 180.0)
     stop_c = _stop("stop-c", 180.0)
-    restore_a = MagicMock(); restore_a.id = "restored-a"; restore_a.status = "accepted"
-    restore_b = MagicMock(); restore_b.id = "restored-b"; restore_b.status = "accepted"
+    restore_a = MagicMock()
+    restore_a.id = "restored-a"
+    restore_a.status = "accepted"
+    restore_b = MagicMock()
+    restore_b.id = "restored-b"
+    restore_b.status = "accepted"
 
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [stop_a, stop_b, stop_c]
@@ -1668,8 +1715,12 @@ def test_replace_stop_loss_first_cancel_failure_no_restore_attempted(mock_tc_cls
     """If the very first cancel fails, cancelled_specs is empty → nothing
     to roll back. The function must still bail cleanly without trying to
     re-submit phantom stops."""
-    stop_a = MagicMock(); stop_a.id = "stop-a"; stop_a.order_type = "stop"
-    stop_a.side = "sell"; stop_a.qty = "10"; stop_a.stop_price = "180.0"
+    stop_a = MagicMock()
+    stop_a.id = "stop-a"
+    stop_a.order_type = "stop"
+    stop_a.side = "sell"
+    stop_a.qty = "10"
+    stop_a.stop_price = "180.0"
     stop_a.limit_price = "175.0"
 
     mock_client = MagicMock()

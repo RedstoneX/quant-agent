@@ -228,7 +228,8 @@ def _print_missed_ops_comparison(a: dict, b: dict) -> None:
     all_keys = sorted(set(a_cat) | set(b_cat))
     print(f"  {'Category':<26} {'A':>6} {'B':>6} {'Δ':>6}")
     for k in all_keys:
-        av = a_cat.get(k, 0); bv = b_cat.get(k, 0)
+        av = a_cat.get(k, 0)
+        bv = b_cat.get(k, 0)
         d = bv - av
         arrow = f"+{d}" if d > 0 else f"{d}"
         print(f"  {_pad(k, 26)} {av:>6} {bv:>6} {arrow:>6}")
@@ -238,7 +239,8 @@ def _print_missed_ops_comparison(a: dict, b: dict) -> None:
     a_add = _universe_add_counts(a.get("missed_opportunities") or [])
     b_add = _universe_add_counts(b.get("missed_opportunities") or [])
     for k in sorted(set(a_add) | set(b_add)):
-        av = a_add.get(k, 0); bv = b_add.get(k, 0)
+        av = a_add.get(k, 0)
+        bv = b_add.get(k, 0)
         print(f"    {_pad(k, 10)} {av:>4} → {bv:>4}")
 
     # theme_durability counts
@@ -246,7 +248,8 @@ def _print_missed_ops_comparison(a: dict, b: dict) -> None:
     a_dur = _theme_durability_counts(a.get("missed_opportunities") or [])
     b_dur = _theme_durability_counts(b.get("missed_opportunities") or [])
     for k in sorted(set(a_dur) | set(b_dur)):
-        av = a_dur.get(k, 0); bv = b_dur.get(k, 0)
+        av = a_dur.get(k, 0)
+        bv = b_dur.get(k, 0)
         print(f"    {_pad(k, 22)} {av:>4} → {bv:>4}")
 
     # Per-symbol category flips

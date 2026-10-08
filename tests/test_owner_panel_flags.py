@@ -52,7 +52,8 @@ def test_intent_survives_restart_and_is_acted_on(db_path):
 def test_unknown_intent_is_refused_with_its_reason(db_path):
     c = sqlite3.connect(db_path)
     c.execute("INSERT INTO owner_intents (action, raised_at) VALUES ('HANDS_OFF', '2026-01-01T00:00:00+00:00')")
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     oi.intake(db_path)
     (_, _, _, state, outcome), = _rows(db_path)
     assert state == "refused" and "unknown action" in outcome
@@ -92,13 +93,15 @@ def _recording_class():
 def test_paused_desk_raises_no_orders_and_resume_restores(db_path):
     cls, calls = _recording_class()
     d = cls()
-    _raise(db_path, oi.PAUSE); oi.intake(db_path)
+    _raise(db_path, oi.PAUSE)
+    oi.intake(db_path)
     for n in gate.PAUSE_BLOCKS:
         assert getattr(d, n)("ABC") != "THROUGH"
     assert not calls
     d.replace_stop_loss("ABC", 1.0)  # protection upkeep continues under pause
     assert calls == ["replace_stop_loss"]
-    _raise(db_path, oi.RESUME); oi.intake(db_path)
+    _raise(db_path, oi.RESUME)
+    oi.intake(db_path)
     assert d.submit_order("ABC") == "THROUGH"
 
 
@@ -130,13 +133,15 @@ def test_wholesale_cancels_are_not_symbol_filtered(db_path):
     cls, calls = _recording_class()
     d = cls()
     assert d.cancel_open_orders() == "THROUGH" and d.cancel_open_entry_orders() == "THROUGH"
-    _raise(db_path, oi.PAUSE); oi.intake(db_path)
+    _raise(db_path, oi.PAUSE)
+    oi.intake(db_path)
     assert d.cancel_open_orders() == "THROUGH"  # a pause never blocks a cancel
 
 
 def test_unreadable_flag_uses_last_known_then_refuses_new_exposure_only(db_path, monkeypatch):
     monkeypatch.setattr(owner_flags.time, "sleep", lambda s: None)
-    _raise(db_path, oi.PAUSE); oi.intake(db_path)
+    _raise(db_path, oi.PAUSE)
+    oi.intake(db_path)
     assert owner_flags.read_flags(db_path).paused  # primes the durable copy
     Path(db_path).write_bytes(b"not a database")
     cls, calls = _recording_class()

@@ -94,7 +94,9 @@ def _fake_store(monkeypatch):
 
 
 class _Broker:
-    def __init__(self, current): self.current = current; self.placed = []
+    def __init__(self, current):
+        self.current = current
+        self.placed = []
     def get_current_stop_price(self, symbol): return self.current
     def replace_stop_loss(self, symbol, price, **kw):
         self.placed.append((symbol, price))

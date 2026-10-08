@@ -1865,7 +1865,8 @@ def test_day_cost_line_shows_spend_against_the_limit(monkeypatch, tmp_path):
     from src.trading_calendar import et_now
     conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.1395)",
                  (et_now().strftime("%Y-%m-%d"),))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
     monkeypatch.setattr(n, "_daily_cost_limit", lambda: 2.75)
     line = n._day_cost_line()
@@ -1885,7 +1886,8 @@ def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
     from src.trading_calendar import et_now
     conn.execute("INSERT INTO llm_budget_days VALUES (?,0,0.5)",
                  (et_now().strftime("%Y-%m-%d"),))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
     monkeypatch.setattr(n, "_daily_cost_limit", lambda: None)
     assert n._day_cost_line() == "📅 Spent today: $0.50 so far"
@@ -1910,7 +1912,8 @@ def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, t
     from src.trading_calendar import et_now
     conn.execute("INSERT INTO llm_budget_days VALUES (?,0,1.0)",
                  (et_now().strftime("%Y-%m-%d"),))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
     monkeypatch.setattr(n, "_daily_cost_limit", lambda: 2.75)
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
