@@ -18,7 +18,7 @@ from src.entry_evidence import (
 from src.entry_record import insert_pending_entry
 from src.entry_slippage_bound import entry_bound
 from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
-from src.sizing_refusal import no_price_skip, sizing_price_or_refusal
+from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
@@ -729,11 +729,15 @@ class ExecutionStage:
                         "LLM proposed entry $%.2f but cannot be validated.",
                         decision.action, decision.symbol, decision.entry_price,
                     )
-                    reason, detail = no_price_skip(
-                        pipeline, decision.symbol,
-                        "no verifiable price reference (broker + bars unavailable)",
-                    )
-                    _record_execution_skip(pipeline, ctx, decision.symbol, reason, detail)
+                    classified = classified_no_price(pipeline, decision.symbol)
+                    if classified:
+                        _record_execution_skip(pipeline, ctx, decision.symbol, *classified)
+                    else:
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "no_price",
+                            "no verifiable price reference (broker + bars "
+                            "unavailable)",
+                        )
                     continue
 
                 # docs/WORK.md item 120: SIZING vs FILL. `market_price` above

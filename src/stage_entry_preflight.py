@@ -21,7 +21,7 @@ from src.pipeline_stages import (
     _today_sizing_price,
 )
 from src.price_feed_preflight import wait_for_today_prints
-from src.sizing_refusal import NO_SIZING_PRINT, no_price_skip, sizing_price_or_refusal
+from src.sizing_refusal import NO_SIZING_PRINT, classified_no_price, sizing_price_or_refusal
 from src import pipeline_stages as _pipeline_stages
 
 # Tests patch the helpers above on `src.pipeline_stages` and its write-through
@@ -70,8 +70,14 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
         if market_price is not None:
             price_map[decision.symbol] = market_price
         if not isinstance(market_price, (int, float)) or market_price <= 0:
-            reason, detail = no_price_skip(pipeline, decision.symbol)
-            _record_execution_skip(pipeline, ctx, decision.symbol, reason, detail)
+            classified = classified_no_price(pipeline, decision.symbol)
+            if classified:
+                _record_execution_skip(pipeline, ctx, decision.symbol, *classified)
+            else:
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "no_price",
+                    "no verifiable live price (daily bar close is not a fill reference)",
+                )
             continue
         if decision.entry_price > 0:
             deviation = abs(decision.entry_price - market_price) / market_price

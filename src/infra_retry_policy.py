@@ -9,7 +9,9 @@ constants, not a pydantic model: the bounds already live on the consuming
 They are not invented: each equals the macro data provider's transient-fault
 default (`MacroConfig.max_retries`, `MacroConfig.retry_backoff_base_s`,
 `MacroConfig.retry_backoff_max_s`, used by `MacroDataProvider._next_backoff`).
-Each has its own row in config/number_ledger.yaml.
+Each has its own row in config/number_ledger.yaml. Since 2026-10-08 they also pace
+the live-price read and the today-print re-ask, so they decide when an entry is
+skipped: trade-governing, and ledgered as such with the owner's pacing ruling.
 """
 
 MAX_RETRIES = 2

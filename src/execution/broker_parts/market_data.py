@@ -17,7 +17,7 @@ from src.execution.price_read import read_price_with_retry
 from src.execution.broker_parts.http_timeout import (  # noqa: F401 (re-export)
     _BROKER_HTTP_TIMEOUT, _install_http_timeout,
 )
-from src.execution.broker_parts.intraday_snapshots import get_intraday_snapshots as _get_intraday_snapshots
+from src.execution.broker_parts.intraday_snapshots import snapshots_from_client
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
@@ -519,7 +519,23 @@ class MarketData:
 
         return read_price_with_retry(once, list(symbols), log=logger)
 
-    get_intraday_snapshots = _get_intraday_snapshots
+    def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
+        """Bulk current-session move data; see `snapshots_from_client` for the
+        payload. The client is built HERE, where the replay patches it."""
+        if not symbols:
+            return {}
+        if self._data_client is None:
+            try:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+
+                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
+                _install_http_timeout(self._data_client)
+            except Exception as exc:
+                record_swallowed("broker.intraday_snapshots_client_init", exc, log=logger)
+                return {}
+        from alpaca.data.requests import StockSnapshotRequest
+
+        return snapshots_from_client(self._data_client, symbols, StockSnapshotRequest)
 
     @staticmethod
     def _extract_symbol_payload(payload, symbol: str):

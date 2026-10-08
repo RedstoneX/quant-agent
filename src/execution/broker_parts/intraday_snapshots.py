@@ -1,17 +1,20 @@
-"""`MarketData.get_intraday_snapshots`, lifted verbatim from
-src/execution/broker_parts/market_data.py; `self` is the MarketData."""
+"""The body of `MarketData.get_intraday_snapshots`, lifted verbatim from
+src/execution/broker_parts/market_data.py.
+
+The data client and the snapshot request model are built in market_data.py and
+passed in, so this module imports no provider client: the replay seam stays
+where the client is built (board item 202)."""
 from __future__ import annotations
 
 import logging
 
-from src.execution.broker_parts.http_timeout import _install_http_timeout
 from src.execution.broker_parts.stop_place import _alpaca_symbol
 from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger("src.execution.broker")
 
 
-def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
+def snapshots_from_client(data_client, symbols: list[str], snapshot_request) -> dict[str, dict]:
     """Bulk current-session move data for the intraday opportunity scan.
 
     One Alpaca snapshot call for the whole symbol list (not one call
@@ -55,18 +58,6 @@ def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
     """
     if not symbols:
         return {}
-    if self._data_client is None:
-        try:
-            from alpaca.data.historical.stock import StockHistoricalDataClient
-
-            self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-            _install_http_timeout(self._data_client)
-        except Exception as exc:
-            record_swallowed("broker.intraday_snapshots_client_init", exc, log=logger)
-            return {}
-
-    from alpaca.data.requests import StockSnapshotRequest
-
     requested = [(symbol, _alpaca_symbol(symbol)) for symbol in symbols]
     alpaca_symbols = list(dict.fromkeys(mapped for _, mapped in requested))
     successful_batches = 0
@@ -77,8 +68,8 @@ def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         if not batch:
             return {}
         try:
-            result = self._data_client.get_stock_snapshot(
-                StockSnapshotRequest(symbol_or_symbols=batch)
+            result = data_client.get_stock_snapshot(
+                snapshot_request(symbol_or_symbols=batch)
             )
             successful_batches += 1
             return result if isinstance(result, dict) else {}

@@ -16,7 +16,8 @@ owner the same day: "this is a swing trading desk, not scalping. The desk can
 keep re-asking until a price is received. It should not be hammered because
 that will get us banned." Names with no today print are held in a waiting set
 and re-asked for in ONE batched latest-trades request for every waiting name,
-on a rising backoff, until each prints or the session's own slot ends.
+on a rising backoff, until each prints or the session's own slot ends. A
+failed batch is never a feed fault by itself: the reference symbol decides.
 """
 from __future__ import annotations
 
@@ -33,8 +34,10 @@ from src.sizing_refusal import (
     NO_PRINT_BY_WINDOW_END,
     NO_SIZING_PRINT,
     PRICE_FEED_UNREADABLE,
+    classify_price_read_failure,
     declare_price_feed_fault,
     price_feed_fault,
+    reference_read_ok,
     reset_price_feed,
 )
 from src.trading_calendar import SESSION_WINDOWS, et_now
@@ -108,20 +111,39 @@ def slot_seconds_left(ctx, now=None) -> float:
     return max(0.0, (min(window_end, tick_end) - now).total_seconds())
 
 
+def _no_batched_reader(pending: dict) -> list:
+    """A stub broker that declares no batched reader: nothing to wait on, so
+    the plain measured-absence refusal stands for every waiting name."""
+    return [
+        (d, NO_SIZING_PRINT, "no today trade print to size against and "
+         "no batched re-ask available on this broker")
+        for d in pending.values()
+    ]
+
+
 def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     """Re-ask for every waiting name in ONE batched request per ask until each
     has a today print or the slot ends. Returns ``(printed, skipped)``: the
     decisions that printed, in their original order, and ``(decision,
-    reason, detail)`` for each that did not, for the caller to record. A
-    batched read that FAILS after its own retry is the desk fault.
+    reason, detail)`` for each that did not, for the caller to record.
 
-    Pacing: the first batched ask is immediate (it also proves the batched
-    path answers before any wait is spent); each later one waits
+    A batched read that FAILS after its own retry does not, by itself, say
+    the feed is down: one bad symbol can fail the whole request. The feed is
+    declared down ONLY by the session's reference-symbol classification
+    (`reference_read_ok`, the same one every single-name failure uses). If
+    the reference still reads, the waiting names are re-asked ONE AT A TIME
+    at the same pace -- one request per paced ask -- and a name whose own
+    read fails is skipped alone, classified and recorded like any
+    single-name failure. Once that round has covered every waiting name the
+    re-ask returns to one batched request.
+
+    Pacing: the first ask is immediate (it also proves the batched path
+    answers before any wait is spent); each later one waits
     `BACKOFF_BASE_S`, doubling to `BACKOFF_MAX_S` (the desk's ledgered
     transient-fault policy). At the cap that is 60 / BACKOFF_MAX_S = 7.5
-    requests a minute, 3.75% of Alpaca's published 200 requests/minute
-    market-data limit (the limit is ledgered at
-    `src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY`).
+    asks a minute, batched or single, 3.75% of Alpaca's published 200
+    requests/minute market-data limit (ledgered at
+    `src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY`).
     The ask count is bounded by the slot: one immediate ask plus at most
     `ceil(slot_seconds / BACKOFF_MAX_S)` on backoff, and the count is logged.
     """
@@ -130,6 +152,8 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     ask_ceiling = math.ceil(budget_s / BACKOFF_MAX_S)  # backoff asks; the first ask is immediate
     pending = {d.symbol: d for d in waiting}
     printed: dict[str, object] = {}
+    failed: list[tuple] = []
+    one_by_one: list[str] = []  # names left in a single-name round; empty = batched
     asks = 0
     deadline = time.monotonic() + budget_s
     wait_s = BACKOFF_BASE_S
@@ -141,37 +165,53 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
             _sleep(wait_s)
             wait_s = min(wait_s * 2, BACKOFF_MAX_S)
         asks += 1
+        # Explicit capability check: a stub broker that does not declare the
+        # batched reader has nothing to re-ask (absence stands).
+        if not hasattr(broker, "read_latest_trade_prints"):
+            return [], _no_batched_reader(pending)
+        single = bool(one_by_one)
+        asked = [one_by_one.pop(0)] if single else list(pending)
         try:
-            # Explicit capability check: a stub broker that does not declare
-            # the batched reader has nothing to re-ask (absence stands below).
-            prints = (broker.read_latest_trade_prints(list(pending))
-                      if hasattr(broker, "read_latest_trade_prints") else None)
+            prints = broker.read_latest_trade_prints(asked)
         except PriceReadFailed as exc:
-            fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
-                                             symbol=",".join(pending))
-            break
+            if single:
+                # This name's own read failed: the reference decides whether
+                # it is the name or the feed, exactly as for a sizing read.
+                reason, detail = classify_price_read_failure(
+                    pipeline, exc, symbol=asked[0], what="buy")
+                if reason == PRICE_FEED_UNREADABLE:
+                    fault = detail
+                    break
+                failed.append((pending.pop(asked[0]), reason, detail))
+                continue
+            if reference_read_ok(pipeline) is False:
+                fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
+                                                 symbol=",".join(asked))
+                break
+            # The feed answers: the batch failed on something in it. Re-ask
+            # each waiting name alone, at the same pace, to find which.
+            logger.warning("batched today-print re-ask failed while the reference "
+                           "reads; re-asking %s one at a time: %s", sorted(pending), exc)
+            one_by_one = list(pending)
+            continue
         if not isinstance(prints, dict):
-            # No real batched reader on this broker (a stub): nothing to
-            # wait on, so the plain measured-absence refusal stands.
-            return [], [
-                (d, NO_SIZING_PRINT, "no today trade print to size against and "
-                 "no batched re-ask available on this broker")
-                for d in pending.values()
-            ]
+            return [], _no_batched_reader(pending)
         for symbol in [s for s in pending if s in prints]:
             printed[symbol] = pending.pop(symbol)
+        one_by_one = [s for s in one_by_one if s in pending]
     logger.info(
-        "today-print wait: %d batched ask(s) (one immediate, then at most %d on "
-        "backoff inside the %.0fs slot); printed %s, still waiting %s",
-        asks, ask_ceiling, budget_s, sorted(printed) or "-", sorted(pending) or "-",
+        "today-print wait: %d ask(s) (one immediate, then at most %d on backoff "
+        "inside the %.0fs slot); printed %s, read failed %s, still waiting %s",
+        asks, ask_ceiling, budget_s, sorted(printed) or "-",
+        sorted(d.symbol for d, _r, _x in failed) or "-", sorted(pending) or "-",
     )
-    skipped = []
+    skipped = list(failed)
     for decision in pending.values():
         if fault:
             skipped.append((decision, PRICE_FEED_UNREADABLE, fault))
             continue
         skipped.append((decision, NO_PRINT_BY_WINDOW_END, (
-            f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {asks} batched "
+            f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {asks} "
             f"ask(s) across this pass's slot ({budget_s:.0f}s); not sized -- the "
             "desk's next pass re-decides the name"
         )))

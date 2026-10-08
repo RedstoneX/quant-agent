@@ -180,16 +180,14 @@ def record_price_read_swallowed(pipeline, where: str, *, symbol: str) -> None:
     failures[symbol] = verdict
 
 
-def no_price_skip(pipeline, symbol: str, detail: str = (
-    "no verifiable live price (daily bar close is not a fill reference)"
-)) -> tuple[str, str]:
-    """``(reason, detail)`` for a stage's no-price skip: the classified read
-    failure for this name when there is one, the desk fault when one is
-    declared, else the plain ``no_price`` the stage always recorded."""
+def classified_no_price(pipeline, symbol: str) -> tuple[str, str] | None:
+    """``(reason, detail)`` for a stage's no-price skip when the read was
+    classified -- this name's own read failure, or the declared desk fault --
+    else None, and the stage records its plain ``no_price`` itself."""
     failures = getattr(pipeline, "price_read_failures", None)
     if isinstance(failures, dict) and symbol in failures:
         return failures.pop(symbol)
     fault = price_feed_fault(pipeline)
     if fault:
         return PRICE_FEED_UNREADABLE, fault
-    return "no_price", detail
+    return None

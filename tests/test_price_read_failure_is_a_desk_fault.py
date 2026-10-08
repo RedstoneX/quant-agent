@@ -253,8 +253,10 @@ def test_preflight_uses_a_held_name_first_and_resets_last_sessions_fault():
 
 # --- no print YET: wait, re-ask in ONE batch, size when it prints ----------
 
-_QUOTE_ONLY = LivePrice(price=100.0, source="quote_mid", trade_at=datetime.now(ET),
-                        is_today=True, is_today_print=False)
+def _quote_only() -> LivePrice:
+    """A quote with no today print, stamped at call time (never import time)."""
+    return LivePrice(price=100.0, source="quote_mid", trade_at=datetime.now(ET),
+                     is_today=True, is_today_print=False)
 
 
 def _waiting_rig(monkeypatch, prints_on_ask: int | None, *, slot_s: float = 60.0):
@@ -268,7 +270,7 @@ def _waiting_rig(monkeypatch, prints_on_ask: int | None, *, slot_s: float = 60.0
     sleeps: list[float] = []
 
     def stamped(symbol):
-        return _print(100.0) if symbol in state["printed"] or symbol == "GOOD" else _QUOTE_ONLY
+        return _print(100.0) if symbol in state["printed"] or symbol == "GOOD" else _quote_only()
 
     def batch(symbols):
         batch_calls.append(list(symbols))
@@ -331,20 +333,62 @@ def test_a_zero_slot_asks_once_without_waiting_then_skips(monkeypatch):
     assert batch_calls == [["THIN"]] and sleeps == []
 
 
-def test_a_batched_reask_that_fails_is_the_desk_fault(monkeypatch):
+def _failing_batch_rig(monkeypatch, *, bad: set[str], feed_goes_down: bool):
+    """A batched read that raises whenever it is asked for a name in `bad`
+    (or always once the feed is down); the reference GOOD reads until then."""
     import src.price_feed_preflight as preflight
-    pipeline = _pipeline(lambda s: _QUOTE_ONLY if s == "THIN" else _print(100.0))
 
-    def batch(_symbols):
-        raise PriceReadFailed("THIN: price read failed on all attempts")
+    state = {"down": False, "printed": {"GOOD"}}
+    batch_calls: list[list[str]] = []
 
+    def stamped(symbol):
+        if state["down"]:
+            raise PriceReadFailed(f"{symbol}: price read failed on all attempts")
+        return _print(100.0) if symbol in state["printed"] else _quote_only()
+
+    def batch(symbols):
+        batch_calls.append(list(symbols))
+        if feed_goes_down:
+            state["down"] = True
+        if state["down"] or bad & set(symbols):
+            raise PriceReadFailed(f"{symbols}: price read failed on all attempts")
+        state["printed"].update(symbols)
+        return {s: _print(100.0) for s in symbols}
+
+    pipeline = _pipeline(stamped)
     monkeypatch.setattr(pipeline.broker, "read_latest_trade_prints", batch, raising=False)
     monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
     monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 60.0)
-    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
+    return pipeline, batch_calls
+
+
+def test_one_bad_symbol_in_the_batch_skips_only_that_name(monkeypatch):
+    """A failed batch is not the feed: the reference still reads, so each
+    waiting name is re-asked alone and only the one that fails is skipped."""
+    pipeline, batch_calls = _failing_batch_rig(monkeypatch, bad={"BAD"}, feed_goes_down=False)
+    skips = _run(pipeline, [_decision("GOOD"), _decision("THIN"), _decision("BAD")],
+                 monkeypatch, session="morning")
+    assert sizing_refusal.price_feed_fault(pipeline) is None
+    assert ("BAD", PRICE_READ_FAILED) in skips
+    assert not [r for sym, r in skips if sym in ("GOOD", "THIN")]
+    assert {"GOOD", "THIN"} <= _submitted(pipeline) and "BAD" not in _submitted(pipeline)
+    # One batch for both, then one name per ask -- never a burst.
+    assert batch_calls[0] == ["THIN", "BAD"]
+    assert all(len(c) == 1 for c in batch_calls[1:3])
+
+
+def test_a_failed_batch_with_the_reference_also_failing_is_the_desk_fault(monkeypatch):
+    rows: list[dict] = []
+    monkeypatch.setattr(sizing_refusal, "record_guarded_outcome",
+                        lambda **kw: rows.append(kw))
+    pipeline, _ = _failing_batch_rig(monkeypatch, bad=set(), feed_goes_down=True)
+    skips = _run(pipeline, [_decision("GOOD"), _decision("THIN")], monkeypatch,
+                 session="morning")
     assert ("THIN", PRICE_FEED_UNREADABLE) in skips
-    fault = sizing_refusal.price_feed_fault(pipeline)
-    assert fault and "batched_reask" in fault
+    assert sizing_refusal.price_feed_fault(pipeline)
+    # Declared by the reference classification after the failed batch.
+    assert "price_feed.batched_reask" in [r["where"] for r in rows]
+    pipeline.broker.submit_order.assert_not_called()  # no new entries this session
 
 
 def test_slot_end_is_the_earlier_of_the_session_window_and_the_next_tick():
@@ -397,7 +441,7 @@ def test_broker_batched_read_is_one_request_and_keeps_only_today_prints():
 
 
 def test_a_stub_broker_has_nothing_to_reask_so_absence_stands(monkeypatch):
-    pipeline = _pipeline(lambda s: _QUOTE_ONLY)
+    pipeline = _pipeline(lambda s: _quote_only())
     del pipeline.broker.read_latest_trade_prints  # this stub declares no batched reader
     assert not hasattr(pipeline.broker, "read_latest_trade_prints")
     import src.price_feed_preflight as preflight
