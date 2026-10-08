@@ -5,7 +5,9 @@ See the docstring of scripts/measure_trend_alignment.py for why every failure is
 from __future__ import annotations
 
 import json
+import math
 import os
+import sys
 import time
 from datetime import date
 

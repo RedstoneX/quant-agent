@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import statistics
+from datetime import date
 
 import trend_alignment  # noqa: F401  (puts the repo root on sys.path)
 from trend_alignment.analysis import FWD, REF, SHAPES, WARMUP, measure_two_years, readings, walk  # noqa: F401
