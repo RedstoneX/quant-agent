@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from src.sentinel.counted import record_swallowed, record_swallowed_here
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -142,6 +143,9 @@ class ResearchChangeDetectors:
                 summary = getter()
                 freshness = getattr(provider, "_run_freshness", None)
             except Exception:  # noqa: BLE001 — failed fetch ≠ print change
+                record_swallowed_here(
+                    "research_continuity.change_detectors._live_macro_series_prints", log=logger
+                )
                 return None
             if not isinstance(summary, dict) or not summary:
                 return None
@@ -223,6 +227,7 @@ class ResearchChangeDetectors:
             except TypeError:
                 items, _coverage = fetch()
         except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
+            record_swallowed_here("research_continuity.change_detectors._peek_news_headlines", log=logger)
             return []
         # Keep what we just paid for. The expiry compare only needs titles,
         # but discarding the wire body meant the tick proved its remembered
@@ -265,7 +270,7 @@ class ResearchChangeDetectors:
         try:
             text = fmt(items, max_items=self.config.news.max_prompt_items)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: wire text for news heal failed: %s", e)
+            record_swallowed("research_continuity.change_detectors._peeked_news_wire_text", e, log=logger)
             return ""
         return text if isinstance(text, str) and text.strip() else ""
 
@@ -294,5 +299,8 @@ class ResearchChangeDetectors:
         try:
             fetched = self._peek_news_headlines(report) or []
         except Exception:  # noqa: BLE001
+            record_swallowed_here(
+                "research_continuity.change_detectors._news_has_newer_material_wire", log=logger
+            )
             return False
         return newer_material_wire(frozenset(covered), fetched)

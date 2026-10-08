@@ -77,6 +77,7 @@ from typing import Any
 from src.data_paths import db_path
 
 logger = logging.getLogger(__name__)
+from src.sentinel.counted import record_swallowed
 
 #: Same file `src/notifier.py` reads for the cost line and position
 #: snapshot, resolved from the project root rather than the working
@@ -243,7 +244,7 @@ def record_check(
     try:
         conn = _connect_rw(path)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("alert watchdog could not open %s: %s", path, exc)
+        record_swallowed("alert_watchdog.open_db", exc, log=logger)
         return False
     try:
         with conn:
@@ -268,7 +269,7 @@ def record_check(
             )
         return True
     except Exception as exc:  # noqa: BLE001
-        logger.warning("alert watchdog could not record a check: %s", exc)
+        record_swallowed("alert_watchdog.record_check", exc, log=logger)
         return False
     finally:
         try:
@@ -368,7 +369,7 @@ def verify_alert_channel(
         target = build_default_notifier(existing=notifier)
         result = target.probe()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("alert watchdog probe raised: %s", exc)
+        record_swallowed("alert_watchdog.probe", exc, log=logger)
         return None
 
     if not isinstance(result, ProbeResult):

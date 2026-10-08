@@ -57,6 +57,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from src.sentinel.counted import record_swallowed, record_swallowed_here
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ def write(ctx) -> Path | None:
         )
         return path
     except Exception as e:  # noqa: BLE001 — checkpointing must never hurt the live run
-        logger.warning("decision checkpoint write failed (non-fatal): %s", e)
+        record_swallowed("decision_checkpoint.write", e, log=logger)
         return None
 
 
@@ -165,7 +166,7 @@ def load(session: str, max_age_minutes: float = MAX_AGE_MINUTES) -> dict | None:
             },
         }
     except Exception as e:  # noqa: BLE001
-        logger.warning("decision checkpoint load failed (treating as absent): %s", e)
+        record_swallowed("decision_checkpoint.load", e, log=logger)
         return None
 
 
@@ -201,12 +202,14 @@ def mark_consumed(session: str) -> bool:
         logger.info("decision checkpoint %s marked consumed", path)
         return True
     except Exception as e:  # noqa: BLE001
+        record_swallowed("decision_checkpoint.mark_consumed", e, log=logger)
         logger.error("decision checkpoint consume-mark failed (%s) — "
                      "deleting the checkpoint instead (fail-closed)", e)
         try:
             path.unlink(missing_ok=True)
             return True
         except Exception as e2:  # noqa: BLE001
+            record_swallowed("decision_checkpoint.mark_consumed", e2, log=logger)
             logger.error("decision checkpoint delete also failed: %s — "
                          "resume lane may re-offer this plan!", e2)
             return False
@@ -236,4 +239,5 @@ def read_status(session: str) -> str | None:
             return None
         return json.loads(path.read_text()).get("status")
     except Exception:  # noqa: BLE001
+        record_swallowed_here("decision_checkpoint.read_status", log=logger)
         return None
