@@ -239,7 +239,7 @@ Warn-only flag, deadline, fetch/text caps, ordinal sort-key ranks, JSON-candidat
 
 ## The 158 sites the unscoped-number guard grandfathers (measured 2026-10-05)
 
-The guard (`scripts/unscoped_number_guard.py`) reports a DELTA against `origin/main`, so it refuses only a NEW
+The guard (`scripts/unscoped_number_guard.py`) compares with the fixed list `config/check_allowlists/code_unscoped_number.txt` (no trunk read), so it refuses only a NEW
 unscoped constant. Running its own scanner (`src.number_sources.collect_unscoped_sites`) with the trunk subtraction
 removed returns **158 sites** [measured 2026-10-05 on `origin/main` @8a097ad3].
 

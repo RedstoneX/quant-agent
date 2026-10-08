@@ -1,4 +1,4 @@
-"""Unscoped-number guard with no stored ceiling.
+"""Unscoped-number guard against a fixed, committed allow-list.
 
 A module-level numeric constant in a ``src/`` file outside ``SCOPED_PATHS`` is
 a number nobody classified. This used to be held back by a hardcoded
@@ -6,36 +6,25 @@ a number nobody classified. This used to be held back by a hardcoded
 measurement committed to the repo, so every change adding such a constant
 edited the same line and collided with every other one.
 
-So this stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). At check time it
-runs the scanner in ``src.number_sources.collect_unscoped_sites`` over the
-working tree, runs the SAME scanner (same scope rules) over a throwaway copy of
-``origin/main``'s ``src/``, and reports the DELTA. If ``origin/main`` cannot be
-read it REFUSES; it never passes by default.
-
-The delta is per NUMBER, never a count. An earlier version excused any change
-whose total did not rise, so deleting one registered constant paid for adding
-an unregistered one (a net-sum waiver, which a swap always satisfies). Now a
-site new to the working tree is excused only when a site the trunk lost is the
-SAME number -- equal value and either the same name (it moved) or the same
-module (it was renamed) -- and each lost site can stand in for at most one.
+The limit is now FIXED and written in the repo:
+``config/check_allowlists/code_unscoped_number.txt`` lists every existing
+unscoped constant by site id (``pkg.mod.NAME``), never a count. The guard runs
+the scanner in ``src.number_sources.collect_unscoped_sites`` over the working
+tree and fails on a site not in the list and on a listed site that no longer
+occurs. It reads no git ref, so an unrelated merge cannot redden it. A constant
+that moves or is renamed changes its site id, so the list line is edited in the
+same change, visibly, with a Guard-rule-change line.
 
 Run it directly: ``python -m scripts.unscoped_number_guard``.
 """
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
-from scripts.guard_reference import (
-    ROOT,
-    ReferenceUnavailable,
-    TRUNK,
-    trunk_blobs,
-    trunk_paths,
-)
+from scripts.check_allowlist import ALLOWLIST_DIR, compare, report
+from scripts.guard_reference import ROOT
 from src import number_sources
-from src.number_universe import is_production
 
 
 def working_number_sites() -> list[number_sources.NumberSite]:
@@ -48,50 +37,12 @@ def working_sites() -> list[str]:
     return [s.site_id for s in working_number_sites()]
 
 
-def trunk_sites() -> list[str]:
-    """Site ids of every unscoped numeric constant on ``origin/main``."""
-    return [s.site_id for s in trunk_number_sites()]
-
-
-def trunk_number_sites() -> list[number_sources.NumberSite]:
-    """Every unscoped numeric constant on ``origin/main``.
-
-    The trunk's ``src/`` is written to a temp dir that is deleted on exit; the
-    working tree's scope rules are applied to it so both sides are measured by
-    the same rule. A scoped path the trunk does not have yet is created empty.
-    """
-    paths = [p for p in trunk_paths(".py") if is_production(p)]
-    blobs = trunk_blobs(paths)
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        for path, text in blobs.items():
-            dest = root / path
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(text, encoding="utf-8")
-        (root / "src").mkdir(exist_ok=True)
-        for entry in number_sources.SCOPED_PATHS:
-            target = root / entry
-            if not target.exists():
-                if entry.endswith(".py"):
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text("", encoding="utf-8")
-                else:
-                    target.mkdir(parents=True, exist_ok=True)
-        try:
-            return number_sources.collect_unscoped_sites(root)
-        except (OSError, SyntaxError) as exc:
-            raise ReferenceUnavailable(
-                f"cannot measure unscoped numbers on {TRUNK} ({exc}); it refuses "
-                f"rather than pass."
-            ) from exc
-
-
 def money_reach_gap() -> tuple[int, int]:
     """(money modules outside the ledger's scope, numbers a full scan finds in them).
 
     MEASURED, NOT GATED: the ledger scope is a reviewed list and 135 derived money
     modules are outside it. Making this absolute would red the trunk until those
-    numbers are registered, so it is reported here and the gate stays the delta.
+    numbers are registered, so it is reported here and the gate stays the fixed allow-list.
     """
     from scripts.money_modules import derive
 
@@ -102,72 +53,25 @@ def money_reach_gap() -> tuple[int, int]:
     return len(outside), count
 
 
-def _split_id(site_id: str) -> tuple[str, str]:
-    """(module, name) of a site id such as ``pkg.mod.NAME`` or ``pkg.mod.Cls.field``."""
-    module, _, name = site_id.partition(".")
-    while "." in name and not name.split(".", 1)[0][:1].isupper():
-        head, name = name.split(".", 1)
-        module = f"{module}.{head}"
-    return module, name
+ALLOWLIST = ALLOWLIST_DIR / "code_unscoped_number.txt"
 
 
-def same_number(lost: number_sources.NumberSite, new: number_sources.NumberSite) -> bool:
-    """A lost trunk site and a new working site are one constant that moved or was renamed.
-
-    Identity is the VALUE plus one of the two things a site id is made of: the
-    same name in another module is a move; another name in the same module is a
-    rename. Equal value alone is not identity -- two unrelated constants can share
-    a value -- and a different value is a different number whatever it is called.
-    """
-    if lost.value != new.value:
-        return False
-    lost_module, lost_name = _split_id(lost.site_id)
-    new_module, new_name = _split_id(new.site_id)
-    return lost_name == new_name or lost_module == new_module
-
-
-def added_sites() -> list[str]:
-    """Site ids new to this working tree that are not a trunk constant moved or renamed.
-
-    Each site is judged by its own identity. A trunk site that disappeared can
-    stand in for at most one new site, and only when ``same_number`` holds; a
-    deletion never pays for an unrelated addition, whatever the totals do.
-    """
-    now, before = working_number_sites(), trunk_number_sites()
-    before_ids = {s.site_id for s in before}
-    now_ids = {s.site_id for s in now}
-    lost = [s for s in before if s.site_id not in now_ids]
-    added: list[str] = []
-    for site in sorted((s for s in now if s.site_id not in before_ids), key=lambda s: s.site_id):
-        match = next((old for old in lost if same_number(old, site)), None)
-        if match is None:
-            added.append(site.site_id)
-        else:
-            lost.remove(match)
-    return added
-
-
-def violations() -> list[str]:
-    added = added_sites()
-    return [f"+{len(added)} unscoped numeric constant(s) vs {TRUNK}: " + ", ".join(added)] if added else []
+def check(allowlist: Path = ALLOWLIST) -> tuple[list[str], list[str]]:
+    """``(unlisted, stale)``: sites missing from the fixed list, and listed ones now gone."""
+    return compare([(site,) for site in working_sites()], allowlist)
 
 
 def main(argv: list[str] | None = None) -> int:
-    try:
-        bad = violations()
-    except ReferenceUnavailable as exc:
-        print(f"REFUSING: {exc}", file=sys.stderr)
-        return 2
-    if bad:
+    unlisted, stale = check()
+    if unlisted or stale:
         print(
             "a numeric constant was added in a production file (root, src, ops, scripts) outside SCOPED_PATHS; if it "
             "decides, sizes, prices or exits a trade, bring its module into scope "
-            "and ledger it (src/number_sources.py). Delta against %s:\n%s"
-            % (TRUNK, "\n".join(bad)),
+            "and ledger it (src/number_sources.py):\n" + report(unlisted, stale, ALLOWLIST),
             file=sys.stderr,
         )
         return 1
-    print(f"unscoped-number guard: this tree adds no unscoped numeric constant against {TRUNK}.")
+    print("unscoped-number guard: unscoped numeric constants match the fixed allow-list exactly.")
     modules, numbers = money_reach_gap()
     print(f"measured, not gated: {modules} money modules outside ledger scope hold {numbers} unledgered numbers.")
     return 0

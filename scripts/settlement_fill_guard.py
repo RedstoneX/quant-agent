@@ -37,14 +37,14 @@ correct in most code. What settles that one is a production measurement that
 the accrued distribution holds observations on BOTH sides of the threshold,
 which is a reading of the database, not of the source.
 
-STORES NOTHING
---------------
-Per `docs/GUARDS_WITHOUT_STORED_STATE.md` there is no grandfathered list.
-The guard names every offending site in the working tree, names them again in
-the tree as it stands on `origin/main`, and fails only on an IDENTITY the
-tree holds that the trunk does not. Pre-existing rot is not this change's
-business; a NEW silent default is. If the trunk cannot be read it REFUSES and
-never passes by default.
+FIXED ALLOW-LIST
+----------------
+A three-argument ``getattr`` (a silent default) or a literal ``None`` supplied
+for a built-route field is an ABSOLUTE ban. The only exceptions are the
+existing sites named, by identity (path, enclosing scope, field, problem), in
+``config/check_allowlists/code_settlement_fill.txt``: a committed, shrink-only
+list. The guard fails on a site not in the list and on a listed entry that no
+longer occurs. It reads no git ref, so unrelated merges cannot redden it.
 
 Run it directly:
 ``PYTHONPATH=. .venv/bin/python -m scripts.settlement_fill_guard``.
@@ -58,17 +58,9 @@ from typing import Iterable
 
 import yaml
 
-from scripts.guard_reference import (
-    ROOT,
-    _git,
-    ReferenceUnavailable,
-    TRUNK,
-    added_sites,
-    enclosing_scopes,
-    trunk_blobs,
-    trunk_paths,
-)
-from scripts.ledger_locator import trunk_ledger, working_ledger
+from scripts.check_allowlist import ALLOWLIST_DIR, compare, report
+from scripts.guard_reference import ROOT, _git, ReferenceUnavailable, enclosing_scopes
+from scripts.ledger_locator import working_ledger
 
 #: The storage layer is where the INSERT lives; the defect is in its CALLERS,
 #: and `src/storage/db.py` legitimately uses defaulted reads on payload dicts.
@@ -168,20 +160,26 @@ def _working_subject_paths() -> list[str]:
     return sorted({p for p in lines if _is_subject(p)})
 
 
+ALLOWLIST = ALLOWLIST_DIR / "code_settlement_fill.txt"
+
+
+def check(
+    blobs: dict[str, str], fields: set[str], allowlist: Path = ALLOWLIST
+) -> tuple[list[str], list[str]]:
+    """``(unlisted, stale)``: silent suppliers missing from the fixed list, and listed ones now gone."""
+    return compare(scan(blobs, fields), allowlist)
+
+
 def main() -> int:
     try:
-        paths = [p for p in trunk_paths(".py") if _is_subject(p)]
-        trunk_rel = trunk_ledger()
+        paths = _working_subject_paths()
         ledger_rel = working_ledger()
-        trunk_source = trunk_blobs(paths + [trunk_rel])
     except ReferenceUnavailable as exc:
-        print(f"REFUSED: cannot read {TRUNK}: {exc}", file=sys.stderr)
+        print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
 
-    ledger_now = (Path(ROOT) / ledger_rel).read_text(encoding="utf-8")
-    fields_now = built_route_fields(ledger_now)
-    fields_trunk = built_route_fields(trunk_source.get(trunk_rel, "numbers: []"))
-    if not fields_now:
+    fields = built_route_fields((Path(ROOT) / ledger_rel).read_text(encoding="utf-8"))
+    if not fields:
         print(
             "REFUSED: no settlement route is in state `built`; moving every "
             "route to `specified` is not a way past this guard",
@@ -189,22 +187,15 @@ def main() -> int:
         )
         return 2
 
-    working_paths = sorted(set(paths) | set(_working_subject_paths()))
-    now = scan(_working_blobs(working_paths), fields_now)
-    before = scan(
-        {p: t for p, t in trunk_source.items() if p != trunk_rel}, fields_trunk,
-    )
-    added = added_sites(now, before)
-    if not added:
+    unlisted, stale = check(_working_blobs(paths), fields)
+    if not unlisted and not stale:
         print(
-            f"settlement-fill guard: no new silent supplier for "
-            f"{len(fields_now)} built-route field(s) "
-            f"({len(now)} pre-existing site(s) unchanged)"
+            f"settlement-fill guard: silent suppliers for {len(fields)} built-route "
+            f"field(s) match the fixed allow-list exactly"
         )
         return 0
-    print("SETTLEMENT RECORDING WOULD NOT FILL:", file=sys.stderr)
-    for identity, _n, _had in added:
-        print(f"  {describe(identity)}", file=sys.stderr)
+    print("SETTLEMENT RECORDING WOULD NOT FILL (a three-argument getattr or None is banned):", file=sys.stderr)
+    print(report(unlisted, stale, ALLOWLIST), file=sys.stderr)
     return 1
 
 
