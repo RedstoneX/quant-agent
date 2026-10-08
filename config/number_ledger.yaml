@@ -7516,7 +7516,8 @@ numbers:
       decision.
     settles_by:
       kind: "recording"
-      state: "specified"
+      state: "built"
+      writes: ["reconciliation_runs.detail"]
       where: "docs/board_notes/item-090.md (item 90, the 2026-10-01 pipeline tranche)"
       records: >-
         every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
@@ -7546,7 +7547,8 @@ numbers:
       decision.
     settles_by:
       kind: "recording"
-      state: "specified"
+      state: "built"
+      writes: ["reconciliation_runs.detail"]
       where: "docs/board_notes/item-090.md (item 90, the 2026-10-01 pipeline tranche)"
       records: >-
         every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
