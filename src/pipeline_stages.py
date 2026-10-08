@@ -46,6 +46,7 @@ from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
 from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
+from src.sentinel.entry_guard import record_swallowed
 from src.soft_exit_never_blank import (
     record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
 )
@@ -239,6 +240,26 @@ def _book_risk_inputs(ctx, total_value: float):
 
 
 
+def _sizing_read(pipeline, read, arg, symbol: str, what: str):
+    """``read(arg)``, or `SizingPriceUnavailable` when it raises: fail closed.
+
+    A typed `PriceReadFailed` is the read failing after its own retry (the
+    caller classifies it: this name or the feed). Any OTHER error is not a
+    price fact at all -- a bug or an unexpected client error -- so it is
+    recorded loudly (durable counted row with the traceback) before it
+    refuses the sizing the same way; it is never silently treated as absence.
+    """
+    try:
+        return read(arg)
+    except Exception as exc:  # noqa: BLE001 -- every failure refuses; unexpected ones are recorded
+        if not isinstance(exc, PriceReadFailed):
+            logger.error("%s sizing %s read raised an UNEXPECTED error -- refused: %s",
+                         symbol, what, exc, exc_info=True)
+            record_swallowed(pipeline, f"sizing_price.{what.replace(' ', '_')}", exc,
+                             symbol=symbol)
+        raise SizingPriceUnavailable(f"{symbol}: {what} read failed") from exc
+
+
 def _today_sizing_price(pipeline, symbol) -> float | None:
     """A price the SHARE COUNT may divide the dollar allocation by, or None.
 
@@ -277,16 +298,13 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
     stamped_getter = getattr(broker, "get_latest_price_stamped", None)
     stamped_is_real = False
     if callable(stamped_getter):
-        try:
-            from src.execution.broker import LivePrice
+        from src.execution.broker import LivePrice
 
-            candidate = stamped_getter(symbol)
-            if isinstance(candidate, LivePrice):
-                stamped_is_real = True
-                if candidate.price and candidate.price > 0 and candidate.is_today_print:
-                    return float(candidate.price)
-        except PriceReadFailed as exc:  # a FAILED read, not "no print"
-            raise SizingPriceUnavailable(f"{symbol}: stamped read failed") from exc
+        candidate = _sizing_read(pipeline, stamped_getter, symbol, symbol, "stamped")
+        if isinstance(candidate, LivePrice):
+            stamped_is_real = True
+            if candidate.price and candidate.price > 0 and candidate.is_today_print:
+                return float(candidate.price)
 
     # 2. No today print: accept today's forming SESSION/minute bar through the
     #    same resolver the constructor uses (never a quote mid), so both
@@ -294,15 +312,12 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
     snap_getter = getattr(broker, "get_intraday_snapshots", None)
     if callable(snap_getter):
         snap_is_real = False
-        try:
-            snaps = snap_getter([symbol])
-            if isinstance(snaps, dict):
-                snap_is_real = True
-                resolved = resolve_live_price(snaps.get(symbol))
-                if resolved.is_today_print:
-                    return float(resolved.price)
-        except PriceReadFailed as exc:  # a FAILED read, not "no bar"
-            raise SizingPriceUnavailable(f"{symbol}: snapshot read failed") from exc
+        snaps = _sizing_read(pipeline, snap_getter, [symbol], symbol, "snapshot")
+        if isinstance(snaps, dict):
+            snap_is_real = True
+            resolved = resolve_live_price(snaps.get(symbol))
+            if resolved.is_today_print:
+                return float(resolved.price)
         # A REAL stamped price (real broker) that was a quote mid or stale,
         # and no usable today bar either: refuse rather than fall through to
         # the mid-capable bare getter.
@@ -322,10 +337,7 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
     getter = getattr(broker, "get_latest_price", None)
     if not callable(getter):
         return None
-    try:
-        live = getter(symbol)
-    except PriceReadFailed as exc:  # a FAILED read, not "no price"
-        raise SizingPriceUnavailable(f"{symbol}: bare price read failed") from exc
+    live = _sizing_read(pipeline, getter, symbol, symbol, "bare price")
     if isinstance(live, (int, float)) and not isinstance(live, bool) and live > 0:
         return float(live)
     return None

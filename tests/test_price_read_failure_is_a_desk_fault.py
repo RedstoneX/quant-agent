@@ -28,11 +28,14 @@ import pytest
 
 import src.sizing_refusal as sizing_refusal
 from tests.test_broker_market_data import _broker, _price_client
+from src.config.risk_adjuncts import CashSweepConfig
 from src.execution import price_read
 from src.execution.broker import LivePrice
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline_context import RunContext
-from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
+from src.price_feed_preflight import (
+    preflight_price_feed, price_feed_session_start, reference_symbol, wait_for_today_prints,
+)
 from src.refusal_errors import PriceReadFailed
 from src.sizing_refusal import (
     NO_PRINT_BY_WINDOW_END, NO_SIZING_PRINT, PRICE_FEED_UNREADABLE, PRICE_READ_FAILED,
@@ -40,6 +43,15 @@ from src.sizing_refusal import (
 from src.stage_execution import ExecutionStage
 
 ET = ZoneInfo("America/New_York")
+REF = CashSweepConfig().symbol  # the session's reference symbol: the cash vehicle
+
+
+@pytest.fixture(autouse=True)
+def _instant_reads(monkeypatch):
+    """Stubbed reads take no time, so the slot bound admits an ask whenever
+    any slot is left; the test that measures the bound restores the real one."""
+    import src.price_feed_preflight as preflight
+    monkeypatch.setattr(preflight, "read_worst_case_s", lambda: 0.0)
 
 
 def _print(price: float) -> LivePrice:
@@ -173,13 +185,14 @@ def test_one_name_failing_while_the_reference_reads_refuses_only_that_name(actio
 
 
 def test_reference_failing_too_halts_every_further_entry_this_session(monkeypatch):
-    # The reference symbol is the first approved entry (no positions held):
-    # GOOD reads at preflight, then BAD fails and GOOD now fails too.
-    state = {"reads": 0}
+    # The reference (the cash vehicle) reads at the preflight; then BAD fails
+    # and the reference fails too when it is read to classify BAD.
+    state = {"reads": 0, "ref_reads": 0}
 
     def reader(symbol):
         state["reads"] += 1
-        if symbol == "BAD" or state["reads"] > 1:
+        state["ref_reads"] += symbol == REF
+        if symbol == "BAD" or (symbol == REF and state["ref_reads"] > 1):
             raise PriceReadFailed(f"{symbol}: price read failed on all attempts")
         return _print(100.0)
 
@@ -215,40 +228,59 @@ def test_absence_is_a_per_name_skip_and_other_names_still_trade(monkeypatch):
     assert sizing_refusal.price_feed_fault(pipeline) is None
 
 
-def test_preflight_failure_places_no_entries_and_records_why(monkeypatch):
-    # Nothing held, so the reference is the first approved entry; it fails
-    # at the preflight and NO name is read for sizing afterwards.
+def test_reference_failing_at_preflight_places_no_entries_and_records_why(monkeypatch):
+    # The reference is the cash vehicle; it fails at the preflight and NO
+    # approved name is read for sizing afterwards.
     reads: list[str] = []
 
     def reader(symbol):
         reads.append(symbol)
-        if symbol == "GOOD":
-            raise PriceReadFailed("GOOD: price read failed on all attempts")
+        if symbol == REF:
+            raise PriceReadFailed(f"{REF}: price read failed on all attempts")
         return _print(100.0)
 
     pipeline = _pipeline(reader)
     skips = _run(pipeline, [_decision("GOOD"), _decision("ALSO")], monkeypatch)
     assert ("GOOD", PRICE_FEED_UNREADABLE) in skips and ("ALSO", PRICE_FEED_UNREADABLE) in skips
-    assert reads == ["GOOD"]
+    assert reads == [REF]
     pipeline.broker.submit_order.assert_not_called()
     fault = sizing_refusal.price_feed_fault(pipeline)
-    assert fault and "GOOD" in fault and "preflight" in fault
+    assert fault and REF in fault and "preflight" in fault
     # Existing protection is untouched: nothing cancelled, replaced or moved.
     for name in ("cancel_order", "replace_order", "cancel_all_orders", "amend_stop"):
         getattr(pipeline.broker, name).assert_not_called()
 
 
-def test_preflight_uses_a_held_name_first_and_resets_last_sessions_fault():
+def test_a_rejected_first_entry_with_nothing_held_skips_only_that_name(monkeypatch):
+    """The old defect: with nothing held the FIRST approved entry was the
+    reference, so one ticker Alpaca rejects halted every entry. Now only that
+    ticker is skipped and the rest proceed."""
+    pipeline = _pipeline(_failing_only({"BAD"}))
+    skips = _run(pipeline, [_decision("BAD"), _decision("GOOD"), _decision("ALSO")],
+                 monkeypatch)
+    assert ("BAD", PRICE_READ_FAILED) in skips
+    assert not [r for sym, r in skips if r == PRICE_FEED_UNREADABLE]
+    assert sizing_refusal.price_feed_fault(pipeline) is None
+    assert {"GOOD", "ALSO"} <= _submitted(pipeline) and "BAD" not in _submitted(pipeline)
+
+
+def test_reference_is_the_cash_vehicle_never_a_held_or_approved_name():
     pipeline = SimpleNamespace(broker=SimpleNamespace(get_latest_price_stamped=lambda s: None),
                                price_feed_fault="price_feed_unreadable: yesterday", db=None)
     ctx = SimpleNamespace(positions=[{"symbol": "HELD"}],
                           portfolio_decision=SimpleNamespace(decisions=[_decision("NEW")]))
     assert price_feed_session_start(pipeline, ctx) is ctx
     assert pipeline.price_feed_fault is None
-    assert pipeline.price_feed_reference == "HELD"
+    assert pipeline.price_feed_reference == REF
+    # An operator-configured vehicle is the one used.
+    configured = SimpleNamespace(config=SimpleNamespace(cash_sweep=SimpleNamespace(symbol="BIL")))
+    assert reference_symbol(configured) == "BIL"
     # Absence at the reference (None) is the feed answering: entries proceed.
     decisions = [_decision("NEW")]
     assert preflight_price_feed(pipeline, ctx, decisions) is decisions
+    # A failing name is never classified against itself.
+    assert sizing_refusal.reference_read_ok(pipeline, exclude=(REF,)) is None
+    assert sizing_refusal.reference_read_ok(pipeline) is True
 
 
 # --- no print YET: wait, re-ask in ONE batch, size when it prints ----------
@@ -326,16 +358,47 @@ def test_a_name_that_never_prints_is_skipped_at_the_slot_end_with_the_reason(mon
     assert max(sleeps) == price_read.BACKOFF_MAX_S
 
 
-def test_a_zero_slot_asks_once_without_waiting_then_skips(monkeypatch):
+def test_a_zero_slot_asks_nothing_and_skips_with_the_reason(monkeypatch):
     pipeline, batch_calls, sleeps = _waiting_rig(monkeypatch, prints_on_ask=None, slot_s=0.0)
     skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="close")
     assert ("THIN", NO_PRINT_BY_WINDOW_END) in skips
+    assert batch_calls == [] and sleeps == []
+
+
+def test_no_ask_starts_without_one_reads_worst_case_left_in_the_slot(monkeypatch):
+    """The whole wait is bounded by the slot: an ask is admitted only while
+    the slot still holds one read's worst case (every attempt to the HTTP
+    timeout plus the backoff), so it can never run into the next pass."""
+    import src.price_feed_preflight as preflight
+    monkeypatch.setattr(preflight, "read_worst_case_s", price_read.read_worst_case_s)
+    worst = price_read.read_worst_case_s()
+    # Room for the immediate ask, not for the backoff wait plus another.
+    pipeline, batch_calls, sleeps = _waiting_rig(
+        monkeypatch, prints_on_ask=None, slot_s=worst + price_read.BACKOFF_BASE_S / 2)
+    skips = _run(pipeline, [_decision("THIN")], monkeypatch, session="morning")
     assert batch_calls == [["THIN"]] and sleeps == []
+    assert ("THIN", NO_PRINT_BY_WINDOW_END) in skips
+
+
+def test_a_malformed_batch_answer_records_every_waiting_name_and_keeps_the_printed(monkeypatch):
+    """A non-dict answer never drops a name silently: names that printed on an
+    earlier ask are kept, and every name still waiting gets a skip row."""
+    import src.price_feed_preflight as preflight
+    answers = iter([{"EARLY": _print(100.0)}, ["not", "a", "map"]])
+    broker = SimpleNamespace(read_latest_trade_prints=lambda _s: next(answers))
+    monkeypatch.setattr(preflight, "_sleep", lambda _s: None)
+    monkeypatch.setattr(preflight, "slot_seconds_left", lambda _ctx: 600.0)
+    early, late = _decision("EARLY"), _decision("LATE")
+    printed, skipped = wait_for_today_prints(SimpleNamespace(broker=broker),
+                                             SimpleNamespace(), [early, late])
+    assert printed == [early]
+    assert [(d.symbol, r) for d, r, _x in skipped] == [("LATE", PRICE_READ_FAILED)]
+    assert "not a price map" in skipped[0][2]
 
 
 def _failing_batch_rig(monkeypatch, *, bad: set[str], feed_goes_down: bool):
     """A batched read that raises whenever it is asked for a name in `bad`
-    (or always once the feed is down); the reference GOOD reads until then."""
+    (or always once the feed is down); the reference reads until then."""
     import src.price_feed_preflight as preflight
 
     state = {"down": False, "printed": {"GOOD"}}
@@ -467,3 +530,56 @@ def test_latest_price_raises_typed_failure_when_the_data_api_raises(monkeypatch)
     assert isinstance(err.value.__cause__, ConnectionError)
     assert b._data_client.get_stock_latest_trade.call_count == 1 + price_read.MAX_RETRIES
     assert len(waits) == price_read.MAX_RETRIES
+
+
+# --- the stop repair keeps its old worst case; unexpected errors are loud ----
+
+def test_stop_repair_reads_once_per_its_own_attempt_never_nested_retries(monkeypatch):
+    """The repair loop IS the retry (2 tries): each read inside it is single-
+    attempt, so protecting naked shares is never slowed by a nested retry."""
+    import src.execution.exit_path_records as exit_path_records
+    from src.execution.stop_repair_price import read_repair_price
+    monkeypatch.setattr(exit_path_records, "record_stop_repair_refusal", lambda *a, **k: None)
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def once(symbol):
+        calls.append(symbol)
+        raise ConnectionError("feed timed out")
+
+    broker = SimpleNamespace(
+        get_latest_price_stamped=lambda s: price_read.read_price_with_retry(
+            once, s, sleep=sleeps.append),
+        get_intraday_snapshots=lambda syms: {},
+    )
+    _stamped, price, error = read_repair_price(
+        broker, "NAKED", stop_price=90.0, uncovered_qty=5, is_short=False, caller="t",
+        db=None, outcome={}, resting_stops=[], rec={"held_qty": 5, "covered_qty": 0},
+        live_price_cls=LivePrice)
+    assert calls == ["NAKED", "NAKED"] and sleeps == []
+    assert price is None and isinstance(error, PriceReadFailed)
+    # Outside the repair the same read still retries per the ledgered policy.
+    with pytest.raises(PriceReadFailed):
+        price_read.read_price_with_retry(once, "X", sleep=sleeps.append)
+    assert len(sleeps) == price_read.MAX_RETRIES
+
+
+def test_an_unexpected_sizing_read_error_is_refused_and_recorded_loudly(monkeypatch):
+    import src.pipeline_stages as stages
+    rows: list[tuple] = []
+    monkeypatch.setattr(stages, "record_swallowed",
+                        lambda p, where, exc, **ctx: rows.append((where, exc, ctx)))
+
+    def broken(_symbol):
+        raise TypeError("client bug")
+
+    pipeline = SimpleNamespace(broker=SimpleNamespace(get_latest_price_stamped=broken))
+    with pytest.raises(sizing_refusal.SizingPriceUnavailable):
+        stages._today_sizing_price(pipeline, "NVDA")
+    assert [(w, type(e)) for w, e, _c in rows] == [("sizing_price.stamped", TypeError)]
+    # A typed read failure is the classified path: refused, not a swallow row.
+    rows.clear()
+    pipeline.broker.get_latest_price_stamped = _failing_only({"NVDA"})
+    with pytest.raises(sizing_refusal.SizingPriceUnavailable):
+        stages._today_sizing_price(pipeline, "NVDA")
+    assert rows == []

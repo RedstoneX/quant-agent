@@ -18,13 +18,45 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Callable, Iterator
 
+from src.execution.broker_parts.http_timeout import _BROKER_HTTP_TIMEOUT
 from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S, MAX_RETRIES
 from src.refusal_errors import PriceReadFailed
 
 logger = logging.getLogger(__name__)
 _sleep = time.sleep  # module attribute so a test can stub the backoff
+
+# Set by `single_attempt_reads` for a caller that already runs its OWN retry
+# loop (the stop repair): nesting this retry inside it would multiply the
+# reads and the waits before naked shares are protected.
+_SINGLE_ATTEMPT: ContextVar[bool] = ContextVar("price_read_single_attempt", default=False)
+
+
+@contextmanager
+def single_attempt_reads() -> Iterator[None]:
+    """Inside this block every `read_price_with_retry` reads ONCE (no backoff)
+    and still raises `PriceReadFailed` on failure. For a caller whose own loop
+    is the retry; the caller's worst case is then exactly its own."""
+    token = _SINGLE_ATTEMPT.set(True)
+    try:
+        yield
+    finally:
+        _SINGLE_ATTEMPT.reset(token)
+
+
+def _backoff_s(attempt: int) -> float:
+    return min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+
+
+def read_worst_case_s() -> float:
+    """Longest one `read_price_with_retry` call can take: every attempt runs
+    to the broker's ledgered HTTP timeout, plus the policy's backoff between
+    attempts. Built only from ledgered numbers; it adds none of its own."""
+    attempts = 1 + MAX_RETRIES
+    return attempts * _BROKER_HTTP_TIMEOUT + sum(_backoff_s(a) for a in range(1, attempts))
 
 
 def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,
@@ -39,7 +71,7 @@ def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,
     """
     log = log or logger
     sleep = sleep or _sleep
-    attempts = 1 + MAX_RETRIES
+    attempts = 1 if _SINGLE_ATTEMPT.get() else 1 + MAX_RETRIES
     last: BaseException | None = None
     for attempt in range(1, attempts + 1):
         try:
@@ -51,7 +83,7 @@ def read_price_with_retry(read_once: Callable[[str], object], symbol: str, *,
             log.warning("price read for %s failed (attempt %d of %d): %s",
                         symbol, attempt, attempts, exc)
             if attempt < attempts:
-                sleep(min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S))
+                sleep(_backoff_s(attempt))
     raise PriceReadFailed(
         f"{symbol}: price read failed on all {attempts} attempts ({last!r})"
     ) from last

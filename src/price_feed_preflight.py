@@ -1,8 +1,8 @@
 """Prove the price feed reads before a session places any new entry.
 
 Owner ruling 2026-10-08: a desk that cannot read price cannot trade. Before
-the entry stage sizes anything, ONE read of a reference symbol -- a held
-name when there is one, else the first approved entry -- must come back
+the entry stage sizes anything, ONE read of a reference symbol -- the desk's
+configured cash vehicle, never an approved entry -- must come back
 (absence is fine: the feed answered). The read carries the broker's own
 retry; when it still fails the session places no new entries, every approved
 entry is recorded as skipped under ``price_feed_unreadable``, and the fault is
@@ -27,6 +27,8 @@ import time
 from datetime import timedelta
 
 from src.config.llm_cost import INTRA_CHECK_TICK_MINUTES
+from src.config.risk_adjuncts import CashSweepConfig
+from src.execution.price_read import read_worst_case_s
 from src.infra_retry_policy import BACKOFF_BASE_S, BACKOFF_MAX_S
 from src.pipeline_candidate_records import _record_execution_skip
 from src.refusal_errors import PriceReadFailed
@@ -34,6 +36,7 @@ from src.sizing_refusal import (
     NO_PRINT_BY_WINDOW_END,
     NO_SIZING_PRINT,
     PRICE_FEED_UNREADABLE,
+    PRICE_READ_FAILED,
     classify_price_read_failure,
     declare_price_feed_fault,
     price_feed_fault,
@@ -46,31 +49,26 @@ logger = logging.getLogger(__name__)
 _sleep = time.sleep  # module attribute so a test can stub the backoff
 
 
-def _symbol_of(item) -> str | None:
-    sym = item.get("symbol") if isinstance(item, dict) else getattr(item, "symbol", None)
-    return str(sym) if isinstance(sym, str) and sym else None
+def reference_symbol(pipeline) -> str:
+    """The symbol whose read decides "this name" versus "the feed".
 
-
-def reference_symbol(ctx) -> str | None:
-    """A held name first (its stop is live, its price must read), else the
-    first approved entry; None when the session holds and approves nothing."""
-    for position in getattr(ctx, "positions", None) or []:
-        sym = _symbol_of(position)
-        if sym:
-            return sym
-    decisions = getattr(getattr(ctx, "portfolio_decision", None), "decisions", None) or []
-    for decision in decisions:
-        if getattr(decision, "action", None) in ("BUY", "SHORT"):
-            sym = _symbol_of(decision)
-            if sym:
-                return sym
-    return None
+    It is the desk's configured cash vehicle (`cash_sweep.symbol`, default
+    `CashSweepConfig.symbol`, SGOV): a heavily traded T-bill ETF the desk
+    already reads to park and fund cash. It is NEVER an approved entry or a
+    held name, so one bad ticker can never become its own reference and halt
+    every entry; and `reference_read_ok` refuses to use it for its own name.
+    """
+    sweep = getattr(getattr(pipeline, "config", None), "cash_sweep", None)
+    symbol = getattr(sweep, "symbol", None)
+    if isinstance(symbol, str) and symbol:
+        return symbol
+    return CashSweepConfig().symbol
 
 
 def price_feed_session_start(pipeline, ctx):
     """Entry-stage start: last session's fault does not carry over, and this
     session's reference symbol is pinned. Returns `ctx` so it nests in place."""
-    reset_price_feed(pipeline, reference_symbol(ctx))
+    reset_price_feed(pipeline, reference_symbol(pipeline))
     return ctx
 
 
@@ -121,46 +119,112 @@ def _no_batched_reader(pending: dict) -> list:
     ]
 
 
-def _after_failed_ask(pipeline, exc, asked: list, single: bool, pending: dict,
-                      failed: list, one_by_one: list) -> tuple[str | None, list]:
-    """``(fault, names_left_to_ask_alone)`` after an ask raised.
+class _TodayPrintWait:
+    """State of one pass's batched re-ask. Every ask -- and every reference
+    read a failed ask triggers -- is admitted only while the time left in the
+    slot covers one read's worst case (`read_worst_case_s`), so the wait can
+    never run into the desk's next pass."""
 
-    A single-name ask is classified like any single-name failure (the
-    reference decides name or feed); a skipped name joins ``failed``. A
-    failed BATCH declares the feed down only when the reference fails too;
-    otherwise every waiting name is queued to be re-asked alone."""
-    if single:
-        reason, detail = classify_price_read_failure(pipeline, exc, symbol=asked[0], what="buy")
-        if reason == PRICE_FEED_UNREADABLE:
-            return detail, one_by_one
-        failed.append((pending.pop(asked[0]), reason, detail))
-        return None, one_by_one
-    if reference_read_ok(pipeline) is False:
-        return declare_price_feed_fault(pipeline, "batched_reask", exc,
-                                        symbol=",".join(asked)), one_by_one
-    # The feed answers: the batch failed on something in it. Re-ask each
-    # waiting name alone, at the same pace, to find which.
-    logger.warning("batched today-print re-ask failed while the reference "
-                   "reads; re-asking %s one at a time: %s", sorted(pending), exc)
-    return None, list(pending)
+    def __init__(self, ctx, waiting: list):
+        self.budget_s = slot_seconds_left(ctx)
+        self.deadline = time.monotonic() + self.budget_s
+        self.read_s = read_worst_case_s()
+        # backoff asks; the first ask is immediate
+        self.ask_ceiling = math.ceil(self.budget_s / BACKOFF_MAX_S)
+        self.pending = {d.symbol: d for d in waiting}
+        self.printed: dict[str, object] = {}
+        self.failed: list[tuple] = []
+        self.one_by_one: list[str] = []  # names left in a single-name round; empty = batched
+        self.asks = 0
+        self.wait_s = BACKOFF_BASE_S
+        self.fault: str | None = None
+        self.stopped: tuple[str, str] | None = None  # (reason, detail) for names left
 
+    def _room(self, wait_s: float = 0.0) -> bool:
+        return time.monotonic() + wait_s + self.read_s <= self.deadline
 
-def _unprinted(pending: dict, fault: str | None, asks: int, budget_s: float) -> list:
-    """The skip rows for names still waiting when the re-ask stopped."""
-    if fault:
-        return [(d, PRICE_FEED_UNREADABLE, fault) for d in pending.values()]
-    return [(d, NO_PRINT_BY_WINDOW_END, (
-        f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {asks} "
-        f"ask(s) across this pass's slot ({budget_s:.0f}s); not sized -- the "
-        "desk's next pass re-decides the name"
-    )) for d in pending.values()]
+    def pace(self) -> bool:
+        """Wait the rising backoff before a later ask; False ends the wait."""
+        if not self.asks:
+            return self._room()  # the first ask is immediate
+        if self.asks > self.ask_ceiling or not self._room(self.wait_s):
+            return False
+        _sleep(self.wait_s)
+        self.wait_s = min(self.wait_s * 2, BACKOFF_MAX_S)
+        return True
+
+    def ask(self, pipeline, broker) -> None:
+        self.asks += 1
+        single = bool(self.one_by_one)
+        asked = [self.one_by_one.pop(0)] if single else list(self.pending)
+        try:
+            prints = broker.read_latest_trade_prints(asked)
+        except PriceReadFailed as exc:
+            self._after_failed_ask(pipeline, exc, asked, single)
+            return
+        if not isinstance(prints, dict):
+            self.stopped = (PRICE_READ_FAILED, (
+                f"{PRICE_READ_FAILED}: the batched today-print re-ask answered "
+                f"{type(prints).__name__}, not a price map -- not sized rather "
+                "than sized on an unread price; the desk's next pass re-decides"
+            ))
+            return
+        for symbol in [s for s in self.pending if s in prints]:
+            self.printed[symbol] = self.pending.pop(symbol)
+        self.one_by_one = [s for s in self.one_by_one if s in self.pending]
+
+    def _after_failed_ask(self, pipeline, exc, asked: list, single: bool) -> None:
+        """A single-name ask is classified like any single-name failure (the
+        reference decides name or feed); a skipped name joins ``failed``. A
+        failed BATCH declares the feed down only when the reference fails
+        too; otherwise every waiting name is queued to be re-asked alone."""
+        if not self._room():
+            self.stopped = (NO_PRINT_BY_WINDOW_END, (
+                f"{NO_PRINT_BY_WINDOW_END}: a re-ask failed ({exc}) with too "
+                f"little of this pass's slot left for one more read "
+                f"({self.read_s:.0f}s worst case); not sized -- the desk's next "
+                "pass re-decides the name"
+            ))
+            return
+        if single:
+            reason, detail = classify_price_read_failure(pipeline, exc, symbol=asked[0],
+                                                         what="buy")
+            if reason == PRICE_FEED_UNREADABLE:
+                self.fault = detail
+            else:
+                self.failed.append((self.pending.pop(asked[0]), reason, detail))
+            return
+        if reference_read_ok(pipeline, exclude=tuple(asked)) is False:
+            self.fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
+                                                  symbol=",".join(asked))
+            return
+        # The feed answers: the batch failed on something in it. Re-ask each
+        # waiting name alone, at the same pace, to find which.
+        logger.warning("batched today-print re-ask failed while the reference "
+                       "reads; re-asking %s one at a time: %s", sorted(self.pending), exc)
+        self.one_by_one = list(self.pending)
+
+    def unprinted(self) -> list:
+        """The skip rows for every name still waiting when the re-ask stopped."""
+        if self.fault:
+            reason, detail = PRICE_FEED_UNREADABLE, self.fault
+        elif self.stopped:
+            reason, detail = self.stopped
+        else:
+            reason, detail = NO_PRINT_BY_WINDOW_END, (
+                f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {self.asks} "
+                f"ask(s) across this pass's slot ({self.budget_s:.0f}s, each ask "
+                f"admitted only with {self.read_s:.0f}s left); not sized -- the "
+                "desk's next pass re-decides the name"
+            )
+        return [(d, reason, detail) for d in self.pending.values()]
 
 
 def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     """Re-ask for every waiting name in ONE batched request per ask until each
     has a today print or the slot ends. Returns ``(printed, skipped)``: the
     decisions that printed, in their original order, and ``(decision,
-    reason, detail)`` for each that did not, for the caller to record.
+    reason, detail)`` for EVERY other waiting name, for the caller to record.
 
     A batched read that FAILS after its own retry does not, by itself, say
     the feed is down: one bad symbol can fail the whole request. The feed is
@@ -179,51 +243,26 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     asks a minute, batched or single, 3.75% of Alpaca's published 200
     requests/minute market-data limit (ledgered at
     `src.execution.broker_parts.trade_stream_reconnect._STREAM_ATTEMPT_CEILING_PER_DAY`).
-    The ask count is bounded by the slot: one immediate ask plus at most
-    `ceil(slot_seconds / BACKOFF_MAX_S)` on backoff, and the count is logged.
+    Bound: each ask is one retried read -- `1 + MAX_RETRIES` attempts
+    (`src.infra_retry_policy.MAX_RETRIES`), each up to the broker's HTTP
+    timeout, with the policy's backoff between them. An ask (or the
+    reference read after a failed one) starts only while the slot still
+    holds that worst case, so the whole wait ends inside the slot; the ask
+    count is logged.
     """
     broker = getattr(pipeline, "broker", None)
-    budget_s = slot_seconds_left(ctx)
-    ask_ceiling = math.ceil(budget_s / BACKOFF_MAX_S)  # backoff asks; the first ask is immediate
-    pending = {d.symbol: d for d in waiting}
-    printed: dict[str, object] = {}
-    failed: list[tuple] = []
-    one_by_one: list[str] = []  # names left in a single-name round; empty = batched
-    asks = 0
-    deadline = time.monotonic() + budget_s
-    wait_s = BACKOFF_BASE_S
-    fault = None
-    while pending and broker is not None:
-        if asks:  # the first ask is immediate; every later one waits, rising
-            if asks > ask_ceiling or time.monotonic() + wait_s > deadline:
-                break
-            _sleep(wait_s)
-            wait_s = min(wait_s * 2, BACKOFF_MAX_S)
-        asks += 1
+    if broker is None or not hasattr(broker, "read_latest_trade_prints"):
         # Explicit capability check: a stub broker that does not declare the
         # batched reader has nothing to re-ask (absence stands).
-        if not hasattr(broker, "read_latest_trade_prints"):
-            return [], _no_batched_reader(pending)
-        single = bool(one_by_one)
-        asked = [one_by_one.pop(0)] if single else list(pending)
-        try:
-            prints = broker.read_latest_trade_prints(asked)
-        except PriceReadFailed as exc:
-            fault, one_by_one = _after_failed_ask(pipeline, exc, asked, single, pending,
-                                                  failed, one_by_one)
-            if fault:
-                break
-            continue
-        if not isinstance(prints, dict):
-            return [], _no_batched_reader(pending)
-        for symbol in [s for s in pending if s in prints]:
-            printed[symbol] = pending.pop(symbol)
-        one_by_one = [s for s in one_by_one if s in pending]
+        return [], _no_batched_reader({d.symbol: d for d in waiting})
+    wait = _TodayPrintWait(ctx, waiting)
+    while wait.pending and wait.fault is None and wait.stopped is None and wait.pace():
+        wait.ask(pipeline, broker)
     logger.info(
         "today-print wait: %d ask(s) (one immediate, then at most %d on backoff "
         "inside the %.0fs slot); printed %s, read failed %s, still waiting %s",
-        asks, ask_ceiling, budget_s, sorted(printed) or "-",
-        sorted(d.symbol for d, _r, _x in failed) or "-", sorted(pending) or "-",
+        wait.asks, wait.ask_ceiling, wait.budget_s, sorted(wait.printed) or "-",
+        sorted(d.symbol for d, _r, _x in wait.failed) or "-", sorted(wait.pending) or "-",
     )
-    skipped = failed + _unprinted(pending, fault, asks, budget_s)
-    return [d for d in waiting if d.symbol in printed], skipped
+    skipped = wait.failed + wait.unprinted()
+    return [d for d in waiting if d.symbol in wait.printed], skipped

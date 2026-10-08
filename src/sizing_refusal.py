@@ -6,8 +6,9 @@ on a price that was actually read. Three different states all mean "do not size"
 * ``no_sizing_print`` -- MEASURED: the read worked and there is no today print
   (or no usable one). Per-name skip; other names keep trading.
 * ``price_read_failed`` -- UNKNOWN, ONE NAME: the read itself failed after the
-  broker's retry, but a read of the session's reference symbol (a held or
-  liquid name, the one the entry-stage preflight used) succeeded. The fault is
+  broker's retry, but a read of the session's reference symbol (the desk's
+  configured cash vehicle, never an approved entry -- see
+  `src.price_feed_preflight.reference_symbol`) succeeded. The fault is
   that name's; its entry is refused, the fault is recorded and counted, and
   other names keep trading.
 * ``price_feed_unreadable`` -- UNKNOWN, THE DESK: the reference read failed
@@ -90,7 +91,7 @@ def declare_price_feed_fault(pipeline, where: str, exc: BaseException, *,
     return detail
 
 
-def reference_read_ok(pipeline) -> bool | None:
+def reference_read_ok(pipeline, exclude: tuple[str, ...] = ()) -> bool | None:
     """Read the session's reference symbol once (its own retry inside).
 
     True: the feed answers (absence included) -- a failing name is alone.
@@ -101,6 +102,8 @@ def reference_read_ok(pipeline) -> bool | None:
     reference = getattr(pipeline, "price_feed_reference", None)
     getter = getattr(getattr(pipeline, "broker", None), "get_latest_price_stamped", None)
     if not isinstance(reference, str) or not reference or not callable(getter):
+        return None
+    if reference in exclude:  # a failing name is never its own reference
         return None
     try:
         getter(reference)
@@ -149,7 +152,7 @@ def classify_price_read_failure(pipeline, exc: BaseException, *, symbol: str,
     (``price_feed.desk_unclassified``) so a genuine outage is never visible
     only as N single-name rows, and the entry is refused as this name's.
     """
-    verdict = reference_read_ok(pipeline)
+    verdict = reference_read_ok(pipeline, exclude=(symbol,))
     if verdict is False:
         return PRICE_FEED_UNREADABLE, declare_price_feed_fault(
             pipeline, "sizing_read", exc, symbol=symbol,

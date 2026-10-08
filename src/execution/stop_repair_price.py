@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+from src.execution.price_read import single_attempt_reads
+
 logger = logging.getLogger("src.execution.stop_repair")
 
 
@@ -29,18 +31,21 @@ def read_repair_price(
     # Retry the same read once, then fall back to the intraday snapshot the
     # research path already trusts. An unknown price is never a reason to
     # leave shares naked (owner ruling 2026-10-02).
+    # This loop IS the retry: each read inside it is single-attempt, so the
+    # broker's own retry does not nest here (2 reads, no backoff, worst case).
     for _attempt in range(2):
         try:
-            getter = getattr(broker, "get_latest_price_stamped", None)
-            if callable(getter):
-                candidate = getter(symbol)
-                # isinstance, not truthiness: most tests drive this with a
-                # MagicMock broker whose auto-attributes are callable and
-                # whose return value is another MagicMock. Only a real
-                # reading may carry the freshness verdict.
-                if isinstance(candidate, live_price_cls):
-                    stamped = candidate
-            price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
+            with single_attempt_reads():
+                getter = getattr(broker, "get_latest_price_stamped", None)
+                if callable(getter):
+                    candidate = getter(symbol)
+                    # isinstance, not truthiness: most tests drive this with a
+                    # MagicMock broker whose auto-attributes are callable and
+                    # whose return value is another MagicMock. Only a real
+                    # reading may carry the freshness verdict.
+                    if isinstance(candidate, live_price_cls):
+                        stamped = candidate
+                price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
             price_error = None
             break
         except Exception as exc:  # noqa: BLE001
