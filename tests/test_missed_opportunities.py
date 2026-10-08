@@ -647,7 +647,10 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
     p.market = MagicMock()
     def _ohlcv(symbol, lookback_days=12):
         def _bar(d, close):
-            b = MagicMock(); b.date = d; b.close = close; return b
+            b = MagicMock()
+            b.date = d
+            b.close = close
+            return b
         if symbol == "SPY":
             # oldest → newest bars; buy_date match or nearby
             return [

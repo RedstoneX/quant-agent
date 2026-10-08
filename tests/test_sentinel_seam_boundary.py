@@ -181,7 +181,9 @@ def test_scrubber_redacts_every_identifying_field_and_keeps_the_rest():
 
 def test_publisher_scrubs_before_it_signs(tmp_path):
     def leaky_state():
-        s = _state(); s["trading_state"]["api_key"] = "x"; return s
+        s = _state()
+        s["trading_state"]["api_key"] = "x"
+        return s
     pub = SnapshotPublisher(state_reader=leaky_state, output_path=tmp_path / "s.json",
                             desk_version="v", signing_key=KEY, clock=lambda: NOW)
     env = pub.publish()

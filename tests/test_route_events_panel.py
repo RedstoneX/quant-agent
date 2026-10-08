@@ -14,7 +14,8 @@ def _db(tmp_path, monkeypatch, rows):
     for r in rows:
         c.execute("INSERT INTO llm_route_events (event_type, agent_name, route, from_route,"
                   "input_usd_per_mtok, output_usd_per_mtok, timestamp) VALUES (?,?,?,?,?,?,?)", r)
-    c.commit(); c.close()
+    c.commit()
+    c.close()
 
     def conn():
         k = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -43,6 +44,7 @@ def test_unreadable_is_not_reported_as_nothing_happened(monkeypatch):
 
 
 def test_missing_table_says_no_entries(tmp_path, monkeypatch):
-    path = tmp_path / "e.db"; sqlite3.connect(path).close()
+    path = tmp_path / "e.db"
+    sqlite3.connect(path).close()
     monkeypatch.setattr(mod, "_connect", lambda: sqlite3.connect(f"file:{path}?mode=ro", uri=True))
     assert "no entries" in mod.get_route_events().note

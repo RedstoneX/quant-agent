@@ -99,7 +99,7 @@ tmp_path_retention_count = 5
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E501", "C901", "PLR0912", "PLR0915"]
+select = ["E501", "E701", "E702", "E703", "C901", "PLR0912", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -134,7 +134,6 @@ max-branches = 12
 "scripts/prune_worktrees.py" = ["C901"]
 "scripts/replay_evening.py" = ["PLR0915"]
 "scripts/resolve_doc_conflict.py" = ["C901", "PLR0912", "PLR0915"]
-"scripts/statement_cram_guard.py" = ["C901"]
 "scripts/status_board.py" = ["C901", "E501", "PLR0912", "PLR0915"]
 "scripts/trend_alignment/analysis.py" = ["C901"]
 "scripts/trend_alignment/report.py" = ["C901", "PLR0912", "PLR0915"]

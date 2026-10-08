@@ -609,7 +609,8 @@ class TradingPipeline(
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
-        from src.sentinel.cancel_attempts import install_cancel_recording as _count_cancels; _count_cancels(broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None))  # every broker cancel becomes one order_attempts row
+        from src.sentinel.cancel_attempts import install_cancel_recording as _count_cancels
+        _count_cancels(broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None))  # every broker cancel becomes one order_attempts row
         self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in

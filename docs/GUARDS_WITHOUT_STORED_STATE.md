@@ -27,7 +27,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
   (`pipeline_new_guard`, `pipeline_method_guard`,
   `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
   `unscoped_number_guard`,
-  `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
+  `settlement_fill_guard`, `guard_weakening_gate`, the
   boundary harness, the patch-target audit) each reference `guard_reference` or
   `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
 - Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
@@ -284,11 +284,8 @@ still fails. No totals cross files; with no merge base nothing is excluded.
 Tests: `test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth`,
 `test_touching_a_file_puts_it_back_under_the_full_rule`. The width ratchet
 lives in the same function and is covered by the same skip (the live case
-showed two "new" wide lines the trunk had removed). The statement-cram ratchet
-shares the shape — a stale copy of a file the trunk has since uncrammed — and
-applies the same skip in `statement_cram_guard.violations`; tests
-`test_trunk_uncramming_a_file_the_branch_never_opened_is_not_a_violation`,
-`test_touching_a_file_puts_it_back_under_the_full_cram_rule`.
+showed two "new" wide lines the trunk had removed). (The statement-cram ratchet that once shared this shape was
+replaced on 2026-10-08 by ruff E701/E702/E703; see "Compressing is the same offence as growing".)
 
 ## Acceptance — proven, not asserted
 
@@ -325,7 +322,7 @@ Also done (2026-10-05, settlement route field identity check): The ledger route 
 
 ## Compressing is the same offence as growing
 
-`tests/test_statement_cram_ratchet.py` (logic in `scripts/statement_cram_guard.py`) closes the route a change took on 2026-10-04 to satisfy the size ratchet without splitting anything: it joined statements onto shared lines (`from A import x; from B import y`, `if cond: return x`) and only the line counter moved. The guard PARSES every tracked `.py` file (the size ratchet's own scope, `working_paths("*.py")`, no second list) and names each line on which more than one statement starts, or whose block body sits on its header's line (`if`/`elif`/`except`/`else`/`finally`/`case` headers alike); semicolons inside strings, docstrings and comments are invisible to it. There is no threshold -- the measure is statements per line -- and no stored list: identities (`path`, enclosing scope, the line's text) are collected on the working tree and on `origin/main` at check time and only a NEW or more-frequent identity fails. A one-line stub body (`class Boom(Exception): pass`, `def f(self) -> int: ...`) is not cramming and is exempt. It refuses without `origin/main`; removals never fail; the ~116 pre-existing crammed lines on the trunk pass (measured 2026-10-04).
+**Replaced 2026-10-08.** The home-made statement-cram ratchet (it compared against `origin/main`) is deleted. Ruff E701/E702/E703 (multiple statements on one line) now run in `pyproject.toml` with no per-file ignores: every existing offender was fixed, so the rule is stricter on every file and has no trunk-relative limit. Known accepted gap: ruff has no rule for a one-line `def f(): return x` body (E704); joining lines no longer buys anything since the line-count ratchet was removed.
 
 **Lines are not size (2026-10-04, second route).** The same day, two changes added error logging to dozens of money-path sites, reported their files SHRANK in lines, and between them added 33 lines over 140 characters with none removed (measured from the two diffs); the project has no line-width lint, so the line ratchet was satisfied by widening. `scripts/file_size_guard.py` now ratchets two further measures of the same files, same rule, same scope, still storing nothing: (1) AST statements -- invariant under renaming, line-joining, wrapping and re-indenting, so neither a re-layout nor a rename can move it; a file over the 400-line floor may not gain one against `origin/main`; (2) lines wider than the derived width fence -- a file may not gain one by identity (path + the line's text), so a widened line fails and passes once wrapped, while the trunk's ~416 pre-existing wide lines pass (the fence is DERIVED at check time as the 99.9th percentile of line widths over both trees, tighter wins; it resolved to 120 on 2026-10-04 and again on 2026-10-05). Run against the two changes it was built for, it names 25 and 30 new wide lines and +2,367 / +2,320 / +1,378 non-whitespace characters in files that "shrank". Tests: `test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped`, `test_more_statements_in_fewer_lines_is_still_growth`, `test_a_pre_existing_wide_line_is_not_reported`.
 

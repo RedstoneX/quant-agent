@@ -146,14 +146,18 @@ def sccs(nodes, edges) -> list[set[str]]:
         if root in index:
             continue
         work = [(root, iter(sorted(adj[root])))]
-        index[root] = low[root] = counter[0]; counter[0] += 1
-        stack.append(root); on.add(root)
+        index[root] = low[root] = counter[0]
+        counter[0] += 1
+        stack.append(root)
+        on.add(root)
         while work:
             v, it = work[-1]
             for w in it:
                 if w not in index:
-                    index[w] = low[w] = counter[0]; counter[0] += 1
-                    stack.append(w); on.add(w)
+                    index[w] = low[w] = counter[0]
+                    counter[0] += 1
+                    stack.append(w)
+                    on.add(w)
                     work.append((w, iter(sorted(adj[w]))))
                     break
                 elif w in on:
@@ -165,7 +169,9 @@ def sccs(nodes, edges) -> list[set[str]]:
                 if low[v] == index[v]:
                     comp = set()
                     while True:
-                        w = stack.pop(); on.discard(w); comp.add(w)
+                        w = stack.pop()
+                        on.discard(w)
+                        comp.add(w)
                         if w == v:
                             break
                     if len(comp) > 1:
@@ -198,7 +204,8 @@ def shortest_cycles(edges) -> list[list[str]]:
         if a in prev:
             path, v = [], a
             while v is not None:
-                path.append(v); v = prev[v]
+                path.append(v)
+                v = prev[v]
             path.reverse()  # b ... a
             cyc = path  # b -> ... -> a, closes via a -> b
             # Start at the smallest module: `edges` is a set, so without this
@@ -277,7 +284,8 @@ def report() -> str:
     cyc = shortest_cycles(cycle_edges(nodes, rt))
     inb, outb = defaultdict(int), defaultdict(int)
     for a, b in rt:
-        outb[a] += 1; inb[b] += 1
+        outb[a] += 1
+        inb[b] += 1
     top = lambda d: sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
     lines = [f"modules={len(nodes)} runtime_edges={len(rt)} type_only_edges={len(to)}",
              f"cycles(shortest per edge)={len(cyc)}"]

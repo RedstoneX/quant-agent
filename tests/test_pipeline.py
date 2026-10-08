@@ -824,7 +824,8 @@ def test_pipeline_morning_early_return_still_reconciles_fills():
     pipeline.broker.cancel_open_entry_orders.return_value = None
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
-    pipeline._reconcile_fills = MagicMock(); pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
+    pipeline._reconcile_fills = MagicMock()
+    pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -3684,7 +3685,8 @@ def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
     pipeline.broker.cancel_open_entry_orders.return_value = None
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
-    pipeline._reconcile_fills = MagicMock(); pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
+    pipeline._reconcile_fills = MagicMock()
+    pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
     pipeline._sync_positions_from_broker = MagicMock()
 
     def _populate_empty_research(ctx):

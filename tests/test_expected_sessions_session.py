@@ -19,5 +19,6 @@ def _build(**overrides) -> ExpectedSessionsMissingSession:
 
 
 def test_constructible_without_a_pipeline_and_exercisable():
-    db = MagicMock(); db.session_prefixes_logged_on.side_effect = RuntimeError("boom")
+    db = MagicMock()
+    db.session_prefixes_logged_on.side_effect = RuntimeError("boom")
     assert _build(db=db).run() == []

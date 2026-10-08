@@ -6,17 +6,23 @@ def main(argv):
     out, i, n = [], 0, 0
     while i < len(L):
         if L[i].startswith('<<<<<<<'):
-            n += 1; i += 1; ours = []
+            n += 1
+            i += 1
+            ours = []
             while not L[i].startswith('|||||||') and not L[i].startswith('======='):
-                ours.append(L[i]); i += 1
+                ours.append(L[i])
+                i += 1
             base = []
             if L[i].startswith('|||||||'):
                 i += 1
                 while not L[i].startswith('======='):
-                    base.append(L[i]); i += 1
-            i += 1; theirs = []
+                    base.append(L[i])
+                    i += 1
+            i += 1
+            theirs = []
             while not L[i].startswith('>>>>>>>'):
-                theirs.append(L[i]); i += 1
+                theirs.append(L[i])
+                i += 1
             i += 1
             j = lambda rows: '\n'.join(rows)
             is_dict = ':' in j(base)
@@ -33,7 +39,8 @@ def main(argv):
                 keep = sorted(b & o & t, key=int)
                 out.append('    ' + ', '.join(f'"{x}"' for x in keep) + ',')
         else:
-            out.append(L[i]); i += 1
+            out.append(L[i])
+            i += 1
     s = '\n'.join(out)
     open(p, 'w').write(s)
     print('resolved', n, 'region(s); markers left', s.count('<<<<<<<'))

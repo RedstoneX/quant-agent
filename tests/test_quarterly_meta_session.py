@@ -19,6 +19,7 @@ def _build(**overrides) -> QuarterlyMetaReflectionSession:
 
 
 def test_constructible_without_a_pipeline_and_exercisable():
-    broker = MagicMock(); broker.is_last_trading_day_of_quarter.return_value = False
+    broker = MagicMock()
+    broker.is_last_trading_day_of_quarter.return_value = False
     result = _build(broker=broker).run(force=False)
     assert isinstance(result, dict)

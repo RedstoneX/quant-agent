@@ -47,7 +47,10 @@ def test_period_performance_computes_return_alpha_drawdown():
 
     market = MagicMock()
     def _bar(d, close):
-        b = MagicMock(); b.date = d; b.close = close; return b
+        b = MagicMock()
+        b.date = d
+        b.close = close
+        return b
     market.get_ohlcv.return_value = [
         _bar(date(2026, 3, 25), 570.0),
         _bar(date(2026, 3, 26), 572.0),
