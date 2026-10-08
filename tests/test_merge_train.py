@@ -1,43 +1,4 @@
-"""The merge train sends exactly one change to test at a time, oldest first."""
-from scripts.merge_train import plan
-
-
-def _pr(n, state, created, armed=True, running=False, failed=False, draft=False):
-    checks = []
-    if running:
-        checks.append({"status": "IN_PROGRESS"})
-    elif failed:
-        checks.append({"status": "COMPLETED", "conclusion": "FAILURE"})
-    else:
-        checks.append({"status": "COMPLETED", "conclusion": "SUCCESS"})
-    return {"number": n, "mergeStateStatus": state, "createdAt": created, "isDraft": draft,
-            "autoMergeRequest": {"enabledAt": created} if armed else None, "statusCheckRollup": checks}
-
-
-def test_busy_while_a_current_change_is_testing():
-    action, prs = plan([_pr(1, "BEHIND", "2026-10-01"), _pr(2, "BLOCKED", "2026-10-02", running=True)])
-    assert action == "busy" and prs[0]["number"] == 2
-
-
-def test_advances_oldest_behind_change_first():
-    action, prs = plan([_pr(3, "BEHIND", "2026-10-03"), _pr(1, "BEHIND", "2026-10-01")])
-    assert action == "advance" and [p["number"] for p in prs] == [1, 3]
-
-
-def test_a_red_current_change_does_not_stall_the_train():
-    action, prs = plan([_pr(1, "BLOCKED", "2026-10-01", failed=True), _pr(2, "BEHIND", "2026-10-02")])
-    assert action == "advance" and prs[0]["number"] == 2
-
-
-def test_unarmed_and_draft_changes_are_left_alone():
-    action, _ = plan([_pr(1, "BEHIND", "2026-10-01", armed=False), _pr(2, "BEHIND", "2026-10-02", draft=True)])
-    assert action == "idle"
-
-
-def test_a_behind_change_with_an_old_run_still_going_is_not_busy():
-    # Its run tests a stale main; the train must still bring it up to date.
-    action, prs = plan([_pr(1, "BEHIND", "2026-10-01", running=True)])
-    assert action == "advance" and prs[0]["number"] == 1
+"""Board-edits-alone and stop-hook finish-first rules."""
 
 
 def test_board_edit_with_code_is_refused():

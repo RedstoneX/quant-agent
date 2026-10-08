@@ -418,7 +418,7 @@ def _repo_with_merged_pr(tmp_path: Path, number: int) -> Path:
     _git(repo, "commit", "-q", "-am", "feature work")
     _git(repo, "checkout", "-q", "main")
     _git(repo, "merge", "-q", "--no-ff",
-         "-m", f"Merge pull request #{number} from RedstoneX/feature", "feature")
+         "-m", f"Merge pull request #{number} from redstone-hq/feature", "feature")
     # `check_rule` looks up `origin/main` by name; give this throwaway repo a
     # ref with that name rather than an actual remote, which it doesn't need.
     _git(repo, "branch", "origin/main", "main")
@@ -571,7 +571,7 @@ def _work_md_base_ref():
     `refs/remotes/pull/<N>/merge`, an ephemeral ref outside that namespace,
     so the plain deepen exited 0 having fetched nothing relevant and HEAD^1
     stayed unresolvable — confirmed against a real PR merge commit
-    (RedstoneX/quant-agent PR #500's merge ref) on 2026-09-18. Passing the
+    (redstone-hq/quant-agent PR #500's merge ref) on 2026-09-18. Passing the
     bare checked-out SHA as a "want" does not fix it either: GitHub's
     upload-pack will not serve an unadvertised SHA with no destination
     refspec. What does work, verified against that same PR ref, is refetching

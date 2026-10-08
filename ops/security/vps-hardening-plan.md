@@ -68,7 +68,7 @@ Proposed (script, section `apply_pending_upgrades`):
 
 ```bash
 # as ubuntu, on the VPS
-git -C /tmp/qamc-ops-checkout pull 2>/dev/null || git clone git@github.com-quant-agent:RedstoneX/quant-agent.git /tmp/qamc-ops-checkout
+git -C /tmp/qamc-ops-checkout pull 2>/dev/null || git clone git@github.com-quant-agent:redstone-hq/quant-agent.git /tmp/qamc-ops-checkout
 cd /tmp/qamc-ops-checkout && git checkout claude/vps-security-hardening-t8m3qz
 sudo bash ops/security/harden.sh --dry-run   # review exactly what would change, changes nothing
 sudo bash ops/security/harden.sh             # applies fail2ban + UFW baseline + pending package upgrades
