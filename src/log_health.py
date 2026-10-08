@@ -96,7 +96,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.notifier import TelegramNotifier
-from src.notifier.sections import fmt_time_12h
+from src.time_format import fmt_time_12h
 from src.health_words import (  # noqa: F401  re-exported names
     OWNER_TZ,
     _duration_words,

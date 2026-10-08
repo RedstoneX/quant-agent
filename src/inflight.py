@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
-from src.notifier.sections import fmt_time_12h
+from src.time_format import fmt_time_12h
 
 REPO = "RedstoneX/quant-agent"
 API = "https://api.github.com"
