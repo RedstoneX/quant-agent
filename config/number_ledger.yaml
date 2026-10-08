@@ -4467,7 +4467,7 @@ numbers:
       the point the fundamentals changed.
   - cost_while_unanswered: A ratified owner table of fixed percentages; the desk carries this as accepted
       appetite pending a measurement of the account's own recovery behaviour.
-    id: src.risk.rules.GROSS_LADDER[0][0]
+    id: src.risk.gross_ladder.GROSS_LADDER[0][0]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4499,11 +4499,11 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: -8
   - cost_while_unanswered: As above.
-    id: src.risk.rules.GROSS_LADDER[0][1]
+    id: src.risk.gross_ladder.GROSS_LADDER[0][1]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4532,11 +4532,11 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: 1.5
   - cost_while_unanswered: As above.
-    id: src.risk.rules.GROSS_LADDER[1][0]
+    id: src.risk.gross_ladder.GROSS_LADDER[1][0]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4565,12 +4565,12 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: -15
   - cost_while_unanswered: Part of a ratified owner table of fixed percentages; carried as accepted
       appetite pending a measurement of this book's own recovery record.
-    id: src.risk.rules.GROSS_LADDER[1][1]
+    id: src.risk.gross_ladder.GROSS_LADDER[1][1]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4599,11 +4599,11 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: 1
   - cost_while_unanswered: As above, and this is the rung that halves the book.
-    id: src.risk.rules.GROSS_LADDER[2][0]
+    id: src.risk.gross_ladder.GROSS_LADDER[2][0]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4632,11 +4632,11 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: -20
   - cost_while_unanswered: As above.
-    id: src.risk.rules.GROSS_LADDER[2][1]
+    id: src.risk.gross_ladder.GROSS_LADDER[2][1]
     note: 'OWNER APPETITE, declared 2026-10-02 (fix #4, first slice). The rung''s drawdown trigger
       and its leverage ceiling are preferences, not measurements, and the `measurement` route previously
       attached to this row was a wish that could never close: no measurement of gaps, correlations
@@ -4665,13 +4665,13 @@ numbers:
         a measurement that was never possible
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     status: arbitrary
     value: 0.5
-  - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
+  - id: src.risk.gross_ladder.GROSS_LADDER_ALERT_PCT
     value: -10
     status: sourced
-    site: src/risk/rules.py
+    site: src/risk/gross_ladder.py
     source: >-
       Article 62(1) of Commission Delegated Regulation (EU) 2017/565 (the
       MiFID Org Regulation), reproduced in the FCA Handbook as COBS
