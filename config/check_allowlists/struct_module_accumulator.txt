@@ -1,0 +1,23 @@
+# Fixed allow-list for the module_accumulator check: one existing violation identity per line.
+# Shrink-only. Sorted. A new entry needs a Guard-rule-change: line in the commit.
+# A stale entry (no longer occurring) fails the check; delete it.
+src/agents/llm_route_breaker.py | _ROUTE_BREAKERS
+src/agents/llm_schema.py | _RESPONSE_FORMAT_CACHE
+src/agents/llm_schema.py | _STRICT_SCHEMA_FALLBACK_LOGGED
+src/agents/portfolio_manager/__init__.py | _PRISTINE
+src/cost_table.py | PRICING
+src/cost_table.py | _UNKNOWN_MODELS
+src/data/congressional_trading.py | _UNRECOGNIZED_TRANSACTION_TYPES
+src/execution/stop_read.py | _alerted
+src/inflight.py | _etag_cache
+src/models/base.py | _LIST_TYPED_FIELDS_CACHE
+src/models/base.py | _NULL_TOLERANT_FIELDS_CACHE
+src/notifier/__init__.py | _PRISTINE
+src/owner_flags.py | _CACHE
+src/pipeline_stages.py | _MOVED_NAME_OWNERS
+src/pipeline_stages.py | _STAGE_CLASS_MODULES
+src/sector_reference.py | _sector_cache
+src/sector_reference.py | _sector_resolution_status
+src/soft_exit_restore_buffer.py | _restore_observations
+src/token_budget.py | _cache
+src/trader_feed/__init__.py | _PRISTINE

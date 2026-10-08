@@ -1,0 +1,26 @@
+# Fixed allow-list for the replay_outbound check: one existing violation identity per line.
+# Shrink-only. Sorted. A new entry needs a Guard-rule-change: line in the commit.
+# A stale entry (no longer occurring) fails the check; delete it.
+src/agents/base.py | anthropic
+src/agents/base.py | httpx
+src/agents/base.py | openai
+src/agents/base.py | requests
+src/cost_table.py | requests
+src/data/company.py | yfinance
+src/data/congressional_trading.py | requests
+src/data/earnings.py | urllib
+src/data/macro.py | fredapi
+src/data/market.py | yfinance
+src/data/news.py | feedparser
+src/data/news.py | urllib
+src/data/smart_money.py | requests
+src/execution/broker.py | alpaca
+src/execution/broker.py | yfinance
+src/execution/broker_parts/market_data.py | alpaca
+src/execution/broker_parts/trade_stream.py | alpaca
+src/inflight.py | urllib
+src/notifier/__init__.py | requests
+src/notifier/costs.py | urllib
+src/notifier/snapshots.py | yfinance
+src/notifier/transport.py | requests
+src/sector_reference.py | yfinance

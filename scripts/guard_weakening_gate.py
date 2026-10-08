@@ -28,6 +28,15 @@ WHAT IS CAUGHT
     whose AST is identical once docstrings are stripped (comments, blank lines
     and formatting never reach the AST).
 
+WHAT ELSE IS COVERED (limits and exceptions, by pattern)
+    config/check_allowlists/*.txt   any edit that ADDS a line (blank lines and
+                                    # comments do not count). Pure deletions
+                                    shrink an allow-list and need nothing.
+    pyproject.toml                  any added line inside a [tool.ruff...]
+                                    table: per-file-ignores, limits, selects.
+                                    Removed lines need nothing.
+Pattern-based, so a new allow-list file is covered the day it lands.
+
 THE JUSTIFICATION
     A commit message line, ONE PHYSICAL LINE, starting `Guard-rule-change:`
     of at least 25 words that (a) names the mechanism making the existing rule
@@ -43,6 +52,7 @@ import ast
 import fnmatch
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 try:
@@ -53,6 +63,8 @@ except ImportError:  # run as a bare script
 
 GUARD_PATTERNS = ("scripts/*guard*.py", "tests/test_*guard*.py",
                   "tests/test_*ratchet*.py")
+ALLOWLIST_PATTERN = "config/check_allowlists/*.txt"
+PYPROJECT = "pyproject.toml"
 ENFORCE_BEHAVIOURAL = False  # report-only until the open changes that edit them land
 _INSPECTS = {"rglob", "glob", "walk", "iterdir", "parse", "_git", "base_ref",
              "file_at", "check_output", "run"}
@@ -69,6 +81,40 @@ REQUIREMENT = (
 def is_guard(path: str) -> bool:
     return any(fnmatch.fnmatchcase(path, p) and path.count("/") == p.count("/")
                for p in GUARD_PATTERNS)
+
+
+def is_allowlist(path: str) -> bool:
+    return fnmatch.fnmatchcase(path, ALLOWLIST_PATTERN) and path.count("/") == 2
+
+
+def _allowlist_entries(text: str | None) -> Counter:
+    lines = (ln.strip() for ln in (text or "").splitlines())
+    return Counter(ln for ln in lines if ln and not ln.startswith("#"))
+
+
+def _ruff_entries(text: str | None) -> Counter:
+    """Meaningful lines inside any [tool.ruff...] table of a pyproject."""
+    out: Counter = Counter()
+    inside = False
+    for raw in (text or "").splitlines():
+        ln = raw.strip()
+        if ln.startswith("["):
+            inside = ln.startswith("[tool.ruff")
+            continue
+        if inside and ln and not ln.startswith("#"):
+            out[ln] += 1
+    return out
+
+
+def adds_exception(path: str, before: str | None, after: str | None) -> bool:
+    """True when the edit adds an allow-list line or a ruff exception/limit line."""
+    if is_allowlist(path):
+        extract = _allowlist_entries
+    elif path == PYPROJECT:
+        extract = _ruff_entries
+    else:
+        return False
+    return bool(extract(after) - extract(before))
 
 
 def behaves_as_guard(source: str) -> bool:
@@ -163,6 +209,9 @@ def problems(base: str | None, repo: Path | None = None,
         before = dod.file_at(base, path, repo)
         f = repo / path
         after = f.read_text() if f.exists() else None
+        if adds_exception(path, before, after):
+            touched.append(path + " (adds an allow-list line or ruff exception)")
+            continue
         # judged on the BASE text: rewriting a guard so it stops looking like
         # one cannot take it out of scope
         source = before if before is not None else after
