@@ -73,7 +73,8 @@ def imports_module(tree: ast.AST, module: str) -> bool:
 
 #: Tests that are not measured: the harness's own files and the composition
 #: root. These are the ONLY files the metric skips; there is no list of
-#: current offenders, because the trunk is the list (see below).
+#: current offenders; those are pinned by path in
+#: config/check_allowlists/struct_boundary_pipeline_files.txt.
 _UNMEASURED = ("boundary_harness.py", "test_boundary_harness.py",
                # and the composition root,
                "pipeline_factory.py", "test_pipeline_factory.py",
@@ -101,30 +102,6 @@ def test_files_referencing_pipeline(tests_dir: Path = TESTS) -> set[str]:
             continue
         if references_pipeline(tree, strings=False):
             found.add(p.relative_to(tests_dir.parent).as_posix())
-    return found
-
-
-def trunk_test_files_referencing_pipeline() -> set[str]:
-    """The same metric measured on ``origin/main`` at check time, stored nowhere.
-
-    Raises ``ReferenceUnavailable`` when the trunk cannot be read, so the
-    ratchet refuses rather than passes.
-    """
-    from scripts.guard_reference import ReferenceUnavailable, TRUNK, trunk_blobs, trunk_paths
-
-    paths = [p for p in trunk_paths(".py") if p.startswith("tests/")
-             and p.rsplit("/", 1)[-1] not in _UNMEASURED]
-    found: set[str] = set()
-    for path, text in trunk_blobs(paths).items():
-        try:
-            tree = ast.parse(text)
-        except SyntaxError as exc:
-            raise ReferenceUnavailable(
-                f"cannot parse {TRUNK}:{path} ({exc}), so this guard cannot measure "
-                f"what that file already contained; it refuses rather than pass."
-            ) from exc
-        if references_pipeline(tree, strings=False):
-            found.add(path)
     return found
 
 

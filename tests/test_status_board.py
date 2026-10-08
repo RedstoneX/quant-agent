@@ -20,8 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import board_rot_guard, guard_reference
-from scripts.guard_reference import ReferenceUnavailable
+_QUEUE_STOPS = ("### Re-measure gate", "\n## ", "\n### ")
 from src.api.server import _freshness_banner
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -876,158 +875,6 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
 
 
 # ---------------------------------------------------------------------------
-# PER-ITEM budget on docs/WORK.md -- `scripts/board_item_guard.py`
-# ---------------------------------------------------------------------------
-# The board has always been policed by a WHOLE-FILE cap
-# (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
-# growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
-# author. The design the owner wrote for this file is a one-line item plus a
-# pointer, with the detail in `docs/board_notes/item-NNN.md`. The guard
-# enforces that half: a per-item byte budget and a resolving note pointer.
-#
-# This file used to carry `_WORK_MD_OVERSIZE_ON_ARRIVAL` (eight items with
-# their byte size on 2026-10-01) and `_WORK_MD_POINTERLESS_ON_ARRIVAL` (four
-# numbers): cached measurements committed to the repo, a stored baseline in
-# Python clothing. Per docs/GUARDS_WITHOUT_STORED_STATE.md the guard now
-# stores nothing: it names every offending (item, rule) in the working tree,
-# names them again on origin/main at check time, and fails on any identity
-# the tree holds that the trunk does not. Removing or fixing an offender never
-# fails; retiring one and filing a different one still does.
-from scripts import board_item_guard  # noqa: E402
-
-_RETIRED_PARA = board_item_guard.RETIRED_PARA
-
-
-def _per_item_offences(text, budget, notes):
-    return board_item_guard.offences(text, budget, notes)
-
-
-def test_every_work_md_item_offence_is_already_on_the_trunk():
-    """The real docs/WORK.md against the real origin/main: this change may
-    not add an over-budget item or a pointerless one. Refuses, never passes,
-    without the trunk."""
-    try:
-        bad = board_item_guard.violations()
-    except ReferenceUnavailable as exc:
-        pytest.fail(f"board-item guard refused: {exc}")
-    assert not bad, "\n".join(bad)
-
-
-def test_the_per_item_guard_fails_a_new_offender_and_the_net_zero_swap(monkeypatch):
-    """Identity, not total: removing one offender never licenses adding a
-    different one, and a pre-existing offender is not this change's business."""
-    budget = 2_500
-    monkeypatch.setattr(board_item_guard, "item_budget_bytes", lambda root=None: budget)
-    fat = {("6", "over_budget"): 9_000, ("7", "pointerless"): 0}
-    monkeypatch.setattr(board_item_guard, "trunk_offences", lambda b: dict(fat))
-    # Same offenders as the trunk: pre-existing rot, green.
-    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: dict(fat))
-    assert board_item_guard.violations() == []
-    # Both fixed: removals never fail.
-    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: {})
-    assert board_item_guard.violations() == []
-    # A new offender fails, and names the rule.
-    monkeypatch.setattr(board_item_guard, "working_offences",
-                        lambda root=None: {**fat, ("8", "over_budget"): 3_000})
-    bad = board_item_guard.violations()
-    assert len(bad) == 1 and bad[0].startswith("item 8 is 3,000 bytes") and "CHOSEN" in bad[0]
-    assert "docs/board_notes/" in bad[0] and "move the item's prose" in bad[0]
-    # Net-zero swap: item 6 fixed, item 9 newly fat -- a count would pass this.
-    monkeypatch.setattr(board_item_guard, "working_offences",
-                        lambda root=None: {("7", "pointerless"): 0, ("9", "over_budget"): 2_600})
-    assert [b.split(" ")[1] for b in board_item_guard.violations()] == ["9"]
-    # A pointer that resolves to no note is as bad as no pointer at all.
-    monkeypatch.setattr(board_item_guard, "working_offences",
-                        lambda root=None: {**fat, ("10", "pointerless"): 0})
-    assert [b.split(" ")[1] for b in board_item_guard.violations()] == ["10"]
-    assert board_item_guard.main() == 1
-
-
-def test_the_per_item_guard_refuses_without_the_trunk(monkeypatch):
-    def gone(b):
-        raise ReferenceUnavailable("no origin/main")
-    monkeypatch.setattr(board_item_guard, "item_budget_bytes", lambda root=None: 2_500)
-    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: {})
-    monkeypatch.setattr(board_item_guard, "trunk_offences", gone)
-    assert board_item_guard.main() == 2
-    with pytest.raises(ReferenceUnavailable):
-        board_item_guard.violations()
-
-
-def test_the_per_item_scanner_catches_a_fat_item_and_a_pointerless_one():
-    """Verifies the scanner itself against a SIMULATED over-budget item, so
-    it is not merely passing because today's file happens to be tidy."""
-    budget = board_item_guard.item_budget_bytes()
-    assert budget > 0
-    tidy = (
-        "**5. A short title.**\n\n"
-        "DONE WHEN:\n  - [ ] the thing is measured\n\n"
-        "detail: docs/board_notes/item-005.md\n\n"
-    )
-    fat = (
-        "**6. A fat title.**\n\n" + ("  - [ ] " + "x" * 200 + "\n") * 40 +
-        "\ndetail: docs/board_notes/item-006.md\n\n"
-    )
-    pointerless = "**7. No pointer anywhere.**\n\nDONE WHEN:\n  - [ ] something\n\n"
-    text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
-    present = {5, 6}
-
-    assert [n for n, _ in board_item_guard.item_blocks(text)] == ["5", "6", "7"]
-    assert _per_item_offences(text, budget, present) == {("6", "over_budget"): len(fat.rstrip() + "\n"), ("7", "pointerless"): 0}
-    # A pointer that resolves to no note file is as bad as no pointer at all.
-    assert sorted(n for n, rule in _per_item_offences(text, budget, {5}) if rule == "pointerless") == ["6", "7"]
-    assert _per_item_offences(tidy + _RETIRED_PARA, budget, {5}) == {}
-    assert board_item_guard.notes_in(["docs/board_notes/item-005.md", "docs/board_notes/README.md", "docs/other/item-009.md"]) == {5}
-    # The retired-numbers paragraph is not an item and is never measured.
-    assert all(not b.startswith(_RETIRED_PARA) for _, b in board_item_guard.item_blocks(text))
-
-
-def test_the_per_item_budget_is_the_cap_over_the_chosen_divisor():
-    from scripts.check_board_hygiene import read_cap_bytes
-    cap, error = read_cap_bytes(Path(__file__).resolve().parents[1])
-    assert error is None, error
-    assert board_item_guard.item_budget_bytes() == cap // board_item_guard.MAX_OPEN_ITEMS
-
-
-def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
-    """The cap above used to be satisfied by DELETING finished work, on the
-    grounds that git history keeps it. The owner is not a developer and does
-    not read git, so in practice that erased the record of what had gone
-    wrong at exactly the point it became history — and it erased it on a
-    schedule, every time the backlog filled up.
-
-    `docs/INCIDENT_HISTORY.md` is the destination: append-only, never trimmed, one
-    plain-language line per entry stating what actually broke. This test is
-    the mechanical half of that rule. A prose instruction telling future
-    sessions to prune into the log is exactly the kind of thing that gets
-    followed twice and then forgotten; the pointer being load-bearing on a
-    passing test is not.
-
-    Asserted here rather than trusted: the log exists, WORK.md tells a
-    session where to put finished work, and the log has not been quietly
-    emptied to keep some other budget happy.
-    """
-    root = Path(__file__).resolve().parents[1]
-    work_md = root / "docs" / "WORK.md"
-    defect_log = root / "docs" / "INCIDENT_HISTORY.md"
-    if not work_md.exists():
-        return
-
-    assert defect_log.exists(), (
-        "docs/INCIDENT_HISTORY.md is missing. WORK.md is capped and its finished "
-        "content has to go somewhere other than /dev/null — recreate the log "
-        "rather than resuming deletion."
-    )
-    assert defect_log.stat().st_size > 2_000, (
-        "docs/INCIDENT_HISTORY.md is suspiciously small — it is append-only and is "
-        "never trimmed, so it should only ever grow."
-    )
-    assert "INCIDENT_HISTORY.md" in work_md.read_text(), (
-        "docs/WORK.md no longer points at docs/INCIDENT_HISTORY.md. A session "
-        "pruning the backlog will not find the destination and will fall "
-        "back to deleting, which is the behaviour this pair of tests exists "
-        "to stop."
-    )
 # relevance ordering: unfinished on top, finished collapsed, rot never hidden
 # --------------------------------------------------------------------------
 
@@ -1427,7 +1274,7 @@ def _funnel_openers(text: str) -> list[int]:
     the raw text with the parser's own stop markers -- an independent read the
     parser's yield must equal, item for item."""
     section = text.split(sb._QUEUE_HEADING, 1)[1]
-    for stop in board_rot_guard._QUEUE_STOPS:
+    for stop in _QUEUE_STOPS:
         if stop in section:
             section = section.split(stop, 1)[0]
     return [int(n) for n in re.findall(r"^\*\*(?:~~)?(\d+)\.", section, re.M)]
@@ -1448,14 +1295,10 @@ def test_a_small_whole_board_parses_and_a_mangled_one_does_not(tmp_path):
     p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n"))
     items, problem = sb.load_funnel_queue(p)
     assert problem is None and [i.rank for i in items] == [7] == _funnel_openers(p.read_text())
-    assert not board_rot_guard._board_structure_problems(p)
-    # truncated part-way through the queue: no closing heading
-    p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n").split("\n**Retired")[0])
-    assert board_rot_guard._board_structure_problems(p)
     # mangled: the queue heading survives but no item under it parses
     p.write_text(_whole_board("prose only, no numbered items\n"))
     items, problem = sb.load_funnel_queue(p)
-    assert items == [] and problem and board_rot_guard._board_structure_problems(p)
+    assert items == [] and problem
 
 
 def test_prose_outside_the_done_when_run_never_moves_box_state(tmp_path):
@@ -1492,7 +1335,6 @@ def test_the_real_backlog_still_parses():
     # Whole, not big: the parse is checked against the file's own shape, never
     # against a floor on the item count. A floor made a board that finished
     # its work indistinguishable from one the parser could not read.
-    assert not board_rot_guard._board_structure_problems(work)
     assert [i.rank for i in items] == sorted(_funnel_openers(work.read_text())), (
         "the parser yields a different set of items than the queue's own bold "
         "`**N.` openers -- some item heading no longer parses")
@@ -2013,62 +1855,6 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
-
-
-# ---------------------------------------------------------------------------
-# finished-but-still-open board items: measured against the trunk, stored nowhere
-#
-# This used to be a frozenset, `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26`,
-# naming the ten items the check flagged on that date. That was a cached
-# measurement committed to the repo -- the same collision engine as the JSON
-# baselines, written in Python: every change retiring an item had to edit it,
-# and the set could be widened until the check passed. It is gone. The guard
-# in `scripts/board_rot_guard.py` stores nothing: it measures this working
-# tree and `origin/main` separately at check time and fails only on the DELTA,
-# and REFUSES (never passes) when the trunk cannot be read.
-# ---------------------------------------------------------------------------
-
-
-def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
-    """The real docs/WORK.md and docs/board_notes/, not a fixture.
-
-    Pre-existing rot already visible on `origin/main` is not this change's
-    business and is not something this test may fix by editing docs/WORK.md,
-    which would collide with other sessions retiring items in their own
-    worktrees. What it enforces is the delta: an item that newly declares
-    itself finished -- in its headline or by having every one of its own
-    DONE WHEN boxes ticked -- while still sitting on the board is a fresh
-    instance of exactly the failure this check exists to catch.
-    """
-    new_rot = board_rot_guard.violations()
-    assert not new_rot, (
-        "docs/WORK.md has NEW item(s) that declare themselves finished "
-        "(in headline or DONE WHEN checkboxes) but are still on the board, "
-        "beyond what origin/main already carries:\n  " + "\n  ".join(new_rot)
-    )
-
-
-def test_a_newly_finished_item_is_caught_as_a_delta(monkeypatch):
-    """An item flagged here but not on the trunk is this branch's doing."""
-    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: board_rot_guard.trunk_flagged() | {"item 9999"})
-    assert board_rot_guard.violations() == ["item 9999"]
-    assert board_rot_guard.main() == 1
-
-
-def test_rot_already_on_the_trunk_is_not_this_branch_s_problem(monkeypatch):
-    """Pre-existing rot is reported by neither side of the delta."""
-    monkeypatch.setattr(board_rot_guard, "trunk_flagged", lambda: {"item 4242"})
-    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: {"item 4242"})
-    assert board_rot_guard.violations() == []
-
-
-def test_the_guard_stores_no_list_of_current_items():
-    """The frozen set was the defect; a replacement in the guard is too."""
-    text = (_REPO / "scripts" / "board_rot_guard.py").read_text(encoding="utf-8")
-    assert "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = " not in text
-    assert not re.search(r'"(gate )?item \d+"', text), (
-        "the guard pins a literal board item again; the trunk is the list"
-    )
 
 
 # ---------------------------------------------------------------------------

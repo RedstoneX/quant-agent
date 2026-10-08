@@ -1,15 +1,12 @@
-"""Duplicate-method guard for the pipeline modules, with no stored inventory.
+"""Duplicate-method guard for the pipeline modules: an ABSOLUTE rule.
 
-Replaces ``tests/pipeline_method_inventory.json``, a regenerated copy of every
-method name that each change to the pipeline had to edit. What that file guarded
-is a method DUPLICATED during a move: ``TradingPipeline`` and its mixins are
-combined into one object, so two of them defining one name is a silent win for
-whichever base comes first. Per docs/GUARDS_WITHOUT_STORED_STATE.md this stores
-nothing: at check time it names every owner of a duplicated method in the working
-tree, names them again on ``origin/main``, and fails on any IDENTITY (method
-name, owning module::class) the tree holds more copies of than the trunk. A move
-that leaves one copy is not a duplicate and never fails; a removal never fails.
-If ``origin/main`` cannot be read it REFUSES (exit 2); it never passes by default.
+``TradingPipeline`` and its mixins are combined into one object, so two of them
+defining one name is a silent win for whichever base comes first. The rule is
+absolute: no method name is owned by two pipeline classes. The pairs that exist
+today are pinned by identity (method name | owning module::class) in the fixed
+list ``config/check_allowlists/struct_pipeline_method.txt``; nothing is compared
+with any trunk. The check fails on a duplicate owner not in the list and on a
+listed owner that no longer duplicates (stale entry).
 
 Run it directly: ``PYTHONPATH=. .venv/bin/python -m scripts.pipeline_method_guard``.
 """
@@ -18,13 +15,8 @@ from __future__ import annotations
 import ast
 import sys
 
-from scripts.guard_reference import (
-    ROOT,
-    TRUNK,
-    ReferenceUnavailable,
-    added_sites,
-    trunk_blobs,
-)
+from scripts import struct_allowlist
+from scripts.struct_allowlist import ROOT
 from scripts.pipeline_method_inventory import TRACKED_MODULES, text_inventory
 
 #: One offender: (method name, "path::Class") for an owner of a duplicated name.
@@ -49,6 +41,10 @@ def duplicate_sites(texts: dict[str, str]) -> list[Site]:
     return [(n, o) for n, where in sorted(owners.items()) if len(where) > 1 for o in where]
 
 
+class ReferenceUnavailable(RuntimeError):
+    """A tracked module could not be read or parsed, so nothing can be measured."""
+
+
 def working_texts() -> dict[str, str]:
     texts: dict[str, str] = {}
     for rel in TRACKED_MODULES:
@@ -59,18 +55,17 @@ def working_texts() -> dict[str, str]:
     return texts
 
 
-def violations() -> list[str]:
-    """Every duplicated-method owner this tree holds that ``origin/main`` does not."""
+def found() -> list[str]:
+    """Every duplicated-method owner in the working tree, as ``name | owner``."""
     try:
-        now = duplicate_sites(working_texts())
-        before = duplicate_sites(trunk_blobs(sorted(TRACKED_MODULES)))
+        return [f"{name} | {owner}" for name, owner in duplicate_sites(working_texts())]
     except SyntaxError as exc:
         raise ReferenceUnavailable(f"cannot parse a tracked module: {exc}") from exc
-    return [
-        f"method `{name}` is now defined on {owner} as well as elsewhere "
-        f"(x{n} here vs x{was} on {TRUNK}). {FIX}"
-        for (name, owner), n, was in added_sites(now, before)
-    ]
+
+
+def violations(directory=None) -> list[str]:
+    """Duplicate owners not in the fixed list, and listed owners that no longer duplicate."""
+    return struct_allowlist.problems("pipeline_method", found(), FIX, directory)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,9 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSING: {exc}", file=sys.stderr)
         return 2
     if bad:
-        print("Duplicated pipeline methods grew against %s:\n%s" % (TRUNK, "\n".join(bad)), file=sys.stderr)
+        print("Duplicated pipeline methods differ from the fixed list:\n%s" % "\n".join(bad), file=sys.stderr)
         return 1
-    print(f"pipeline method guard: no new duplicated method against {TRUNK}.")
+    print("pipeline method guard: duplicated methods match the fixed list.")
     return 0
 
 

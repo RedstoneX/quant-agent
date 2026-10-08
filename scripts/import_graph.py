@@ -4,11 +4,10 @@ Pure standard library. Builds the graph of internal ``src.*`` imports with
 ``ast``, separating runtime imports from ``TYPE_CHECKING``-only imports (a
 type-only import is not a true dependency and is ignored by every check).
 
-The cycle guard stores NOTHING: it builds the graph from the working tree,
-builds it again from ``origin/main`` at check time, and reports only the DELTA
-by edge identity, never by a total (docs/GUARDS_WITHOUT_STORED_STATE.md). If the trunk cannot be read it REFUSES
-rather than pass. The layering half works the same way: the rule (below) lives
-in code, and the set of modules that import across it is measured on both sides.
+The cycle rule is ABSOLUTE: the runtime graph must hold zero cycles. The
+layering rule compares this tree's (importer, imported) pairs to a committed,
+sorted, shrink-only list (config/check_allowlists/import_seam_pairs.txt): a new
+pair fails and a stale pair fails. Nothing here reads origin/main.
 
 CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph          (report)
       PYTHONPATH=. .venv/bin/python -m scripts.import_graph --check  (guard)
@@ -20,20 +19,13 @@ import sys
 from collections import defaultdict, deque
 from pathlib import Path
 
-from scripts.guard_reference import (
-    ROOT,
-    ReferenceUnavailable,
-    TRUNK,
-    added_sites,
-    trunk_blobs,
-    trunk_paths,
-)
-
+ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
+SEAM_PAIRS = ROOT / "config" / "check_allowlists" / "import_seam_pairs.txt"
 
 # One-way rule, in code not in a file: src.execution is the broker seam (it can
 # move real money), so no module outside it may GAIN a runtime import of it.
-# Existing importers are whatever origin/main has, measured at check time.
+# Existing importers are the committed pair list; it may only shrink.
 LAYER_RULES = (
     {"name": "broker-seam", "target_prefix": "src.execution",
      "allowed_importers": ("src.execution",),
@@ -94,11 +86,6 @@ def disk_sources(src_dir: Path = SRC) -> dict[str, str]:
         f.relative_to(ROOT).as_posix(): f.read_text(encoding="utf-8")
         for f in sorted(src_dir.rglob("*.py"))
     }
-
-
-def trunk_sources() -> dict[str, str]:
-    """The same files as they stand on ``origin/main``. Raises if it cannot read them."""
-    return trunk_blobs([p for p in trunk_paths(".py") if p.startswith("src/")])
 
 
 def graph_from_sources(sources: dict[str, str]):
@@ -231,78 +218,52 @@ def crossing_edges(runtime_edges, rule) -> set[Edge]:
     }
 
 
-def new_layer_violations(rules=LAYER_RULES) -> list[str]:
-    """Rule-crossing imports this tree has that ``origin/main`` does not.
+def read_seam_pairs(path: Path = SEAM_PAIRS) -> list[str]:
+    """Lines of the committed pair list (``importer -> imported``), comments dropped."""
+    if not path.exists():
+        return []
+    return [ln for ln in path.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
 
-    Stores nothing; raises ``ReferenceUnavailable`` when the trunk is unreadable.
-    Identity is (importer, imported), so swapping one importer for another is
-    still an addition.
-    """
-    _, rt, _, sites = build_graph()
-    _, t_rt, _, _ = graph_from_sources(trunk_sources())
+
+def layer_violations(rt=None, rules=LAYER_RULES, pairs=None) -> list[str]:
+    """Fail on a rule-crossing pair missing from the list, and on a stale listed pair."""
+    if rt is None:
+        _, rt, _, _ = build_graph()
+    listed = read_seam_pairs() if pairs is None else list(pairs)
+    now = sorted(f"{a} -> {b}" for rule in rules for a, b in crossing_edges(rt, rule))
     out = []
-    for rule in rules:
-        for edge, _, _ in added_sites(crossing_edges(rt, rule), crossing_edges(t_rt, rule)):
-            a, b = edge
-            out.append(
-                f"[{rule['name']}] {sites[edge]}: {a} imports {b}. {rule['why']} "
-                f"Fix: route this through {list(rule['allowed_importers'])} instead of "
-                f"importing {b} directly. There is no allowlist to add it to: this "
-                f"compares the working tree against {TRUNK} every time it runs.")
+    if listed != sorted(listed) or len(set(listed)) != len(listed):
+        out.append("import_seam_pairs.txt must be sorted with no duplicates.")
+    for pair in sorted(set(now) - set(listed)):
+        out.append(
+            f"[{rules[0]['name']}] NEW pair {pair}. {rules[0]['why']} Fix: route it through "
+            f"{list(rules[0]['allowed_importers'])}. The pair list only shrinks.")
+    for pair in sorted(set(listed) - set(now)):
+        out.append(f"[{rules[0]['name']}] STALE pair {pair}: no longer imported; delete the line.")
     return out
 
 
-def new_cycle_edges():
-    """Cycle edges this working tree has that ``origin/main`` does not.
-
-    Both sides are measured here and now; nothing is read from or written to a
-    committed file, so two unrelated changes can never collide over this guard.
-    Raises ``ReferenceUnavailable`` when the trunk cannot be read -- the guard
-    refuses rather than passing by default.
-    """
-    nodes, rt, _, sites = build_graph()
-    now = cycle_edges(nodes, rt)
-    t_nodes, t_rt, _, _ = graph_from_sources(trunk_sources())
-    before = cycle_edges(t_nodes, t_rt)
-    # Identity comparison (scripts/guard_reference.py): each cycle edge is named
-    # by (importer, imported); a change that breaks one cycle and closes a
-    # different one is still an addition, never a wash.
-    return [edge for edge, _, _ in added_sites(now, before)], now, sites
-
-
-def new_cycle_report() -> list[str]:
-    """One human line per newly introduced cycle edge, naming the loop it closes."""
-    new, now, sites = new_cycle_edges()
-    if not new:
-        return []
-    cycles = shortest_cycles(now)
-    lines = []
-    for a, b in new:
-        cyc = next((c for c in cycles if (a, b) in zip(c, c[1:] + c[:1])), None)
-        loop = " -> ".join(cyc + [cyc[0]]) if cyc else "(cycle)"
-        lines.append(f"  {sites[(a, b)]}: {a} imports {b}, which closes the cycle {loop}")
-    return lines
+def cycle_report(rt=None, nodes=None) -> list[str]:
+    """One line per shortest cycle. The rule is absolute: any cycle fails."""
+    if rt is None:
+        nodes, rt, _, _ = build_graph()
+    return ["  " + " -> ".join(c + [c[0]]) for c in shortest_cycles(cycle_edges(nodes, rt))]
 
 
 CYCLE_FIX_HINT = (
     "\nFix: remove or invert that import (move the shared piece into a lower module "
     "both can import, or import lazily at the call site only if the dependency is "
-    "truly one-way). There is no baseline to add it to: this guard stores nothing "
-    f"and compares the working tree against {TRUNK} every time it runs."
+    "truly one-way). The rule is zero cycles; there is nothing to add it to."
 )
 
 
 def check(argv: list[str] | None = None) -> int:
-    try:
-        lines = new_cycle_report() + new_layer_violations()
-    except ReferenceUnavailable as exc:
-        print(f"REFUSING: {exc}", file=sys.stderr)
-        return 2
+    lines = cycle_report() + layer_violations()
     if lines:
-        print("NEW import cycle(s) or layer crossing(s) introduced against %s:\n%s%s"
-              % (TRUNK, "\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
+        print("Import cycle(s) or seam-pair change(s):\n%s%s"
+              % ("\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
         return 1
-    print(f"import-cycle guard: this tree adds no import cycle against {TRUNK}.")
+    print("import guard: zero import cycles; seam pairs match the committed list.")
     return 0
 
 

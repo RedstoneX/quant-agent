@@ -5,18 +5,15 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from boundary_harness import (  # noqa: E402
-    ROOT, check_boundary, test_files_referencing_pipeline, trunk_test_files_referencing_pipeline,
-)
-from scripts.guard_reference import ReferenceUnavailable, TRUNK, added_sites  # noqa: E402
+from boundary_harness import ROOT, check_boundary, test_files_referencing_pipeline  # noqa: E402
+from scripts import struct_allowlist  # noqa: E402
 
-# No stored baseline. This file used to carry `TRADING_PIPELINE_TEST_FILE_BASELINE = 79`,
-# a count measured on 2026-10-01 -- a cached measurement every change that dropped a
-# file had to edit, and a TOTAL, so removing one coupled test and adding a different
-# one netted to zero. Per docs/GUARDS_WITHOUT_STORED_STATE.md the ratchet now names
-# every coupled test file in the working tree, names them again on origin/main at
-# check time, and fails on any IDENTITY (path) the tree holds that the trunk does not.
-# Removals never fail; the trunk cannot be read -> the check REFUSES, never passes.
+# Fixed lists, no trunk. This file used to carry `TRADING_PIPELINE_TEST_FILE_BASELINE = 79`,
+# then a comparison against origin/main re-measured at check time, which reddened waiting
+# changes whenever an unrelated merge moved the trunk. Now the coupled test files are pinned
+# by PATH in config/check_allowlists/struct_boundary_pipeline_files.txt and the composed
+# mixins by class name in struct_boundary_mixins.txt. A path (or mixin) not listed fails, and
+# so does a listed one that no longer occurs. Never a count.
 
 
 def _composed_mixin_modules(source: str | None = None):
@@ -35,16 +32,9 @@ def _composed_mixin_modules(source: str | None = None):
     return mods
 
 
-def newly_composed_mixins(tree_source: str | None = None, trunk_source: str | None = None) -> set[str]:
-    """Mixins composed onto `TradingPipeline` here that the trunk does not compose, by IDENTITY
-    (class name) -- never a count, so dropping one mixin and composing another cannot net to zero.
-    Raises `ReferenceUnavailable` when the trunk cannot be read."""
-    from scripts.guard_reference import trunk_blobs
-    if trunk_source is None:
-        trunk_source = trunk_blobs(["src/pipeline.py"]).get("src/pipeline.py")
-        if trunk_source is None:
-            raise ReferenceUnavailable(f"{TRUNK} holds no src/pipeline.py")
-    return set(_composed_mixin_modules(tree_source)) - set(_composed_mixin_modules(trunk_source))
+def composed_mixin_names(source: str | None = None) -> list[str]:
+    """Class names composed onto `TradingPipeline` (the working tree's `src/pipeline.py` when None)."""
+    return sorted(_composed_mixin_modules(source))
 
 
 MIXINS = _composed_mixin_modules()
@@ -69,24 +59,26 @@ def test_harness_fails_every_composed_mixin(name, module):
     assert 2 in v.failures or _shim_only(module), f"{name} keeps bodies yet reads no foreign self attrs"
 
 
-def test_no_new_mixin_is_composed_onto_the_pipeline():
+MIXIN_FIX = "Hold a part instead of composing another mixin onto TradingPipeline."
+
+
+def test_composed_mixins_match_the_fixed_list():
     """Replaces `assert len(MIXINS) == 8`: a count let a swap (drop one, compose another) pass.
-    The composed set may only shrink; the trunk is the list and an unreadable trunk REFUSES."""
-    try:
-        new = newly_composed_mixins()
-    except ReferenceUnavailable as exc:
-        pytest.fail(f"REFUSING: {exc}")
-    assert not new, f"new mixin(s) composed onto TradingPipeline: {sorted(new)}; hold a part instead"
+    Identity by class name against the fixed list; the list only shrinks."""
+    bad = struct_allowlist.problems("boundary_mixins", composed_mixin_names(), MIXIN_FIX)
+    assert not bad, "\n".join(bad)
 
 
-def test_swapping_one_mixin_for_another_is_caught():
-    """Self-proof: a one-for-one swap keeps the count at eight and is still refused by identity."""
-    trunk = (ROOT / "src/pipeline.py").read_text()
+def test_swapping_one_mixin_for_another_is_caught(tmp_path):
+    """Self-proof: a one-for-one swap keeps the count and is still refused by identity."""
+    source = (ROOT / "src/pipeline.py").read_text()
     victim = sorted(MIXINS)[0]
-    swapped = trunk.replace(victim, "FreshlyComposedMixin")
-    assert newly_composed_mixins(swapped, trunk) == {"FreshlyComposedMixin"}
-    assert newly_composed_mixins(trunk, swapped) == {victim}  # the removal side is a different identity
-    assert newly_composed_mixins(trunk, trunk) == set()  # unchanged composition is clean
+    swapped = source.replace(victim, "FreshlyComposedMixin")
+    struct_allowlist.write("boundary_mixins", composed_mixin_names(source), tmp_path)
+    assert struct_allowlist.problems("boundary_mixins", composed_mixin_names(source), MIXIN_FIX, tmp_path) == []
+    bad = struct_allowlist.problems("boundary_mixins", composed_mixin_names(swapped), MIXIN_FIX, tmp_path)
+    assert len(bad) == 2 and any("NEW" in b and "FreshlyComposedMixin" in b for b in bad), bad
+    assert any("STALE" in b and victim in b for b in bad), bad
 
 
 def test_clause_2_catches_foreign_self_reads(tmp_path, monkeypatch):
@@ -100,43 +92,34 @@ def test_clause_2_catches_foreign_self_reads(tmp_path, monkeypatch):
     assert 2 in v.failures and 1 not in v.failures
 
 
-def pipeline_coupling_violations(now=None, before=None):
-    """Every test file newly naming TradingPipeline against the trunk."""
+PIPELINE_FIX = (
+    "Build the pipeline through tests/pipeline_factory.build_pipeline or test the "
+    "service in isolation; the set of coupled test files may only shrink."
+)
+
+
+def pipeline_coupling_violations(now=None, directory=None):
+    """Coupled test files missing from the fixed list, and listed files that no longer couple."""
     now = test_files_referencing_pipeline() if now is None else now
-    before = trunk_test_files_referencing_pipeline() if before is None else before
-    return [path for path, _n, _was in added_sites(now, before)]
+    return struct_allowlist.problems("boundary_pipeline_files", sorted(now), PIPELINE_FIX, directory)
 
 
-def test_ratchet_no_new_test_file_couples_to_trading_pipeline():
-    try:
-        bad = pipeline_coupling_violations()
-    except ReferenceUnavailable as exc:
-        pytest.fail(f"pipeline-import ratchet refused: {exc}")
-    assert not bad, (
-        f"{len(bad)} test file(s) name TradingPipeline and did not on {TRUNK}: {bad}. "
-        "Build the pipeline through tests/pipeline_factory.build_pipeline or test the "
-        "service in isolation; the set of coupled test files may only shrink."
-    )
+def test_ratchet_coupled_test_files_match_the_fixed_list():
+    bad = pipeline_coupling_violations()
+    assert not bad, f"{len(bad)} problem(s) with test files naming TradingPipeline:\n" + "\n".join(bad)
 
 
-def test_ratchet_fails_a_new_offender_and_the_net_zero_swap():
-    before = {"tests/test_a.py", "tests/test_b.py"}
-    assert pipeline_coupling_violations(before, before) == []
-    assert pipeline_coupling_violations(set(), before) == []  # removals never fail
-    assert pipeline_coupling_violations(before | {"tests/test_c.py"}, before) == ["tests/test_c.py"]
+def test_ratchet_new_listed_stale_and_net_zero_swap(tmp_path):
+    listed = {"tests/test_a.py", "tests/test_b.py"}
+    struct_allowlist.write("boundary_pipeline_files", listed, tmp_path)
+    assert pipeline_coupling_violations(listed, tmp_path) == []  # listed passes
+    stale = pipeline_coupling_violations({"tests/test_a.py"}, tmp_path)  # a removal leaves a stale entry
+    assert len(stale) == 1 and "STALE" in stale[0] and "test_b.py" in stale[0]
+    new = pipeline_coupling_violations(listed | {"tests/test_c.py"}, tmp_path)
+    assert len(new) == 1 and "NEW" in new[0] and "test_c.py" in new[0]
     # Net-zero swap: a count of 2 vs 2 would pass this; the identity does not.
-    assert pipeline_coupling_violations({"tests/test_a.py", "tests/test_c.py"}, before) == ["tests/test_c.py"]
-
-
-def test_ratchet_refuses_without_the_trunk(monkeypatch):
-    import boundary_harness as h
-    monkeypatch.setattr(h, "trunk_paths", None, raising=False)
-    import scripts.guard_reference as g
-    def gone(*a, **k):
-        raise ReferenceUnavailable("no origin/main")
-    monkeypatch.setattr(g, "require_trunk", gone)
-    with pytest.raises(ReferenceUnavailable):
-        trunk_test_files_referencing_pipeline()
+    swap = pipeline_coupling_violations({"tests/test_a.py", "tests/test_c.py"}, tmp_path)
+    assert len(swap) == 2
 
 
 def test_pipeline_holds_the_review_part_and_inherits_no_review_mixin():
