@@ -280,7 +280,7 @@ to read to know what the desk is actually wired to.
 ### L0 Kernel
 **Belongs.** Exchange-time arithmetic, the trading calendar, pure value types,
 named constants.
-*Here today:* `src/util/time.py`, `src/trading_calendar.py`, `src/models.py`
+*Here today:* `src/util/time.py`, `src/trading_calendar.py`, `src/models/`
 (47 importing modules, measured), `src/risk/constants.py` (14).
 
 **Must never be here.** Anything that reads a file, a socket, a database or an
@@ -323,7 +323,7 @@ Telegram or Anthropic by name is not a port.
 Alpaca venue client, the SQLite ledger, the Telegram sender, each market/news/
 earnings/macro provider, each analyst seat.
 *Here today:* `src/execution/broker.py` (7,046 lines), `src/storage/db.py`
-(6,270), `src/notifier.py` (3,984), `src/data/*` (24 files), `src/agents/*`
+(6,270), `src/notifier/` (3,984), `src/data/*` (24 files), `src/agents/*`
 (14 files).
 
 **Must never be here.** Doctrine. A sizing rule or a gating threshold living
@@ -360,7 +360,7 @@ wiring.
 
 ### L6 Surfaces
 **Belongs.** `src/api/*`, `scripts/status_board.py`, the dashboard, the rendering
-half of `src/notifier.py`. Read state, render it, accept a command and pass it
+half of `src/notifier/`. Read state, render it, accept a command and pass it
 down.
 
 **Must never be here.** A decision. A surface that decides is a service that got

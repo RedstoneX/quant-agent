@@ -411,7 +411,7 @@ Live auto-apply is deliberately off: every mechanical guardrail below is syntact
 
 - Runs only when you invoke `python main.py --mode meta` (no OS timer schedules this — manual trigger on the last trading day of each quarter)
 - Appends proposed Learnings bullets to the 6 editable agent prompts (tech / news / macro / earnings / portfolio_manager / evening_analyst)
-- **`risk_manager`, `position_reviewer` and `smart_money_analyst` are schema-protected** — the `MetaReflectionAgentName` literal in `src/models.py` doesn't include them, so even in LIVE-APPLY the reflector can't touch them
+- **`risk_manager`, `position_reviewer` and `smart_money_analyst` are schema-protected** — the `MetaReflectionAgentName` literal in `src/models/` doesn't include them, so even in LIVE-APPLY the reflector can't touch them
 - 10 invariants enforce safety (full list in `src/evolution/prompt_editor.py` module docstring). User-visible ones: per-agent **FIFO cap** (10 Learnings, oldest auto-evicted), **Jaccard dedup** (0.6 threshold), **prohibited-words regex** (never / always / override / ignore all — these directly conflict with hard-invariant wording in core prompts), **per-cycle agent cap** (max 3 distinct agents edited per quarterly run), **atomic file writes** (tmp + os.replace), **audit log** at `data/evolution/edits.jsonl` with both accepted and rejected attempts + reasons, and `auto_commit: true` so each quarter's edits land as one `chore(prompts):` commit — `git revert <sha>` is your one-shot rollback
 
 Keep `dry_run: true` until you've eyeballed at least one quarterly `reflection.json` under `data/evolution/{period}/` and are comfortable with proposal quality.
