@@ -11,6 +11,12 @@ kept as history and marked DONE where they describe a stored file that is gone.
 
 - Stored baselines: none. No baseline, snapshot or known-offender file exists
   under `scripts/` or `tests/`; the only JSON/TXT there are test fixtures.
+- SUPERSEDED 2026-10-08 (owner ruling: no limit re-measured against `origin/main`): seven structure
+  checks now use FIXED lists, `config/check_allowlists/struct_<check>.txt`, one identity per line,
+  shrink-only; a new entry needs a `Guard-rule-change:` commit line and a stale entry fails. They are
+  `pipeline_method_guard`, `pipeline_new_guard`, `replay_outbound_guard`, the module-accumulator test,
+  the patch-target test, the boundary harness test and the desk-output audit. Mentions of those
+  guards reading `origin/main` below are history.
 - Computed at check time against the trunk: 15 comparison guards
   (`file_size_guard`, `import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
   `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,

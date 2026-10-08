@@ -3,8 +3,8 @@
 Three things are guarded here and nothing is moved:
 
 1. The DUPLICATE-METHOD guard (`scripts/pipeline_method_guard.py`). A method
-   defined on two of TradingPipeline and its mixins is compared against
-   `origin/main` at check time; nothing is stored.
+   defined on two of TradingPipeline and its mixins is an absolute failure;
+   the pairs that exist are pinned in a fixed list, nothing is read from a trunk.
 2. The LEDGER-ID / `SCOPED_PATHS` MIGRATION HELPER (`src/ledger_move.py`),
    exercised on a SYNTHETIC move against copies of the real files, so the
    helper is proved to rewrite ids rather than merely to exist.
@@ -48,13 +48,26 @@ def _live_scoped_text() -> str:
     """
     return "".join(f'    "{p}",\n' for p in SCOPED_PATHS)
 
-def test_no_new_duplicated_pipeline_method_against_trunk() -> None:
+def test_duplicated_pipeline_methods_match_the_fixed_list() -> None:
     """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
-    whichever is first in the bases list. Measured against origin/main at check
-    time (identity, not totals); REFUSES if the trunk cannot be read."""
+    whichever is first in the bases list. Absolute rule; existing pairs are in
+    config/check_allowlists/struct_pipeline_method.txt."""
     from scripts.pipeline_method_guard import violations
 
     assert not violations()
+
+
+def test_duplicate_guard_bites_new_listed_and_stale(tmp_path, monkeypatch) -> None:
+    from scripts import pipeline_method_guard as g, struct_allowlist
+
+    entry = "dup_name | src/pipeline_x.py::XMixin"
+    monkeypatch.setattr(g, "found", lambda: [entry])
+    struct_allowlist.write("pipeline_method", [], tmp_path)
+    assert any("NEW" in b for b in g.violations(tmp_path))  # new duplicate fails
+    struct_allowlist.write("pipeline_method", [entry], tmp_path)
+    assert g.violations(tmp_path) == []  # listed passes
+    monkeypatch.setattr(g, "found", lambda: [])
+    assert any("STALE" in b for b in g.violations(tmp_path))  # stale entry fails
 
 
 def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
@@ -340,9 +353,8 @@ def test_dead_patch_target_detector_can_fail():
     assert dead_patch_targets('patch("src.pipeline.TradingPipeline")', compat_names) == set()
 
 
-def test_duplicate_guard_identity_catches_net_zero_swap() -> None:
-    """Removing one duplicate and adding a different one must still be red."""
-    from scripts.guard_reference import added_sites
+def test_duplicate_sites_sees_a_duplicate_and_not_a_move() -> None:
+    """Detection itself: a name on two classes is reported once per owner."""
     from scripts.pipeline_method_guard import duplicate_sites
 
     def texts(a_methods: str, b_methods: str) -> dict[str, str]:
@@ -352,11 +364,6 @@ def test_duplicate_guard_identity_catches_net_zero_swap() -> None:
         }
 
     body = lambda *names: "".join(f"    def {n}(self): pass\n" for n in names) or "    pass\n"  # noqa: E731
-    trunk = duplicate_sites(texts(body("a", "b"), body("a")))
-    assert [n for n, _ in trunk] == ["a", "a"]
+    assert [n for n, _ in duplicate_sites(texts(body("a", "b"), body("a")))] == ["a", "a"]
     # a moved (not duplicated) method is no offender
     assert duplicate_sites(texts(body("b"), body("a"))) == []
-    # drop duplicate `a`, add duplicate `b`: same count, different identity
-    swapped = duplicate_sites(texts(body("a", "b"), body("b")))
-    assert len(swapped) == len(trunk)
-    assert {s[0] for s, _, _ in added_sites(swapped, trunk)} == {"b"}
