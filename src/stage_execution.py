@@ -512,11 +512,14 @@ class ExecutionStage:
             pipeline, ctx, buy_decisions, sell_status_by_id,
         )
 
+        # A desk that cannot read price places no new entry: one reference
+        # read proves the feed before anything is sized (owner, 2026-10-08).
+        buy_decisions = preflight_price_feed(pipeline, ctx, buy_decisions)
+
         # Anti-churn, the BUY-side mirror of the SELL-side
         # `held_symbol_bought_today` guard: a name this desk closed earlier
         # TODAY for failing its own entry bar is not bought back in the
         # same session. No new number — same exchange-day window.
-        buy_decisions = preflight_price_feed(pipeline, ctx, buy_decisions)
         buy_decisions = _drop_buys_sold_today_below_bar(
             pipeline, ctx, buy_decisions,
         )

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 from datetime import timedelta
 
@@ -92,13 +93,41 @@ def preflight_price_feed(pipeline, ctx, decisions: list) -> list:
     return []
 
 
+# Seconds the session needs AFTER the no-print wait: the cash-sweep release,
+# the submit loop and each buy's stop placement, through to process exit.
+# Measured, not chosen -- the longest such stretch in the desk's own logs
+# (ledgered with its source in config/number_ledger.yaml).
+POST_WAIT_RESERVE_S = 700
+SESSION_DEADLINE_ENV = "SESSION_DEADLINE_EPOCH"
+
+
+def session_seconds_left(now_epoch: float | None = None) -> float:
+    """Seconds the no-print wait may spend before the session's hard kill.
+
+    The deadline is the absolute epoch the wrapper exports
+    (`scripts/run_if_et_window.sh`, the one place the run ceiling is
+    written), less `POST_WAIT_RESERVE_S` for everything that must still run
+    after the wait. FAILS CLOSED: with no readable deadline (a manual run, a
+    test) the answer is zero -- no wait at all, never an unbounded one."""
+    raw = os.environ.get(SESSION_DEADLINE_ENV, "")
+    try:
+        deadline = float(raw)
+    except ValueError:
+        return 0.0
+    if not math.isfinite(deadline):
+        return 0.0
+    now_epoch = time.time() if now_epoch is None else now_epoch
+    return max(0.0, deadline - POST_WAIT_RESERVE_S - now_epoch)
+
+
 def slot_seconds_left(ctx, now=None) -> float:
-    """Seconds until this pass's own slot ends: the earlier of the session's
-    published window end (`SESSION_WINDOWS`, ET minutes) and the desk's next
-    scheduled pass (`INTRA_CHECK_TICK_MINUTES` from now), because the next
-    pass carries the stop checks and must not find this one still waiting.
-    Both numbers are already ledgered; nothing here is new. Zero when the
-    session has no window or it has already ended."""
+    """Seconds until this pass's own slot ends: the earliest of the session's
+    published window end (`SESSION_WINDOWS`, ET minutes), the desk's next
+    scheduled pass (`INTRA_CHECK_TICK_MINUTES` from now) -- the next pass
+    carries the stop checks and must not find this one still waiting -- and
+    the process's own hard kill less the measured post-wait time
+    (`session_seconds_left`), so the kill can never land mid-submit. Zero
+    when the session has no window, it has ended, or no deadline is known."""
     now = now or et_now()
     tick_end = now + timedelta(minutes=INTRA_CHECK_TICK_MINUTES)
     window = SESSION_WINDOWS.get(str(getattr(ctx, "session", "")))
@@ -106,7 +135,8 @@ def slot_seconds_left(ctx, now=None) -> float:
         return 0.0
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     window_end = midnight + timedelta(minutes=window[1])
-    return max(0.0, (min(window_end, tick_end) - now).total_seconds())
+    slot_s = (min(window_end, tick_end) - now).total_seconds()
+    return max(0.0, min(slot_s, session_seconds_left(now.timestamp())))
 
 
 def _no_batched_reader(pending: dict) -> list:

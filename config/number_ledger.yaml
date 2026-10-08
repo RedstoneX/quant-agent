@@ -3015,6 +3015,25 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
+  - id: src.price_feed_preflight.POST_WAIT_RESERVE_S
+    value: 700
+    status: sourced
+    site: src/price_feed_preflight.py
+    source: >-
+      MEASURED 2026-10-08 from the desk's own log, /home/qamc/quant-agent/quant_agent.log
+      and its rotations .1 .2 .4 .5 (2026-08-31 to 2026-10-01): for each of the 26
+      sessions that executed a buy, the time from the first post-preflight step (the
+      cash-sweep release `Order submitted: sell ... SGOV`, else the first
+      `BUY ... marketable-limit` line, both written after the wait site
+      the entry viability preflight in src/stage_entry_preflight.py) to the session's
+      `__main__: Result:` line, which covers the sweep, the submit loop in
+      the execution stage (src/stage_execution.py) and every buy's stop placement. Longest
+      699.26s (2026-09-15 morning, 4 buys: sweep sell 13:38:30.696 UTC, Result
+      13:50:09.955 UTC); next 442.6s (2026-09-16 morning), then 124.9s. Value is that
+      maximum rounded up to the whole second. It is subtracted from the wrapper's
+      exported hard deadline (scripts/run_if_et_window.sh, SESSION_RUN_TIMEOUT_SEC)
+      to bound the no-print wait at
+      src/price_feed_preflight.py::session_seconds_left; re-measure if the submit loop's fill waits change.
   - id: src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT
     value: 5
     status: derived

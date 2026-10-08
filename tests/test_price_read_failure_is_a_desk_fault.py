@@ -454,22 +454,67 @@ def test_a_failed_batch_with_the_reference_also_failing_is_the_desk_fault(monkey
     pipeline.broker.submit_order.assert_not_called()  # no new entries this session
 
 
-def test_slot_end_is_the_earlier_of_the_session_window_and_the_next_tick():
+def test_slot_end_is_the_earliest_of_window_next_tick_and_session_deadline(monkeypatch):
     from datetime import timedelta
     from src.config.llm_cost import INTRA_CHECK_TICK_MINUTES
-    from src.price_feed_preflight import slot_seconds_left
+    from src.price_feed_preflight import POST_WAIT_RESERVE_S, slot_seconds_left
     from src.trading_calendar import SESSION_WINDOWS
     close_end = SESSION_WINDOWS["close"][1]
     at = datetime(2026, 10, 8, close_end // 60, close_end % 60, tzinfo=ET)
-    # Ten minutes before the close window ends: the window binds.
+    mid = datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+    # A deadline far past every slot: the window and the tick still bind.
+    monkeypatch.setenv("SESSION_DEADLINE_EPOCH", str(at.timestamp() + 86400))
     ten_before = at - timedelta(minutes=10)
     assert slot_seconds_left(SimpleNamespace(session="close"), now=ten_before) == 600.0
-    # Mid-morning: the next tick binds.
-    mid = datetime(2026, 10, 8, 10, 0, tzinfo=ET)
-    assert slot_seconds_left(SimpleNamespace(session="morning"), now=mid) == INTRA_CHECK_TICK_MINUTES * 60
-    # After the window: nothing to wait for.
+    tick_s = INTRA_CHECK_TICK_MINUTES * 60
+    assert slot_seconds_left(SimpleNamespace(session="morning"), now=mid) == tick_s
     assert slot_seconds_left(SimpleNamespace(session="close"), now=at) == 0.0
     assert slot_seconds_left(SimpleNamespace(session="nonesuch"), now=mid) == 0.0
+    # The wrapper's 1200s run ceiling, counted from now: the hard kill less
+    # the measured post-wait time binds, well inside the 30-minute tick.
+    deadline = mid.timestamp() + 1200
+    monkeypatch.setenv("SESSION_DEADLINE_EPOCH", str(deadline))
+    budget = slot_seconds_left(SimpleNamespace(session="morning"), now=mid)
+    assert budget == 1200 - POST_WAIT_RESERVE_S
+    assert mid.timestamp() + budget <= deadline - POST_WAIT_RESERVE_S
+
+
+@pytest.mark.parametrize("raw", [None, "", "not-a-number", "nan", "inf"])
+def test_no_readable_session_deadline_means_no_wait_at_all(monkeypatch, raw):
+    """Fail CLOSED: a manual run or a test has no deadline, so the slot is zero
+    -- never the old 30-minute or an unbounded wait."""
+    from src.price_feed_preflight import slot_seconds_left
+    if raw is None:
+        monkeypatch.delenv("SESSION_DEADLINE_EPOCH", raising=False)
+    else:
+        monkeypatch.setenv("SESSION_DEADLINE_EPOCH", raw)
+    mid = datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+    assert slot_seconds_left(SimpleNamespace(session="morning"), now=mid) == 0.0
+
+
+@pytest.mark.parametrize("share_of_one_read", [None, 0.0, 0.5])
+def test_a_near_or_absent_deadline_starts_no_ask_and_skips_every_name(monkeypatch, share_of_one_read):
+    """Deadline (less the measured post-wait time) closer than one read's
+    worst case, or absent: not one ask is started, and every waiting name is
+    skipped with the slot-end reason rather than sized or left hanging."""
+    import src.price_feed_preflight as preflight
+    mid = datetime(2026, 10, 8, 10, 0, tzinfo=ET)
+    if share_of_one_read is None:
+        monkeypatch.delenv("SESSION_DEADLINE_EPOCH", raising=False)
+    else:
+        left_s = share_of_one_read * preflight.read_worst_case_s()
+        monkeypatch.setenv("SESSION_DEADLINE_EPOCH", str(
+            mid.timestamp() + preflight.POST_WAIT_RESERVE_S + left_s))
+    monkeypatch.setattr(preflight, "et_now", lambda: mid)
+    asks: list[list[str]] = []
+    pipeline = SimpleNamespace(broker=SimpleNamespace(
+        read_latest_trade_prints=lambda symbols: asks.append(list(symbols)) or {}))
+    monkeypatch.setattr(preflight, "_sleep", lambda _s: pytest.fail("no wait may be spent"))
+    printed, skipped = preflight.wait_for_today_prints(
+        pipeline, SimpleNamespace(session="morning"), [_decision("THIN"), _decision("ALSO")])
+    assert asks == [] and printed == []
+    assert sorted((d.symbol, reason) for d, reason, _detail in skipped) == [
+        ("ALSO", NO_PRINT_BY_WINDOW_END), ("THIN", NO_PRINT_BY_WINDOW_END)]
 
 
 # --- no reference available: the desk-level row is still written ----------
