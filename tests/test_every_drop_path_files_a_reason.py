@@ -280,8 +280,19 @@ def _class_nodes():  # the resolver is LAST so its lifted bodies win by name ove
     assert len(out) == 7, [n.name for n, _ in out]
     return out
 
-def _methods(lines=False):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
-    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
+_LIFTED_MODULES = ("sector_dial.py", "target_derivation.py", "refusal_log.py")  # moved bodies: module functions, scanned exactly like the methods they were
+
+
+def _lifted_functions(sources=None):
+    """(function node, its file's lines) for every module-level function in the lifted modules."""
+    texts = sources if sources is not None else {m: (_SOURCE / m).read_text() for m in _LIFTED_MODULES}
+    return [(n, t.splitlines()) for t in texts.values() for n in ast.parse(t).body if isinstance(n, ast.FunctionDef)]
+
+
+def _methods(lines=False, lifted_sources=None):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
+    found = {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
+    found.update({n.name: (ls if lines else n) for n, ls in _lifted_functions(lifted_sources)})
+    return found
 
 
 def _drop_sites(fn):
@@ -382,6 +393,11 @@ def _has_note_call(block):
             if (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr in ("_note_refusal", "_note_data_fault")):
+                return True
+            # A lifted body gets the recorder as an argument: the same call, by its parameter name.
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in ("note_refusal", "note_data_fault", "_note_refusal", "_note_data_fault")):
                 return True
     return False
 
@@ -644,3 +660,17 @@ def test_the_sector_dial_refusals_are_named(archive, monkeypatch):
         STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
         STOP_REFUSAL_SIZED_TO_ZERO,
     )
+
+
+def test_the_guard_bites_on_a_lifted_function_with_a_silent_drop():
+    """Coverage follows moved code: a lifted function ending a candidate with
+    no reason must fail the same rule, and one that files a reason must pass."""
+    silent = "def _apply_sector_dial(cfg, note_refusal, symbol):\n    if symbol:\n        return -1.0, ''\n    return 1.0, ''\n"
+    filed = "def _apply_sector_dial(cfg, note_refusal, symbol):\n    if symbol:\n        note_refusal(symbol, 'long', 'X', 'why')\n        return -1.0, ''\n    return 1.0, ''\n"
+    for source, expect_silent in ((silent, True), (filed, False)):
+        srcs = {"sector_dial.py": source}
+        fn = _methods(lifted_sources=srcs)["_apply_sector_dial"]
+        ls = _methods(lines=True, lifted_sources=srcs)["_apply_sector_dial"]
+        sites = _drop_sites(fn)
+        assert sites
+        assert any(not _files_a_reason(fn, s, ls) for s in sites) is expect_silent

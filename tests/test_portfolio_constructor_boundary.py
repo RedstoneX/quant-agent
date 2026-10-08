@@ -111,3 +111,16 @@ def test_every_lifted_body_has_a_thin_shim_on_the_host():
         shim = inspect.getattr_static(PortfolioConstructor, name)
         fn = getattr(shim, "__func__", shim)
         assert (fn.__doc__ or "").startswith("Thin shim"), name
+
+
+LIFTED_MODULES = [
+    "src.portfolio_constructor.refusal_log",
+    "src.portfolio_constructor.sector_dial",
+    "src.portfolio_constructor.target_derivation",
+]
+
+
+@pytest.mark.parametrize("module", LIFTED_MODULES)
+def test_every_lifted_function_module_passes_the_boundary_check(module):
+    verdict = check_boundary(module)
+    assert verdict.passed, verdict.failures
