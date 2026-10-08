@@ -93,7 +93,7 @@ Commissioning is complete: the runtime `.env` carries the gateway/CA wiring abov
 
 - **`httpx`** (OpenRouter, via the `openai` SDK): honors `HTTPS_PROXY`; CA trust via `SSL_CERT_FILE`.
 - **`requests`** (Alpaca, via `alpaca-py`): honors `HTTPS_PROXY`; CA trust via `REQUESTS_CA_BUNDLE` only — does **not** honor `SSL_CERT_FILE`.
-- **`urllib`** (FRED, via `fredapi`): honors `HTTPS_PROXY`/`https_proxy`; CA trust via `SSL_CERT_FILE` (OpenSSL-level).
+- **`urllib`** (FRED, via `src/data/fred_series_client.py`): honors `HTTPS_PROXY`/`https_proxy`; CA trust via `SSL_CERT_FILE` (OpenSSL-level).
 
 ---
 

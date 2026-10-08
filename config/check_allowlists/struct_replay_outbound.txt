@@ -9,7 +9,6 @@ src/cost_table.py | requests
 src/data/company.py | yfinance
 src/data/congressional_trading.py | requests
 src/data/earnings.py | urllib
-src/data/macro.py | fredapi
 src/data/market.py | yfinance
 src/data/news.py | feedparser
 src/data/news.py | urllib

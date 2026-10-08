@@ -132,9 +132,9 @@ class MacroFetchBudget:
         request by `request_timeout_s` to stay under FRED's rate limit. Two
         findings killed it: FRED publishes no rate limit on its own API
         documentation (checked 2026-09-23 -- the 120/min figure circulates
-        only in third-party clients), and `fredapi` is a bare `urlopen` with
+        only in third-party clients), and the macro FRED client (formerly `fredapi`) is a bare `urlopen` with
         no internal retry or sleep of its own (verified against the installed
-        package: zero occurrences of retry/sleep/backoff in `fredapi/fred.py`).
+        package: zero retry/sleep/backoff in `fredapi/fred.py`; its replacement never retries).
         So a strictly serial walk already has exactly one request in flight and
         is paced by round-trip latency itself -- a structural guarantee. A
         sleep on top of that would be an unsourced constant defending against

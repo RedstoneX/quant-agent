@@ -603,7 +603,7 @@ def test_macro_summary_coverage_carries_overdue_series(mock_fred_cls):
     today = date(2026, 9, 10)
     mock = MagicMock()
     mock.get_series.return_value = _daily_series(today, lag_days=20)
-    mock.get_series_info.side_effect = lambda sid: _info(
+    mock.get_series_info.side_effect = lambda sid, **_kw: _info(
         _daily_series(today, lag_days=20).index[-1].date(),
         _daily_series(today, lag_days=20).index[-1].date() + timedelta(days=1),
     )

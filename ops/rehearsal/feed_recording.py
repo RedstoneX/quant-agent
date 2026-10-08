@@ -16,7 +16,7 @@ real and no importer can route around the patch.
 
 Two transports, because this dependency set has two:
 
-  * `src.data.macro.Fred` — `fredapi`, which is a bare `urlopen` of its own.
+  * `src.data.macro.Fred` — `FredSeriesClient`, a per-request-timeout `urlopen` GET of its own.
   * `urlopen` as imported into `src.data.news`, `src.data.event_calendar` and
     `src.data.earnings` (the FRED release-dates call, the Fed/SEC pages and
     the ~20 RSS feeds all go through it).
@@ -134,7 +134,9 @@ def capture(
     if ids:
         import os
 
-        from fredapi import Fred
+        from src.data import fred_series_client
+
+        Fred = fred_series_client.FredSeriesClient
 
         client = Fred(api_key=api_key or os.getenv("FRED_API_KEY") or "")
         for series_id in ids:
@@ -194,7 +196,7 @@ def capture(
 
     recording = {
         "captured_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        "source": "fredapi.Fred + urllib.request.urlopen, captured by ops.rehearsal.feed_recording",
+        "source": "FredSeriesClient + urllib.request.urlopen, captured by ops.rehearsal.feed_recording",
         "fred_series": fred_series,
         "fred_series_info": fred_info,
         "http": http,

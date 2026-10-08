@@ -32,9 +32,9 @@ def test_unrecorded_series_raises_loudly_and_never_goes_live(monkeypatch):
     del recording["fred_series"]["ICSA"]
     seen: list[str] = []
     with macro_recording.recorded_feeds_with_macro(seen, recording):
-        import fredapi
+        from src.data.fred_series_client import FredSeriesClient
 
-        client = fredapi.Fred(api_key="x" * 32)  # built like the pipeline's, inside the window
+        client = FredSeriesClient(api_key="x" * 32)  # built like the pipeline's, inside the window
         assert len(client.get_series("VIXCLS")) > 0
         with pytest.raises(feed_recording.RecordedFeedFailure):
             client.get_series("ICSA")
