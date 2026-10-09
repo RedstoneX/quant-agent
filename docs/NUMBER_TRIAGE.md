@@ -98,7 +98,7 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 **Tier 2 gates entries/exits or shapes stops after entry.** Exit and trailing-stop thresholds; settled by public-bar retracement/trend-resumption statistics and by recorded session-to-session noise of the exit guard's own inputs.
 
 - `risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` = 3.0
-- `risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` = 1
+- `risk.exit_guard.NOISE_BAND_ATR_MULTIPLE` = 1 (REMOVED 2026-10-09 with the entry-anchored sale gate)
 - `risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE` = 1
 - `risk.exit_guard._NOISE_FLOOR['distance_to_stop_pct']` = 0.1
 - `risk.exit_guard._NOISE_FLOOR['pace']` = 0.05

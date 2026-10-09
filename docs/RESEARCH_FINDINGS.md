@@ -591,7 +591,7 @@ What this means in practice:
 
 ### Does the band's sqrt(sessions_held) widening match the tape? Measured 2026-10-04 — NO, and nothing replaces it
 
-`src/risk/exit_guard.py::noise_band_atr` widens the band as
+`src/risk/exit_guard.py::noise_band_atr` widened the band as
 `ATR * sqrt(sessions_held)` with no cap, so a position held 60 sessions must
 move about 7.8 ATR against entry before a discretionary sale is allowed. The
 sqrt shape was adopted by analogy with random-walk dispersion and never
@@ -626,7 +626,17 @@ trend is over; if anything the tape says the opposite.
 relationship never turns the way the band assumes, the measurement produces no
 excursion size above which a trend is finished, at any holding length — so
 there is no point at which such a size stops growing, which is what an honest
-cap would represent. **No value in `exit_guard.py` is changed by this work.**
+cap would represent. No value in `exit_guard.py` was changed by this work.
+
+**Outcome, 2026-10-09 — the gate is REMOVED.** On Finding 1 the owner ruled
+that no discretionary sale is refused because of the price the desk paid
+("sell anything below the bar, always"). The entry-anchored midday gate, its
+constant `NOISE_BAND_ATR_MULTIPLE`, its sqrt widening and its midday
+recording were deleted together, so a losing holding the reviewer wants to
+sell is no longer held back by its distance from entry. The trailing band
+(1.25 ATR, off the current price) and the structural-protection fallback
+multiple (flat, off the running extreme) are different quantities and were
+not changed.
 
 **What a different answer would have looked like.** Had the sqrt widening been
 right, each decile table would show a region of negative excess forward return

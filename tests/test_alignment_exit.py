@@ -20,10 +20,10 @@ def test_tolerance_is_not_the_entry_anchored_noise_band() -> None:
     ledger note records every published analogue at ~2.8-3.5 ATR. Selling
     on a 1 ATR give-back is roughly three times more eager than the
     literature the desk itself cites."""
-    from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
-
+    # The entry-anchored band (1.0) was removed 2026-10-09; the
+    # tolerance must still not have inherited its value.
     assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
-    assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE != NOISE_BAND_ATR_MULTIPLE
+    assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE != 1.0
 
 
 def test_exit_when_last_mark_given_up_beyond_tolerance() -> None:
