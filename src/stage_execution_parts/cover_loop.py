@@ -2,8 +2,8 @@
 
 Bodies are unchanged apart from dedenting; where the loop body said
 `continue`, the lifted body returns `SKIP` and the caller continues. The
-buy-to-cover limit (`cover_price * 1.005`) stays in `_run_session`, where
-config/number_ledger.yaml cites it. Live-money exit code: behaviour is
+buy-to-cover is a plain DAY MARKET order sent from `_run_session`
+(src/exit_quote.py; the old 1.005 limit pad is gone). Live-money exit code: behaviour is
 identical.
 """
 

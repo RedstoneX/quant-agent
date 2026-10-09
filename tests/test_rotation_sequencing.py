@@ -44,7 +44,7 @@ import ast
 import json
 import pathlib
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import DEFAULT, MagicMock
 
 import pytest
 
@@ -187,6 +187,19 @@ def _pipeline(tmp_path, *, positions=None, total_value=100_000.0, cash=50_000.0,
 
     pipeline.broker = MagicMock()
     pipeline.broker.get_intraday_snapshots.side_effect = _snapshots
+
+    # A held name's live quote straddles its mark by $0.50 a side: a market
+    # SELL fills at the bid, a market COVER at the ask, and the projection
+    # credits exactly that. Any other symbol keeps the MagicMock default.
+    held_marks = {p.symbol: float(p.current_price) for p in positions or []}
+
+    def _quote(symbol):
+        mark = held_marks.get(symbol)
+        if mark is None:
+            return DEFAULT
+        return {"bid_price": mark - 0.50, "ask_price": mark + 0.50}
+
+    pipeline.broker.get_latest_quote.side_effect = _quote
 
     #: The gate refreshes the account before projecting, because the state
     #: this stage is handed is the research snapshot from 5-10 minutes
@@ -555,13 +568,14 @@ def test_a_partial_exit_leaves_a_proportional_share_of_its_intraday_pnl(
         100_000.0,
         [_sell("PART", 40.0)],
         [],
+        quotes={"PART": {"bid": 99.50, "ask": 100.50}},
     )
     (remaining,) = projected
     # Whole-share position: 40% of 10 floors to 4 shares sold, 6 left.
     assert remaining.qty == pytest.approx(6.0)
     assert remaining.market_value == pytest.approx(600.0)
-    # The limit concession on the 4 shares sold: marked at $100, sold at
-    # the SELL loop's own $99.50 limit. Subtracting it TIGHTENS the funding
+    # The concession on the 4 shares sold: marked at $100, sold by market
+    # order at the live $99.50 bid. Subtracting it TIGHTENS the funding
     # gate under the shipped `allow_margin: true` — see the docstring.
     assert equity == pytest.approx(100_000.0 - 4 * 0.50)
 
@@ -575,6 +589,7 @@ def test_a_full_exit_removes_the_position_entirely(tmp_path):
         100_000.0,
         [_sell("GONE")],
         [],
+        quotes={"GONE": {"bid": 99.50, "ask": 100.50}},
     )
     assert [p.symbol for p in projected] == ["KEEP"]
 
@@ -1065,10 +1080,13 @@ def test_a_cover_is_projected_as_a_real_close_not_a_no_op(tmp_path):
         100_000.0,
         [],
         [cover],
+        quotes={"SHRT": {"bid": 99.50, "ask": 100.50}},
     )
     assert [p.symbol for p in projected] == ["KEEP"], "the covered short must leave the projected book"
-    # And covering SPENDS cash, at the 1.005 mirror of the sell cushion.
-    cash = ps._projected_post_sale_cash(50_000.0, positions, [], [cover])
+    # And covering SPENDS cash, at the live ask the market cover fills at.
+    cash = ps._projected_post_sale_cash(
+        50_000.0, positions, [], [cover], quotes={"SHRT": {"bid": 99.50, "ask": 100.50}}
+    )
     assert cash == pytest.approx(50_000.0 - 100.50 * 10)
 
 
@@ -1136,6 +1154,7 @@ def test_a_sell_on_a_short_is_not_projected_as_a_close(tmp_path):
         100_000.0,
         [_sell("SHRT")],
         [],
+        quotes={},
     )
     assert {p.symbol for p in projected} == {"SHRT", "LONG"}
 
@@ -1153,6 +1172,7 @@ def test_a_sell_on_a_short_is_not_projected_as_a_close(tmp_path):
         100_000.0,
         [],
         [cover_long],
+        quotes={},
     )
     assert {p.symbol for p in projected} == {"SHRT", "LONG"}
 

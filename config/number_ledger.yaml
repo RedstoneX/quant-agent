@@ -7136,17 +7136,6 @@ numbers:
       (src/execution/broker_parts/trade_stream.py::_TradeUpdatesHub.wait). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT
-    value: 0.01
-    status: not-trade-governing
-    site: src/pipeline.py
-    note: >-
-      Dead. Defined at src/pipeline.py::TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT and described in comments as the
-      de-lever cushion, but nothing reads it: the de-lever no longer prices off
-      a fixed % of the mark at all -- it crosses the LIVE quote or sends a
-      MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
-      delever-live-fill). Recorded so this dead cushion cannot come back into
-      use without a reviewer seeing it.
   - id: src.pipeline_intraday.IntradayMixin._another_session_recently_active(within_minutes)
     value: 15
     status: not-trade-governing
@@ -7823,72 +7812,6 @@ numbers:
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
       survive; if that column width changes, this changes with it.
-  - id: src.rotation_projection._projected_post_sale_cash:factor[0]
-    value: 1.005
-    status: derived
-    site: src/rotation_projection.py
-    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
-    base_value: 0.995
-    note: >-
-      Board item 39, attempt 3. The same 0.5% exit offset as the
-      projection's own root, applied to the CASH an exit leaves behind rather
-      than to the equity: a COVER buys the borrowed shares back at
-      price x 1.005 and spends that cash. Read from the loop it mirrors;
-      not a second number.
-  - id: src.rotation_projection._projected_post_sale_cash:factor[1]
-    value: 0.995
-    status: derived
-    site: src/rotation_projection.py
-    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
-    base_value: 0.995
-    note: >-
-      Board item 39, attempt 3. The SELL side of the same mirrored offset:
-      a sale credits price x 0.995, the limit the SELL loop actually
-      places, rather than the mark.
-  - id: src.rotation_projection._projected_post_sale_book:factor[0]
-    value: 1.005
-    status: derived
-    site: src/rotation_projection.py
-    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
-    base_value: 0.995
-    note: >-
-      Board item 39, attempt 3. The COVER mirror of the SELL offset below,
-      1.005 = 2 - 0.995, exactly as the COVER loop mirrors it. One number,
-      mirrored, in the projection as in the execution. This note and the
-      one below sat on each other's entry - the 1.005 row carried the SELL
-      text and the 0.995 row the COVER text - from the day they were filed
-      until 2026-09-23.
-  - id: src.rotation_projection._projected_post_sale_book:factor[1]
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: the quoted bid-ask spread and top-of-book depth for the universe the desk could trade,
-        on public daily bars at the time of day the desk sends exits, so the fifty-basis-point give-up
-        on a marketable sell limit becomes a multiple of a measured spread rather than a round number
-      closes_when: the spread and depth distribution is in hand and the pad is restated as a stated
-        multiple of the measured spread for the name being sold; it is DELETED, and the exit leg becomes
-        a plain marketable order, if the measured spread never approaches the pad and the pad therefore
-        never binds a fill
-    value: 0.995
-    status: arbitrary
-    site: src/rotation_projection.py
-    note: >-
-      Board item 39, attempt 3; re-rooted 2026-10-09. The rotation sequencing
-      gate projects the equity the account will hold once this session's exits
-      have gone through, crediting each sale price x 0.995. It mirrored the
-      decision-path SELL limit, which no longer exists: every ordinary exit is
-      now a plain DAY MARKET order (src/exit_quote.py, after the
-      2026-10-09 open left NET, AAPL and VLO exits unfilled). The 0.5% is now
-      this projection's own number, and it describes a fill price the desk no
-      longer places.
-    open_question: >-
-      How far below the mark does a must-fill exit on this desk's names
-      actually fill, measured from its own exit fills against the mark?
-    cost_while_unanswered: >-
-      The rotation gate credits each exit 0.5% below the mark, while the exit
-      itself is now a market order; on a wide spread the gate
-      overstates the cash a rotation leaves, on a tight one it understates it.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25
     status: derived

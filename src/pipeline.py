@@ -767,18 +767,6 @@ class TradingPipeline(
             return None
         return float(position_qty)
 
-    # Cushion used by BOTH sides of a forced/emergency close so they can
-    # never drift apart: a long's exit is a SELL, whose limit needs to sit
-    # BELOW the reference price to have room to fill on the way down; a
-    # short's exit is a BUY-to-cover, whose limit needs to sit ABOVE the
-    # reference price to have room to fill on the way up (same reasoning
-    # broker.py's STOP_LIMIT_BUFFER_PCT already documents for stop legs —
-    # "beyond", not "below", because a short's protective/exit order works
-    # the opposite side of the trigger). One constant, applied with the
-    # correct sign per side, rather than two independently hand-picked
-    # numbers for the two directions.
-    _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
-
     def _total_pnl_since_reset(self, total_value: float) -> tuple[float | None, float | None, str | None]:
         return _pnl_gaps._total_pnl_since_reset(self, total_value)
 
