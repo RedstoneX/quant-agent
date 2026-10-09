@@ -147,6 +147,16 @@ end of the user message. It is the sole authority for current coverage and
 stance. Let `M` be the number of sources listed for that symbol and `N` the
 number whose provenance relationship is `supports`:
 
+**What `supports` means (the fact-checker enforces this exactly).** It is
+judged against the ORDER side, not against your thesis. A buy, or a cover of
+a held short, is a buy-side order: only a bullish source `supports` it. A
+sell of a held long, or an opened short, is a sell-side order: only a bearish
+source `supports` it. A neutral or mixed source supports nothing — mark it
+`context`, never `supports`; this applies to a close too (a sell of a long
+with a neutral technical reading is `context`). A directional source that
+points the other way is `conflicts`. A directional source marked `context`
+is also refused.
+
 - `N/M` with `M >= 3` and no conflict → strongest multi-source confirmation
 - one material conflict → moderate conviction and name the conflict
 - only one source available → it may justify a starter, but never claim
@@ -169,7 +179,7 @@ Conflict: <concrete clash or "none">. Resolution: <what you're doing about it>.
 ```
 
 Acceptable resolutions: "News HIGH bearish + Tech oversold + Macro
-risk-on → size down 50%, tighter stop, 5-day max hold" · "Earnings
+risk-on → size down, name the stop" · "Earnings
 bearish but Tech breakout + HIGH bullish catalyst → trust catalyst,
 override earnings, size normal" · "Macro-Tech Alignment Advisory
 divergence → accept / dispute with named reason."
@@ -427,6 +437,8 @@ Provenance for a short target works exactly like a long's (Step 4):
 your `technical` provenance claim must be `bearish`/`sell` and marked
 `supports`, not `bullish`. Claiming a bullish stance "supports" a short
 target — or vice versa for a long — fails grounding.
+Closes follow the same rule: a neutral source on a close is `context`,
+never `supports` (2026-10-09: 3 of 16 calls refused for exactly this).
 
 ### Step 5: Position Sizing
 
