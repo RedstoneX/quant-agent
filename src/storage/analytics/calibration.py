@@ -824,6 +824,7 @@ class TradeAnalytics:
                             "allocated_risk_pct": lot.get("allocated_risk_pct"),
                             "requested_risk_pct": lot.get("requested_risk_pct"),
                             "decision_model": lot.get("decision_model"),
+                            "open_ts": lot["ts"],
                         }
                     )
                     lot["qty"] -= closed_qty
@@ -873,12 +874,18 @@ class TradeAnalytics:
                             "allocated_risk_pct": lot.get("allocated_risk_pct"),
                             "requested_risk_pct": lot.get("requested_risk_pct"),
                             "decision_model": lot.get("decision_model"),
+                            "open_ts": lot["ts"],
                         }
                     )
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
                         lots.pop(0)
                     remaining -= closed_qty
+        # Clean record (owner ruling 2026-10-09): every outcome section below
+        # (by_size, by_side, by_conviction, by_allocated_risk, overall) is
+        # built from the lots opened on/after the start; earlier ones are
+        # excluded here and counted once, in the position-level count below.
+        closed = [c for c in closed if not _opened_before_clean_record(c["open_ts"])]
         if len(closed) < 3:
             return {}
 
