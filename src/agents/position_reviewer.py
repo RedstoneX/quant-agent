@@ -77,7 +77,7 @@ _SESSION_DISPOSITION = {
 
 class PositionReviewerAgent(BaseAgent):
     """Sell-only agent: reviews open positions, outputs HOLD / TRAIL_STOP /
-    REDUCE / SELL. Never BUYs. Used at midday and close sessions."""
+    SELL / COVER (whole exits only). Never BUYs. Used at midday and close sessions."""
 
     # See review(): parsed JSON is validated as PositionReview(**parsed).
     result_model = PositionReview
@@ -587,7 +587,7 @@ class PositionReviewerAgent(BaseAgent):
             margin_section = (
                 f"### ⚠️ Cash-only policy — de-lever required\n"
                 f"Cash is ${cash_balance:,.2f} (deficit ${deficit:,.2f}). "
-                f"This account runs cash-only; prefer SELL or REDUCE on the "
+                f"This account runs cash-only; prefer SELL on the "
                 f"weakest-conviction position(s) to restore cash ≥ 0. Do NOT "
                 f"TRAIL_STOP when the real problem is over-leverage.\n"
             )
@@ -645,7 +645,7 @@ class PositionReviewerAgent(BaseAgent):
             system_actions_section = ""
 
         # Same-day trim discipline section. Renders only when at least one
-        # symbol was already trimmed earlier today (midday REDUCE, or a
+        # symbol was already sold earlier today (a midday exit, or a
         # deterministic de-lever). The Python executor
         # enforces this rule independently — this section is the prompt-side
         # belt so the LLM isn't fighting an invisible filter.
@@ -656,7 +656,7 @@ class PositionReviewerAgent(BaseAgent):
                 else ""
             )
             already_trimmed_section = (
-                "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
+                "### ⚠️ Already Trimmed Today — DO NOT SELL again\n"
                 + trimmed_line
                 + "These positions ALREADY received a sell-side action this session day "
                 "(a midday REDUCE, or a deterministic de-lever).\n"

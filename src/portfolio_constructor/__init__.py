@@ -119,7 +119,6 @@ from src.portfolio_constructor.config import (
 from src.portfolio_constructor.assembly import hold_parts, install_delegates
 from src.portfolio_constructor.divergence_counter import log_divergence
 from src.portfolio_constructor import refusal_log, sector_dial, target_derivation
-from src.portfolio_constructor.target_derivation import _mark_risk_limit_trim, _trim_forced_by_risk_limit
 
 
 @install_delegates
@@ -497,31 +496,30 @@ class PortfolioConstructor:
 
             # Owner ruling 2026-10-09: never sell PART of a held position.
             # A same-side target smaller than what is held is kept at its
-            # size unless a risk limit forced the cut (budget or single-name
-            # envelope granted less than the PM asked); a full close
-            # (signed_target == 0) is untouched.
-            risk_limit_trim = False
+            # size; a full close (signed_target == 0) is untouched. The
+            # planner never partly cuts a holding — not even when the risk
+            # budget granted less than asked, because the budget funds
+            # better-ranked ideas first and would sell part of a held winner
+            # to pay for a new one. The only partial cut of a holding is the
+            # gross-ceiling de-lever, which has its own order path.
             shrinks_held = (
                 signed_target != 0
                 and (current_pct > 0) == (signed_target > 0)
                 and abs(current_pct) - abs(signed_target) >= _NO_REAL_WEIGHT_DELTA_PCT
             )
             if current_pct != 0 and shrinks_held:
-                risk_limit_trim = _trim_forced_by_risk_limit(target, plan_for_sym)
-                if not risk_limit_trim:
-                    self._note_refusal(
-                        sym,
-                        target.direction,
-                        CONSTRUCTOR_HELD_PARTIAL_TRIM_REFUSED,
-                        "the desk asked for a smaller position in a stock it "
-                        "already holds, but a held position is either kept "
-                        "whole or sold whole (owner ruling 2026-10-09), and "
-                        "no risk limit forced this cut. The position was kept "
-                        "at its current size; nothing was sold.",
-                    )
-                    if current_pct > 0:
-                        buys.append(self._hold_decision(target))
-                    continue
+                self._note_refusal(
+                    sym,
+                    target.direction,
+                    CONSTRUCTOR_HELD_PARTIAL_TRIM_REFUSED,
+                    "the desk asked for a smaller position in a stock it "
+                    "already holds, but a held position is either kept "
+                    "whole or sold whole (owner ruling 2026-10-09). The "
+                    "position was kept at its current size; nothing was sold.",
+                )
+                if current_pct > 0:
+                    buys.append(self._hold_decision(target))
+                continue
 
             delta_pct = signed_target - current_pct
 
@@ -598,8 +596,6 @@ class PortfolioConstructor:
                         ),
                     )
                     if sell_decision is not None:
-                        if risk_limit_trim:
-                            sell_decision = _mark_risk_limit_trim(sell_decision, target, plan_for_sym)
                         sells.append(sell_decision)
                 else:
                     # Open or add to a SHORT (current_pct <= 0).
@@ -631,8 +627,6 @@ class PortfolioConstructor:
                         ),
                     )
                     if cover_decision is not None:
-                        if risk_limit_trim:
-                            cover_decision = _mark_risk_limit_trim(cover_decision, target, plan_for_sym)
                         buys.append(cover_decision)
                 else:
                     # Open or add a LONG.

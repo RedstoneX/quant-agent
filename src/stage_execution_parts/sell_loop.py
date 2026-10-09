@@ -162,18 +162,14 @@ def alert_rotation_close_outcome(pipeline, ctx, prot, status) -> None:
         logger.error("rotation close outcome alert failed: %s", exc)
 
 
-#: Refusal reason for a partial SELL that no risk limit forced.
-PARTIAL_SELL_NOT_RISK_LIMIT = "partial_sell_not_forced_by_risk_limit"
+#: Refusal reason for a partial SELL. Owner ruling 2026-10-09: a held
+#: position is kept whole or sold whole; the only partial cut of a holding is
+#: the gross-ceiling de-lever, which has its own order path and never reaches
+#: this loop.
+PARTIAL_SELL_REFUSED = "partial_sell_refused_whole_exits_only"
 
 
-def _is_risk_limit_trim(decision) -> bool:
-    """A partial exit is a risk-limit trim only when granted risk < asked-for risk."""
-    requested = decision.requested_risk_pct
-    allocated = decision.allocated_risk_pct
-    return requested is not None and allocated is not None and allocated < requested
-
-
-def sell_qty_and_label(pipeline, decision, existing, ctx=None):
+def sell_qty_and_label(pipeline, decision, existing, ctx):
     """Resolve the SELL quantity and label; `SKIP` where the loop skipped."""
     if decision.allocation_pct == 0:
         logger.warning(
@@ -193,31 +189,25 @@ def sell_qty_and_label(pipeline, decision, existing, ctx=None):
             if qty is None:
                 return SKIP
             action_label = "SELL"
-        elif not _is_risk_limit_trim(decision):
-            # Owner ruling 2026-10-09: never sell PART of a held position.
-            # Only a trim a risk limit forced (the constructor stamps it with
-            # granted risk below asked-for risk) may stay partial.
+        else:
             logger.error(
-                "Refusing PARTIAL_SELL %s (%.0f%%): not forced by a risk limit — "
-                "a held position is kept whole or sold whole",
+                "Refusing PARTIAL_SELL %s (%.0f%%): a held position is kept whole or sold whole",
                 decision.symbol,
                 decision.allocation_pct,
             )
-            if ctx is not None:
+            try:
                 _record_pipeline_event(
                     pipeline,
                     ctx,
                     decision.symbol,
                     "order",
                     "refused",
-                    PARTIAL_SELL_NOT_RISK_LIMIT,
+                    PARTIAL_SELL_REFUSED,
                     allocation_pct=decision.allocation_pct,
-                    requested_risk_pct=decision.requested_risk_pct,
-                    allocated_risk_pct=decision.allocated_risk_pct,
                 )
+            except Exception as exc:  # noqa: BLE001 — a record write never changes the refusal
+                logger.error("partial-sell refusal record failed for %s: %s", decision.symbol, exc)
             return SKIP
-        else:
-            action_label = f"PARTIAL_SELL({decision.allocation_pct:.0f}%)"
     else:
         qty = pipeline._full_sell_qty(existing[0].qty)
         if qty is None:

@@ -188,37 +188,3 @@ def _target_note(derivation: TargetDerivation) -> str:
             "this ratio]"
         )
     return note
-
-
-#: Float slack when comparing granted risk to requested risk: both are plain
-#: percents, so a difference smaller than this is arithmetic noise, not a cut.
-_RISK_CUT_EPSILON_PCT = 1e-9
-
-
-def _trim_forced_by_risk_limit(target: TargetPosition, plan) -> bool:
-    """True only when a risk limit, not the PM's own number, shrank this hold.
-
-    Owner ruling 2026-10-09: a held position is kept whole or sold whole. The
-    one surviving reason to sell part of it is a risk limit — here, the risk
-    budget or the single-name envelope granting less than the PM asked for
-    (`RiskPlan.risk_pct < TargetPosition.risk_allocation_pct`). A legacy
-    notional target, or a plan granted everything it asked for, is the PM's
-    own lower number and is never a forced trim.
-    """
-    if plan is None or target.risk_allocation_pct is None:
-        return False
-    return plan.risk_pct < target.risk_allocation_pct - _RISK_CUT_EPSILON_PCT
-
-
-def _mark_risk_limit_trim(decision, target: TargetPosition, plan):
-    """Stamp a forced partial SELL/COVER with the asked-for and granted risk.
-
-    Execution reads `allocated_risk_pct < requested_risk_pct` as the proof a
-    partial exit was forced by a risk limit; an unstamped partial is refused.
-    """
-    return decision.model_copy(
-        update={
-            "requested_risk_pct": target.risk_allocation_pct,
-            "allocated_risk_pct": plan.risk_pct,
-        }
-    )

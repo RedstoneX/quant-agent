@@ -28,7 +28,10 @@ class PositionAction(LLMOutputModel):
     # named-trigger gate, exit-guard veto, noise band, same-day-trim
     # discipline and AI Risk routing a SELL/REDUCE gets, always as a full
     # close (this schema carries no allocation fraction for it).
-    action: Literal["SELL", "REDUCE", "TRAIL_STOP", "COVER", "HOLD"]
+    # Owner ruling 2026-10-09: no REDUCE. A held position is kept whole or
+    # sold whole; the reviewer has no partial-sell action. A legacy REDUCE in
+    # a model answer is lifted out by `PositionReview` and refused on record.
+    action: Literal["SELL", "TRAIL_STOP", "COVER", "HOLD"]
     symbol: str
     reason: str
     new_stop_price: float | None = None  # required when action == TRAIL_STOP
@@ -169,7 +172,31 @@ class PositionReview(LLMOutputModel):
     adjudicated by `src.risk.target_revision` and recorded per symbol
     whichever way it goes; a flag is never an instruction and never an exit."""
 
+    refused_reduce: list[dict] = Field(default_factory=list, exclude=True)
+    """Legacy REDUCE actions lifted out of `actions` at parse (owner ruling
+    2026-10-09: whole exits only). Never executed, never converted into a
+    SELL — the executor records each one as a refusal. Not part of the
+    answer the seat is asked for."""
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(values, lower_fields=("risk_level",))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_out_legacy_reduce(cls, values):
+        # One stray REDUCE must not fail the whole review (and with it every
+        # SELL / TRAIL_STOP beside it), and must not be silently dropped.
+        if not isinstance(values, dict) or not isinstance(values.get("actions"), list):
+            return values
+        kept, refused = [], []
+        for item in values["actions"]:
+            act = item.get("action") if isinstance(item, dict) else None
+            if isinstance(act, str) and act.strip().upper() == "REDUCE":
+                refused.append(dict(item))
+            else:
+                kept.append(item)
+        if refused:
+            values = {**values, "actions": kept, "refused_reduce": refused}
+        return values

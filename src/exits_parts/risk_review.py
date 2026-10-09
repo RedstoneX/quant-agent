@@ -140,7 +140,7 @@ def _risk_review_exits(
     # COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
     # fix): a short's exit must reach the AI Risk Manager exactly like a
     # long's does, not skip it.
-    exits = [a for a in (review.actions if review else []) if a.action in ("SELL", "REDUCE", "COVER")]
+    exits = [a for a in (review.actions if review else []) if a.action in ("SELL", "COVER")]
     if not exits:
         return set(), None
 
@@ -206,13 +206,13 @@ def _risk_review_exits(
         # short as a loser" failure this fix exists to close.
         decisions.append(
             TradeDecision(
-                action="SELL" if action.action in ("SELL", "REDUCE") else "COVER",
+                action="SELL" if action.action == "SELL" else "COVER",
                 symbol=symbol,
                 # 100 = full exit (SELL and COVER are both full closes on
-                # this path); REDUCE is a partial whose exact fraction the
-                # executor derives. The RM is being asked to judge WHETHER the
-                # exit is sound, not to re-size it.
-                allocation_pct=100.0 if action.action in ("SELL", "COVER") else 50.0,
+                # this path; REDUCE was removed 2026-10-09 — whole exits only).
+                # The RM is being asked to judge WHETHER the exit is sound,
+                # not to re-size it.
+                allocation_pct=100.0,
                 entry_price=0.0,
                 stop_loss=0.0,
                 take_profit=0.0,

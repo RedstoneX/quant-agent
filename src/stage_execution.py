@@ -248,7 +248,7 @@ class ExecutionStage:
                 )
                 if rotation_final_reason is _ROTATION_SELL_REFUSED:
                     continue
-                resolved = sell_qty_and_label(pipeline, decision, existing)
+                resolved = sell_qty_and_label(pipeline, decision, existing, ctx)
                 if resolved is SKIP:
                     continue
                 qty, action_label = resolved

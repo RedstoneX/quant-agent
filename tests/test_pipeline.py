@@ -3143,7 +3143,7 @@ def test_midday_blocks_second_reduce_on_soft_reason_for_already_trimmed_symbol()
         reasoning_chain=_review_rc(),
         actions=[
             PositionAction(
-                action="REDUCE",
+                action="SELL",
                 symbol="AMZN",
                 reason="momentum slowing slightly, +13% on day",
             )

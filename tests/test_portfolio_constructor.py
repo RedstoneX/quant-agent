@@ -103,7 +103,11 @@ def test_construct_orders_opens_new_position():
 
 
 def test_construct_orders_trims_to_target_weight():
-    """Held at 15% weight, target 10% → SELL partial equivalent to the delta."""
+    """Held at 15% weight, target 10% → kept whole (owner ruling 2026-10-09).
+
+    A held position is kept at its size or sold whole; the planner never
+    sells part of it. The refusal is recorded by name.
+    """
     constructor = PortfolioConstructor()
     # $15k position on $100k equity = 15% weight
     positions = [_pos("NVDA", qty=150, avg_entry=100, current_price=100)]
@@ -119,9 +123,8 @@ def test_construct_orders_trims_to_target_weight():
     )
     assert len(decisions) == 1
     d = decisions[0]
-    assert d.action == "SELL"
-    # (15 - 10) / 15 = 33.33% of the position
-    assert abs(d.allocation_pct - 33.3) < 0.5
+    assert d.action == "HOLD"
+    assert constructor.last_refusals["NVDA"]["refusal"] == "held_partial_trim_refused"
 
 
 def test_construct_orders_closes_at_zero_target():

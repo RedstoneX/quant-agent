@@ -430,27 +430,22 @@ class ExitEngineMixin:
         signal for this path to act on.
         """
         orders: list[dict] = []
-        _priority = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
+        _priority = {"SELL": 0, "COVER": 0, "TRAIL_STOP": 2, "HOLD": 3}
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
         actions_list = [a.model_dump() for a in actions_raw]
         # Owner ruling 2026-10-09 (docs/OUTCOME.md): never sell PART of a
-        # held position — kept whole or sold whole. The reviewer's REDUCE is
-        # the model's own partial sell, never a risk-limit trim, so it is
-        # refused here with a durable reason and NOT converted into a SELL.
-        # Refused before the dedup so it cannot displace a same-symbol
-        # TRAIL_STOP.
-        kept_actions = []
-        for ai in actions_list:
-            if ai.get("action") != "REDUCE":
-                kept_actions.append(ai)
-                continue
+        # held position — kept whole or sold whole. REDUCE is no longer a
+        # reviewer action; a legacy REDUCE in a model answer is lifted out at
+        # parse (`PositionReview.refused_reduce`) and refused here with a
+        # durable reason. It is never converted into a SELL.
+        for ai in list(getattr(review, "refused_reduce", None) or []):
             logger.warning(
                 "Position reviewer: REDUCE %s refused — a held position is kept whole or sold whole",
                 ai.get("symbol"),
             )
             self._record_exit_refusal(
-                symbol=ai.get("symbol") or "",
+                symbol=str(ai.get("symbol") or ""),
                 run_id=run_id,
                 action="REDUCE",
                 code=CODE_PARTIAL_SELL_REFUSED,
@@ -458,7 +453,6 @@ class ExitEngineMixin:
                 detail=f"REDUCE: {str(ai.get('reason') or '')[:400]}",
                 layer="whole_exits_only",
             )
-        actions_list = kept_actions
         for ai in actions_list:
             sym = (ai.get("symbol") or "").strip().upper()
             if not sym:
@@ -558,7 +552,7 @@ class ExitEngineMixin:
             orders,
         ):
             act = action_item.get("action")
-            if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
+            if act not in ("SELL", "TRAIL_STOP", "COVER"):
                 continue
             symbol = action_item.get("symbol", "")
             if midday_pre_gates(_loop, action_item, act, symbol) is SKIP:

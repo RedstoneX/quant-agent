@@ -2380,12 +2380,10 @@ def test_real_intra_check_plan_sells_aapl_sized_from_its_live_stop_and_buys_net(
     constructor, decisions = _real_plan({"AAPL": _AAPL_STOP})
     by_symbol = {d.symbol: d for d in decisions}
     assert by_symbol["NET"].action == "BUY"
-    sell = by_symbol["AAPL"]
-    assert sell.action == "SELL"
-    # shares to keep = equity x 1.0% / (price - live stop)
-    keep = _REAL_EQUITY * 0.01 / (_AAPL_PX - _AAPL_STOP)
-    shares_sold = sell.allocation_pct / 100 * _AAPL_QTY
-    assert abs(shares_sold - (_AAPL_QTY - keep)) < 0.01  # ~4.10 of 9.763
+    # Owner ruling 2026-10-09: a held position is kept whole or sold whole.
+    # The lower risk number no longer sells part of AAPL; it is held.
+    assert by_symbol["AAPL"].action == "HOLD"
+    assert constructor.last_refusals["AAPL"]["refusal"] == "held_partial_trim_refused"
     assert "AAPL" not in constructor.last_data_faults
 
 

@@ -328,22 +328,18 @@ HELD, HELD_ENTRY, HELD_STOP = 100.0, 95.0, 92.0
 REDUCE_TO_PCT = 4.0
 
 
-def assert_reduce_keeps_exact_cover(result, trading, price, equity) -> None:
+def assert_held_whole_with_stop_intact(result, trading) -> None:
+    """Owner ruling 2026-10-09: a lower target on a held name sells nothing."""
     plain = _plain(trading)
-    assert result["status"] == "executed", (result.get("status"), result.get("error"), plain)
     sells = [o for o in trading.submitted if o.symbol == B and o.side == "sell" and o.order_type != "stop"]
-    keep = math.ceil(equity * REDUCE_TO_PCT / 100.0 / price)
-    assert len(sells) == 1, plain
-    sold = float(sells[0].qty)
-    assert sold == HELD - keep or abs(sold - (HELD - keep)) <= 1, (sold, HELD, keep, plain)
-    assert 0 < sold < HELD, f"a reduce must neither be a no-op nor a close: {plain}"
+    assert sells == [], f"a held position is kept whole or sold whole: {plain}"
     stops = _resting_stops(trading, B)
-    assert len(stops) == 1, f"one stop must rest on the reduced name: {plain}"
-    assert float(stops[0].qty) == HELD - sold, f"stop covers {stops[0].qty} but {HELD - sold} shares are held: {plain}"
+    assert len(stops) == 1, f"the held name keeps its one stop: {plain}"
+    assert float(stops[0].qty) == HELD, f"stop covers {stops[0].qty} but {HELD} shares are held: {plain}"
     assert result["stop_coverage_gaps"] == [], result["stop_coverage_gaps"]
 
 
-def test_a_reduce_sells_only_the_difference_and_resizes_the_stop_to_what_is_left(
+def test_a_lower_target_keeps_the_held_name_whole_with_its_stop(
     tmp_path,
     monkeypatch,
 ):
@@ -354,7 +350,7 @@ def test_a_reduce_sells_only_the_difference_and_resizes_the_stop_to_what_is_left
     result, trading, price = _run(
         tmp_path, monkeypatch, answers=base, cash=cash, session="morning", held={B: (HELD, HELD_ENTRY, HELD_STOP)}
     )
-    assert_reduce_keeps_exact_cover(result, trading, price, cash + HELD * price)
+    assert_held_whole_with_stop_intact(result, trading)
 
 
 # -------------------------------------------------------------- DE-LEVER

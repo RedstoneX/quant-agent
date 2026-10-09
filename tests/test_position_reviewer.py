@@ -917,7 +917,7 @@ def test_executor_blocks_reduce_on_already_trimmed_with_soft_reason():
     ]
     review = _mk_review_with_action(
         "AMZN",
-        "REDUCE",
+        "SELL",
         "thesis_progress 155% with TARGET_BREACH flag and pace only 0.62x. "
         "Overnight macro backdrop is less forgiving; prudent to trim 50%.",
     )
@@ -953,7 +953,7 @@ def test_executor_allows_reduce_on_already_trimmed_with_hard_trigger():
     ]
     review = _mk_review_with_action(
         "AMZN",
-        "REDUCE",
+        "SELL",
         "thesis_invalid_if condition satisfied — Q1 guidance cut materialised "
         "post-midday on AWS deceleration. Trim further to size down before close.",
     )
@@ -1032,7 +1032,7 @@ def test_executor_blocks_a_soft_reasoned_reduce_even_on_a_clean_session():
     ]
     review = _mk_review_with_action(
         "AMZN",
-        "REDUCE",
+        "SELL",
         "TARGET_BREACH and weight 10.3% — disciplined trim of overdelivered winner.",
     )
     pipeline._midday_execute_llm_actions(

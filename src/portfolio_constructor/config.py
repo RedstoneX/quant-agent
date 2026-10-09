@@ -452,11 +452,10 @@ CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD = "target_weight_zero_nothing_held"
 #:    refusal of the idea — the prose says so.
 CONSTRUCTOR_SHORT_ALREADY_AT_TARGET = "short_already_at_target_weight"
 #: 3. Owner ruling 2026-10-09 (docs/OUTCOME.md): a HELD position is kept at
-#:    its size or exited whole — never partly sold because the desk's own
-#:    risk number for it came down. A trim survives only when a risk limit
-#:    forced it (the budget or the single-name envelope granted less risk
-#:    than the PM asked for). Anything else is refused by this code and the
-#:    position is held unchanged.
+#:    its size or exited whole — never partly sold by the planner, whether
+#:    the desk's own risk number came down or the budget granted less. Such
+#:    a cut is refused by this code and the position is held unchanged. Only
+#:    the gross-ceiling de-lever (its own order path) partly cuts a holding.
 CONSTRUCTOR_HELD_PARTIAL_TRIM_REFUSED = "held_partial_trim_refused"
 #: NOT a replacement for `min_trade_weight_delta`. `signed_target` and
 #: `current_pct` are both floats built from independent divisions (a live

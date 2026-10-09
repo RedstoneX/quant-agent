@@ -199,7 +199,6 @@ def _execution_stage_pipeline(events, positions):
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._full_sell_qty = TradingPipeline._full_sell_qty
-    pipeline._reduce_sell_qty = TradingPipeline._reduce_sell_qty
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0},
         positions,
@@ -243,7 +242,7 @@ def test_execution_stage_sell_loop_restores_each_stop_before_the_next_name():
     ctx = _execution_ctx(
         [
             _exit_decision("SELL", "NVDA", 100.0),
-            _exit_decision("SELL", "AMD", 50.0),
+            _exit_decision("SELL", "AMD", 100.0),
             _exit_decision("SELL", "MSFT", 100.0),
         ],
         positions,
