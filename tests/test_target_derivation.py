@@ -1150,17 +1150,17 @@ class TestSLB:
         # fires and the reward:risk gate is reached.
         #
         # Numbers reworked 2026-09-04 for the 1.5 floor (range 1.35 ATRs),
-        # re-derived 2026-09-10 for the 2.5 floor (range 2.25 ATRs).
+        # re-derived 2026-09-10 for the 2.5 floor (2.5 ATRs, no setup scaling since 2026-10-09).
         # Worked by hand, and both conditions still have to hold:
-        #   band distance  2.25 x 1.33333 = $3.00  -> widened stop $57.10
-        #   stop $59.00 is $1.10 out, INSIDE $3.00, so widening fires
-        #   nearest shelf $62.50 -> reward $2.40, risk $3.00, R/R 0.80 < 1.5
+        #   band distance  2.5 x 1.33333 = $3.33  -> widened stop $56.77
+        #   stop $59.00 is $1.10 out, INSIDE $3.33, so widening fires
+        #   nearest shelf $62.50 -> reward $2.40, risk $3.33, R/R 0.72 < 1.5
         # The shelf itself does NOT have to move again. It moved $63.50 ->
         # $62.50 in the 2026-09-04 rework because the 1.35-ATR band left only
         # $1.80 of risk, against which $63.50's $3.40 of reward scored 1.89
-        # and TRADED. A 2.25-ATR band is a larger denominator, so $62.50 now
+        # and TRADED. A 2.5-ATR band is a larger denominator, so $62.50 now
         # fails by more than it did (0.80 where it was 1.33), not less — and
-        # $63.50 would fail too, at 3.40 / 3.00 = 1.13. The shelf is left at
+        # $63.50 would fail too, at 3.40 / 3.33 = 1.02. The shelf is left at
         # $62.50 so the fixture keeps failing for the same reason it has
         # since that rework, with margin rather than on a knife edge.
         analysis = _analysis(
@@ -1191,8 +1191,8 @@ class TestSLB:
         # refusal is deleted, so the 0.80 geometry TRADES again. The
         # DERIVATION, which is what this class exists for, is asserted on the
         # shipped order: the computed shelf at $62.50 (not the model's guess)
-        # and the band-edge stop at $57.10.
+        # and the band-edge stop at $56.77.
         assert len(decisions) == 1
         assert "SLB" not in constructor.last_refusals
         assert decisions[0].take_profit == 62.50
-        assert decisions[0].stop_loss == 57.10
+        assert decisions[0].stop_loss == 56.77
