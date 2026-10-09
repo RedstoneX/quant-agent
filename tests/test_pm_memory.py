@@ -758,7 +758,7 @@ def test_pm_decisions_builder_tags_the_unit_on_targets_schema(tmp_path):
     assert "XLE→?(l)" in out
 
 
-def test_pm_renders_weight_pct_and_drift_flag():
+def test_pm_renders_weight_pct():
     """Each position line shows weight_pct; drift flag appears on concentrated winners."""
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
@@ -802,12 +802,8 @@ def test_pm_renders_weight_pct_and_drift_flag():
         assert "Weight: 15.0%" in msg
         assert "Weight: 14.0%" in msg
         assert "Weight: 6.0%" in msg
-        # Drift flag on the NVDA line only
-        assert "⚠️DRIFT" in msg
-        # MSFT must NOT be flagged (big but not drifted)
-        lines = msg.split("\n")
-        msft_line = next(ln for ln in lines if ln.startswith("- MSFT:"))
-        assert "⚠️DRIFT" not in msft_line
+        # The drift flag was deleted 2026-10-09: no line carries it.
+        assert "DRIFT" not in msg
 
 
 def test_queued_earnings_buys_are_refused_not_capped():

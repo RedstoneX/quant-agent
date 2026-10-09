@@ -66,7 +66,6 @@ def test_pmfacts_render_produces_structured_block():
         positions_under_5d=2,
         positions_5_to_15d=4,
         positions_over_15d=2,
-        positions_drift_flagged=1,
         tech_signals_count=14,
         tech_signals_median_age_days=3,
         tech_signals_stale_count=2,
@@ -80,7 +79,6 @@ def test_pmfacts_render_produces_structured_block():
     assert "Technology: 22.0%" in rendered
     assert "LONG side" in rendered and "SHORT side" in rendered
     assert "Energy: 6.0%" in rendered
-    assert "drift-flagged (weight>12% + P&L>10%): 1" in rendered
     assert "stale(≥8d)=2" in rendered
 
 
