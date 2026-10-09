@@ -155,7 +155,10 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     ledger = load_ledger()
 
     stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
-    exit_offset = "src.stage_execution.ExecutionStage._run_session:factor[0]"
+    # The exit pads themselves were DELETED 2026-10-09 (every ordinary exit is
+    # a plain market order, src/execution/exit_pricing.py); the
+    # 0.5% survives only in the rotation projection, now rooted there.
+    exit_offset = "src.rotation_projection._projected_post_sale_book:factor[1]"
 
     # The two canonical bases: arbitrary, with their unchanged values.
     assert ledger[stop_buffer]["status"] == "arbitrary", stop_buffer
@@ -166,13 +169,9 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
         "src.delever.forced.DeleverForced._force_delever:factor[0]": stop_buffer,
-        "src.stage_execution.ExecutionStage._run_session:factor[1]": exit_offset,
-        "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]": exit_offset,
-        "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]": exit_offset,
         "src.rotation_projection._projected_post_sale_cash:factor[0]": exit_offset,
         "src.rotation_projection._projected_post_sale_cash:factor[1]": exit_offset,
         "src.rotation_projection._projected_post_sale_book:factor[0]": exit_offset,
-        "src.rotation_projection._projected_post_sale_book:factor[1]": exit_offset,
     }
     for site_id, base in derived_from_base.items():
         assert ledger[site_id]["status"] == "derived", site_id
@@ -565,8 +564,13 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # the haircut factor[1] -> factor[0]. One site still proves rule (e).
     assert "src.delever.forced.DeleverForced._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
-    assert "src.stage_execution.ExecutionStage._run_session:factor[0]" in ids
-    assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" in ids
+    # The decision-path and midday exit pads were DELETED 2026-10-09: every
+    # ordinary exit is now a plain market order
+    # (src/execution/exit_pricing.py). The rotation projection's own pad is
+    # still an inline factor site, so rule (e) is still proven on a live one.
+    assert "src.stage_execution.ExecutionStage._run_session:factor[0]" not in ids
+    assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" not in ids
+    assert "src.rotation_projection._projected_post_sale_book:factor[1]" in ids
 
 
 def test_a_parameter_default_is_a_site() -> None:

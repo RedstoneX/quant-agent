@@ -8182,25 +8182,6 @@ numbers:
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
       refused (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
-  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
-    value: 1.005
-    status: derived
-    site: src/pipeline_exits.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
-    base_value: 0.995
-    note: >-
-      Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Its comment ties it to the ExecutionStage
-      COVER loop. One number, mirrored.
-  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
-    value: 0.995
-    status: derived
-    site: src/pipeline_exits.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
-    base_value: 0.995
-    note: >-
-      Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
   - id: src.exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
@@ -8236,32 +8217,6 @@ numbers:
       (src/pipeline_intraday.py::IntradayMixin._intraday_open_overlap_skip). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml@`dry_run: true # explicit (was relying on the schema default)` deploys
       evolution enabled with dry_run true (stage-only).
-  - id: src.stage_execution.ExecutionStage._run_session:factor[0]
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: the quoted bid-ask spread and top-of-book depth for the universe the desk could trade,
-        on public daily bars at the time of day the desk sends exits, so the fifty-basis-point give-up
-        on a marketable sell limit becomes a multiple of a measured spread rather than a round number
-      closes_when: the spread and depth distribution is in hand and the pad is restated as a stated
-        multiple of the measured spread for the name being sold; it is DELETED, and the exit leg becomes
-        a plain marketable order, if the measured spread never approaches the pad and the pad therefore
-        never binds a fill
-    value: 0.995
-    status: arbitrary
-    site: src/stage_execution.py
-    note: >-
-      Board item 138, the 0.5% offset: an ordinary decision-path SELL is
-      limited at price x 0.995 (src/stage_execution.py::ExecutionStage._run_session). The midday
-      and cover sites mirror it.
-    open_question: >-
-      What limit distance fills an ordinary exit on this desk's names without
-      paying more than the spread, measured from its own exit fills against
-      the reference price?
-    cost_while_unanswered: >-
-      Every ordinary exit concedes up to 0.5%; if too tight on a fast tape the
-      exit does not fill and the position is held against the decision.
   - id: src.rotation_parts.types.ROTATION_REASON_MAX_CHARS
     value: 500
     status: not-trade-governing
@@ -8278,11 +8233,11 @@ numbers:
     value: 1.005
     status: derived
     site: src/rotation_projection.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
+    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
     base_value: 0.995
     note: >-
-      Board item 39, attempt 3. The same mirrored 0.5% exit offset as the
-      projection above, applied to the CASH an exit leaves behind rather
+      Board item 39, attempt 3. The same 0.5% exit offset as the
+      projection's own root, applied to the CASH an exit leaves behind rather
       than to the equity: a COVER buys the borrowed shares back at
       price x 1.005 and spends that cash. Read from the loop it mirrors;
       not a second number.
@@ -8290,7 +8245,7 @@ numbers:
     value: 0.995
     status: derived
     site: src/rotation_projection.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
+    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The SELL side of the same mirrored offset:
@@ -8300,7 +8255,7 @@ numbers:
     value: 1.005
     status: derived
     site: src/rotation_projection.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
+    derived_from: src.rotation_projection._projected_post_sale_book:factor[1]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The COVER mirror of the SELL offset below,
@@ -8310,28 +8265,36 @@ numbers:
       text and the 0.995 row the COVER text - from the day they were filed
       until 2026-09-23.
   - id: src.rotation_projection._projected_post_sale_book:factor[1]
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the quoted bid-ask spread and top-of-book depth for the universe the desk could trade,
+        on public daily bars at the time of day the desk sends exits, so the fifty-basis-point give-up
+        on a marketable sell limit becomes a multiple of a measured spread rather than a round number
+      closes_when: the spread and depth distribution is in hand and the pad is restated as a stated
+        multiple of the measured spread for the name being sold; it is DELETED, and the exit leg becomes
+        a plain marketable order, if the measured spread never approaches the pad and the pad therefore
+        never binds a fill
     value: 0.995
-    status: derived
+    status: arbitrary
     site: src/rotation_projection.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
-    base_value: 0.995
     note: >-
-      Board item 39, attempt 3. The rotation sequencing gate projects the
-      equity the account will hold once this session's exits have gone
-      through, and an exit fills at the SELL loop's own limit rather than
-      at the mark. This is that same 0.5% offset, read from the loop it
-      mirrors - not a second number. If the two ever differ, the projection
-      is describing a fill that never happens.
-  - id: src.stage_execution.ExecutionStage._run_session:factor[1]
-    value: 1.005
-    status: derived
-    site: src/stage_execution.py
-    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
-    base_value: 0.995
-    note: >-
-      Board item 138: the COVER mirror of the 0.5% SELL offset
-      (src/stage_execution.py::ExecutionStage._run_session), 1.005 = 2 - 0.995. One number,
-      mirrored.
+      Board item 39, attempt 3; re-rooted 2026-10-09. The rotation sequencing
+      gate projects the equity the account will hold once this session's exits
+      have gone through, crediting each sale price x 0.995. It mirrored the
+      decision-path SELL limit, which no longer exists: every ordinary exit is
+      now a plain DAY MARKET order (src/execution/exit_pricing.py, after the
+      2026-10-09 open left NET, AAPL and VLO exits unfilled). The 0.5% is now
+      this projection's own number, and it describes a fill price the desk no
+      longer places.
+    open_question: >-
+      How far below the mark does a must-fill exit on this desk's names
+      actually fill, measured from its own exit fills against the mark?
+    cost_while_unanswered: >-
+      The rotation gate credits each exit 0.5% below the mark, while the exit
+      itself is now a market order; on a wide spread the gate
+      overstates the cash a rotation leaves, on a tight one it understates it.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25
     status: derived

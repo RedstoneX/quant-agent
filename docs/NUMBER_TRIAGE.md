@@ -153,7 +153,7 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 
 - `execution.cash_sweep._SELL_LIMIT_PAD` = 0.999
 - `execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT` = 0.03
-- `stage_execution.ExecutionStage._run_session:factor[0]` = 0.995
+- `rotation_projection._projected_post_sale_book:factor[1]` = 0.995 (RESOLVED 2026-10-09 for the exits themselves: every ordinary SELL/COVER is now a plain DAY MARKET order, its live bid/ask recorded at submit; this pad survives only in the rotation gate's projection, which no longer matches the fill)
 
 **Tier 2 gates entries/exits or shapes stops after entry.** Minimum ratchet step: should be tick-relative. (The short-side gap multiple that sat here was DELETED 2026-10-04 by owner ruling — a short runs the same math as a long.)
 - `risk.trailing.MIN_RATCHET_TICKS` = 1 (RESOLVED 2026-10-02: the 2% floor is retired; the minimum ratchet step is now one venue tick, read off the instrument)

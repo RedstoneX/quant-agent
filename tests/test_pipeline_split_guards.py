@@ -166,7 +166,8 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
         and len(ledger_ids_for_module("src.rotation_projection", ledger)) == 4
     )  # moved verbatim to its part 2026-10-08
     assert len(ledger_ids_for_module("src.pipeline_entry_orders", ledger)) == 0
-    assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
+    # Both exit pads deleted 2026-10-09: ordinary exits are market orders.
+    assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 0
     assert len(ledger_ids_for_module("src.pipeline_sizing", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_earnings_quality", ledger)) == 11
 
