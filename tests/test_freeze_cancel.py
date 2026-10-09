@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace as NS
 
+import pytest
+
 from src.execution import freeze_cancel as fc
 
 
@@ -157,14 +159,15 @@ def test_sweep_runs_only_when_frozen_or_unknown(monkeypatch):
     assert fc.sweep_if_frozen(broker, "db").cancelled == ["e1"]
 
 
-def test_scheduler_session_start_cancels_resting_entry_when_frozen(tmp_path):
-    """The seam: a scheduled session start with Freeze on cancels a resting buy entry."""
+@pytest.mark.parametrize("session", ["run_morning", "run_position_review", "run_evening", "run_earnings_preprocess"])
+def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monkeypatch, session):
+    """The seam: every pipeline session start with Freeze on cancels a resting buy entry first."""
     import sqlite3
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     from src.execution.broker import AlpacaBroker
     from src.owner_flags import PAUSE
-    from src.scheduler import TradingScheduler
+    from src import pipeline as pl
     from src.storage.schema.owner_intent_tables import apply
 
     db = str(tmp_path / "desk.db")
@@ -181,12 +184,20 @@ def test_scheduler_session_start_cancels_resting_entry_when_frozen(tmp_path):
     )
     broker.is_trading_day = lambda: True
     broker.sweep_frozen_resting_orders = lambda db_path: AlpacaBroker.sweep_frozen_resting_orders(broker, db_path)
-    pipeline = MagicMock(broker=broker)
-    pipeline.run_morning.return_value = {"status": "executed"}
-    with patch("src.scheduler.TradingPipeline", return_value=pipeline):
-        sched = TradingScheduler(MagicMock(storage=MagicMock(db_path=db)))
-    sched.notifier = MagicMock()
-    sched._run_safe(pipeline.run_morning, "morning")
+    for helper, fn in (
+        (pl._morning_helpers, "run_morning"),
+        (pl._review, "run_position_review"),
+        (pl._review, "run_earnings_preprocess"),
+        (pl._evening, "run_evening"),
+    ):
+        monkeypatch.setattr(
+            helper, fn, lambda *a, **k: {"status": "executed", "cancelled_at_start": list(broker.cancelled)}
+        )
+    pipe = pl.TradingPipeline.__new__(pl.TradingPipeline)
+    pipe.broker = broker
+    pipe.config = MagicMock(storage=MagicMock(db_path=db))
+
+    result = getattr(pipe, session)()
 
     assert broker.cancelled == ["entry"]
-    pipeline.run_morning.assert_called_once()
+    assert result["cancelled_at_start"] == ["entry"]  # swept BEFORE the session body ran

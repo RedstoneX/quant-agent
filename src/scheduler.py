@@ -167,16 +167,6 @@ class TradingScheduler:
                 intake(getattr(getattr(self.config, "storage", None), "db_path", None))
             except Exception as exc:  # noqa: BLE001 - a failed pickup never stops a session
                 logger.error("[%s] owner intent pickup failed: %s", name, exc)
-            try:
-                # FREEZE step 2: the door only sees NEW orders; cancel any
-                # already-resting entry the freeze observed here would let fill.
-                # Reached through the broker (the seam the scheduler already holds).
-                # Every cancel / shrink / fault is a per-symbol reconciliation row.
-                self.pipeline.broker.sweep_frozen_resting_orders(
-                    getattr(getattr(self.config, "storage", None), "db_path", None)
-                )
-            except Exception as exc:  # noqa: BLE001 - a failed sweep never stops a session
-                logger.error("[%s] freeze resting-order sweep failed: %s", name, exc)
             result = func()
             logger.info("[%s] Completed: %s", name, result.get("status", "unknown"))
         except Exception as exc:
