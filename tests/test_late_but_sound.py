@@ -33,6 +33,13 @@ from src.pipeline_stages import (
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 
 
+@pytest.fixture
+def limit_entries(monkeypatch):
+    """Entries default to plain market orders (owner ruling 2026-10-09); this
+    test exercises the marketable-limit path behind `execution.entry_order_type`."""
+    monkeypatch.setattr("src.stage_execution_parts.entry_order_pricing.entry_orders_are_market", lambda _p: False)
+
+
 def _rc() -> ReasoningChain:
     return ReasoningChain(
         macro_filter="m",
@@ -212,7 +219,7 @@ def _buy_ctx(entry=100.0):
     return ctx
 
 
-def test_a_displayed_ask_through_the_ceiling_no_longer_refuses_the_entry():
+def test_a_displayed_ask_through_the_ceiling_no_longer_refuses_the_entry(limit_entries):
     """Board item 183, 2026-09-30. A 1000bp IEX ask against a 40bp ceiling
     used to refuse this BUY outright. It no longer does: the order goes at
     the ceiling, which it cannot fill through, and the far-through quote is
@@ -269,7 +276,7 @@ def test_overrun_refuses_inside_ceiling_as_latency_window(monkeypatch):
     assert ctx.catch_up_used.get("AAPL") is not True
 
 
-def test_catch_up_is_safety_net_after_stall_when_original_would_miss():
+def test_catch_up_is_safety_net_after_stall_when_original_would_miss(limit_entries):
     pipeline = _buy_pipeline(ask=100.2, live=100.0, stall=True)
     ctx = _buy_ctx()
     ExecutionStage(pipeline=pipeline).run(ctx)

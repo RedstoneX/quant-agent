@@ -420,6 +420,7 @@ def test_pipeline_morning_run_buy(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_latest_quote.return_value = {"bid_price": 507.0, "ask_price": 507.0}
     mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
@@ -581,6 +582,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_latest_quote.return_value = {"bid_price": 507.0, "ask_price": 507.0}
     mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
@@ -781,6 +783,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
+    mock_broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(100.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
@@ -944,6 +947,7 @@ def test_pipeline_risk_rejected(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
+    mock_broker.get_latest_quote.return_value = {"bid_price": 507.0, "ask_price": 507.0}
     mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
@@ -1364,6 +1368,7 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline.broker.submit_order.return_value = {
         "id": "sell-full",
         "status": "accepted",
@@ -2915,6 +2920,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_broker = MagicMock()
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 100.0
+    mock_broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     mock_broker.get_intraday_snapshots.return_value = {"QQQ": _today_snapshot(100.0)}
     # 3 account snapshots: (1) initial pre-research, (2) board item 178's
     # ExecutionStage pre-SELL/COVER refresh (nothing has traded yet, so the
@@ -3007,7 +3013,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     # 15% of $10k / $100 = qty_by_alloc = 15 is the constraint instead.
     assert buy_kw["qty"] == 15
     assert buy_kw["side"] == "buy"
-    assert buy_kw["limit_price"] == 100.0
+    assert buy_kw["limit_price"] is None  # a plain market order (2026-10-09)
     assert buy_kw["stop_loss_price"] == 95.0
     assert buy_kw.get("reference_price") is not None
 
@@ -4141,6 +4147,7 @@ def test_reconcile_stop_coverage_repairs_undercovered_short():
         [{"id": "s1", "qty": 25.0}],  # only 25 of 40 covered
     )
     pipe.broker.get_latest_price.return_value = 200.0
+    pipe.broker.get_latest_quote.return_value = {"bid_price": 200.0, "ask_price": 200.0}
     pipe.broker.STOP_LIMIT_BUFFER_PCT = 0.03
     pipe.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
 

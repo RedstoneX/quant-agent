@@ -10,7 +10,10 @@ patch target keeps working.
 from __future__ import annotations
 
 from src.sentinel.guarded import record_guarded_pass
+from src.exit_quote import read_exit_quote
 from src.sizing_refusal import sizing_price_or_refusal
+from src.stage_execution_parts.entry_order_pricing import no_price_detail, quote_side_paid
+from src.stage_execution_parts.entry_order_type import entry_orders_are_market
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     _IN_FLIGHT_FILL_STATUSES,
     _entry_deployment_budget,
@@ -734,6 +737,22 @@ def _rotation_buy_leg_projected_refusal(
     # already-approved entry — never off the fill-reference mid.
     sizing_price = max(sizing_print, entry_price or 0.0)
     is_short = getattr(buy_decision, "action", "BUY") == "SHORT"
+    # The same divisor the submit loop uses (src/stage_execution_parts/
+    # entry_order_pricing.py): a market entry's risk budget divides by the
+    # quote side it pays — ask for a BUY, bid for a SHORT — and a missing
+    # side refuses the leg, never falls back to the print. The rotation
+    # projection sized off the print before (it never received the
+    # 2026-10-04 divisor fix), so it cleared buys the submit loop then sized
+    # smaller or refused.
+    risk_sizing_price = sizing_price
+    if entry_orders_are_market(pipeline):
+        quote = read_exit_quote(pipeline.broker, symbol)
+        paid = quote_side_paid(is_short, quote["bid"], quote["ask"])
+        if paid is None:
+            return None, "no_price", no_price_detail("replacement " + ("SHORT" if is_short else "BUY"), is_short)
+        risk_sizing_price = paid
+        if not is_short:
+            sizing_price = max(sizing_price, paid)
     fractional = _fractional_sizing_allowed(
         pipeline,
         symbol,
@@ -755,7 +774,7 @@ def _rotation_buy_leg_projected_refusal(
     risk_qty = _qty_by_risk_budget(
         pipeline,
         total_value=float(equity_for_weights),
-        sizing_price=sizing_price,
+        sizing_price=risk_sizing_price,
         stop_price=getattr(buy_decision, "stop_loss", 0.0),
         is_short=is_short,
         fractional=fractional,
@@ -767,7 +786,7 @@ def _rotation_buy_leg_projected_refusal(
             None,
             "qty_zero",
             (
-                f"risk budget at ${sizing_price:.2f} entry / "
+                f"risk budget at ${risk_sizing_price:.2f} entry / "
                 f"${getattr(buy_decision, 'stop_loss', 0.0)} stop rounds to zero "
                 f"shares"
             ),

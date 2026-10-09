@@ -729,6 +729,7 @@ def test_hold_and_sell_decisions_carry_no_entry_only_fields():
 def _exec_pipeline() -> MagicMock:
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline.broker.submit_order.return_value = {
         "id": "order-1",
         "status": "accepted",

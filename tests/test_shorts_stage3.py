@@ -253,6 +253,7 @@ def test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entr
 
     pipeline = _exec_pipeline()
     pipeline.broker.get_latest_price.return_value = 250.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 250.0, "ask_price": 250.0}
     pipeline.broker.submit_order.return_value = {
         "id": "short-order-1",
         "status": "accepted",
@@ -871,6 +872,7 @@ def _borrow_gated_ctx_and_pipeline(borrow_result_or_exc):
 
     pipeline = _exec_pipeline()
     pipeline.broker.get_latest_price.return_value = 250.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 250.0, "ask_price": 250.0}
     if isinstance(borrow_result_or_exc, Exception):
         pipeline.broker.get_shortability.side_effect = borrow_result_or_exc
     else:
@@ -929,6 +931,7 @@ def test_protective_stop_failure_on_a_short_triggers_immediate_market_cover():
 
     pipeline = _exec_pipeline()
     pipeline.broker.get_latest_price.return_value = 250.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 250.0, "ask_price": 250.0}
     entry_order = {
         "id": "short-order-1",
         "status": "accepted",
@@ -1347,6 +1350,7 @@ def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
         "symbol": symbol,
     }
     pipeline.broker.get_latest_price.return_value = current_price
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": current_price, "ask_price": current_price}
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "filled",

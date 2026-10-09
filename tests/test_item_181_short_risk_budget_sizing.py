@@ -140,7 +140,8 @@ def test_short_risk_budget_sizes_off_the_print_not_a_stale_higher_entry(monkeypa
     # against the submitted limit is what makes the realised fill-to-stop
     # risk equal the risk the share count was computed from — see
     # tests/test_risk_sized_against_submitted_limit.py.
-    assert captured["sizing_price"] == captured["limit_price"]
+    assert captured["limit_price"] is None  # a plain market order (2026-10-09)
+    assert captured["sizing_price"] == 99.0  # the live bid the short sells at
     assert captured["sizing_price"] < 100.0  # never the 104 analyst entry
     assert captured["stop_price"] == 120.0
     risk_per_share = abs(captured["sizing_price"] - captured["stop_price"])
@@ -164,8 +165,8 @@ def test_short_risk_budget_unaffected_when_entry_is_at_or_below_the_print(monkey
     captured = _run_exec(pipeline, short, monkeypatch)
     # Now anchored to the submitted marketable floor (itself computed off
     # the print), so the entry still cannot reach the divisor.
-    assert captured["sizing_price"] == captured["limit_price"]
-    assert captured["sizing_price"] < 100.0
+    assert captured["limit_price"] is None
+    assert captured["sizing_price"] == 99.0  # the live bid
 
 
 def test_buy_risk_budget_still_sizes_off_the_max_conservative_divisor(monkeypatch):
@@ -188,5 +189,6 @@ def test_buy_risk_budget_still_sizes_off_the_max_conservative_divisor(monkeypatc
     # this order can actually fill at. `max(print, entry)` was a price the
     # order could never pay, so it was never the right divisor; the ceiling
     # is, and both directions use the same rule.
-    assert captured["sizing_price"] == captured["limit_price"]
+    assert captured["limit_price"] is None
+    assert captured["sizing_price"] == 101.0  # the live ask the buy pays
     assert captured["sizing_price"] > 100.0  # above the print, as a buy must be

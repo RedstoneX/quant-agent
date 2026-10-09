@@ -267,26 +267,30 @@ def _assert_rotation(result: dict, trading, attempts: list) -> None:
     )
     assert [o.symbol for o in buys] == [NEW], plain
     buy = buys[0]
-    assert buy.status == "filled" and buy.limit_price, buy.as_plain()
+    assert buy.status == "filled", buy.as_plain()
+    # A plain DAY market order (owner ruling 2026-10-09), sized against the
+    # ask the rehearsal broker quotes: the snapshot price, zero spread.
+    assert str(buy.order_type).lower() == "market" and buy.limit_price is None, buy.as_plain()
+    buy_price = LAST_CLOSE
     assert trading.submitted.index(sells[0]) < trading.submitted.index(buy), (
         f"the sale must come first; its proceeds fund the buy: {plain}"
     )
 
     proceeds = HELD_QTY * LAST_CLOSE
-    cost = float(buy.qty) * buy.limit_price
+    cost = float(buy.qty) * buy_price
     assert cost > CASH, f"buy {cost} was affordable without the sale: {plain}"
     assert cost <= CASH + proceeds, f"buy {cost} exceeds cash + proceeds"
     total = CASH + proceeds
-    expected = math.floor(total * TARGET_WEIGHT_PCT / 100.0 / buy.limit_price)
+    expected = math.floor(total * TARGET_WEIGHT_PCT / 100.0 / buy_price)
     assert float(buy.qty) == float(expected), (
-        f"{TARGET_WEIGHT_PCT}% of {total:,.2f} at {buy.limit_price} -> {expected} whole shares; desk bought {buy.qty}"
+        f"{TARGET_WEIGHT_PCT}% of {total:,.2f} at {buy_price} -> {expected} whole shares; desk bought {buy.qty}"
     )
 
     assert [o.symbol for o in stops] == [NEW], f"exactly one stop, against the new name: {plain}"
     stop = stops[0]
     assert stop.side == "sell" and float(stop.qty) == float(buy.qty), stop.as_plain()
     assert str(stop.time_in_force).lower() == "gtc", stop.as_plain()
-    assert 0 < stop.stop_price < buy.limit_price, stop.as_plain()
+    assert 0 < stop.stop_price < buy_price, stop.as_plain()
     assert trading.submitted.index(stop) > trading.submitted.index(buy), plain
     resting = [
         o
