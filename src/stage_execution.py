@@ -310,7 +310,7 @@ class ExecutionStage:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
             if prot is None:
                 continue
-            await_sell_and_finalize(pipeline, prot, sell_status_by_id)
+            await_sell_and_finalize(pipeline, prot, sell_status_by_id, ctx)
 
         # Stage 3 (shorts): COVER loop — the exit-side twin of the SELL loop
         # just above. Reuses `_submit_protected_sell`'s side="buy" plumbing

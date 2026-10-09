@@ -720,6 +720,9 @@ def test_owner_alert_fires_with_the_sale_and_the_measured_reason(monkeypatch):
         qty=10.0,
         limit_price=94.53,
         order_id="brk-42",
+        terminal_status="filled",
+        filled_qty=10.0,
+        avg_price=94.6,
     )
     ((text, symbols),) = sent
     assert text.startswith("POSITION CLOSED AUTOMATICALLY")

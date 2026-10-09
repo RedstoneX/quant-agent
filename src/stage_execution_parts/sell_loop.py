@@ -20,7 +20,7 @@ from src.pipeline_stages import (
 from src.stage_execution_parts.state import SKIP
 
 
-def await_sell_and_finalize(pipeline, prot, sell_status_by_id) -> None:
+def await_sell_and_finalize(pipeline, prot, sell_status_by_id, ctx=None) -> None:
     """Wait for this sell's order, then rebuild this name's stop coverage."""
     # Wait for THIS sell and rebuild THIS name's stop coverage on its
     # actual fill before the loop cancels the next name's stops —
@@ -66,6 +66,8 @@ def await_sell_and_finalize(pipeline, prot, sell_status_by_id) -> None:
         context="ExecutionStage",
         wait=False,
     )
+    if ctx is not None:
+        alert_rotation_close_outcome(pipeline, ctx, prot, status)
 
 
 def record_rotation_close(pipeline, ctx, leg, order) -> None:
@@ -77,14 +79,15 @@ def record_rotation_close(pipeline, ctx, leg, order) -> None:
         leg.rotation_final_reason,
     )
     # Phase 14b — this SELL is the desk's own rotation close.
-    # Record it durably and page the owner NOW: broker
-    # acceptance is the irreversible act, and a position sold
-    # without a human or a model deciding to must never be
-    # silent (see `_alert_rotation_executed`).
+    # Record the submit durably NOW; the owner is paged at the
+    # sale's terminal state (`alert_rotation_close_outcome`), so a
+    # position sold automatically is never silent and an unfilled
+    # one is never reported as closed.
     rotation = ctx.rotation
     if isinstance(rotation, dict) and decision.symbol.upper() == rotation.get("held_symbol"):
         rotation["sell_order_id"] = order.get("id")
         rotation["sell_qty"] = float(qty)
+        rotation["sell_limit"] = float(sell_limit)
         if isinstance(rotation_final_reason, str):
             # A SECOND durable fact, not an edit of the first.
             # The proposal the Risk Manager reviewed and the
@@ -116,12 +119,47 @@ def record_rotation_close(pipeline, ctx, leg, order) -> None:
             limit_price=sell_limit,
             new_symbol=rotation.get("new_symbol"),
         )
+        # The owner alert is NOT sent here: broker acceptance sells
+        # nothing. `await_sell_and_finalize` pages the owner once the
+        # order is terminal, worded from what actually filled.
+
+
+def alert_rotation_close_outcome(pipeline, ctx, prot, status) -> None:
+    """Page the owner the TRUE outcome of the desk's own rotation close.
+
+    Runs after the wait and the finalize, so the fill quantity and the
+    restore result are final. Silent for any sell that is not this
+    session's rotation close; sent at most once. Never raises.
+    """
+    try:
+        rotation = getattr(ctx, "rotation", None)
+        order_id = prot.get("order_id")
+        if not isinstance(rotation, dict) or not order_id:
+            return
+        if rotation.get("sell_order_id") != order_id or rotation.get("sell_alert_sent"):
+            return
+        rotation["sell_alert_sent"] = True
+        filled_qty = avg_price = None
+        try:
+            info = pipeline.broker.get_order_fill_info(order_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("rotation alert: fill read failed for %s: %s", order_id, exc)
+            info = None
+        if isinstance(info, dict) and info.get("filled_qty") is not None:
+            filled_qty = float(info["filled_qty"])
+            avg_price = float(info.get("filled_avg_price") or 0.0) or None
         _alert_rotation_executed(
             rotation=rotation,
-            qty=float(qty),
-            limit_price=float(sell_limit),
-            order_id=order.get("id"),
+            qty=float(rotation.get("sell_qty") or 0.0),
+            limit_price=float(rotation.get("sell_limit") or 0.0),
+            order_id=order_id,
+            terminal_status=status,
+            filled_qty=filled_qty,
+            avg_price=avg_price,
+            stops_restored=prot.get("coverage_confirmed"),
         )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("rotation close outcome alert failed: %s", exc)
 
 
 def sell_qty_and_label(pipeline, decision, existing):
