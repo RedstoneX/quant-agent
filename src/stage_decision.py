@@ -352,6 +352,8 @@ class DecisionStage:
         pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
         _pm_blocked = getattr(pipeline.portfolio_manager, "last_blocked", None)
         pm_blocked = dict(_pm_blocked) if isinstance(_pm_blocked, dict) else {}
+        _pm_ranked = getattr(pipeline.portfolio_manager, "last_candidate_ranking", None)
+        pm_ranked = list(_pm_ranked) if isinstance(_pm_ranked, list) else []
         # Board item 78: same "read NOW" reason — the accounting re-ask
         # resets the heal record too. One durable row per name, whether the
         # heal worked or not.
@@ -446,6 +448,7 @@ class DecisionStage:
             )
 
         _journal_refused_candidates(pipeline, ctx, pm_blocked)
+        _journal_ranked_candidates(pipeline, ctx, pm_ranked)
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -860,4 +863,35 @@ def _journal_refused_candidates(pipeline, ctx, blocked: dict) -> None:
             "portfolio_manager",
             "candidate_refused",
             reason,
+        )
+
+
+def _journal_ranked_candidates(pipeline, ctx, ranked: list) -> None:
+    """One durable `candidate_ranked` event per ranked survivor, with its score.
+
+    Recording only: stores the composite score, its components and each
+    seat's conviction/magnitude so session-to-session score noise can be
+    measured. Rank is 1-based position in the PM's own order.
+    """
+    for rank, cand in enumerate(ranked, start=1):
+        seats = {
+            str(v.seat): {
+                "conviction": getattr(v, "conviction", None),
+                "magnitude": getattr(v, "magnitude", None),
+            }
+            for v in (getattr(cand, "verdicts", None) or [])
+        }
+        _record_pipeline_event(
+            pipeline,
+            ctx,
+            cand.symbol,
+            "portfolio_manager",
+            "candidate_ranked",
+            "",
+            rank=rank,
+            ranked_count=len(ranked),
+            direction=cand.direction,
+            score=cand.score,
+            components=dict(cand.components),
+            seats=seats,
         )
