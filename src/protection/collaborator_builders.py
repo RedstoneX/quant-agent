@@ -47,6 +47,7 @@ def _build_sell_finalization(host):
         persist_orphaned_protection_restore=_collab_of(host, "_persist_orphaned_protection_restore"),
         reprotect_residual_after_partial_sell=_collab_of(host, "_reprotect_residual_after_partial_sell"),
         derive_close_side_for_drain=_collab_of(host, "_derive_close_side_for_drain"),
+        trim_book=getattr(type(host), "_TRIM_BOOK", None),
     )
 
 

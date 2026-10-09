@@ -43,8 +43,10 @@ class SellFinalization:
         persist_orphaned_protection_restore,
         reprotect_residual_after_partial_sell,
         derive_close_side_for_drain,
+        trim_book=None,
     ) -> None:
         self.broker = broker
+        self._trim_book = trim_book  # the broker CLASS (host-injected): src.protection imports no src.execution
         self.db = db
         self._TERMINAL_ORDER_STATUSES = terminal_order_statuses
         self._finalize_protection_after_sell = finalize_protection_after_sell
@@ -149,6 +151,14 @@ class SellFinalization:
                 self._register_exit_settlement(prot)
             finalize_side = prot.get("side")
             side_kwargs = {} if not finalize_side or finalize_side == "sell" else {"side": finalize_side}
+            if prot.get("kept_leg"):
+                # A trim whose stop was shrunk in place: the whole-share leg
+                # is live, so restoring the cancelled specs over it would be
+                # refused. The quantity invariant settles the book instead.
+                from src.protection.trim_amend import finalize_trim_amend
+
+                prot["coverage_confirmed"] = finalize_trim_amend(self, prot)
+                continue
             ok, _retry_specs = self._finalize_protection_after_sell(
                 prot["order_id"],
                 prot["symbol"],

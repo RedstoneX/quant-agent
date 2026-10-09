@@ -199,6 +199,7 @@ def _build_protected_sell(host):
         write_ahead_protection_restore=_collab_of(host, "_write_ahead_protection_restore"),
         cancel_stops_with_write_ahead=_collab_of(host, "_cancel_stops_with_write_ahead"),
         state=_HostState(host),
+        trim_book=AlpacaBroker,  # this module may import the broker seam; src.protection may not
     )
 
 
@@ -257,6 +258,11 @@ def _build_reprotect_residual(host):
 
 class ProtectionMixin:
     """See the module docstring. Methods are the moved text, byte-for-byte."""
+
+    # The broker-side trim methods (src/execution/broker_parts/trim_book.py),
+    # injected into ProtectedSell / SellFinalization so src.protection never
+    # imports src.execution; called unbound on whatever broker the host holds.
+    _TRIM_BOOK = AlpacaBroker
 
     # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
     # class attribute so tests can introspect the exact set the

@@ -68,12 +68,15 @@ def test_full_exit_sell_cancels_same_symbol_entry_orders():
 def test_partial_trim_keeps_its_entry_orders():
     p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
+    p.broker.snapshot_protective_stops.return_value = (True, [])
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
 
     p._submit_protected_sell(
         symbol="VST", qty=10, limit_price=150.0, reference_price=151.0, position_qty_before_sell=31, label="REDUCE"
     )
     p.broker.cancel_open_entry_orders.assert_not_called()
+    # A trim keeps shares, so it never takes the cancel-all route either.
+    p._cancel_stops_with_write_ahead.assert_not_called()
 
 
 def _park_pipeline():

@@ -116,6 +116,7 @@ from src.execution.broker_parts.stop_order_snapshot import snapshot_stop_order
 from src.execution.broker_parts import entry_protection as _entry_protection
 from src.execution.broker_parts.entry_protection import _ENTRY_SIDES  # noqa: F401 (re-export keeps the name importable)
 from src.execution.broker_parts import stop_cancel as _stop_cancel
+from src.execution.broker_parts import trim_book as _trim_book
 
 logger = logging.getLogger(__name__)
 
@@ -555,6 +556,24 @@ class AlpacaBroker:
 
         Thin shim: body moved to src/execution/broker_parts/stop_cancel.py."""
         return _stop_cancel.snapshot_protective_stops(self, symbol, side=side)
+
+    def trim_keeps_shares(self, label: str, position_qty_before_sell: float, qty: float) -> bool:
+        """True when `label` is a trim AND shares remain. Body in broker_parts/trim_book.py."""
+        return _trim_book.trim_keeps_shares(label, position_qty_before_sell, qty)
+
+    def clear_stops_for_trim(
+        self, symbol: str, held: float, sell_qty: float, *, side: str = "sell", cancel_specs_with_write_ahead, state
+    ) -> tuple[bool, list[dict], int | None, dict | None]:
+        """Shrink the resting stops in place for ONE trim (src.protection reaches it here).
+
+        Thin shim: body in src/execution/broker_parts/trim_book.py."""
+        return _trim_book.TrimAmend(
+            broker=self, cancel_specs_with_write_ahead=cancel_specs_with_write_ahead, state=state
+        ).clear_for_trim(symbol, held, sell_qty, side=side)
+
+    def settle_trim_book(self, symbol: str, side: str = "sell") -> str:
+        """Settle both stop legs after a trim. Thin shim: body in broker_parts/trim_book.py."""
+        return _trim_book.settle_book(self, symbol, side)
 
     def cancel_snapshotted_stops(
         self,
