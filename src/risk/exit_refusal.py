@@ -18,9 +18,11 @@ is what made the pair look incoherent.
 that the reason did not name a recognised trigger is a refusal by this
 owner. So are the fact gates that already run on this loop (noise band,
 metric-contradiction veto, proven-false holding-discipline claim). AI
-Risk is a challenge seat: it may *add* a refusal when it returns a
-parseable reject. It cannot refuse by being silent, and its approval
-cannot override a deterministic drop.
+Risk is an ADVISORY challenge seat: since the 2026-09-19 decision
+(shipped 2026-10-09) a parseable reject no longer drops an exit; it is
+recorded per stock as `CODE_AI_RISK_OBJECTION` (`dropped=False`) and the
+sell proceeds. It cannot refuse by being silent, and its approval cannot
+override a deterministic drop.
 
 **Fail direction on uncertainty: OPEN, for both layers.** Uncertainty
 means the layer could not produce a judgment — the Risk Manager raised,
@@ -59,8 +61,8 @@ logger = logging.getLogger(__name__)
 #: trading pipeline never reads these rows.
 EXIT_REFUSAL_KIND = "exit_refusal"
 
-#: The layer whose completed "no" is binding. AI Risk may add a refusal;
-#: it is not this owner.
+#: The layer whose completed "no" is binding. AI Risk may only object
+#: (advisory, never a drop); it is not this owner.
 REFUSAL_OWNER = "deterministic"
 
 #: Shared uncertainty posture for both layers of the item-60 pair.
@@ -70,6 +72,9 @@ TriggerJudgment = Literal["named", "unnamed", "uncertain"]
 
 # Completed refusals (dropped=True).
 CODE_UNRECOGNIZED_TRIGGER = "unrecognized_trigger"
+# Historical only: rows written before the 2026-09-19 decision (shipped
+# 2026-10-09) when an AI Risk reject still dropped the exit. Nothing writes
+# it now; kept so readers can still name those rows.
 CODE_AI_RISK_REJECT = "ai_risk_reject"
 CODE_NOISE_BAND = "inside_atr_noise_band"
 CODE_CONTRADICTS_METRICS = "contradicts_own_metrics"
@@ -83,6 +88,14 @@ CODE_AI_RISK_UNAVAILABLE = "ai_risk_unavailable"
 # item 164, 2026-09-19). Until then an approved exit reached `agent_logs`
 # only, so this per-symbol record held every outcome except the commonest.
 CODE_AI_RISK_APPROVED = "ai_risk_approved"
+
+# A completed OBJECTION by the challenge seat that did NOT stop the sell
+# (dropped=False). Decided 2026-09-19, adversary-approved again 2026-10-09:
+# the seat may not block an exit. Whole-book or per-name, its reject is
+# recorded here per stock with its reason and the exit proceeds to the
+# deterministic fact gates. Distinct from `CODE_AI_RISK_REJECT` so a reader
+# can tell an objection that did not stop the sell from a refusal that did.
+CODE_AI_RISK_OBJECTION = "ai_risk_objection_advisory"
 
 # A completed ADJUSTMENT, not a refusal and not a drop (board item 185,
 # 2026-09-30). The midday TRAIL_STOP path used to REFUSE a proposed stop
