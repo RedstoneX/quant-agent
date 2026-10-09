@@ -81,9 +81,11 @@ class UniverseScreenConfig(BaseModel):
 
     The spread and volatility thresholds have no field here on purpose: they
     are DERIVED at run time from `execution.max_entry_slippage_bps` and
-    `risk.min_stop_atr_multiple` (see the module docstring), and the cap on
-    screened names per session is `nominations.max_per_seat_per_run` — the
-    screen is one more source of candidates, capped like one seat.
+    `risk.min_stop_atr_multiple` (see the module docstring). The cap on
+    screened names per session is the screen's OWN affordability limit,
+    computed at run time (`universe_screen.affordable_names_per_session`):
+    floor((`llm_cost_circuit.session_cost_limit_usd` - the measured base
+    morning-session cost) / the measured cost per researched name).
     """
 
     enabled: bool = False
@@ -105,11 +107,26 @@ class UniverseScreenConfig(BaseModel):
     # scripts/systemd/quant-agent-evening.service, and the evening body
     # measured 173 s on 2026-09-19 (journal, 00:00:10 -> 00:03:03 UTC).
     # 173 + 900 = 1,073 <= 1,260, leaving 187 s — more than the whole
-    # measured body again. A pass that does not finish loses nothing: the
-    # next evening resumes with whoever is still due.
+    # measured body again. Re-measured 2026-10-09 before the screen was
+    # turned on: the last 10 evenings (2026-09-17 .. 2026-10-01, journal
+    # first-to-last line per invocation) ran 82..178 s, max 178 s;
+    # 178 + 900 = 1,078 <= 1,260, leaving 182 s, still more than the whole
+    # measured body again, so 900 stands. A pass that does not finish
+    # loses nothing: the next evening resumes with whoever is still due.
     screen_deadline_s: float = Field(default=900.0, ge=10, le=1080)
     # Symbols per daily-bar download request (yfinance multi-ticker).
     bars_batch_size: int = Field(default=50, ge=1, le=200)
+    # The two measured costs behind the screen's per-session name bound.
+    # MEASURED 2026-10-09, production DB read-only (llm_budget_sessions
+    # joined to agent_logs' portfolio_manager row, whose input summary
+    # names the analyses it read): the 23 complete, exactly-costed morning
+    # sessions 2026-08-25 .. 2026-10-09. Median session cost $0.2619; median
+    # session cost per name analysed $0.005025 (the regression slope of
+    # session cost on names analysed is $0.0041, so the median — which also
+    # spreads the fixed calls over the names — overstates the marginal
+    # cost and understates the bound, the safe side).
+    measured_base_session_cost_usd: float = Field(default=0.2619, gt=0)
+    measured_cost_per_name_usd: float = Field(default=0.005025, gt=0)
 
 
 class NewsConfig(BaseModel):

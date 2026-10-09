@@ -19,13 +19,9 @@ THE CRITERIA, and where each threshold comes from (every number is in
 
   asset       broker says the symbol exists, is `active`, `tradable`, a US
               equity on a listed exchange, and is not a warrant, unit,
-              right, preferred, depositary receipt or fund. Delisted /
+              right, preferred or depositary receipt. Delisted /
               inactive / untradable is PERMANENT: an admitted name is
               removed at once, no second chance.
-  borrow      broker `shortable` AND easy to borrow — half the point is
-              bearish trades. Read from `borrow_status`, falling back to
-              the deprecated `easy_to_borrow` flag (Alpaca sunsets it
-              2026-09-22; https://docs.alpaca.markets/reference/get-v2-assets-1).
   history     a year of daily bars: the first bar is at least a calendar
               year before the last, AND there are enough bars for the
               200-session average plus the 10-session slope the analyst
@@ -60,6 +56,26 @@ THE CRITERIA, and where each threshold comes from (every number is in
               holds no merger proxy / tender-offer filing that a later
               8-K Item 1.02 (termination of a material definitive
               agreement) has not followed.
+  fund        an exchange-traded fund (Yahoo `quoteType == "ETF"`; owner
+              ruling 2026-10-09: expand the universe including ETFs) is
+              admitted ONLY as an unlevered equity fund. Refused: a
+              leveraged or inverse fund (SEC Rule 18f-4(a), 17 CFR
+              270.18f-4(a)) -- the order layer's leverage table counts an
+              unlisted fund as 1x, so the screen is where one must stop;
+              a bond, money-market, ultrashort, treasury or other
+              non-equity category -- the owner's mandate forbids parking
+              cash in bonds or T-bills (SGOV files as "Ultrashort Bond");
+              and a fund with no category at all (fail closed). The
+              fund's category string is its sector key. Company size and
+              takeover do not apply to a fund and are recorded as "not
+              applicable: fund"; liquidity is the same spread check every
+              stock passes. Any other fund (Yahoo quote type not EQUITY or
+              ETF, or a fund-named security Yahoo calls EQUITY) is refused
+              as not a common share, as before.
+
+Short borrow is NOT an admission criterion (owner ruling 2026-10-09): a
+name the desk can only buy is still an opportunity. Whether a short can be
+borrowed is checked at the order seam, where a short is placed.
 
 NOT criteria, on the owner's ruling: no earnings-date requirement, no
 maximum price.
@@ -105,9 +121,51 @@ NON_EQUITY_SUFFIXES = (".WS", ".WSA", ".WSB", ".U", ".UN", ".RT", "-WS", "-U", "
 #: matches "First United", which this does not.
 _NON_COMMON_NAME = re.compile(
     r"\b(warrants?|units?|rights?|preferred|depositary|american deposit\w*|"
-    r"etf|exchange traded fund|fund shares|notes?|debentures?)\b",
+    r"notes?|debentures?)\b",
     re.IGNORECASE,
 )
+
+#: Security-name words that mark a fund. A fund is not refused at the asset
+#: stage: Yahoo's `quoteType` decides at the profile stage whether it is an
+#: exchange-traded fund (screened as one) or another kind (refused).
+_FUND_NAME = re.compile(r"\b(etf|exchange traded fund|fund shares)\b", re.IGNORECASE)
+
+#: Yahoo `quoteType` values the screen admits. Anything else (MUTUALFUND,
+#: CLOSEDEND, INDEX, ...) is not a listed common share or ETF.
+EQUITY_QUOTE_TYPE = "EQUITY"
+ETF_QUOTE_TYPE = "ETF"
+
+#: Category words that mark a leveraged or inverse fund, the SEC Rule
+#: 18f-4(a) definition (https://www.law.cornell.edu/cfr/text/17/270.18f-4):
+#: a fund seeking a multiple, or the inverse, of an index's return. Yahoo
+#: reports Morningstar categories, which file these under "Trading--"
+#: ("Trading--Leveraged Equity", "Trading--Inverse Equity", ...).
+LEVERAGED_CATEGORY_WORDS = ("trading--", "leveraged", "inverse")
+
+#: Category words that mark a fund that is not an equity fund: fixed
+#: income, cash and the other non-stock families. The owner's 2026-10-09
+#: mandate (docs/OUTCOME.md): equity funds only, no parking in bonds or
+#: T-bills. Matched against the Morningstar category name Yahoo reports
+#: (e.g. SGOV "Ultrashort Bond", TLT "Long Government").
+NON_EQUITY_CATEGORY_WORDS = (
+    "bond",
+    "money market",
+    "ultrashort",
+    "treasury",
+    "government",
+    "muni",
+    "bank loan",
+    "inflation",
+    "preferred",
+    "allocation",
+    "target-date",
+    "commodit",
+    "currency",
+    "digital asset",
+)
+
+#: What a fund records for the checks that do not apply to it.
+NOT_APPLICABLE_FUND = "not applicable: fund"
 
 #: SEC submission types that mean the issuer is the subject of a pending
 #: acquisition: merger proxies and information statements (Schedule 14A /
@@ -160,7 +218,12 @@ PLAIN_REASON = {
     "asset_lookup_failed": "the broker could not be read",
     "not_us_equity": "not a US stock",
     "unsupported_exchange": "not on a main US exchange",
-    "not_common_stock": "a warrant, unit, right, preferred, receipt or fund",
+    "not_common_stock": "a warrant, unit, right, preferred, receipt or non-ETF fund",
+    "fund_category_unknown": "a fund with no category on record",
+    "leveraged_or_inverse_fund": "a leveraged or inverse fund",
+    "not_equity_fund": "a bond, cash or other non-stock fund",
+    # No longer screen criteria (2026-10-09); kept so older recorded
+    # events still read in plain words.
     "not_shortable": "cannot be sold short",
     "hard_to_borrow": "hard to borrow for a short",
     "no_price_history": "no price history",
@@ -331,6 +394,10 @@ def is_non_common_security(symbol: str, name: str) -> bool:
     return upper.endswith(NON_EQUITY_SUFFIXES) or bool(_NON_COMMON_NAME.search(str(name or "")))
 
 
+def is_fund_name(name: str) -> bool:
+    return bool(_FUND_NAME.search(str(name or "")))
+
+
 # --------------------------------------------------------------------------
 # The criteria
 # --------------------------------------------------------------------------
@@ -352,17 +419,6 @@ def check_asset(symbol: str, asset) -> list[str]:
     if is_non_common_security(_field(asset, "symbol", symbol) or symbol, _field(asset, "name", "")):
         failures.append("not_common_stock")
     return failures
-
-
-def check_borrow(asset) -> list[str]:
-    if not bool(_field(asset, "shortable", False)):
-        return ["not_shortable"]
-    status = str(_field(asset, "borrow_status", "") or "").strip().lower()
-    if status:
-        easy = status == "easy_to_borrow"
-    else:
-        easy = bool(_field(asset, "easy_to_borrow", False))
-    return [] if easy else ["hard_to_borrow"]
 
 
 def check_bars(bars: list, th: ScreenThresholds) -> tuple[list[str], dict]:
@@ -414,19 +470,46 @@ def check_bars(bars: list, th: ScreenThresholds) -> tuple[list[str], dict]:
     return failures, measured
 
 
-def check_profile(profile, th: ScreenThresholds) -> tuple[list[str], dict]:
+def check_fund(category) -> tuple[list[str], dict]:
+    """An ETF: unlevered equity funds only; its category is its sector key."""
+    text = str(category or "").strip()
+    measured = {
+        "fund": True,
+        "fund_category": text or None,
+        "company_size": NOT_APPLICABLE_FUND,
+        "takeover": NOT_APPLICABLE_FUND,
+    }
+    if not text:
+        return ["fund_category_unknown"], measured
+    lowered = text.lower()
+    if any(word in lowered for word in LEVERAGED_CATEGORY_WORDS):
+        return ["leveraged_or_inverse_fund"], measured
+    if any(word in lowered for word in NON_EQUITY_CATEGORY_WORDS):
+        return ["not_equity_fund"], measured
+    measured["sector"] = text
+    return [], measured
+
+
+def check_profile(profile, th: ScreenThresholds, name: str = "") -> tuple[list[str], dict]:
     if profile is None:
         return ["profile_unavailable"], {}
+    if not isinstance(profile, dict):
+        profile = {}
+    quote_type = str(profile.get("quote_type") or "").strip().upper()
+    if quote_type == ETF_QUOTE_TYPE:
+        return check_fund(profile.get("category"))
+    if (quote_type and quote_type != EQUITY_QUOTE_TYPE) or is_fund_name(name):
+        return ["not_common_stock"], {}
     failures = []
     measured = {}
-    cap = profile.get("market_cap_usd") if isinstance(profile, dict) else None
+    cap = profile.get("market_cap_usd")
     if not isinstance(cap, (int, float)) or cap <= 0:
         failures.append("market_cap_unknown")
     else:
         measured["market_cap_usd"] = float(cap)
         if cap < th.min_market_cap_usd:
             failures.append("company_too_small")
-    sector = (profile.get("sector") if isinstance(profile, dict) else None) or "Unknown"
+    sector = profile.get("sector") or "Unknown"
     measured["sector"] = sector
     if sector == "Unknown":
         failures.append("unresolved_sector")
@@ -526,8 +609,6 @@ def screen_symbol(
             result.failures = ["asset_lookup_failed"]
             return result
     result.failures = check_asset(symbol, asset)
-    if not result.failures:
-        result.failures = check_borrow(asset)
     if result.failures:
         return result
     if bars is None:
@@ -547,9 +628,10 @@ def screen_symbol(
     except Exception as exc:  # noqa: BLE001
         logger.warning("universe screen: profile failed for %s: %s", symbol, exc)
         profile = None
-    failures, measured = check_profile(profile, th)
+    failures, measured = check_profile(profile, th, _field(asset, "name", "") or "")
     result.measured.update(measured)
-    if failures:
+    if failures or measured.get("fund"):
+        # A fund has no issuer takeover to check: it stops here either way.
         result.failures = failures
         return result
     try:
@@ -849,7 +931,7 @@ def run_screen(
     needs_bars: list[str] = list(due_admitted)
     for symbol in fresh + stale:
         asset = by_symbol[symbol]
-        failures = check_asset(symbol, asset) or check_borrow(asset)
+        failures = check_asset(symbol, asset)
         if failures:
             _record(ScreenResult(symbol=symbol, failures=failures))
         else:
@@ -888,6 +970,25 @@ def run_screen(
             run.screened,
         )
     return run
+
+
+# --------------------------------------------------------------------------
+# How many screened names one session can afford
+# --------------------------------------------------------------------------
+
+
+def affordable_names_per_session(
+    session_limit_usd: float,
+    base_session_cost_usd: float,
+    cost_per_name_usd: float,
+) -> int:
+    """The screen's own per-session bound, a named affordability limit: the
+    names that fit in what a session may spend after its measured base
+    cost, at the measured research cost per name. Zero when nothing fits."""
+    if cost_per_name_usd <= 0:
+        return 0
+    headroom = float(session_limit_usd) - float(base_session_cost_usd)
+    return max(0, math.floor(headroom / float(cost_per_name_usd)))
 
 
 # --------------------------------------------------------------------------

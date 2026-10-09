@@ -8557,6 +8557,8 @@ numbers:
       never whether one passes; an unfinished pass resumes next evening.
       Derivation at src/config/__init__.py (UniverseScreenConfig): evening job
       TimeoutStartSec=1260, evening body measured 173 s on 2026-09-19.
+      Re-measured 2026-10-09 before turning the screen on: last 10 evenings
+      (2026-09-17 .. 2026-10-01) ran 82..178 s; 178 + 900 = 1,078 <= 1,260.
   - id: src.config.UniverseScreenConfig.bars_batch_size
     value: 50
     status: not-trade-governing
@@ -8564,6 +8566,43 @@ numbers:
     note: >-
       Symbols per multi-ticker daily-bar download. A fetch batch size: it
       changes how many requests a pass makes, never a screen verdict.
+  - id: src.config.UniverseScreenConfig.measured_base_session_cost_usd
+    value: 0.2619
+    status: sourced
+    site: src/config/__init__.py
+    source: >-
+      MEASURED 2026-10-09, production DB /home/qamc/quant-agent/data/quant_agent.db
+      read-only: median actual_cost_usd of the 23 complete (not suspended),
+      exactly-costed (costs_exact=1), non-zero `morning` rows of
+      llm_budget_sessions that have a portfolio_manager row in agent_logs,
+      2026-08-25 .. 2026-10-09 (range $0.178 .. $0.623). Derivation and use
+      at src/config/research.py::UniverseScreenConfig and
+      src/universe_screen.py::affordable_names_per_session.
+    note: >-
+      The base a morning session spends before the screen adds any name.
+      With the measured cost per name it sets the screen's per-session
+      bound: floor((llm_cost_circuit.session_cost_limit_usd 0.90 - 0.2619)
+      / 0.005025) = 126 names at today's settings. This closes the
+      nominations.max_per_seat_per_run row's question for the SCREEN as a
+      named affordability limit, as that row's closes_when asks.
+  - id: src.config.UniverseScreenConfig.measured_cost_per_name_usd
+    value: 0.005025
+    status: sourced
+    site: src/config/__init__.py
+    source: >-
+      MEASURED 2026-10-09, same 23 morning sessions as
+      measured_base_session_cost_usd: median of session cost divided by the
+      names the portfolio manager analysed (its agent_logs input_summary
+      "N analyses", N 14..87). The least-squares slope of session cost on
+      names analysed over the same sessions is $0.00414, below this median,
+      so the median overstates the marginal cost and the bound errs small.
+      The tech analyst and the nomination responder ran on zero-cost models
+      in every one (specialist_evidence nomination_summary
+      responder_cost_usd median 0.0, max $0.0093). Use at
+      src/universe_screen.py::affordable_names_per_session.
+    note: >-
+      Research cost per extra name in a session. Re-measure when the
+      portfolio manager's model or price changes: the bound moves with it.
   - id: src.universe_screen.HISTORY_FETCH_DAYS
     value: 400
     status: not-trade-governing

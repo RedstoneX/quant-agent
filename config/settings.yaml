@@ -1129,12 +1129,13 @@ nominations:
 
 universe_screen:
   # Universe expansion and pruning (src/universe_screen.py; design agreed
-  # with the owner 2026-09-01, built 2026-09-19). OFF until the owner turns
-  # it on after review. Off = no weekly screen, no screened symbol in any
-  # session, and the Form 4 / nomination side doors keep their old gates.
+  # with the owner 2026-09-01, built 2026-09-19). ON by owner approval
+  # 2026-10-09 (docs/OUTCOME.md: constantly look for opportunities; expand
+  # the universe including ETFs). Off = no weekly screen, no screened symbol
+  # in any session, and the Form 4 / nomination side doors keep their old gates.
   # Thresholds and their sources: src/config/__init__.py::UniverseScreenConfig and
   # config/number_ledger.yaml.
-  enabled: false
+  enabled: true
   data_dir: "data/universe"
   min_price_usd: 5
   min_market_cap_usd: 30000000
