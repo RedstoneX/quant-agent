@@ -555,6 +555,9 @@ _UNITS_NEEDING_BROKER_CREDENTIALS = frozenset(
         # writes to the broker exactly as intra_check does.
         "quant-agent-intra_safety.service",
         "quant-agent-midday.service",
+        # The daily record-only universe screen asks the broker for its asset
+        # list (read only), so it needs the real keys like the daily export.
+        "quant-agent-universe-daily.service",
         "quant-agent-morning.service",
     }
 )
