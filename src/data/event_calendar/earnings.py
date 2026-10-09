@@ -49,11 +49,9 @@ _EARNINGS_ABSENCE_TEXT = {
 }
 
 
-#: Sessions-to-earnings inside which a scheduled report is treated as
-#: imminent. Not a new threshold: `EarningsProximity.describe()` has marked
-#: this same window "INSIDE THE 3-SESSION EVENT WINDOW" for every seat that
-#: reads it, and the evening owner report (src/trader_feed.py) now names the
-#: same window rather than picking a second one of its own.
+#: LABEL ONLY: sessions-to-earnings inside which the evening owner report
+#: lists a name under "reports soon". Nothing gates, sizes or blocks a trade
+#: on it (owner ruling 2026-10-09: earnings never resize or block a trade).
 EARNINGS_EVENT_WINDOW_SESSIONS = 3
 
 
@@ -76,13 +74,8 @@ class EarningsProximity:
 
     def describe(self) -> str:
         if self.measured:
-            imminent = (
-                (f" ** INSIDE THE {EARNINGS_EVENT_WINDOW_SESSIONS}-SESSION EVENT WINDOW **")
-                if self.sessions_away <= EARNINGS_EVENT_WINDOW_SESSIONS
-                else ""
-            )
             unit = "session" if self.sessions_away == 1 else "sessions"
-            return f"{self.symbol}: next earnings ~{self.sessions_away} {unit} away (fetched){imminent}"
+            return f"{self.symbol}: next earnings ~{self.sessions_away} {unit} away (fetched)"
         detail = _EARNINGS_ABSENCE_TEXT.get(
             self.status,
             "UNAVAILABLE — treat the earnings date as UNKNOWN",

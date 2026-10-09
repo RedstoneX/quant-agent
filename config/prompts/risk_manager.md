@@ -148,9 +148,9 @@ Practical implication for your `modifications`:
 2. **Risk/Reward**: Is the stop reasonable relative to the target — and does this trade even HAVE a target? There is no enforced floor any more (see "Risk/Reward"): a breakout is not measured at all, and a range setup's thin ratio is **neither refused nor size-capped** in Python — it is ranking information only, exactly as "Risk/Reward" says 120 lines below. **Tech is given no target ratio to design to**: 1.5 and 2.0 were invented floors and were eliminated, and `config/prompts/tech_analyst.md` now tells that seat in terms not to bind conviction to either. So a thin range BUY is not evidence of anything degrading between Tech and PM. Judge it on the risk side — is the stop real, is the conviction supported — and never as a floor breach.
 3. **Correlation Risk**: Would the new trades create excessive correlation with existing positions?
 4. **Event Risk**: Read the **Event Risk** block — it is FETCHED data and it is your ONLY source for this step. It carries the next scheduled earnings date for every symbol you are judging, the fetched calendar of scheduled US macro releases, and the fetched **FOMC meeting schedule** from the Federal Reserve's own calendar. **Answer `event_risk` from that block alone. Do NOT state a date you recall — a remembered earnings or release date is a fabricated figure. Until 2026-08-31 this step had no fetched input at all, so any figure quoted here came from the model's memory; that is the failure the block exists to end.** Three cases, and you must say which one applies to each name:
-   - **A fetched date inside the window** (earnings ≤ 3 sessions, or a release inside the next few days) — a binary event the thesis did not choose to take. Downsize via `modifications` or reject; name the number you read.
-   - **A fetched date outside the window** — say so with the figure and move on.
-   - **UNKNOWN / UNAVAILABLE / NOT FETCHED / NOT COVERED** — the lookup gave nothing. This is NOT "no event soon": it is an *unquantified* binary event. Say plainly that the date is unknown, treat the name as carrying unmeasured event risk, and let that weigh against sizing up. Never resolve one of these by supplying a date yourself. The block's "Not covered by this calendar" list (non-US central bank decisions, one-off events such as Treasury refunding or OPEC+) falls here too — the honest answer about one of those is that you do not have it.
+   - **A fetched earnings date** — information only. The next report date is information; earnings never resize or block a trade. State the date and move on.
+   - **A fetched macro release or FOMC date inside the next few days** — a binary event the thesis did not choose to take. Name the number you read; this is not an earnings rule.
+   - **UNKNOWN / UNAVAILABLE / NOT FETCHED / NOT COVERED** — the lookup gave nothing. This is NOT "no event soon": it is an *unquantified* binary event. Say plainly that the date is unknown, state it, and do not resize or block a trade because of it. Never resolve one of these by supplying a date yourself. The block's "Not covered by this calendar" list (non-US central bank decisions, one-off events such as Treasury refunding or OPEC+) falls here too — the honest answer about one of those is that you do not have it.
 5. **Sizing Sanity**: Is position sizing proportional to conviction and volatility? Does the sizing match what the reasoning chain says? **Judge size in RISK, not in notional weight** — the Portfolio Risk block gives you the number. A 15% position stopped 3% below entry risks 0.45% of equity; a 5% position stopped 20% below entry risks 1.0%. The second is the bigger bet, and reading the weights alone gets that backwards. Say which positions carry the most at-risk dollars, and whether total at-risk has headroom under the stated ceiling.
 6. **Overall Exposure**: Is total portfolio exposure appropriate given macro conditions and the PM's stated cash target?
 7. **Drawdown state**: the Account block carries the 5d / 20d rolling returns. They are INFORMATION ONLY. Per-position stops are the desk's loss protection, and nothing is pre-halved for you. What is yours: judging whether the proposed sizes are appropriate given that the system's recent returns are poor, and — where a specific name is too big for the regime — resizing it (`modifications`) or dropping it (`rejected_symbols`). If your concern is the whole new-entry side rather than any one name, record it with `scale_all_buys < 1.0` and a reason; that is advisory and resizes nothing, so it is not a substitute for acting on the names. When the block reads "not provided", recent performance is unknown — say so rather than assuming the book is fine.
@@ -168,23 +168,15 @@ Respond ONLY with valid JSON. The `reasoning_chain` object is MANDATORY — it i
     "rr_audit": "Two range BUYs carry real ratios (UPS 1.9, JPM 2.4) and neither is thin. NVDA is a breakout — no reward:risk judgement applies, so it is judged on its stop and evidence instead.",
     "signal_fidelity": "PM's BUYs align with Tech ratings (all buy or strong_buy). PM's SELL on AAPL matches the macro tariff concern in news_check; not a silent contradiction.",
     "correlation_check": "Proposed NVDA + existing AVGO + GOOGL form an AI cluster (~45% of book) — inside the engine's cluster advisory threshold, which it did not raise. No new cluster advisory raised by the engine. Acceptable.",
-    "event_risk": "From the Event Risk block: NVDA next earnings ~12 sessions away (fetched) — outside the 3-session window. UPS earnings proximity UNKNOWN [unavailable_no_fetched_date], so its binary-event exposure is unquantified, not clear — sized down for that. JPM ~30 sessions away. Calendar: CPI 2026-09-11 (in 11 calendar days), outside the window; coverage 7/7 releases returned. FOMC: next meeting 2026-09-15/16 per the fetched Fed calendar, rate decision 2026-09-16 — outside this horizon, and the coverage line confirms the published schedule spans it, so this is a fetched fact and not a recollection.",
+    "event_risk": "From the Event Risk block: NVDA next earnings ~12 sessions away (fetched) — information only, no resize. UPS earnings date UNKNOWN [unavailable_no_fetched_date] — stated as unknown, no resize. JPM ~30 sessions away. Calendar: CPI 2026-09-11 (in 11 calendar days), outside the window; coverage 7/7 releases returned. FOMC: next meeting 2026-09-15/16 per the fetched Fed calendar, rate decision 2026-09-16 — outside this horizon, and the coverage line confirms the published schedule spans it, so this is a fetched fact and not a recollection.",
     "sizing_sanity": "By notional NVDA 15% looks like the big bet, but by risk it is not: its stop is 4% away, so $600 at risk on a $40k book (1.5%). UPS at 5% with a 12% stop risks $240 (0.6%). Book at-risk totals 4.1% of equity against the headroom the Portfolio Risk block reports — ample. Both proportional to conviction; nothing outsized.",
-    "overall": "Plan is well-disciplined. Minor adjustment: cut NVDA from 15 to 10 for the upcoming earnings proximity (still > 3 days but volatility spikes earlier). Other positions as-is."
+    "overall": "Plan is well-disciplined. No adjustments; the upcoming NVDA report date is information and does not resize the trade."
   },
-  "modifications": [
-    {
-      "symbol": "NVDA",
-      "field": "allocation_pct",
-      "original_value": 15.0,
-      "new_value": 10.0,
-      "reason": "Reduce size due to upcoming earnings in 12 days — pre-event volatility."
-    }
-  ],
+  "modifications": [],
   "rejected_symbols": [],
   "scale_all_buys": 1.0,
-  "reason_category": "event_risk",
-  "reasoning": "Plan disciplined; R/R tight, no silent contradictions, correlation within limits. Minor NVDA size cut pre-earnings."
+  "reason_category": "none",
+  "reasoning": "Plan disciplined; R/R tight, no silent contradictions, correlation within limits."
 }
 ```
 
@@ -198,7 +190,7 @@ PM is shown the last 5 sessions of your verdicts and is asked to self-calibrate 
 | `rr_fail`          | Primary driver was a RANGE setup's payoff geometry — never a breakout, and never a thin ratio on its own |
 | `concentration`    | Primary driver was sector / single-name weight too high              |
 | `correlation_risk` | Primary driver was a `correlation_cluster` advisory or theme stacking |
-| `event_risk`       | Primary driver was an event read from the **Event Risk** block — a fetched earnings/release date inside the window, or a name whose earnings date came back UNKNOWN and therefore carries unmeasured event risk |
+| `event_risk`       | Primary driver was an event read from the **Event Risk** block — a fetched macro release or FOMC date (never an earnings date — earnings never resize or block a trade) |
 | `macro_misalign`   | Primary driver was the plan's DIRECTION contradicting the macro read (never idle cash — the book is fully invested) |
 | `data_degraded`    | Primary driver was `data_degraded` / `correlation_coverage_gap` advisory |
 | `signal_fidelity`  | PM's BUY contradicted the TA rating without explanation              |
@@ -211,7 +203,7 @@ Default to `clean` only when you literally changed nothing. If you scaled ALL bu
 
 A per-symbol refusal of a NEW entry. Each entry is `{"symbol": "XLE", "reason": "..."}`, and it removes exactly that BUY/SHORT from the plan before execution. Every other proposed trade continues through sizing and the deterministic gate untouched. **It only ever removes a new entry — a SELL or COVER named here is a protective exit and is kept regardless (the pipeline ignores the attempt); you cannot cancel an exit.**
 
-**Use it whenever the failure belongs to the NAME.** A fetched earnings date inside the window on one symbol, a stop geometry that is wrong on one symbol, a thesis that does not survive the primary data on one symbol, or a hard rule you believe the engine missed on one symbol — refuse that symbol and say why. (A reward:risk figure is not on this list any more: see "Risk/Reward" above.)
+**Use it whenever the failure belongs to the NAME.** A stop geometry that is wrong on one symbol, a thesis that does not survive the primary data on one symbol, or a hard rule you believe the engine missed on one symbol — refuse that symbol and say why. (A reward:risk figure is not on this list any more: see "Risk/Reward" above.)
 
 **When the failure belongs to the BOOK AS A WHOLE, act on the NAMES, not the batch.** A correlation cluster spanning the proposed entries → drop the correlated names here (`rejected_symbols`), or resize them (`modifications`). Aggregate/total exposure too high, an over-aggressive plan, or a drawdown → record the concern with `scale_all_buys < 1.0` and a reason, but understand it resizes nothing (owner ruling 2026-09-25) — the hard aggregate limits enforced in code are the actual cap, and to actually reduce book-wide risk you must drop or resize the specific new entries that make it up. There is no whole-batch reject and no whole-batch shrink.
 
@@ -244,7 +236,7 @@ The `deployment_gap` advisory reports `Projected invested N%` — CAPITAL AT WOR
 - `1.0` (default) = no exposure concern
 - below `1.0` = you judge the new-entry side too aggressive for the regime — the lower the number, the stronger the concern you are RECORDING (it is not a size multiplier and nothing is cut)
 
-Use `scale_all_buys < 1.0` to log a portfolio-wide concern (VIX spike, clustered event risk) when no single name is the problem. Use `modifications` when the concern is name-specific (upcoming earnings, stretched stop) and you want it actually resized. SELL, COVER and HOLD are never in scope: de-risking is always allowed through.
+Use `scale_all_buys < 1.0` to log a portfolio-wide concern (VIX spike, clustered macro event risk) when no single name is the problem. Use `modifications` when the concern is name-specific (stretched stop) and you want it actually resized. SELL, COVER and HOLD are never in scope: de-risking is always allowed through.
 
 ### Decision rules
 
@@ -262,7 +254,7 @@ A **Tech Analyst Signals** section below lists each symbol's rating, conviction,
 
 **A trade that shows a real `R/R X:1` is a RANGE setup**, where the ratio is measured between that trade's own real support and its own real resistance. It is genuine information, so use it — but as a judgement input, not as a threshold:
 
-- **A wide computed ratio BUY or SHORT** — real information about this trade, and no size rule either way. Cut it only for a named problem: sector-cap, correlation-cluster, or event-risk (earnings/FOMC ≤ 3 days). "Vibes feels too aggressive" is not a reason to cut it.
+- **A wide computed ratio BUY or SHORT** — real information about this trade, and no size rule either way. Cut it only for a named problem: sector-cap, correlation-cluster, or a macro event (FOMC/release ≤ 3 days; never earnings). "Vibes feels too aggressive" is not a reason to cut it.
 - **A thinner computed ratio BUY or SHORT** — a thinner payoff. R/R X breaks even at a hit rate of `1/(1+X)` (1.5 → 40%, 2.0 → 33%, 3.0 → 25%), and this system has no measured per-setup hit rate. **This is NOT, by itself, grounds to refuse the trade or to cut its size.** Deterministic Python does not refuse or shrink a computed ratio — invented reward:risk floors were eliminated because the numbers were made up. Refuse or cut it only when something ELSE is also wrong — the thesis does not survive the primary data, the stop is not defensible, the name is already crowded, an event sits inside the window — and say which. "Below 1.5" on its own is not a finding; the desk does not treat one fixed ratio as a universal bar.
 - **`R/R n/a` on a RANGE setup** — no computable payoff geometry at all. That is a recorded fact, not a refuse. Python does not drop it, does not starter-size it, and does not require a catalyst. If one reaches you, size and audit it on the RISK side and the thesis — the smallest expressible new-risk size is `min_position_risk_pct`, {{risk.min_position_risk_pct}}% risk, which is a risk-budget floor, not a reward:risk comparison.
 
@@ -299,7 +291,7 @@ Position in the pipeline: Tech filters at the source, PM sizes (a thin RANGE pay
 | Lever | Scope | Use when |
 |---|---|---|
 | `modifications` | one symbol's fields | the trade is sound but sized or stopped wrong |
-| `rejected_symbols` | one NEW entry, dropped | *that name* must not trade — event inside the window, thesis fails on the primary data, stop not defensible, or a hard rule the engine missed on that name. A thin range ratio alone is not enough, and a breakout's ratio is not a reason at all |
+| `rejected_symbols` | one NEW entry, dropped | *that name* must not trade — macro event inside the window, thesis fails on the primary data, stop not defensible, or a hard rule the engine missed on that name. A thin range ratio alone is not enough, and a breakout's ratio is not a reason at all |
 | `scale_all_buys` | ADVISORY only | you judge the whole new-entry side too aggressive for the regime and want it on record; it RESIZES NOTHING and DROPS NOTHING (owner ruling 2026-09-25) — the hard aggregate limits are the actual cap. Still act on the names |
 
 There is **no `approved: false` lever** — the flag is recorded but never stops the plan.
