@@ -60,6 +60,21 @@ _SYMBOL_DIRECTION_RE = re.compile(r"^([A-Z0-9.\-]+)\((\w+)\)$")
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def _order_is_buy_side(intent: str, pos: Position | None) -> bool:
+    """True when the ORDER a target implies is buy-side, i.e. needs bullish evidence.
+
+    `intent` says whether exposure grows ("buy"/"short") or shrinks ("sell");
+    it does not say which side of the book the order hits. Shrinking a held
+    SHORT is a cover — a buy-side order — so bearish evidence argues AGAINST
+    it, exactly as it argues against a long entry. 2026-10-09: five FLNC
+    cover decisions labelled bearish evidence "conflicts" (correct) and were
+    refused because polarity was read from `intent == "buy"` alone.
+    """
+    if intent == "buy":
+        return True
+    return intent == "sell" and pos is not None and (pos.qty or 0) < 0
+
+
 class DecisionGrounding:
     """Decision grounding: validation of the model reply, conflict/catalyst/rejection/target drops, canonical targets.
 
@@ -256,7 +271,7 @@ class DecisionGrounding:
                     other_source,
                     symbol,
                     other_stance,
-                    wants_bullish=(intent == "buy"),
+                    wants_bullish=_order_is_buy_side(intent, pos),
                 )
                 for other_source, other_stance in expected_sources.items()
                 if other_source != "smart_money"
@@ -281,8 +296,9 @@ class DecisionGrounding:
                 # Stage 3: "short" (opening/adding a short, direction=="short")
                 # needs the same bearish-polarity evidence a "sell" (trimming
                 # a long) does — both are bearish-direction actions on the
-                # symbol. Only "buy" (opening/adding a long) needs bullish
-                # evidence. `stance_is_aligned` (src/risk/rules.py) is the
+                # symbol. "buy" (opening/adding a long) and a "sell" that
+                # COVERS a held short are buy-side orders and need bullish
+                # evidence (`_order_is_buy_side`). `stance_is_aligned` (src/risk/rules.py) is the
                 # SAME polarity rule §9.4's agreement-count ceiling uses —
                 # one definition, not a second one that could quietly drift
                 # from this one.
@@ -290,7 +306,7 @@ class DecisionGrounding:
                     source,
                     symbol,
                     stance,
-                    wants_bullish=(intent == "buy"),
+                    wants_bullish=_order_is_buy_side(intent, pos),
                 )
                 # A PARTIAL trim keeps a position. Evidence aligned with the
                 # side still held supports HOLDING that remainder — trimming
