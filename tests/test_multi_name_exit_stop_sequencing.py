@@ -267,7 +267,7 @@ def test_execution_stage_cover_loop_restores_each_stop_before_the_next_name():
     ctx = _execution_ctx(
         [
             _exit_decision("COVER", "TSLA", 100.0),
-            _exit_decision("COVER", "RIVN", 50.0),
+            _exit_decision("COVER", "RIVN", 100.0),
         ],
         positions,
     )
