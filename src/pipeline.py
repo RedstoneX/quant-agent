@@ -1,27 +1,18 @@
-import contextlib
-import json as _json
 import logging
-import math
-import re
-import uuid
-from datetime import date
 from pathlib import Path
-from src.trading_calendar import et_now, et_today, session_date_key
 
-from pydantic import ValidationError
 
-from src.config import AppConfig, RiskConfig
+from src.config import AppConfig
 from src.cash_park import CashPark
-from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
-from src.data.macro import MacroCoverage, MacroDataProvider
+from src.data.macro import MacroDataProvider
 from src.data.event_calendar import FOMCCalendarProvider, MacroEventCalendarProvider
 from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
 from src.agents.base import (
-    AgentResult, BaseAgent, agent_log_kwargs, seat_acceptance_kwargs,
+    BaseAgent,
 )
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
@@ -39,18 +30,14 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.metrics import drift_flag as _drift_flag_check
-from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     RiskRuleEngine,
-    position_weight_pct,
 )
 from src.execution.broker import (
     AlpacaBroker,
-    _split_protective_qty,
+    _split_protective_qty,  # noqa: F401
 )
-from src.sector_reference import _get_sector
-from src.pipeline_context import PMFacts, RunContext, SessionType
+from src.pipeline_context import RunContext
 # --- MIRROR: config builders moved to src/pipeline_config_build.py (pure move). ---
 # Re-exported so `from src.pipeline import ...` and `patch("src.pipeline.<name>")` still resolve.
 from src.pipeline_config_build import (  # noqa: F401
@@ -115,9 +102,6 @@ from src.pipeline_stages import (
     ExecutionStage,
     MorningResearchStage,
     RiskStage,
-    _persist_evidence,
-    _record_pipeline_event,
-    record_stage,
 )
 # RE-EXPORT MIRROR (pipeline split, run gates): the paid-analysis gate and the
 # two pre-decision halt gates moved VERBATIM to function-only modules.
@@ -128,38 +112,30 @@ from src import pipeline_halt_gates as _halt_gates
 from src.portfolio_constructor.refusal_recorder import TradeRefusalRecorder
 from src.portfolio_constructor import PortfolioConstructor
 from src.cash_park_retired import release_retired_cash_park, retired_cash_park_symbol
-from src.sessions.evening_session import EveningSession
-from src.sessions.position_review_session import PositionReviewSession
-from src.sessions.expected_sessions_session import ExpectedSessionsMissingSession
 from src.sessions.live_session_context_session import LiveSessionContextSession
-from src.sessions.earnings_analyses_session import EarningsAnalysesLoadSession
 from src.sessions.live_context_resolve_session import LiveContextResolveSession
-from src.sessions.evening_stop_proximity_session import EveningStopProximitySession
-from src.sessions.name_coverage_session import NameCoverageRecordSession
-from src.sessions.news_update_session import NewsUpdateSession
 from src.sessions.quarterly_meta_session import QuarterlyMetaReflectionSession
-from src.sessions.earnings_preprocess_session import EarningsPreprocessSession
 from src.sessions.morning_session import MorningSession
 from src.storage.db import Database
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
-    PaidAnalysisSuspended,
-    UnavailableLLMCostCircuit,
 )
 from src.models import (
     NewsIntelligenceReport,
-    PortfolioDecision,
-    RiskVerdict,
-    TargetPosition,
-    TechAnalysisResult,
-    TechnicalIndicators,
-    TradeDecision,
+    RiskVerdict,  # noqa: F401
 )
 
 logger = logging.getLogger(__name__)
 
 # Lives in a leaf module so a session can catch it; re-exported here.
 from src.sessions.termination import SessionTerminated  # noqa: E402,F401
+from src.pipeline_parts import (  # noqa: E402
+    evening as _evening,
+    kill_repair as _kill_repair,
+    morning_helpers as _morning_helpers,
+    pnl_gaps as _pnl_gaps,
+    review as _review,
+)
 
 
 # `HARD_BLOCK_RULES` now lives in `src/risk/rules.py`, beside the engine that
@@ -797,105 +773,17 @@ class TradingPipeline(
     # numbers for the two directions.
     _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
 
-    def _total_pnl_since_reset(
-        self, total_value: float,
-    ) -> tuple[float | None, float | None, str | None]:
-        """`(total_pnl, total_return_pct, since_date)` for the Telegram
-        feed's "total P&L" line.
-
-        **Why "since reset" and not "since inception".** The desk's
-        2026-09-02 book-wide liquidation archived every prior trade/
-        daily_pnl row (see docs/INCIDENT_HISTORY.md); the live `daily_pnl`
-        table has held no row earlier than that date since. A "total"
-        spanning that boundary would silently splice pre-reset and
-        post-reset history into one number the owner would act on as if it
-        were continuous — exactly the defect he flagged. So the baseline
-        is the EARLIEST row this table actually has, never reconstructed
-        from the archive.
-
-        **Why that row's `total_value - daily_pnl`, not its `equity_close`.**
-        `equity_close` is that day's OWN 4pm close — already one day inside
-        the post-reset period, which would drop that first day's P&L from
-        the total. `total_value - daily_pnl` recovers the broker's
-        last_equity going into that day (the same basis `daily_pnl` itself
-        is built from everywhere else in this file), i.e. the account's
-        equity immediately before the first post-reset trading day —
-        a value already recorded on that row, not invented here.
-
-        Returns `(None, None, None)` when no `daily_pnl` row exists yet
-        (fresh DB) or the recorded baseline is non-finite/non-positive —
-        never a fabricated 0.
-        """
-        try:
-            earliest = self.db.get_earliest_daily_pnl()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("total P&L baseline lookup failed: %s", exc)
-            return None, None, None
-        if not earliest:
-            return None, None, None
-        try:
-            baseline = float(earliest["total_value"]) - float(earliest["daily_pnl"])
-            tv = float(total_value)
-        except (TypeError, ValueError, KeyError):
-            return None, None, None
-        if not (baseline > 0) or not math.isfinite(baseline) or not math.isfinite(tv):
-            return None, None, None
-        total_pnl = tv - baseline
-        total_return_pct = total_pnl / baseline * 100
-        since_date = str(earliest.get("date") or "") or None
-        return total_pnl, total_return_pct, since_date
+    def _total_pnl_since_reset(self, total_value: float) -> tuple[float | None, float | None, str | None]:
+        return _pnl_gaps._total_pnl_since_reset(self, total_value)
 
 
     @staticmethod
     def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
-        """Direction-aware sizing for a FORCED close — the §11.2
-        de-levering ladder's forced trim, or an operator kill. NOT the
-        normal decision
-        path: SELL/REDUCE decisions and the portfolio constructor keep
-        refusing a negative qty exactly as before (see _full_sell_qty /
-        _reduce_sell_qty and the Stage 1 guard in portfolio_constructor.py
-        — shorts still cannot be opened or covered through that path).
-
-        Returns ``(side, qty)`` where ``side`` is ``'sell'`` to flatten a
-        long or ``'buy'`` to cover a short, and ``qty`` is the ABSOLUTE
-        number of shares — always positive, never the signed broker qty.
-
-        Returns ``None`` when direction can't be determined (qty is zero,
-        NaN, or otherwise not a finite nonzero number). This is the one
-        design rule the reviewer called non-negotiable: a forced close is
-        only safe when the side is certain, because guessing wrong on a
-        short doesn't fail safe — a SELL aimed at a position that's
-        actually already short would ADD to the short (sell more of a
-        symbol you don't hold long), doubling the very exposure the
-        forced close exists to shed. Refusing and logging loudly beats
-        guessing every time; the caller is responsible for the loud log,
-        this just refuses to hand back an answer to guess with.
-        """
-        if not isinstance(position_qty, (int, float)) or not math.isfinite(position_qty):
-            return None
-        if position_qty == 0:
-            return None
-        if position_qty > 0:
-            return "sell", float(position_qty)
-        return "buy", float(-position_qty)
+        return _pnl_gaps._forced_close_side_and_qty(position_qty)
 
     @staticmethod
     def _trade_executed_or_pending(trade: dict) -> bool:
-        """True when a trade either executed or is still an open live attempt.
-
-        Used for idempotence checks on sell-side rows (same-day trim
-        discipline): a pending submitted trim should block a duplicate order,
-        but a canceled/rejected/expired zero-fill should not.
-        """
-        status = str(trade.get("fill_status") or "").lower()
-        if not status:
-            return True
-        if status in {"submitted", "filled"}:
-            return True
-        try:
-            return float(trade.get("fill_qty") or 0) > 0
-        except (TypeError, ValueError):
-            return False
+        return _pnl_gaps._trade_executed_or_pending(trade)
 
 
     @staticmethod
@@ -968,113 +856,16 @@ class TradingPipeline(
             logger.error("local positions table refresh failed: %s", exc)
 
     def _record_short_overnight_gaps(self, positions) -> None:
-        """Store the adverse overnight gap suffered by each held SHORT.
+        return _pnl_gaps._record_short_overnight_gaps(self, positions)
 
-        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY — item 186. The short-side
-        sizing haircut is unsourced and two attempts to read it off the
-        instrument have failed; both failed because this desk has never
-        kept a record of what a short actually suffers overnight. Bars are
-        fetched live and discarded and there is no OHLCV table, so the
-        evidence has to be captured beside the trade while the trade is
-        open. Nothing reads this back: no threshold, no gate, no sizing
-        change. See `TradeStore.record_overnight_gap` for the hard limit on
-        its use.
+    def _run_news_update(self, run_id: str, session: str='morning', universe: list[str] | None=None, held_symbols: list[str] | None=None, candidate_symbols: list[str] | None=None) -> 'tuple[NewsIntelligenceReport | None, NewsCoverage | None]':
+        return _pnl_gaps._run_news_update(self, run_id, session, universe, held_symbols, candidate_symbols)
 
-        Shorts only, because only a short's loss above its stop is
-        unbounded and only the short-side multiple is the open question.
-        Held shorts are a handful at most, so the two-bar fetch per name is
-        cheap. Fail-soft per symbol and as a whole: a recording problem
-        must never disturb a trading session.
-        """
-        for p in positions or []:
-            try:
-                if float(getattr(p, "qty", 0) or 0) >= 0:
-                    continue
-                bars = self.market.get_ohlcv(p.symbol, 7) or []
-                if len(bars) < 2:
-                    continue
-                prev_bar, today = bars[-2], bars[-1]
-                self.db.record_overnight_gap(
-                    p.symbol, prev_bar.close, today.open, str(today.date),
-                )
-            except Exception:  # noqa: BLE001
-                logger.debug(
-                    "overnight-gap recording skipped for %s",
-                    getattr(p, "symbol", "?"), exc_info=True,
-                )
-
-    def _run_news_update(
-        self, run_id: str, session: str = "morning",
-        universe: list[str] | None = None,
-        held_symbols: list[str] | None = None,
-        candidate_symbols: list[str] | None = None,
-    ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/news_update_session.py)."""
-        return NewsUpdateSession(
-            config=self._collab("config"),
-            db=self._collab("db"),
-            news_analyst=self._collab("news_analyst"),
-            news_provider=self._collab("news_provider"),
-            news_store=self._collab("news_store"),
-        ).run(run_id, session, universe, held_symbols, candidate_symbols)
-
-    def _load_earnings_analyses(
-        self, run_id: str, session: str = "morning",
-        ctx: RunContext | None = None,
-        universe: list[str] | None = None,
-    ) -> tuple[list, list]:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/earnings_analyses_session.py)."""
-        return EarningsAnalysesLoadSession(
-            config=self._collab("config"),
-            earnings_analyst=self._collab("earnings_analyst"),
-            earnings_provider=self._collab("earnings_provider"),
-        ).run(run_id, session, ctx, universe)
+    def _load_earnings_analyses(self, run_id: str, session: str='morning', ctx: RunContext | None=None, universe: list[str] | None=None) -> tuple[list, list]:
+        return _pnl_gaps._load_earnings_analyses(self, run_id, session, ctx, universe)
 
     def _earnings_preprocess_symbols(self) -> list[str]:
-        """Configured universe plus Form-4 admission-eligible names.
-
-        2026-09-16: preprocess returned `nothing_new` against the configured
-        universe while FTK/RSG were already Form-4 hot. Morning then saw
-        those filings as placeholders. The hot list is whatever the
-        already-refreshed provider marks `admission_eligible` — not an
-        invented "preprocess N names" cap. Morning's broker-quality gate
-        and `max_external_candidates` still decide who actually trades.
-        """
-        configured = [
-            str(symbol).strip().upper()
-            for symbol in (self.config.trading.universe or [])
-            if str(symbol).strip()
-        ]
-        hot: list[str] = []
-        try:
-            if not getattr(self.config.smart_money, "enabled", False):
-                return configured
-            provider = getattr(self, "smart_money_provider", None)
-            if provider is None or not hasattr(provider, "fetch"):
-                return configured
-            observations, _err = provider.fetch(configured)
-            seen = set(configured)
-            for item in observations or []:
-                if not bool(getattr(item, "admission_eligible", False)):
-                    continue
-                symbol = str(getattr(item, "symbol", "") or "").strip().upper()
-                if not symbol or symbol in seen:
-                    continue
-                seen.add(symbol)
-                hot.append(symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Earnings preprocess: hot-admit symbol union failed (%s) — "
-                "falling back to the configured universe", exc,
-            )
-            return configured
-        if hot:
-            logger.info(
-                "Earnings preprocess: adding %d Form-4 admission-eligible "
-                "symbol(s) to the filing check: %s",
-                len(hot), ", ".join(hot),
-            )
-        return configured + hot
+        return _pnl_gaps._earnings_preprocess_symbols(self)
 
     # ---------------------------------------------------------------
     # Morning stages (extracted from the legacy monolithic run_morning).
@@ -1106,103 +897,20 @@ class TradingPipeline(
         return getattr(sweeper, "symbol", None) if sweeper is not None else None
 
     def _install_sigterm_unwind(self, context: str):
-        """Make the wrapper's SIGTERM raise instead of killing silently.
-
-        Returns whatever handler was installed before, for the caller to
-        restore. Returns None — and changes nothing — when signals cannot be
-        set here (not the main thread, or a platform without SIGTERM), which
-        is the ordinary case under pytest's worker threads.
-        """
-        import signal
-        try:
-            return signal.signal(
-                signal.SIGTERM,
-                lambda *_: (_ for _ in ()).throw(
-                    SessionTerminated(f"{context}: SIGTERM from the run wrapper")
-                ),
-            )
-        except (ValueError, OSError, AttributeError, RuntimeError) as exc:
-            logger.debug("SIGTERM unwind not installed for %s: %s", context, exc)
-            return None
+        return _kill_repair._install_sigterm_unwind(self, context)
 
     def _repair_stops_on_kill(self, context: str) -> None:
-        """FIRST act of a SIGTERM unwind: ADD the stops a kill left owed.
-
-        Execution sends every buy, then places stops in a second loop, so a
-        kill between the two leaves a filled buy with no stop until the next
-        scheduled coverage check, ~25-30 minutes later.
-
-        ADD-ONLY, deliberately not the session-start `_reconcile_stop_coverage`:
-        that pass first applies owed stop levels, which can cancel a good stop
-        and resubmit it, and the SIGKILL 30s later can land between the two
-        and leave a position with no stop that had one. This runs only the
-        coverage sweep's gap repair (`uncovered_positions` +
-        `replace_missing_stops`): it re-reads the broker's resting stops per
-        name, places only the shortfall, and never cancels or replaces.
-
-        Time is NOT bounded and no cap is invented. Clean passes measured a
-        max of 4.7s in production; passes that place stops are unmeasured and
-        unbounded (per-name reads, up to three submits with pauses, 30s HTTP
-        timeouts). Stops go first on purpose: because the repair only adds,
-        a SIGKILL mid-repair loses only the stops not yet placed, which the
-        next scheduled check covers, and never removes one. A failure is
-        logged with its traceback and the rest of the unwind still runs.
-        """
-        logger.warning("%s: SIGTERM unwind — adding owed stops first (add-only)", context)
-        try:
-            outcomes = self._add_missing_stops()
-        except Exception:  # noqa: BLE001 — logged with traceback; the unwind must go on
-            logger.exception(
-                "%s: SIGTERM unwind stop-coverage repair FAILED — continuing the unwind", context,
-            )
-        else:
-            self._report_kill_repair(context, outcomes)
+        return _kill_repair._repair_stops_on_kill(self, context)
 
     @staticmethod
     def _report_kill_repair(context: str, outcomes: list) -> None:
-        """Each stop the kill repair could not add is an error, by name."""
-        for o in outcomes:
-            if not o.placed:
-                logger.error(
-                    "%s: SIGTERM unwind could NOT add the stop owed on %s (%.4f): %s",
-                    context, o.symbol, o.qty, o.detail,
-                )
-        logger.warning(
-            "%s: SIGTERM unwind placed %d of %d owed stop(s)", context,
-            sum(1 for o in outcomes if o.placed), len(outcomes),
-        )
+        return _kill_repair._report_kill_repair(context, outcomes)
 
     def _add_missing_stops(self) -> list:
-        """The coverage sweep's add-only gap repair, against this desk's book."""
-        from src.coverage_watchdog import replace_missing_stops, uncovered_positions
-
-        pending = {
-            r.get("symbol") for r in self.db.get_pending_protection_restores()
-        }
-        sweeper = self._sweeper()
-        sweep_symbol = (
-            sweeper.symbol if sweeper is not None else self._retired_cash_park_symbol()
-        )
-        gaps, error = uncovered_positions(
-            self.broker, sweep_symbol=sweep_symbol, skip_symbols=pending, db=self.db,
-        )
-        if error:
-            raise RuntimeError(error)
-        return replace_missing_stops(
-            self.broker, gaps, sweep_symbol=sweep_symbol, db=self.db,
-            last_buy=lambda sym, action="BUY": self.db.get_symbol_last_buy(
-                sym, include_in_flight=True, action=action,
-            ),
-        )
+        return _kill_repair._add_missing_stops(self)
 
     def _restore_sigterm(self, previous) -> None:
-        if previous is None:
-            return
-        import signal
-        try:
-            signal.signal(signal.SIGTERM, previous)
-        except (ValueError, OSError, AttributeError, RuntimeError):
-            pass
+        return _kill_repair._restore_sigterm(self, previous)
 
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
@@ -1261,150 +969,22 @@ class TradingPipeline(
         return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
     def run_morning(self) -> dict:
-        """The morning session, plus the durable record of its own output.
-
-        `leverage` (the §11.2 gross-ceiling snapshot) and
-        `stop_coverage_gaps` (the broker-truth stop audit) are computed
-        fresh from live broker state every call and, before this wrapper,
-        were handed to the notifier and dropped — no other durable
-        table holds them (unlike PM/RM reasoning and orders, already kept
-        via `specialist_evidence`/`trades`). The body below is unchanged;
-        this wrapper persists EVERY return path so the message can be
-        re-read without paying for a fresh run. Fail-soft — a storage
-        problem costs the audit record, never the morning push.
-        """
-        self._last_evidence_freshness = None
-        self._last_account_snapshot = None
-        result = self._run_morning_body()
-        self._attach_pnl(result)
-        self._attach_evidence_freshness(result)
-        self.admission._attach_universe_changes(result)
-        self._persist_session_report("morning", result)
-        return result
+        return _morning_helpers.run_morning(self)
 
     def _record_name_coverage(self, ctx, _record) -> None:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/name_coverage_session.py)."""
-        return NameCoverageRecordSession(
-            config=self._collab("config"),
-        ).run(ctx, _record)
+        return _morning_helpers._record_name_coverage(self, ctx, _record)
 
     def _attach_evidence_freshness(self, result) -> None:
-        """Carry this run's evidence-freshness disclosure out to the owner.
-
-        Owner mandate 2026-09-18 made every seat but the technical one
-        advisory, so a decision can now rest on ONE freshly-read seat plus a
-        carried-forward book — and every carried seat reports green. The
-        disclosure is computed once, by the evidence gate, on the single
-        path every decision passes through; this hands it to the message
-        renderer and to the durable session report.
-
-        Disclosure only. It states how much was read on this tick; it never
-        judges the count and there is no minimum — that number is the
-        owner's (docs/WORK.md item 20). Fail-soft: a problem here costs the
-        disclosure line, never the session.
-        """
-        if not isinstance(result, dict):
-            return
-        record = getattr(self, "_last_evidence_freshness", None)
-        if isinstance(record, dict) and "evidence_freshness" not in result:
-            result["evidence_freshness"] = dict(record)
-        # A lost ADVISORY seat no longer halts the run, so the one alert
-        # that cannot be silenced by a mode's noise policy
-        # (`notifier.maybe_alert_data_quality`, fired from main.py's finally
-        # block) must be able to see it. It reads `result["data_status"]`,
-        # which the intra_check result paths never carried — before the
-        # mandate change they did not have to, because a lost seat there
-        # halted the run instead.
-        status = getattr(self, "_last_decision_data_status", None)
-        if isinstance(status, dict) and status and "data_status" not in result:
-            result["data_status"] = dict(status)
+        return _morning_helpers._attach_evidence_freshness(self, result)
 
     def _record_account_snapshot(self, total_value, last_equity) -> None:
-        """Remember the account read this session already made, so the P&L
-        block can be built from it on EVERY return path.
-
-        The session takes exactly one broker account snapshot and then may
-        leave by any of a dozen returns (no_trades, pm_agent_failure,
-        paid_analysis_suspended, executed, ...). Before 2026-09-23 only the
-        position-review and intra-check happy paths bothered to carry the
-        P&L keys out, so the morning message the owner actually reads said
-        "not available" while the same message printed the book it had just
-        read. Recording the snapshot here, and attaching in the wrapper,
-        makes the figure a property of "the account was read", not of which
-        exit the run happened to take.
-        """
-        try:
-            self._last_account_snapshot = (
-                float(total_value), float(last_equity),
-            )
-        except (TypeError, ValueError):
-            self._last_account_snapshot = None
+        return _morning_helpers._record_account_snapshot(self, total_value, last_equity)
 
     def _attach_pnl(self, result) -> None:
-        """Fill the owner-facing P&L keys from this run's own account read.
-
-        SAME basis and SAME source as the path that already worked — the
-        broker's day-over-day change against `last_equity`, and
-        `_total_pnl_since_reset` for the dated baseline (see
-        `trader_feed._pnl_section_lines` for why "total" is dated). No
-        second way to compute P&L is introduced here, and nothing is
-        computed where the account was not read: a run with no snapshot
-        sets the REASON instead, so the message can say something true.
-
-        Never overwrites a figure a body already set, and never raises — a
-        P&L fault must not cost the push.
-        """
-        if not isinstance(result, dict):
-            return
-        keys = (
-            "daily_pnl", "daily_return_pct",
-            "total_pnl", "total_return_pct", "total_pnl_since",
-        )
-        if any(k in result for k in keys):
-            return
-        snapshot = getattr(self, "_last_account_snapshot", None)
-        if not snapshot:
-            result.setdefault(
-                "pnl_unavailable_reason", "ended_before_account_read",
-            )
-            return
-        try:
-            total_value, last_equity = snapshot
-            if last_equity > 0:
-                daily_pnl = total_value - last_equity
-                result["daily_pnl"] = daily_pnl
-                result["daily_return_pct"] = daily_pnl / last_equity * 100
-            total_pnl, total_return_pct, total_pnl_since = (
-                self._total_pnl_since_reset(total_value)
-            )
-            if total_pnl is not None:
-                result["total_pnl"] = total_pnl
-                result["total_return_pct"] = total_return_pct
-                result["total_pnl_since"] = total_pnl_since
-        except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning("P&L attach failed (non-fatal): %s", exc)
-        if not any(k in result for k in keys):
-            # The account WAS read; what is missing is a usable prior close
-            # (and no dated baseline row exists either). Say that, rather
-            # than claiming an account read that demonstrably happened did
-            # not.
-            result.setdefault("pnl_unavailable_reason", "no_prior_close")
+        return _morning_helpers._attach_pnl(self, result)
 
     def _persist_session_report(self, mode: str, result: dict) -> None:
-        """Write a morning/midday/close result dict verbatim, keyed by
-        trading day + mode. No field is defaulted or filled in here.
-        """
-        if not isinstance(result, dict):
-            return
-        try:
-            self.db.save_session_report(
-                mode=mode, date=session_date_key(),
-                run_id=result.get("run_id"), payload=result,
-            )
-        except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "%s report persistence failed (non-fatal): %s", mode, exc,
-            )
+        return _morning_helpers._persist_session_report(self, mode, result)
 
     def _run_morning_body(self) -> dict:
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/morning_session.py)."""
@@ -1472,48 +1052,10 @@ class TradingPipeline(
     )
 
     def _persist_review_metrics(self, position_facts: dict, *, run_id: str) -> None:
-        """Snapshot this review's metrics so the next one can compare.
+        return _review._persist_review_metrics(self, position_facts, run_id=run_id)
 
-        Never raises: losing a snapshot degrades the NEXT review to "no prior",
-        which the guard handles, and must not take down the current session.
-        """
-        import json as _json
-        for symbol, facts in (position_facts or {}).items():
-            payload = {
-                key: facts.get(key)
-                for key in self._REVIEW_METRIC_KEYS
-                if facts.get(key) is not None
-            }
-            if not payload:
-                continue
-            try:
-                self.db.save_position_review_metrics(
-                    run_id=run_id, symbol=symbol,
-                    metrics_json=_json.dumps(payload, sort_keys=True),
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "review memory: failed to snapshot %s (%s) — next review "
-                    "will have no prior for it", symbol, e,
-                )
-
-    def run_position_review(self, session_type: str = "midday") -> dict:
-        """Midday/close, plus the durable record of its own output.
-
-        Same gap as `run_morning` (2026-09-18 sweep): `leverage`,
-        `stop_coverage_gaps` and this session's own `daily_pnl`/`total_pnl`
-        snapshot are computed from live broker state and handed to the
-        notifier with no other durable home. The body is unchanged; this
-        wrapper persists every return path, keyed by (date, session_type)
-        so midday and close each keep their own row. Fail-soft.
-        """
-        if session_type not in ("midday", "close"):
-            raise ValueError(f"run_position_review: unknown session_type {session_type!r}")
-        self._last_account_snapshot = None
-        result = self._run_position_review_body(session_type)
-        self._attach_pnl(result)
-        self._persist_session_report(session_type, result)
-        return result
+    def run_position_review(self, session_type: str='midday') -> dict:
+        return _review.run_position_review(self, session_type)
 
     def _collab(self, name: str):
         """A collaborator for a session object: the attribute, or a deferred-error stand-in."""
@@ -1523,266 +1065,32 @@ class TradingPipeline(
             return _MissingCollaborator(name)
 
     def _run_position_review_body(self, session_type: str) -> dict:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/position_review_session.py)."""
-        return PositionReviewSession(
-            activate_cost_session=self._collab("_activate_cost_session"),
-            adjudicate_target_revision_flags=self._collab("_adjudicate_target_revision_flags"),
-            apply_deterministic_trails=self._collab("_apply_deterministic_trails"),
-            build_active_state_changes=self._collab("_build_active_state_changes"),
-            build_calibration_note=self._collab("_build_calibration_note"),
-            build_macro_trajectory=self._collab("_build_macro_trajectory"),
-            build_own_recent_decisions=self._collab("_build_own_recent_decisions"),
-            build_position_facts=self._collab("_build_position_facts"),
-            build_review_metric_deltas=self._collab("_build_review_metric_deltas"),
-            build_trade_grade_summary=self._collab("_build_trade_grade_summary"),
-            build_weekly_narrative=self._collab("_build_weekly_narrative"),
-            compute_deployable_cash=self._collab("_compute_deployable_cash"),
-            compute_recent_performance=self._collab("_compute_recent_performance"),
-            cost_circuit_status=self._collab("_cost_circuit_status"),
-            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
-            drain_pending_repegs=self._collab("_drain_pending_repegs"),
-            enforce_gross_ceiling=self._collab("_enforce_gross_ceiling"),
-            force_delever=self._collab("_force_delever"),
-            handle_ex_dividends=self._collab("_handle_ex_dividends"),
-            is_trading_day=self._collab("_is_trading_day"),
-            kill_switch_halt_result=self._collab("_kill_switch_halt_result"),
-            load_earnings_analyses=self._collab("_load_earnings_analyses"),
-            midday_execute_llm_actions=self._collab("_midday_execute_llm_actions"),
-            news_held_symbols=self._collab("_news_held_symbols"),
-            paid_suspension_after_late_safety=self._collab("_paid_suspension_after_late_safety"),
-            persist_review_metrics=self._collab("_persist_review_metrics"),
-            reconcile_fills=self._collab("_reconcile_fills"),
-            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
-            reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
-            reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
-            record_account_snapshot=self._collab("_record_account_snapshot"),
-            release_retired_cash_park=self._collab("_release_retired_cash_park"),
-            require_paid_analysis=self._collab("_require_paid_analysis"),
-            risk_review_exits=self._collab("_risk_review_exits"),
-            run_news_update=self._collab("_run_news_update"),
-            substantiate_exit_triggers=self._collab("_substantiate_exit_triggers"),
-            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
-            sweeper=self._collab("_sweeper"),
-            symbols_already_trimmed_today=self._collab("_symbols_already_trimmed_today"),
-            sync_positions_from_broker=self._collab("_sync_positions_from_broker"),
-            total_pnl_since_reset=self._collab("_total_pnl_since_reset"),
-            trade_executed_or_pending=self._collab("_trade_executed_or_pending"),
-            broker=self._collab("broker"),
-            config=self._collab("config"),
-            db=self._collab("db"),
-            macro=self._collab("macro"),
-            macro_store=self._collab("macro_store"),
-            position_reviewer=self._collab("position_reviewer"),
-        ).run(session_type)
+        return _review._run_position_review_body(self, session_type)
     def run_earnings_preprocess(self) -> dict:
-        """Pre-market earnings analysis, plus the one true sentence its
-        P&L block can say.
-
-        This mode runs before the open and makes no broker account read at
-        all, so its message genuinely has no figure. It says so explicitly
-        rather than letting the renderer guess from absent keys — the guess
-        is what produced the false "built without an account read" line on
-        trading sessions that HAD read the account (2026-09-23).
-        """
-        result = self._run_earnings_preprocess_body()
-        if isinstance(result, dict):
-            result.setdefault("pnl_unavailable_reason", "no_account_read")
-        return result
+        return _review.run_earnings_preprocess(self)
 
     def _run_earnings_preprocess_body(self) -> dict:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/earnings_preprocess_session.py)."""
-        return EarningsPreprocessSession(
-            activate_cost_session=self._collab("_activate_cost_session"),
-            alert_form4_backlog_before_open=self._collab("_alert_form4_backlog_before_open"),
-            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
-            drain_pending_repegs=self._collab("_drain_pending_repegs"),
-            earnings_preprocess_symbols=self._collab("_earnings_preprocess_symbols"),
-            is_trading_day=self._collab("_is_trading_day"),
-            paid_suspended_payload=self._collab("_paid_suspended_payload"),
-            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
-            record_congressional_refresh=self._collab("_record_congressional_refresh"),
-            record_form4_backlog=self._collab("_record_form4_backlog"),
-            require_paid_analysis=self._collab("_require_paid_analysis"),
-            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
-            watched_research_symbols=self._collab("_watched_research_symbols"),
-            smart_money_refresh_sources_word=_smart_money_refresh_sources_word,
-            config=self._collab("config"),
-            db=self._collab("db"),
-            earnings_analyst=self._collab("earnings_analyst"),
-            earnings_provider=self._collab("earnings_provider"),
-            smart_money_provider=self._collab("smart_money_provider"),
-        ).run()
+        return _review._run_earnings_preprocess_body(self)
 
     def run_evening(self) -> dict:
-        """The evening session, plus the durable record of its own output.
-
-        The body below is unchanged; this wrapper exists so that EVERY
-        return path (holiday short-circuit, paid-analysis suspension, the
-        error payloads and the full report) lands in `evening_reports`
-        before the result reaches the notifier. Previously the run handed
-        stop_coverage_gaps / stop_proximity / earnings_proximity /
-        total_pnl / risk_capital_dollars to the Telegram formatter and
-        then dropped them: only daily_pnl and insights survived, so last
-        night's report could not be re-read without paying for a fresh
-        run. Persistence is fail-soft — a storage problem must cost the
-        audit record, never the evening push.
-        """
-        result = self._run_evening_body()
-        if isinstance(result, dict) and result.get("status") != "market_holiday":
-            if (screen := self.admission._run_universe_screen(
-                    result.get("run_id") or "evening")) is not None:
-                result["universe_screen"] = screen
-        self._persist_evening_report(result)
-        return result
+        return _evening.run_evening(self)
 
     def _persist_evening_report(self, result: dict) -> None:
-        """Write the evening result dict verbatim, keyed by trading day.
-
-        No field is defaulted or filled in: a value the run could not
-        compute is stored absent/None so that a re-render says
-        "not available" rather than showing a fabricated zero.
-        """
-        if not isinstance(result, dict):
-            return
-        try:
-            self.db.save_evening_report(
-                date=session_date_key(),
-                run_id=result.get("run_id"),
-                payload=result,
-            )
-        except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "evening report persistence failed (non-fatal): %s", exc,
-            )
+        return _evening._persist_evening_report(self, result)
 
     def _run_evening_body(self) -> dict:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_session.py)."""
-        return EveningSession(
-            activate_cost_session=self._collab("_activate_cost_session"),
-            actualize_trade_row=self._collab("_actualize_trade_row"),
-            build_active_state_changes=self._collab("_build_active_state_changes"),
-            build_missed_opportunities_digest=self._collab("_build_missed_opportunities_digest"),
-            build_portfolio_heat=self._collab("_build_portfolio_heat"),
-            build_recent_buys_for_grading=self._collab("_build_recent_buys_for_grading"),
-            build_recent_outlook_calibration=self._collab("_build_recent_outlook_calibration"),
-            build_recent_sells_for_grading=self._collab("_build_recent_sells_for_grading"),
-            build_thesis_health_context=self._collab("_build_thesis_health_context"),
-            build_weekly_narrative=self._collab("_build_weekly_narrative"),
-            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
-            drain_pending_repegs=self._collab("_drain_pending_repegs"),
-            evening_earnings_proximity=self._collab("_evening_earnings_proximity"),
-            evening_stop_proximity=self._collab("_evening_stop_proximity"),
-            expected_sessions_missing_today=self._collab("_expected_sessions_missing_today"),
-            is_trading_day=self._collab("_is_trading_day"),
-            load_earnings_analyses=self._collab("_load_earnings_analyses"),
-            maybe_run_quarterly_meta=self._collab("_maybe_run_quarterly_meta"),
-            news_held_symbols=self._collab("_news_held_symbols"),
-            paid_suspended_payload=self._collab("_paid_suspended_payload"),
-            persist_evening_replay_inputs=self._collab("_persist_evening_replay_inputs"),
-            reconcile_fills=self._collab("_reconcile_fills"),
-            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
-            reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
-            reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
-            require_paid_analysis=self._collab("_require_paid_analysis"),
-            run_news_update=self._collab("_run_news_update"),
-            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
-            sweeper=self._collab("_sweeper"),
-            sync_positions_from_broker=self._collab("_sync_positions_from_broker"),
-            total_pnl_since_reset=self._collab("_total_pnl_since_reset"),
-            broker=self._collab("broker"),
-            config=self._collab("config"),
-            db=self._collab("db"),
-            earnings_provider=self._collab("earnings_provider"),
-            evening_analyst=self._collab("evening_analyst"),
-            macro=self._collab("macro"),
-            news_store=self._collab("news_store"),
-        ).run()
+        return _evening._run_evening_body(self)
     def _evening_stop_proximity(self, positions) -> list[dict]:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
-        from src.execution.stop_read import read_stop
-        return EveningStopProximitySession(
-            stop_reader=read_stop, db=self.db, atr_for_symbol=self._collab("_atr_for_symbol"),
-            sweep_symbol=self._collab("_sweep_symbol"),
-            broker=self._collab("broker"),
-        ).run(positions)
+        return _evening._evening_stop_proximity(self, positions)
 
     def _evening_earnings_proximity(self, positions) -> list[dict]:
-        """Next-earnings proximity for every held name, for the evening
-        report's "reports earnings soon" line.
-
-        Reuses `src.data.event_calendar.fetch_earnings_proximity` — already
-        bounded per symbol and in aggregate by the same `config.event_risk`
-        timeouts the morning research stage uses — rather than calling the
-        unbounded provider method directly. A symbol whose date could not be
-        fetched comes back labelled, never as "no earnings".
-
-        Never raises; degrades to [].
-        """
-        try:
-            symbols = self._news_held_symbols(positions)
-            if not symbols or getattr(self, "market", None) is None:
-                return []
-            from src.data.event_calendar import fetch_earnings_proximity
-            event_cfg = getattr(getattr(self, "config", None), "event_risk", None)
-            rows = fetch_earnings_proximity(
-                self.market, symbols,
-                per_symbol_timeout_s=getattr(
-                    event_cfg, "earnings_symbol_timeout_s", 8.0,
-                ),
-                total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
-            )
-        except Exception as exc:  # noqa: BLE001
-            record_stage(self, "evening_earnings_proximity", exc)
-            return []
-        return [
-            {
-                "symbol": r.symbol,
-                "sessions_away": r.sessions_away,
-                "status": r.status,
-            }
-            for r in rows or []
-        ]
+        return _evening._evening_earnings_proximity(self, positions)
 
     def _expected_sessions_missing_today(self) -> list[str]:
-        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/expected_sessions_session.py)."""
-        return ExpectedSessionsMissingSession(
-            db=self._collab("db"),
-        ).run()
+        return _evening._expected_sessions_missing_today(self)
 
     def _maybe_run_quarterly_meta(self) -> dict | None:
-        """Evening-time piggyback for the quarterly meta-reflection loop.
-
-        There is no separate systemd timer for `meta`; the autonomous-
-        evolution loop fires by checking the quarter-end gate inside
-        evening. The pre-fix behavior was that `run_quarterly_meta_
-        reflection()` had to be invoked by hand (`python main.py --mode
-        meta`), so the entire 8-week-built loop never ran automatically.
-
-        Wrapped in try/except so a meta failure can never fail the
-        evening report. Evening's artifact is load-bearing for next
-        morning's PM; meta is a once-a-quarter bonus.
-
-        Returns None when not quarter-end, a result dict otherwise.
-        """
-        try:
-            from src.trading_calendar import et_today
-            today = et_today()
-            try:
-                is_last = self.broker.is_last_trading_day_of_quarter(on_date=today)
-            except Exception as e:
-                record_stage(self, "meta_quarter_end_check", e)
-                return None
-            if not is_last:
-                return None
-            logger.info(
-                "Evening: today is last trading day of quarter %d-Q%d — "
-                "running auto meta-reflection",
-                today.year, (today.month - 1) // 3 + 1,
-            )
-            return self.run_quarterly_meta_reflection(force=False)
-        except Exception as e:
-            logger.exception("Evening: meta-reflection piggyback failed: %s", e)
-            return {"status": "auto_meta_error", "error": str(e)}
+        return _evening._maybe_run_quarterly_meta(self)
 
     def run_quarterly_meta_reflection(
         self,
