@@ -385,9 +385,11 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 )
             else:
                 rr = f" | R/R {d.reward_risk}:1" if d.reward_risk is not None else ""
+            # No take-profit (owner rule 2026-10-09) reads ABSENT, never "$None".
+            tgt = f"${d.take_profit}" if d.take_profit is not None else "absent (no structural level; trend trade)"
             return (
                 f"- {d.action} {d.symbol}: {alloc} | Entry: ${d.entry_price} | "
-                f"Stop: ${d.stop_loss} | Target: ${d.take_profit}{rr}\n  Reasoning: {d.reasoning}"
+                f"Stop: ${d.stop_loss} | Target: {tgt}{rr}\n  Reasoning: {d.reasoning}"
             )
 
         decisions_text = "\n".join(_fmt_decision(d) for d in portfolio_decision.decisions)

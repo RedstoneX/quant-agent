@@ -61,6 +61,7 @@ _DESK_FILLED_FIELDS = {
     "computed_level_zones",
     "input_fingerprint",
     "read_state",
+    "reference_target_wrong_side",
 }
 
 _VALID_ITEM = {

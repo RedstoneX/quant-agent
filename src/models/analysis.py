@@ -643,6 +643,13 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
     # never counted as a trade the desk judged. Defaults to "unknown",
     # which the derivation classifies with the faults, fail-closed.
     levels_coverage: str = "unknown"
+    # PYTHON-SET (owner rule 2026-10-09). True when the analyst's
+    # `reference_target` sits on the WRONG side of its own entry (at/below
+    # entry for a buy, at/above for a sell). Until 2026-10-09 that rejected
+    # the whole analysis and dropped the signal; the guess is only evidence
+    # (the order's take-profit is derived from structure), so the signal is
+    # kept and this recorded flag travels with it for every AI reader.
+    reference_target_wrong_side: bool = False
     # PYTHON-SET (2026-09-12, docs/WORK.md item 54), same pattern as the
     # two above, from the same bars: the last completed bar's low and high
     # — the SIGNAL bar the analyst judged — and how many completed sessions
@@ -771,6 +778,17 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         # when a tied composite tier has no risk_reward at all, e.g. an
         # all-breakout tier). No entry price, or no computed levels at
         # all, means zero — a real absence, not an invented value.
+        if self.reference_target_wrong_side:
+            evidence.append(
+                VerdictEvidence(
+                    label="reference_target_wrong_side",
+                    text=(
+                        f"the analyst's reference target {self.reference_target} is on "
+                        f"the wrong side of its own entry {self.entry_price}; it is "
+                        f"evidence only and was not used as the take-profit"
+                    ),
+                )
+            )
         stop_side_level_touches = 0.0
         if self.entry_price is not None:
             is_short = self.rating in ("sell", "strong_sell")
@@ -860,18 +878,14 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
                 f"{self.symbol}: rating={self.rating} requires reference_target > 0 "
                 f"(derive it from structure, or from a measured move on a breakout)"
             )
+        # A wrong-side guess is RECORDED, not rejected (owner rule
+        # 2026-10-09): the take-profit is derived from structure, never from
+        # this number, so dropping the whole signal over it lost real trades.
         if self.rating in ("buy", "strong_buy"):
-            if self.reference_target <= self.entry_price:
-                raise ValueError(
-                    f"{self.symbol}: BUY reference_target {self.reference_target} "
-                    f"must be above entry {self.entry_price}"
-                )
+            wrong_side = self.reference_target <= self.entry_price
         else:
-            if self.reference_target >= self.entry_price:
-                raise ValueError(
-                    f"{self.symbol}: SELL reference_target {self.reference_target} "
-                    f"must be below entry {self.entry_price}"
-                )
+            wrong_side = self.reference_target >= self.entry_price
+        self.__dict__["reference_target_wrong_side"] = bool(wrong_side)
         if self.setup_type is None:
             raise ValueError(
                 f"{self.symbol}: rating={self.rating} requires setup_type "
