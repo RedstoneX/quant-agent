@@ -44,6 +44,9 @@ from src.exit_quote import read_exit_quote
 from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
 
+#: Exit-refusal code for a reviewer REDUCE (a model-originated partial sell).
+CODE_PARTIAL_SELL_REFUSED = "partial_sell_refused_whole_exits_only"
+
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
@@ -431,6 +434,31 @@ class ExitEngineMixin:
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
         actions_list = [a.model_dump() for a in actions_raw]
+        # Owner ruling 2026-10-09 (docs/OUTCOME.md): never sell PART of a
+        # held position — kept whole or sold whole. The reviewer's REDUCE is
+        # the model's own partial sell, never a risk-limit trim, so it is
+        # refused here with a durable reason and NOT converted into a SELL.
+        # Refused before the dedup so it cannot displace a same-symbol
+        # TRAIL_STOP.
+        kept_actions = []
+        for ai in actions_list:
+            if ai.get("action") != "REDUCE":
+                kept_actions.append(ai)
+                continue
+            logger.warning(
+                "Position reviewer: REDUCE %s refused — a held position is kept whole or sold whole",
+                ai.get("symbol"),
+            )
+            self._record_exit_refusal(
+                symbol=ai.get("symbol") or "",
+                run_id=run_id,
+                action="REDUCE",
+                code=CODE_PARTIAL_SELL_REFUSED,
+                dropped=True,
+                detail=f"REDUCE: {str(ai.get('reason') or '')[:400]}",
+                layer="whole_exits_only",
+            )
+        actions_list = kept_actions
         for ai in actions_list:
             sym = (ai.get("symbol") or "").strip().upper()
             if not sym:
@@ -1027,10 +1055,7 @@ class ExitEngineMixin:
                     position_qty = abs(existing[0].qty)
                     close_side = "buy"
                 else:
-                    if act == "REDUCE":
-                        qty = self._reduce_sell_qty(existing[0].qty)
-                    else:
-                        qty = self._full_sell_qty(existing[0].qty)
+                    qty = self._full_sell_qty(existing[0].qty)
                     if qty is None:
                         continue
                     # A plain DAY MARKET sell — see src/exit_quote.py.

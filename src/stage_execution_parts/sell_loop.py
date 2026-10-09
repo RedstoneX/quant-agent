@@ -162,7 +162,18 @@ def alert_rotation_close_outcome(pipeline, ctx, prot, status) -> None:
         logger.error("rotation close outcome alert failed: %s", exc)
 
 
-def sell_qty_and_label(pipeline, decision, existing):
+#: Refusal reason for a partial SELL that no risk limit forced.
+PARTIAL_SELL_NOT_RISK_LIMIT = "partial_sell_not_forced_by_risk_limit"
+
+
+def _is_risk_limit_trim(decision) -> bool:
+    """A partial exit is a risk-limit trim only when granted risk < asked-for risk."""
+    requested = decision.requested_risk_pct
+    allocated = decision.allocated_risk_pct
+    return requested is not None and allocated is not None and allocated < requested
+
+
+def sell_qty_and_label(pipeline, decision, existing, ctx=None):
     """Resolve the SELL quantity and label; `SKIP` where the loop skipped."""
     if decision.allocation_pct == 0:
         logger.warning(
@@ -182,6 +193,29 @@ def sell_qty_and_label(pipeline, decision, existing):
             if qty is None:
                 return SKIP
             action_label = "SELL"
+        elif not _is_risk_limit_trim(decision):
+            # Owner ruling 2026-10-09: never sell PART of a held position.
+            # Only a trim a risk limit forced (the constructor stamps it with
+            # granted risk below asked-for risk) may stay partial.
+            logger.error(
+                "Refusing PARTIAL_SELL %s (%.0f%%): not forced by a risk limit — "
+                "a held position is kept whole or sold whole",
+                decision.symbol,
+                decision.allocation_pct,
+            )
+            if ctx is not None:
+                _record_pipeline_event(
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "order",
+                    "refused",
+                    PARTIAL_SELL_NOT_RISK_LIMIT,
+                    allocation_pct=decision.allocation_pct,
+                    requested_risk_pct=decision.requested_risk_pct,
+                    allocated_risk_pct=decision.allocated_risk_pct,
+                )
+            return SKIP
         else:
             action_label = f"PARTIAL_SELL({decision.allocation_pct:.0f}%)"
     else:
