@@ -52,8 +52,9 @@ Ties and unranked names still break alphabetically, so the outcome never
 depends on dict ordering or the order the PM happened to list its targets.
 
 A request cut below `floor_pct` is DENIED rather than shrunk to a token
-position: below the floor the idea is not worth trading, and a 0.1%-risk
-position pays full commission and full attention for an immaterial payoff.
+position: the floor is the owner's own minimum risk per trade (OUTCOME.md
+risk table, 2026-08-27), and with the total-risk ceiling it bounds how many
+names the book holds. Alpaca charges no commission; cost is not the reason.
 
 **The candidate on the cut line** — whose request only partly fits what is
 left — is taken at the REDUCED SIZE, not skipped. Owner decision, 2026-09-14,
@@ -330,8 +331,8 @@ def allocate_risk_budget(
             )
             continue
         if granted < floor:
-            # Below the floor the idea is not worth trading. A token position
-            # pays full commission and full attention for an immaterial payoff.
+            # Below the owner's minimum risk per trade (OUTCOME.md, 2026-08-27).
+            # Not a commission floor: Alpaca charges none.
             grants[symbol] = RiskGrant(
                 symbol,
                 requested,
