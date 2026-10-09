@@ -42,15 +42,35 @@ qamc_systemctl() {
 # paused_units.yaml). A paused unit is installed but deliberately NOT
 # enabled; the deploy must not silently switch it back on.
 unit_is_paused() {
-  [[ -r "${PAUSED_UNITS}" ]] || return 1
-  grep -Eq "^[[:space:]]*-?[[:space:]]*unit:[[:space:]]*${1}[[:space:]]*$" \
+  # Read as root: the operator cannot read the qamc-owned deploy root, and a
+  # plain [[ -r ]] there answered "no paused list", i.e. "enable everything".
+  if ! sudo -n test -r "${PAUSED_UNITS}"; then
+    echo "PAUSED LIST UNREADABLE: ${PAUSED_UNITS} - refusing to enable units blind" >&2
+    exit 1
+  fi
+  sudo -n grep -Eq "^[[:space:]]*-?[[:space:]]*unit:[[:space:]]*${1}[[:space:]]*$" \
     "${PAUSED_UNITS}"
+}
+
+# The deploy root is owned by qamc and is not readable by the operator, so a
+# plain "${UNIT_SRC}"/*.timer glob matched NOTHING here and every new unit was
+# skipped without a word. List the files as root instead, and refuse to treat
+# "found none" as "nothing to install".
+unit_sources() {
+  local found
+  found="$(sudo -n find "${UNIT_SRC}" -maxdepth 1 -type f \( -name '*.service' -o -name '*.timer' \) | sort)"
+  if [[ -z "${found}" ]]; then
+    echo "NO UNIT FILES FOUND in ${UNIT_SRC} - refusing to treat that as nothing to install" >&2
+    exit 1
+  fi
+  echo "${found}"
 }
 
 install_units() {
   local src name changed=0
-  for src in "${UNIT_SRC}"/*.service "${UNIT_SRC}"/*.timer; do
-    [[ -e "${src}" ]] || continue
+  local unit_list
+  unit_list="$(unit_sources)" || exit 1
+  for src in ${unit_list}; do
     name="$(basename "${src}")"
     # `cmp` exits non-zero for a missing target too, so a brand-new unit
     # takes the same path as a changed one. Idempotent: an unchanged unit
@@ -77,12 +97,13 @@ install_units() {
     echo "==> systemctl --user daemon-reload (unit files changed)"
     qamc_systemctl daemon-reload
   fi
-  for src in "${UNIT_SRC}"/*.service "${UNIT_SRC}"/*.timer; do
-    [[ -e "${src}" ]] || continue
+  local unit_list
+  unit_list="$(unit_sources)" || exit 1
+  for src in ${unit_list}; do
     name="$(basename "${src}")"
     # Only units that declare an [Install] section can be enabled; the
     # oneshot services behind the timers deliberately carry none.
-    grep -q '^\[Install\]' "${src}" || continue
+    sudo -n grep -q '^\[Install\]' "${src}" || continue
     if unit_is_paused "${name}"; then
       echo "==> ${name} is on paused_units.yaml — leaving it disabled"
       continue
