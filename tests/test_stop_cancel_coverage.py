@@ -5,6 +5,7 @@ with a bare False.
 These tests pin the mechanism and the contract that removes it.
 """
 
+from tests.fakes.held_book import hold
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +27,9 @@ def _broker(mock_tc_cls, failing_id="stop-b"):
 
     client.cancel_order_by_id.side_effect = _cancel
     mock_tc_cls.return_value = client
-    return AlpacaBroker(api_key="test", secret_key="test", paper=True), client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    hold(broker, {"AMZN": 71.0})  # SPEC_A + SPEC_B: the shares are still held, so the rollback runs
+    return broker, client
 
 
 @patch("src.execution.broker.TradingClient")

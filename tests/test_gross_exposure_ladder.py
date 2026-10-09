@@ -17,6 +17,7 @@ The ratified table (owner, 2026-09-01):
     worse than -20%            0.5x, and the owner is alerted
 """
 
+from tests.fakes.held_book import hold
 import math
 import pytest
 
@@ -1976,6 +1977,7 @@ def test_a_multi_symbol_gross_delever_restores_each_stop_before_touching_the_nex
     ]  # $20k gross on $10k equity = 2.0x against a 1.0x ceiling
     ctx.total_value = EQUITY
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._enforce_gross_ceiling(ctx)
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)
@@ -1999,6 +2001,7 @@ def test_a_multi_symbol_cash_only_delever_restores_each_stop_before_touching_the
     ]
     ctx.total_value = EQUITY
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._force_delever(ctx)
 
     touched = _assert_no_symbol_left_naked_while_another_is_touched(events)

@@ -12,6 +12,7 @@ concentration / parabolic / target-breach. Everything else is HOLD-biased
 by construction.
 """
 
+from tests.fakes.held_book import hold
 from unittest.mock import MagicMock, patch
 
 from src.models import Position, PositionReasoningChain, PositionReview
@@ -957,6 +958,7 @@ def test_executor_allows_reduce_on_already_trimmed_with_hard_trigger():
         "thesis_invalid_if condition satisfied — Q1 guidance cut materialised "
         "post-midday on AWS deceleration. Trim further to size down before close.",
     )
+    hold(pipeline.broker, {"AMZN": 21.0})  # what the broker holds when the exit is re-sized
     pipeline._midday_execute_llm_actions(
         positions,
         review,

@@ -134,11 +134,12 @@ def test_unreadable_position_refuses_entry_but_allows_exit(frozen_db):
     assert calls == ["close_position", "replace_stop_loss"]
 
 
-def test_fractional_quantities_compare_exactly(frozen_db):
+def test_fractional_quantities_compare_at_broker_precision(frozen_db):
     d, calls = _door({"XYZ": 0.3})
-    assert d.submit_order(symbol="XYZ", qty=0.1 + 0.2, side="sell") != "THROUGH"  # 0.30000000000000004 > held
+    assert d.submit_order(symbol="XYZ", qty=0.1 + 0.2, side="sell") == "THROUGH"  # float noise below 9 dp
     assert d.submit_order(symbol="XYZ", qty=0.3, side="sell") == "THROUGH"
-    assert calls == ["submit_order"]
+    assert d.submit_order(symbol="XYZ", qty=0.300000002, side="sell") != "THROUGH"  # a real excess: a flip
+    assert calls == ["submit_order", "submit_order"]
 
 
 def test_not_frozen_lets_entries_through(frozen_db):

@@ -10,6 +10,7 @@ Default-false `RiskConfig.allow_margin`:
   5. The midday reviewer prompt surfaces the same mandate.
 """
 
+from tests.fakes.held_book import hold
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -543,6 +544,7 @@ def test_force_delever_picks_biggest_loser_first():
         ),
     ]
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._force_delever(ctx)
 
     assert len(orders) == 1
@@ -591,6 +593,7 @@ def test_force_delever_stops_once_deficit_covered():
         ),
     ]
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._force_delever(ctx)
 
     assert len(orders) == 1
@@ -687,6 +690,7 @@ def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
         ),
     ]
 
+    hold(pipeline.broker, {p.symbol: p.qty for p in ctx.positions})  # what the broker holds when the exit is re-sized
     orders = pipeline._force_delever(ctx)
     assert len(orders) == 1
     first_sym = pipeline.broker.submit_order.call_args.kwargs["symbol"]

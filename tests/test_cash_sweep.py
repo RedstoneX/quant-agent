@@ -23,6 +23,7 @@ planning figure PM/RM/the pre-trade gate see. ExecutionStage's raw-cash
 recheck remains the final authority.
 """
 
+from tests.fakes.held_book import hold
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -206,6 +207,7 @@ def test_force_delever_sells_vehicle_before_real_longs():
     )
     ctx.positions = [loser, SGOV]
 
+    hold(p.broker, {x.symbol: x.qty for x in ctx.positions})  # what the broker holds when the exit is re-sized
     p._force_delever(ctx)
     first = p.broker.submit_order.call_args_list[0].kwargs
     assert first["symbol"] == "SGOV"  # parked cash first, not the loser
