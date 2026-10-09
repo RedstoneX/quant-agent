@@ -97,5 +97,3 @@
 ["src.trader_feed.common._COMPANY_NAME_CAP"]
 ["src.trader_feed.common._DETAILS_SAFETY_RESERVE_CHARS"]
 ["src.trader_feed.intraday._HOUR_WINDOW_MINUTES"]
-["src.llm_balance_runway.AVG_WINDOW_DAYS"]
-["src.llm_balance_runway.REFRESH_INTERVAL_HOURS"]

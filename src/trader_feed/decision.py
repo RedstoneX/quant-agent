@@ -472,12 +472,11 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float, mode:
     bits.append(f"took {_fmt_elapsed(elapsed)}")
     lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
     if mode in ("morning", "once"):
-        # Morning only (midday/evening also end here): the one credit line,
-        # and the one-shot alert when the state turns low/unknown.
-        from src.llm_balance_runway import alert_on_state_change, balance_line
+        # Morning only (midday/evening also end here): the one credit line.
+        # The one-shot $3 alert is checked on every send, in the send funnel.
+        from src.llm_balance_runway import balance_line
 
         lines.append("\U0001f50b " + balance_line())
-        alert_on_state_change()
 
 
 def format_coverage_gap_line(row: dict, profiles: dict | None = None) -> str:

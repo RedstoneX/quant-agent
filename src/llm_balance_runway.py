@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -52,6 +53,9 @@ def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
 #: The pricing-refresh timer (scripts/systemd/quant-agent-pricing-refresh.timer)
 #: fires at 06:30 and 18:30 ET, so a healthy snapshot is never more than 12h
 #: old. Older than that means a refresh was missed.
+#: Owner ruling 2026-10-09 ("Yes, $3, and that is that."): the low-credit alert
+#: fires once when the OpenRouter balance is at or below this many dollars.
+LOW_CREDIT_ALERT_USD = 3.0
 REFRESH_INTERVAL_HOURS = 12.0
 #: Window for the average: the last N days on which the desk actually spent.
 AVG_WINDOW_DAYS = 7
@@ -110,7 +114,7 @@ def compute_state(
         }
 
     remaining = max(remaining, 0.0)
-    trigger = 2 * worst
+    trigger = LOW_CREDIT_ALERT_USD
     days_left = remaining / mean if mean else None
     stale = source == "provider" and (age_hours is None or age_hours > REFRESH_INTERVAL_HOURS)
     if source == "derived":
@@ -119,7 +123,7 @@ def compute_state(
         tail = " · balance snapshot age UNKNOWN, STALE"
     else:
         tail = f" · balance {_age_text(age_hours)} old" + (", STALE (refresh missed)" if stale else "")
-    low = remaining < trigger
+    low = remaining <= trigger
     line = (
         f"AI credit: ${remaining:.2f} left · avg ${mean:.2f}/day over last {len(window)} trading days run"
         f" · ~{days_left:.0f} days{tail}"
@@ -215,7 +219,10 @@ def alert_on_state_change(state: dict | None = None, *, path: Path = ALERT_STATE
         sent = False
         if status in ("low", "unknown"):
             if send is None:
-                from src.notifier.owner_alert import send_owner_alert as send
+                # The sender is passed in by the one send seam; importing the
+                # notifier here would close an import cycle through it.
+                logger.error("AI-credit alert has no sender; not recorded, retried on next send")
+                return False
             sent = bool(send(state.get("message", UNKNOWN_LINE)))
             if not sent:
                 return False  # not recorded: try again next morning
@@ -228,3 +235,37 @@ def alert_on_state_change(state: dict | None = None, *, path: Path = ALERT_STATE
         record_swallowed_here("llm_balance_runway.alert_on_state_change", log=logger)
         logger.exception("AI-credit state alert failed")
         return False
+
+
+_checking = threading.local()
+
+
+def check_balance_on_send(*, fetch=None, path: Path = ALERT_STATE_PATH, send=None) -> bool:
+    """Fetch the OpenRouter balance fresh and run `alert_on_state_change` on it.
+
+    Called from the one Telegram send seam, so the $3 alert is checked on every
+    outbound message and sent once per state change. A fetch failure is logged
+    with its traceback and never blocks the message. Re-entrant calls (the
+    alert itself goes out through the same seam) are skipped. Never raises."""
+    if getattr(_checking, "active", False):
+        return False
+    if fetch is None:
+        from src.openrouter_balance import fetch_openrouter_balance as fetch
+    _checking.active = True
+    try:
+        try:
+            remaining = float(fetch()["remaining_usd"])
+        except Exception:  # noqa: BLE001 - logged below, never blocks a send
+            from src.sentinel.counted import record_swallowed_here
+
+            record_swallowed_here("llm_balance_runway.check_balance_on_send", log=logger)
+            logger.error("AI-credit balance fetch failed on send", exc_info=True)
+            return False
+        low = remaining <= LOW_CREDIT_ALERT_USD
+        message = f"AI credit: ${remaining:.2f} left" + (". Top up OpenRouter now." if low else "")
+        if low:
+            message = "LOW " + message
+        state = {"status": "low" if low else "ok", "message": message, "remaining_usd": round(remaining, 2)}
+        return alert_on_state_change(state, path=path, send=send)
+    finally:
+        _checking.active = False
