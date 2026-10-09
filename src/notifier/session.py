@@ -41,10 +41,10 @@ from src.notifier.evening import (
     _append_evening_body,
     _evening_pnl_block,
 )
+from src.llm_balance_runway import balance_line
 from src.notifier.costs import (
     _day_cost_line,
     _margin_interest_lines,
-    _openrouter_balance_line,
     _session_cost_line,
 )
 
@@ -233,9 +233,7 @@ def format_session_result(
     if day_line and cost_line:
         cost_block.append(day_line)
     if mode in ("morning", "once"):
-        balance_line = _openrouter_balance_line()
-        if balance_line:
-            cost_block.append(balance_line)
+        cost_block.append(balance_line())
     _new_section(lines, *cost_block)
 
     # Margin interest gets its OWN section, not a berth in the cost block
