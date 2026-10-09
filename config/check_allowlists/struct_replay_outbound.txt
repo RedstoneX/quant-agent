@@ -19,7 +19,6 @@ src/execution/broker_parts/market_data.py | alpaca
 src/execution/broker_parts/trade_stream.py | alpaca
 src/inflight.py | urllib
 src/notifier/__init__.py | requests
-src/notifier/costs.py | urllib
 src/notifier/snapshots.py | yfinance
 src/notifier/transport.py | requests
 src/sector_reference.py | yfinance

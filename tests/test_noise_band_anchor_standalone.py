@@ -10,7 +10,6 @@ import pytest
 
 from src.risk.noise_band_anchor import (
     anchored_adverse_move,
-    band_width_atr,
     noise_band_anchor,
 )
 
@@ -20,12 +19,6 @@ def test_module_loads_without_exit_guard():
     root = str(Path(__file__).resolve().parents[1])
     env = {**os.environ, "PYTHONPATH": root}
     assert subprocess.run([sys.executable, "-c", code], env=env).returncode == 0
-
-
-def test_band_width_scales_with_sqrt_sessions_and_floors_at_one():
-    assert band_width_atr(4, multiple=2.0) == 4.0
-    for bad in (None, 0, -3, float("nan"), "x"):
-        assert band_width_atr(bad, multiple=2.0) == 2.0
 
 
 def test_anchor_long_short_and_fallback():

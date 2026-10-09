@@ -5,25 +5,26 @@ MEASURED 2026-10-04 (19 symbols, 9,519 daily bars, 2024-09-30..2026-09-29,
 
   * `check_structural_protection`'s fallback: 383 blocks -> 329, i.e. 54
     removed and NONE added. Re-anchored.
-  * The midday position reviewer: 189 -> 329, i.e. 51 removed and 191 ADDED,
-    96 of the added costing money against 95 saving, and 129 never releasing
-    within 60 sessions. NOT re-anchored; it keeps the entry anchor.
+  * The midday position reviewer was the other, entry-anchored home. That
+    gate was REMOVED on 2026-10-09 (owner ruling: no sale is refused for the
+    price the desk paid), so only the fallback home remains.
 
 These tests pin the anchor per home and the long/short mirror; they do NOT
 re-derive the width, which is unchanged under either anchor.
 """
 
-import math
-
-import pytest
+import functools
 
 from src.risk.exit_guard import (
-    NOISE_BAND_ATR_MULTIPLE,
-    adverse_move_is_noise,
+    FALLBACK_PROTECTION_ATR_MULTIPLE,
+    adverse_move_is_noise as _adverse_move_is_noise,
     check_structural_protection,
     noise_band_anchor,
 )
-from src.risk.noise_band_record import fallback_outcome, midday_payload
+from src.risk.noise_band_record import fallback_outcome
+
+# The mechanism's only remaining home is the fallback, with its own multiple.
+adverse_move_is_noise = functools.partial(_adverse_move_is_noise, multiple=FALLBACK_PROTECTION_ATR_MULTIPLE)
 
 
 ATR = 2.0
@@ -169,70 +170,16 @@ def test_anchor_is_clamped_so_it_is_never_worse_than_entry():
 
 def test_no_extreme_reproduces_the_old_entry_anchored_behaviour_exactly():
     for price in [96.0, 99.0, 99.5, 100.0, 101.0]:
-        assert adverse_move_is_noise(100.0, price, ATR) == (0 < 100.0 - price < NOISE_BAND_ATR_MULTIPLE * ATR)
+        assert adverse_move_is_noise(100.0, price, ATR) == (0 < 100.0 - price < FALLBACK_PROTECTION_ATR_MULTIPLE * ATR)
 
 
-def test_width_and_session_widening_are_untouched():
-    # 1.0 ATR at one session; sqrt(4)=2 ATR at four. Re-anchoring changes the
-    # reference point only.
-    assert (
-        adverse_move_is_noise(
-            100.0,
-            97.0,
-            ATR,
-            extreme_since_entry=100.0,
-            days_held=1,
-        )
-        is False
-    )
-    assert (
-        adverse_move_is_noise(
-            100.0,
-            97.0,
-            ATR,
-            extreme_since_entry=100.0,
-            days_held=4,
-        )
-        is True
-    )
+def test_width_is_flat_and_unchanged_by_reanchoring():
+    # 1.0 ATR, flat. Re-anchoring changes the reference point only.
+    assert adverse_move_is_noise(100.0, 98.5, ATR, extreme_since_entry=100.0) is True
+    assert adverse_move_is_noise(100.0, 97.0, ATR, extreme_since_entry=100.0) is False
 
 
 # ------------------------------------------------------------- THE RECORD
-def test_midday_reviewer_row_is_always_entry_anchored():
-    """The midday home is the MEASURED REGRESSION and keeps the entry anchor;
-    its row says so on every observation, and there is no way to ask it for
-    another anchor."""
-    row = midday_payload(
-        close_side="sell",
-        blocked=True,
-        adverse=1.0,
-        entry=100.0,
-        price=109.0,
-        atr=ATR,
-        band_multiple=1.0,
-        sessions_held=1.0,
-        sessions_measured=True,
-        tail="SELL: x",
-    )
-    assert "anchor=100.0000" in row and "anchor_kind=entry" in row
-    assert "extreme_since_entry" not in row
-    with pytest.raises(TypeError):
-        midday_payload(
-            close_side="sell",
-            blocked=True,
-            adverse=1.0,
-            entry=100.0,
-            price=109.0,
-            atr=ATR,
-            band_multiple=1.0,
-            sessions_held=1.0,
-            sessions_measured=True,
-            tail="SELL: x",
-            anchor=110.0,
-            anchor_kind="extreme_since_entry",
-        )
-
-
 def test_fallback_payload_names_the_anchor_it_used():
     _p, _b, detail = fallback_outcome(
         ent=100.0,

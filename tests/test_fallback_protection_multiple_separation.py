@@ -19,7 +19,6 @@ import inspect
 
 from src.risk.exit_guard import (
     FALLBACK_PROTECTION_ATR_MULTIPLE,
-    NOISE_BAND_ATR_MULTIPLE,
     adverse_move_is_noise,
     check_structural_protection,
 )
@@ -45,9 +44,9 @@ def test_the_fallback_home_has_its_own_named_constant() -> None:
     assert isinstance(FALLBACK_PROTECTION_ATR_MULTIPLE, float)
 
 
-def test_no_behaviour_change_the_two_values_are_equal_today() -> None:
-    """The split may not retune either value in the same pass (item 70)."""
-    assert FALLBACK_PROTECTION_ATR_MULTIPLE == NOISE_BAND_ATR_MULTIPLE == 1.0
+def test_no_behaviour_change_the_value_is_unchanged() -> None:
+    """Removing the midday gate (2026-10-09) did not retune this home."""
+    assert FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0
 
 
 def test_the_fallback_call_site_reads_the_fallback_constant() -> None:
@@ -60,11 +59,10 @@ def test_the_fallback_call_site_reads_the_fallback_constant() -> None:
     src = inspect.getsource(check_structural_protection)
     call = _fallback_call(src)
     assert "multiple=FALLBACK_PROTECTION_ATR_MULTIPLE" in call
-    assert "NOISE_BAND_ATR_MULTIPLE" not in call
 
 
 def test_the_fallback_band_stays_flat_no_hold_length_is_passed() -> None:
-    """This home's band does not widen with time; the midday home's does."""
+    """This home's band does not widen with time."""
     src = inspect.getsource(check_structural_protection)
     call = _fallback_call(src)
     assert "days_held" not in call

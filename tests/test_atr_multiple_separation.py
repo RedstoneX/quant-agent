@@ -1,4 +1,8 @@
-"""The four 1.0 ATR multiples must stay four SEPARATE, honestly-marked numbers.
+"""The 1.0 ATR multiples must stay SEPARATE, honestly-marked numbers.
+
+The entry-anchored noise band (`NOISE_BAND_ATR_MULTIPLE`) was one of four
+until 2026-10-09, when the owner ruled that no sale is refused for the price
+the desk paid and the gate was removed with its constant. Three remain.
 
 Board item 70 was opened because one `1.0` literal did two different jobs in the
 exit path. The split is built: the adverse-move noise band, the break-confirmation
@@ -27,14 +31,12 @@ from src.portfolio_constructor import ConstructorConfig
 from src.risk.exit_guard import (
     BREAK_CONFIRMATION_ATR_MULTIPLE,
     FALLBACK_PROTECTION_ATR_MULTIPLE,
-    NOISE_BAND_ATR_MULTIPLE,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = _REPO_ROOT / "config" / "number_ledger.yaml"
 
 _EXIT_GUARD_IDS = (
-    "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE",
     "src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE",
     "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE",
 )
@@ -63,8 +65,7 @@ def _ledger_entries() -> dict[str, dict]:
 
 
 def test_values_unchanged() -> None:
-    """No behaviour change: every one of the four still reads exactly 1.0."""
-    assert NOISE_BAND_ATR_MULTIPLE == 1.0
+    """No behaviour change: every remaining one still reads exactly 1.0."""
     assert BREAK_CONFIRMATION_ATR_MULTIPLE == 1.0
     assert FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0
     assert RiskConfig.model_fields["absolute_min_stop_atr_multiple"].default == 1.0
@@ -76,7 +77,6 @@ def test_three_distinct_names_not_one_shared_constant() -> None:
     import src.risk.exit_guard as exit_guard
 
     for name in (
-        "NOISE_BAND_ATR_MULTIPLE",
         "BREAK_CONFIRMATION_ATR_MULTIPLE",
         "FALLBACK_PROTECTION_ATR_MULTIPLE",
     ):
@@ -142,25 +142,29 @@ def test_no_ledger_row_says_the_break_margin_is_the_noise_band() -> None:
     assert not offenders, "ledger prose re-collapses the break margin into the noise band: " + "; ".join(offenders)
 
 
-def test_noise_band_widening_is_uncapped_and_its_null_is_recorded() -> None:
-    """The sqrt widening is uncapped and measured-unsupported (2026-10-04).
+def test_entry_anchored_sale_gate_is_gone_and_its_removal_is_recorded() -> None:
+    """No sale is refused for the price the desk paid (owner ruling 2026-10-09).
 
-    `ops/research/noise_band_holding_scaling.py` found no adverse-excursion
-    size at which a trend is finished, at any holding length, so no cap is
-    derivable and none was invented. This pins the uncapped state and the
-    recorded null together: a future cap must land with the evidence that
-    replaces this section, not quietly.
+    The 2026-10-04 measurement found loss from entry never marked a finished
+    trend, so the gate, its constant, its sqrt widening helper and its ledger
+    row were removed together. This pins all four gone and the recorded outcome
+    present, so the gate cannot quietly return under its old name.
     """
-    from math import sqrt
+    import src.risk.exit_guard as exit_guard
+    import src.risk.noise_band_anchor as anchor
 
-    from src.risk.exit_guard import noise_band_atr
+    assert not hasattr(exit_guard, "NOISE_BAND_ATR_MULTIPLE")
+    assert not hasattr(exit_guard, "noise_band_atr")
+    assert not hasattr(anchor, "band_width_atr")
+    assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" not in _ledger_entries()
 
-    assert noise_band_atr(60) == sqrt(60)
-    assert noise_band_atr(250) == sqrt(250)
+    pipeline_src = (_REPO_ROOT / "src" / "pipeline_exits.py").read_text()
+    assert "adverse_move_is_noise" not in pipeline_src
+    assert "exit_blocked_inside_atr_noise_band" not in pipeline_src
 
-    findings = (Path(__file__).resolve().parents[1] / "docs/RESEARCH_FINDINGS.md").read_text()
+    findings = (_REPO_ROOT / "docs/RESEARCH_FINDINGS.md").read_text()
     assert "Does the band's sqrt(sessions_held) widening match the tape?" in findings
-    assert "No value in `exit_guard.py` is changed by this work." in findings
+    assert "**Outcome, 2026-10-09 — the gate is REMOVED.**" in findings
 
 
 def test_no_exit_guard_multiple_is_derived_from_another() -> None:

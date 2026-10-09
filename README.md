@@ -638,7 +638,7 @@ quant-agent/
 │   │   ├── rules.py               # Hard risk engine (leverage-adjusted; drawdown BUY-cap gate)
 │   │   ├── metrics.py             # Budget/open risk, portfolio heat, R-multiple
 │   │   ├── budget.py              # allocate_risk_budget: 25% total / 40%-per-cluster at-risk gate
-│   │   ├── exit_guard.py          # Metric-contradiction veto + ATR noise band on exits
+│   │   ├── exit_guard.py          # Metric-contradiction veto + structural-protection fallback band
 │   │   └── trailing.py            # Deterministic broker-resident trailing stops
 │   └── storage/
 │       └── db.py                  # SQLite (trades, positions, logs, PnL, insights)

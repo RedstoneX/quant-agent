@@ -3986,8 +3986,9 @@ numbers:
       Chandelier's 3.0 is calibrated on ATR(22); this divides by ATR(14).
       The published 2.5-3.5 band is retained as CONTEXT for the order of
       magnitude only. Deliberately NOT reused from
-      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and
-      measures excess over noise FROM ENTRY.
+      the since-removed exit_guard entry-anchored noise-band multiple
+      (1.0, measured excess over noise FROM ENTRY; gate and constant
+      deleted 2026-10-09).
     open_question: >-
       Where the desk sits is the owner's dial, left at 3.0 until he moves
       it: tighter realises gains sooner and whipsaws more often, looser
@@ -4016,6 +4017,9 @@ numbers:
       time-scaled and one not, produced two different widths for the same
       holding on the same day from a single named constant. Equal value, not
       shared value -- the names may diverge the moment either is derived.
+      The midday gate and its constant were REMOVED on 2026-10-09 (owner
+      ruling: no sale is refused for the price the desk paid); this value
+      was not touched by that removal.
     open_question: >-
       How far must a holding whose structure the desk cannot read fall below
       its own high-water mark before last-resort protection is lifted? Nothing
@@ -4059,144 +4063,6 @@ numbers:
       An unsourced value here either lifts protection too early, turning an
       ordinary pullback below the extreme into an unprotected position, or too
       late, leaving a genuinely broken holding nominally protected.
-  - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-      records: >-
-        every midday gate evaluation in front of a non-external SELL, carrying the adverse move from
-        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, and
-        whether the band blocked the exit. CORRECTED 2026-10-04: this row previously also claimed to
-        record "what the position did afterwards", and it does not -- a noise-band row is written at
-        the MOMENT of the decision and is never revisited, and the band is only evaluated when an exit
-        is proposed, so these rows alone cannot say whether an adverse move was followed by further
-        adverse travel or by recovery. That second half, which the settlement needs, is reconstructed
-        by joining these rows on (symbol, session) to `alignment_exit_readings`, which is written for
-        every open position every session. It is deliberately NOT collected by adding a follow-up
-        recorder to this payload: any such recorder must fix a look-ahead horizon, and that horizon
-        would be a second chosen number imported into a fix whose whole purpose is to remove one.
-        This row's own `settlement_route` and `derivation_attempts` fields hold the two spent
-        derivation attempts and must not be re-opened blind
-      closes_when: >-
-        the recording holds enough blocked and unblocked evaluations to show where the adverse move
-        from entry stops being ordinary wobble for THIS anchor, which is the anchor no published
-        volatility multiple uses. Its `recording_status` records the measurement of 2026-10-01: the
-        refusal payload has produced ZERO observations so far, so the route is UNPROVEN rather than
-        collecting, and the first closing condition is that the payload be shown to populate at all
-    value: 1
-    status: arbitrary
-    site: src/risk/exit_guard.py
-    note: >-
-      The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
-      widening computed at src/risk/exit_guard.py::noise_band_atr. How far an adverse
-      move must travel FROM ENTRY before it stops being ordinary daily wobble.
-      RECLASSIFIED 2026-09-26, board item 70: this entry read `derived` from
-      `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
-      while its own value is 1 -- a derivation that never produced its own
-      figure. 1.0 is not a reading of 1.25; it is a second, independent flat
-      number, and it is now labelled as one. It also used to do a SECOND job,
-      the structural break margin, which is now its own constant
-      (`BREAK_CONFIRMATION_ATR_MULTIPLE`); nothing about either value changed.
-      RESEARCH, 2026-09-26 (docs/INCIDENT_HISTORY.md -- do not re-search):
-      every published volatility-band multiple for THIS quantity sits well
-      ABOVE 1.0 -- Wilder's Volatility System ARC ~2.8-3.1 (New Concepts,
-      1978), the Chandelier Exit default 3.0 x ATR(22) with 2.5 tight and
-      3.5-4.0 loose, and Kaufman treating it as a whipsaw dial with no blessed
-      constant. Those measure stop distance from a RUNNING EXTREME rather than
-      excess over noise from entry, so they are the closest published
-      analogue, not an exact fit -- which is why this stays `arbitrary` and
-      was NOT swapped to 3.0. Moving it from 1.0 toward 3.0 is a large
-      LOOSENING of how readily the desk may sell, and item 70 states in terms
-      that how readily the desk blocks a sale is owner appetite and not this
-      item's to change.
-    open_question: >-
-      Does the owner accept a noise band read from the published
-      volatility-stop literature (~3 ATR, against today's 1.0), knowing it
-      makes the desk markedly slower to accept that an adverse move is real?
-      That is a risk-appetite question, not a measurement.
-      SUPERSEDED 2026-09-30 by the owner ruling that risk tolerance is read
-      per name from that instrument's own behaviour and the seats'
-      conviction, never set as a global dial: asking the owner to pick one
-      global multiple is no longer an available route, and neither is
-      adopting 3.0 as a new global literal. The remaining route is therefore
-      to replace this constant with a per-name read of how far THIS
-      instrument ordinarily travels against a holding -- a reformulation of
-      the exit path, not a retune -- which was NOT built here because it
-      changes live selling behaviour and no measurement of that per-name
-      quantity has been taken yet. The literature (~3 ATR) bounds the answer;
-      it does not supply it.
-    cost_while_unanswered: >-
-      The band that decides whether an adverse move is real sits below every
-      published volatility multiple, and it is the measured cause of the
-      7-of-8 discretionary exits the reviewer approved and this gate blocked.
-    derivation_attempts: >-
-      THE TWO ATTEMPTS ARE SPENT; do not open a third blind one. ATTEMPT 1
-      (2026-09-26) -- adopt the nearest published volatility-band multiple.
-      FAILED: Wilder, the Chandelier Exit and Kaufman all sit near 3 ATR but
-      all measure a stop's distance from a RUNNING EXTREME, not an adverse
-      move from ENTRY, so they do not measure this quantity; adopting 3.0
-      would also be a large unexplained loosening of when the desk sells.
-      ATTEMPT 2 (2026-09-30) -- replace it with each name's own historical
-      adverse move. BUILT, REVIEWED and REJECTED: the justifying example was
-      arithmetically a counter-example, the bar depth was a second chosen
-      round number, the measurement windows overlapped so the same days were
-      counted repeatedly, a 29-session hold returned ONE observation reported
-      as a median, one of the two call sites was left unpatched, and a failed
-      bars fetch reverted silently to the wider number. More fundamentally,
-      ANY summary statistic of a distribution is a choice of percentile, and
-      that choice is exactly the appetite figure this item exists to remove --
-      so no statistic over history can ever settle this, and the owner ruling
-      that risk is read per name from the instrument, never set as a global
-      dial, also closes the "ask the owner to pick a figure" route.
-    settlement_route: >-
-      Not by measurement over history and not by an owner dial -- both routes
-      are closed above. Two live routes remain. (1) The band's FIRST home, the
-      midday gate standing in front of every non-external SELL, measures the
-      move from the AVERAGE ENTRY PRICE; nothing else in the exit path is
-      anchored to what the desk paid, and being anchored to it is precisely
-      what the per-name alignment ruling forbids. Removing that gate and
-      letting the structure-and-trend test decide removes the number by
-      removing the mechanism. That is an exit-behaviour change and is NOT made
-      under a record-truth pass. (2) The band's SECOND home, the
-      `check_structural_protection` fallback, is the only protection a holding
-      with neither a written invalidation nor a qualifying level has; it must
-      not be deleted with the first and needs its own answer.
-    recording_status: >-
-      MEASURED 2026-10-01 against the PRODUCTION database (read-only,
-      /home/qamc/quant-agent/data/quant_agent.db, latest row 2026-09-30
-      18:15): the machine-readable refusal payload added 2026-09-30 has
-      produced ZERO observations. intraday_evaluations holds 334 rows, none
-      with a noise-band status and none carrying any `rule=` payload at all.
-      The settlement recording for this number therefore exists in code but
-      has recorded nothing yet, and the board's headline "7 of 8 discretionary
-      exits blocked" is NOT reproducible from that table.
-
-      STRUCTURAL CAUSE FOUND AND FIXED 2026-10-04 (recording only, no
-      behaviour change). The emptiness was not only the desk being off. The
-      recording was CENSORED BY CONSTRUCTION: in `src/pipeline_exits.py` the
-      payload was written only on the branch where the band BLOCKED an exit,
-      so every adverse move the band judged large enough to let through was
-      discarded, and the band's SECOND home, the `check_structural_protection`
-      fallback in `src/risk/exit_guard.py`, emitted no `rule=` payload at all.
-      A sample truncated at exactly the threshold under examination can never
-      locate that threshold -- it would have contained only moves below 1.0
-      ATR and would have been consistent with any multiple whatsoever. Both
-      outcomes are now written, tagged `blocked=` / `inside_band=`, and the
-      adverse move is carried as an ATR MULTIPLE as well as in dollars, which
-      is the unit this constant is denominated in and the only unit in which
-      the two homes are comparable. The payload also exposes an asymmetry no
-      record previously stated: the midday home widens the band by
-      sqrt(sessions held) while the fallback home passes no hold length and
-      stays flat at 1.0, so one named constant produced two different widths
-      for the same holding on the same day. NOT YET SETTLED: the recording can
-      now accrue, but it has still accrued nothing, because the desk is off.
-      WHAT WOULD SETTLE IT: the distribution of `adverse_atr_multiple` across
-      both outcomes at the moment of a reviewer-approved exit, paired with
-      what the position did afterwards -- specifically, the multiple above
-      which an adverse move from entry was followed by further adverse travel
-      rather than recovery. That requires live sessions with exits in them and
-      cannot be manufactured from the 334 rows now on disk.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     settles_by:
       kind: recording

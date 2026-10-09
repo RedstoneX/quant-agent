@@ -14,8 +14,8 @@ never by elapsed time. Priority order tested below:
      `PortfolioConstructor._level_backing_stop` (`min_level_touches`, and
      the stop falling inside the level's own `CLUSTER_TOLERANCE_PCT`
      zone), no new constant introduced.
-  3. Neither resolves: the existing noise band (`adverse_move_is_noise` /
-     `NOISE_BAND_ATR_MULTIPLE`) — NOT an automatic unprotect (owner
+  3. Neither resolves: the fallback noise band (`adverse_move_is_noise` /
+     `FALLBACK_PROTECTION_ATR_MULTIPLE`) — NOT an automatic unprotect (owner
      refinement 2026-09-04), so breakout/momentum trades without classic
      multi-touch structure are not systematically stripped of protection.
 
@@ -45,7 +45,6 @@ Every number below is hand-computed against the real formulas in
 from src.data.levels import CLUSTER_TOLERANCE_PCT
 from src.risk.exit_guard import (
     BREAK_CONFIRMATION_ATR_MULTIPLE,
-    NOISE_BAND_ATR_MULTIPLE,
     check_structural_protection,
     level_zone_span_phrase,
     structural_protection_broken,
@@ -364,7 +363,7 @@ def test_unparseable_thesis_falls_back_to_structural_level():
 
 
 def test_no_basis_within_noise_band_stays_protected():
-    # entry 100, atr 2, NOISE_BAND_ATR_MULTIPLE == 1.0 -> band is 2.0.
+    # entry 100, atr 2, FALLBACK_PROTECTION_ATR_MULTIPLE == 1.0 -> band is 2.0.
     # Adverse move of 1.0 is inside the band.
     result = check_structural_protection(
         thesis_invalid_if=None,

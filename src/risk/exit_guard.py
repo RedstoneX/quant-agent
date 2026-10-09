@@ -47,7 +47,6 @@ from src.risk.exit_guard_structural import (  # noqa: F401 -- lifted verbatim, r
 )
 from src.risk.noise_band_anchor import (  # noqa: F401 -- noise_band_anchor re-exported
     anchored_adverse_move,
-    band_width_atr,
     noise_band_anchor,
 )
 from src.risk.exit_guard_claims import (  # noqa: F401 -- re-exported, lifted verbatim
@@ -121,9 +120,7 @@ __all__ = [
     "cites_external_information",
     "adverse_move_is_noise",
     "noise_band_anchor",
-    "noise_band_atr",
     "FALLBACK_PROTECTION_ATR_MULTIPLE",
-    "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
     "check_thesis_invalid_if",
@@ -145,46 +142,25 @@ __all__ = [
 # Noise band on exits — spec Phase 3.6
 # ---------------------------------------------------------------------------
 
-#: An adverse move smaller than this many ATRs from entry, ON DAY ONE, cannot
-#: be distinguished from one ordinary day's range. `TRAIL_STOP` already uses
-#: 1.25x ATR14 against CURRENT price for the same reason; this is the
-#: equivalent floor for a discretionary exit, measured from ENTRY.
+#: THE ENTRY-ANCHORED MIDDAY GATE IS GONE (owner ruling, 2026-10-09). Until
+#: this date a constant here, `NOISE_BAND_ATR_MULTIPLE` (1.0, widened by
+#: sqrt(sessions held)), refused a discretionary SELL/REDUCE/COVER of a losing
+#: holding whenever the loss FROM AVERAGE ENTRY sat inside that band. The
+#: desk's own measurement (docs/RESEARCH_FINDINGS.md, "Does the band's
+#: sqrt(sessions_held) widening match the tape?", 2026-10-04) found a larger
+#: adverse move from entry never marked a finished trend, at any holding
+#: length, and the owner ruled that no sale is measured from the price paid
+#: ("sell anything below the bar, always"). The gate, its constant, its
+#: sqrt widening and its midday recording were removed together.
 #:
-#: OKLO was bought and sold on 2026-08-26 for a 2.5% loss — **0.67 ATR**, on
-#: day zero. The evening review graded the buy "wrong" and the sell "correct",
-#: but the honest reading is that nothing had happened yet in either
-#: direction: the position was never given one day's normal range to breathe.
-#:
-#: 2026-09-04 audit (real-data fix #1): this constant was applied FLAT,
-#: regardless of how long the position had been held, so a position on day 10
-#: was judged against the same one-day noise band as a position on day 0. On
-#: 8 of 12 real positions opened before the 2026-08-27 stop-floor fix, that
-#: flat band came out roughly the SAME WIDTH as the entry stop itself
-#: (0.89-1.12 ATR) — meaning almost every attempted discretionary exit on an
-#: aging position was blocked, and 5 of 9 real exits ended up as plain broker
-#: stop-outs instead of a deliberate call. See `adverse_move_is_noise` below,
-#: which now scales this constant by sqrt(sessions_held) — the same
-#: convention `src/data/levels.py::derive_structural_target` already uses
-#: for target projection (`ATR * sqrt(sessions)`), on the same random-walk
-#: basis: expected price dispersion grows with the square root of elapsed
-#: TRADING TIME, not linearly and not with calendar time. The `days_held`
-#: parameter name below is legacy from the first pass of this fix (2026-09-04
-#: audit, real-data fix #1); a follow-up on the same date caught it actually
-#: being fed calendar days (`(today - entry_date).days`, weekends included)
-#: rather than trading sessions, which over-widened the band by sqrt(3) on
-#: every Friday-to-Monday hold — the opposite of the fix's own intent, since
-#: only one real session's price action had occurred. Callers MUST pass a
-#: trading-session count (see `AlpacaBroker.trading_sessions_held`, item
-#: 165's holiday-aware counter — `trading_calendar.trading_sessions_held` is
-#: a Mon-Fri-only fallback for callers with no broker connection),
-#: never a raw calendar-day count. `sessions_held` is floored at 1 session so
-#: day-zero/day-one behaviour is UNCHANGED — only positions held longer than
-#: one session get a wider band than before.
-NOISE_BAND_ATR_MULTIPLE = 1.0
+#: What REMAINS below is a different quantity that only shared the old name:
+#: the structural-protection fallback's own flat multiple, anchored on the
+#: running extreme since entry, and the trailing band in `src/risk/trailing.py`
+#: (1.25). Neither is measured from the price paid at a sale decision.
 
-#: BOARD ITEM 70, THE SECOND SPLIT (2026-10-04). The constant above was
-#: still doing TWO jobs, which the settlement recording added earlier the
-#: same day made visible for the first time: the two homes of the "noise
+#: BOARD ITEM 70, THE SECOND SPLIT (2026-10-04). HISTORY: the since-removed
+#: `NOISE_BAND_ATR_MULTIPLE` was still doing TWO jobs, which the settlement
+#: recording added earlier the same day made visible for the first time: the two homes of the "noise
 #: band" do not compute the same quantity, and sharing one name hid that.
 #:
 #:   HOME 1, the midday gate in `src/pipeline_exits.py`, in front of every
@@ -220,10 +196,9 @@ NOISE_BAND_ATR_MULTIPLE = 1.0
 #: home now emits (`src/risk/noise_band_record.py`) is what would locate it;
 #: it has accrued nothing, because the desk is off.
 #:
-#: DELIBERATELY EQUAL TO `NOISE_BAND_ATR_MULTIPLE` TODAY. Equal value, not
-#: shared value: the two names may diverge the moment either is derived, and
-#: neither was retuned in this pass. See the no-behaviour-change proof in
-#: `tests/test_fallback_protection_multiple_separation.py`.
+#: It was split at the SAME value (1.0) as the midday gate's multiple; that
+#: gate and its constant were removed on 2026-10-09 and this value was not
+#: touched by that removal.
 FALLBACK_PROTECTION_ATR_MULTIPLE = 1.0
 
 #: BOARD ITEM 70, THE SPLIT (2026-09-26). Until this date ONE literal `1.0`
@@ -302,33 +277,27 @@ def cites_external_information(reason: str) -> bool:
     return bool(reason) and bool(_EXTERNAL_RE.search(reason))
 
 
-def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAND_ATR_MULTIPLE) -> float:
-    """The noise-band width, in ATRs, for `days_held` sessions (a TRADING-SESSION
-    count, floored at 1). Rule and rationale: `noise_band_anchor.band_width_atr`."""
-    return band_width_atr(days_held, multiple=multiple)
-
-
 def adverse_move_is_noise(
     entry: float,
     current_price: float,
     atr: float | None,
     *,
-    multiple: float = NOISE_BAND_ATR_MULTIPLE,
+    multiple: float,
     side: str = "sell",
-    days_held: int | float | None = None,
     extreme_since_entry: float | None = None,
 ) -> bool:
     """True when the position has moved ADVERSELY from its anchor by less
-    than the noise band for how long it has been held.
+    than `multiple * ATR`. Its one caller is the `check_structural_protection`
+    fallback, with `FALLBACK_PROTECTION_ATR_MULTIPLE`; the entry-anchored
+    midday sale gate that also used it was removed on 2026-10-09.
 
     ANCHOR: ENTRY by default; a caller that can read the running extreme
     since entry may pass `extreme_since_entry` (rule and the per-home
     measurement: `noise_band_anchor`). `None` is the entry-anchored
     behaviour bit for bit.
 
-    The band is `multiple * ATR * sqrt(days_held)` (floor 1 session) — see
-    `noise_band_atr`. Passing no `days_held` (the old call shape) reproduces
-    the original flat `multiple * ATR` band exactly, since sqrt(1) == 1.
+    The band is FLAT, `multiple * ATR`: the sqrt(sessions held) widening
+    belonged to the removed midday gate and was never applied by the fallback.
 
     `side` is the CLOSING side, same convention as
     `TradingPipeline._submit_protected_sell` / `_forced_close_side_and_qty`:
@@ -357,7 +326,7 @@ def adverse_move_is_noise(
     )[1]
     if adverse <= 0:
         return False  # flat or winning — not this guard's business
-    return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
+    return adverse < multiple * atr_f
 
 
 # ---------------------------------------------------------------------------
@@ -974,11 +943,9 @@ def check_structural_protection(
                 raw_broken=False,
             )
         # BOARD ITEM 70 (2026-10-04, the second split): this home uses its
-        # OWN named multiple, `FALLBACK_PROTECTION_ATR_MULTIPLE`, not the
-        # midday gate's `NOISE_BAND_ATR_MULTIPLE`. Same value today, so no
-        # decision moves; different jobs, so deriving one can never silently
-        # move the other. No `days_held` is passed here and that is
-        # deliberate and unchanged -- this home's band is FLAT.
+        # OWN named multiple, `FALLBACK_PROTECTION_ATR_MULTIPLE`; the midday
+        # gate's entry-anchored multiple it was split from was removed on
+        # 2026-10-09. This home's band is FLAT and always was.
         is_noise = adverse_move_is_noise(
             ent,
             cur,
