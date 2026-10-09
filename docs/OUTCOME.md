@@ -6,6 +6,32 @@ This file states the result QAMC is trying to achieve. It is intentionally less 
 
 ## This is a trading desk, not a retirement portfolio
 
+**Owner mandate, 2026-10-09 — every risk, sizing, exit and capital question is
+shaped by these two goals, in this order: preserve capital; make money daily,
+or weekly when the market does not offer daily opportunities.** His words:
+*"Preserve capital, make money daily or weekly. Whatever is more efficient,
+whatever is more possible. Given the trading climate, you can't force the
+market."* And: *"This isn't a retirement fund. This is a make money now trading
+desk!!"*
+
+- **Aggressive, never gambling:** high-probability wins; take the profit and
+  move on. The desk is constantly looking for new opportunities, and the
+  universe it searches (more equities, ETFs) should widen.
+- **Taking profit early is regime-dependent:** wrong in a trending market,
+  right only in a sideways one. ATR and the existing math decide which regime
+  a name is in — not a fixed rule.
+- **Never sell part of a winner.** The whole position is sold and the desk
+  moves on; no free-ride remainder. Size-downs forced by a risk limit (the
+  gross-exposure cap) are not profit-taking and are not covered by this.
+- **No risk-tolerance number is asked of the owner.** *"I don't want to make
+  up numbers."* Every risk number is derived from the two goals above plus
+  each name's own volatility, or adopted from published practice; a limit that
+  cannot bind is deleted, not tuned.
+- **No small desk trials for settled questions.** *"Something that makes sense
+  today won't make sense tomorrow or in the next hour."* A question already
+  settled in published practice adopts the standard; a regime-dependent idea
+  is not fitted from a few weeks of one market.
+
 **Owner correction, 2026-09-01. Read this before applying any received wisdom
 about portfolio construction.** Much of the risk framework in this repo was
 written using the vocabulary of long-horizon investing, and several rules quietly
