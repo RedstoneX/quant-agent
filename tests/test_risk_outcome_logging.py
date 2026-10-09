@@ -134,6 +134,15 @@ class _PipelineStub:
     _log_conviction_outcome_for_operator = staticmethod(TradingPipeline._log_conviction_outcome_for_operator)
 
 
+def _date_trades_after_clean_record_start(db: Database) -> None:
+    """Re-date every trade to just after the clean-record start (owner ruling
+    2026-10-09: the record begins 2026-10-12 13:30 UTC), preserving order."""
+    db.conn.execute(
+        "UPDATE trades SET timestamp = strftime('%Y-%m-%d %H:%M:%S', '2026-10-12 14:00:00', '+' || id || ' seconds')"
+    )
+    db.conn.commit()
+
+
 def _seed_closed_round_trips(
     db: Database, n: int, *, conviction: str, side: str = "long", win: bool = False, decision_model: str = "test/model"
 ) -> None:
@@ -176,6 +185,7 @@ def _seed_closed_round_trips(
         pnl = (exit_price - entry_price) * 10 * (1 if side == "long" else -1)
         db.conn.execute("UPDATE trades SET realized_pnl = ? WHERE id = ?", (pnl, exit_id))
         db.conn.commit()
+    _date_trades_after_clean_record_start(db)
 
 
 # ===========================================================================
@@ -438,6 +448,7 @@ def test_by_allocated_risk_buckets_and_gates_the_same_way(tmp_path):
             run_id="r1",
             fill_status="filled",
         )
+    _date_trades_after_clean_record_start(db)
     stats = db.compute_trade_calibration(lookback_days=100_000)
     high_risk = stats["by_allocated_risk"]["high (≥3%)"]
     assert high_risk["n"] == _CONVICTION_OUTCOME_MIN_N
@@ -457,6 +468,7 @@ def test_conviction_and_allocated_risk_unknown_counts_are_honest(tmp_path):
         symbol="OLD1", action="BUY", qty=1, price=10.0, reasoning="t", run_id="r1", fill_status="filled", stop_loss=90.0
     )
     db.insert_trade(symbol="OLD1", action="SELL", qty=1, price=11.0, reasoning="t", run_id="r1", fill_status="filled")
+    _date_trades_after_clean_record_start(db)
     stats = db.compute_trade_calibration(lookback_days=100_000)
     assert stats["conviction_unknown_n"] == 1
     assert stats["allocated_risk_unknown_n"] == 1  # the seeded 5 all carry allocated_risk_pct
