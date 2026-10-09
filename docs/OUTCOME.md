@@ -14,6 +14,13 @@ whatever is more possible. Given the trading climate, you can't force the
 market."* And: *"This isn't a retirement fund. This is a make money now trading
 desk!!"*
 
+- **Not reckless — adaptive.** The desk trades what the market is giving it
+  now: bull, bear or range. It reads the regime and trades accordingly; it
+  never forces a trade the market is not offering.
+- **Capital preservation comes first, and it does not mean parking money.**
+  *"Capital preservation does not equal put it all into bonds or ETFs, making
+  three percent a year."* Preservation means bounding each loss and cutting
+  losers fast, never sitting out in low-yield holdings.
 - **Aggressive, never gambling:** high-probability wins; take the profit and
   move on. The desk is constantly looking for new opportunities, and the
   universe it searches (more equities, ETFs) should widen.
