@@ -149,7 +149,8 @@ class IntradayCandidates:
             raw = str(rows[0]["timestamp"]).replace("T", " ")[:19]
             then = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
             return round((datetime.now(UTC) - then).total_seconds() / 3600.0, 3)
-        except Exception:  # noqa: BLE001 - the reason is still recorded without the age
+        except Exception as exc:  # noqa: BLE001 - the reason is still recorded without the age
+            _site(self, "cooldown_age_read", exc, context={"symbol": symbol}, log=logger)
             return None
 
     def _intraday_scan_mover_candidates(
