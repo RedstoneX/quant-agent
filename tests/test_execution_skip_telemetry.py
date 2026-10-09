@@ -20,6 +20,13 @@ from src.pipeline_stages import ExecutionStage
 from src.execution.cash_sweep import CashSweeper
 
 
+@pytest.fixture
+def limit_entries(monkeypatch):
+    """Entries default to plain market orders (owner ruling 2026-10-09); this
+    test exercises the marketable-limit path behind `execution.entry_order_type`."""
+    monkeypatch.setattr("src.stage_execution_parts.entry_order_pricing.entry_orders_are_market", lambda _p: False)
+
+
 def _rc() -> ReasoningChain:
     return ReasoningChain(
         macro_filter="m",
@@ -35,6 +42,8 @@ def _rc() -> ReasoningChain:
 def _pipeline(live_price=100.0, cash=50_000.0):
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = live_price
+    # A market entry is sized against the quote side it pays (ask / bid).
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": live_price, "ask_price": live_price}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
@@ -178,7 +187,7 @@ def test_successful_buy_records_no_skip():
     assert ctx.execution_skips == []
 
 
-def test_buy_limit_crosses_offer_with_bounded_price_protection():
+def test_buy_limit_crosses_offer_with_bounded_price_protection(limit_entries):
     pipeline = _pipeline(live_price=100.0)
     pipeline.broker.get_latest_quote.return_value = {
         "bid_price": 100.0,
@@ -250,7 +259,7 @@ def test_buys_unfunded_does_not_repeat_paid_stack_in_main():
 # ---------------------------------------------------------------------------
 
 
-def test_the_limit_is_a_ceiling_not_a_haggled_price():
+def test_the_limit_is_a_ceiling_not_a_haggled_price(limit_entries):
     """The VLO shape: reference $349.99, IEX ask $350.96 (28bp above it).
 
     The limit must be set AT the slippage ceiling, not shaved down toward the
@@ -288,7 +297,7 @@ def test_the_limit_is_a_ceiling_not_a_haggled_price():
     assert limit_price > 350.96, "must clear the displayed offer to be fillable"
 
 
-def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
+def test_even_a_tight_ceiling_is_not_shaved_below_the_offer(limit_entries):
     """25bp gives $350.86, BELOW the $350.96 displayed ask. The limit is
     still set at its own ceiling and still sent (board item 183): IEX is not
     the book the order fills against, and a limit at $350.86 cannot pay more
@@ -323,7 +332,7 @@ def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
     assert ctx.execution_skips == []
 
 
-def test_a_quote_far_through_the_cap_is_recorded_and_still_submitted():
+def test_a_quote_far_through_the_cap_is_recorded_and_still_submitted(limit_entries):
     """Board item 183, 2026-09-30. A displayed ask 300bp through a 40bp
     ceiling used to refuse this BUY as `slippage_gated`. It no longer does.
 
@@ -413,7 +422,7 @@ def _short_decision(symbol="NKE", entry=100.0, stop=105.0, target=90.0):
     )
 
 
-def test_short_limit_is_a_floor_marketable_versus_the_bid():
+def test_short_limit_is_a_floor_marketable_versus_the_bid(limit_entries):
     """The NKE shape: last ~ reference, bid a few bp below, short limit
     parked at the last — a sell limit above the bid cannot fill.
 
@@ -441,7 +450,7 @@ def test_short_limit_is_a_floor_marketable_versus_the_bid():
     assert ctx.execution_skips == []
 
 
-def test_short_uses_the_configured_bps_not_a_new_constant():
+def test_short_uses_the_configured_bps_not_a_new_constant(limit_entries):
     """25bp floor at $100 is $99.75 — the configured bound, not 40 and not 1%."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=25.0)
     pipeline.broker.get_latest_quote.return_value = {
@@ -456,7 +465,7 @@ def test_short_uses_the_configured_bps_not_a_new_constant():
     assert limit_price == pytest.approx(99.75, abs=0.01)
 
 
-def test_short_records_and_still_submits_when_the_bid_is_through_the_floor():
+def test_short_records_and_still_submits_when_the_bid_is_through_the_floor(limit_entries):
     """Mirror of the BUY case. The old `bid < floor / 1.02` inherited the
     BUY multiple rather than adding a second one, and it goes for the same
     reason: a sell-short limit at the floor cannot fill below the floor, so
@@ -477,7 +486,7 @@ def test_short_records_and_still_submits_when_the_bid_is_through_the_floor():
     assert ctx.execution_skips == []
 
 
-def test_short_within_iex_noise_still_submits_at_the_floor():
+def test_short_within_iex_noise_still_submits_at_the_floor(limit_entries):
     """Mirror of the BUY tight-ceiling case: bid a little through the floor
     but inside the existing 2% IEX-noise multiple is still submitted at the
     floor — it may fill against a better NBBO than IEX shows. What must NOT
@@ -497,7 +506,7 @@ def test_short_within_iex_noise_still_submits_at_the_floor():
     assert ctx.execution_skips == []
 
 
-def test_short_still_lowers_to_market_when_quote_has_no_bid():
+def test_short_still_lowers_to_market_when_quote_has_no_bid(limit_entries):
     """Degraded quote: keep the pre-existing lower-to-market SHORT path.
     Limit 101 vs last 100 is inside the 5% stale gate, so pull it down to
     last — not skip, not invent a floor without a bid."""

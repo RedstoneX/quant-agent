@@ -128,11 +128,14 @@ def test_realised_limit_to_stop_risk_matches_the_sized_risk(
         entry_price=entry,
         stop_loss=stop,
         take_profit=(115.0 if action == "BUY" else 88.0),
-        reasoning="marketable limit prices away from the analysis price",
+        reasoning="the market order pays the quote, away from the analysis price",
     )
     captured = _run_exec(pipeline, decision, monkeypatch)
-    limit = captured["limit_price"]
-    assert isinstance(limit, (int, float)) and limit > 0
+    # A plain market order (owner ruling 2026-10-09): the worst price it can
+    # fill at is the quote side it pays — the ask for a BUY, the bid for a SHORT.
+    assert captured["limit_price"] is None
+    quote = pipeline.broker.get_latest_quote.return_value
+    limit = quote["bid_price"] if action == "SHORT" else quote["ask_price"]
     sized_risk_per_share = abs(captured["sizing_price"] - captured["stop_price"])
     realised_risk_per_share = abs(limit - stop)
     # Pre-fix the realised distance is the WIDER one and the size was

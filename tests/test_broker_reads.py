@@ -383,9 +383,9 @@ def _order(**overrides):
         symbol="AAPL",
         side=SimpleNamespace(value="BUY"),
         qty="10",
-        order_type=SimpleNamespace(value="LIMIT"),
+        order_type=SimpleNamespace(value="MARKET"),
         status=SimpleNamespace(value="FILLED"),
-        limit_price="150.5",
+        limit_price=None,
         stop_price=None,
         filled_qty="10",
         filled_avg_price="150.4",
@@ -400,10 +400,12 @@ def test_order_to_dict_unwraps_enums_and_coerces_numbers():
     out = broker_reads._order_to_dict(_order())
     assert out["id"] == "ord-1"
     assert out["side"] == "buy"  # enum .value, lowercased
-    assert out["order_type"] == "limit"
+    assert out["order_type"] == "market"  # what an entry is sent as (2026-10-09)
     assert out["status"] == "filled"
     assert out["qty"] == 10.0  # str -> float
-    assert out["limit_price"] == 150.5
+    assert out["limit_price"] is None
+    limit = broker_reads._order_to_dict(_order(order_type=SimpleNamespace(value="LIMIT"), limit_price="150.5"))
+    assert limit["order_type"] == "limit" and limit["limit_price"] == 150.5
     assert out["stop_price"] is None
     assert out["submitted_at"] == "2026-08-12T13:30:00+00:00"
     assert out["filled_at"] is None

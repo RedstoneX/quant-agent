@@ -6,8 +6,8 @@ PM before the RM, a BUY reaching the broker stand-in. This file runs the
 SAME session once more and checks the part the shape check cannot see:
 
   size        the buy is the PM's weight of the snapshot's cash, in WHOLE
-              shares (fractionability fails closed offline) at the limit
-              the desk chose — derived from the inputs, never read back
+              shares (fractionability fails closed offline) at the ask
+              the desk pays — derived from the inputs, never read back
               from the output and compared with itself;
   protection  exactly one GTC SELL stop rests behind the fill, for its
               whole size, below the entry, at the level the session itself
@@ -38,7 +38,7 @@ import math
 import time
 from pathlib import Path
 
-from tests.test_e2e_morning_session import SYMBOL, _assert_full_shape, _run_session
+from tests.test_e2e_morning_session import LAST_CLOSE, SYMBOL, _assert_full_shape, _run_session
 
 CASH = 10_000.0  # the harness's broker snapshot
 TARGET_WEIGHT_PCT = 10.0  # what the scripted PM asks for
@@ -72,12 +72,16 @@ def _assert_decision_and_protection(result: dict, trading) -> None:
     assert others == [], f"unexpected orders: {[o.as_plain() for o in others]}"
     buy = buys[0]
 
-    assert str(buy.order_type).lower() == "limit", buy.as_plain()
-    assert buy.limit_price is not None and buy.limit_price > 0, buy.as_plain()
-    expected_qty = math.floor(CASH * TARGET_WEIGHT_PCT / 100.0 / buy.limit_price)
+    # A plain DAY MARKET order (owner ruling 2026-10-09), sized against the
+    # ask it pays; the rehearsal broker quotes the snapshot price on both
+    # sides (zero spread), so the ask IS the last close.
+    assert str(buy.order_type).lower() == "market", buy.as_plain()
+    assert buy.limit_price is None, buy.as_plain()
+    buy_price = LAST_CLOSE
+    expected_qty = math.floor(CASH * TARGET_WEIGHT_PCT / 100.0 / buy_price)
     assert float(buy.qty) == float(expected_qty), (
         f"PM asked for {TARGET_WEIGHT_PCT}% of ${CASH:,.0f} at "
-        f"{buy.limit_price} -> {expected_qty} whole shares; desk sized "
+        f"{buy_price} -> {expected_qty} whole shares; desk sized "
         f"{buy.qty}: {buy.as_plain()}"
     )
     assert buy.status == "filled", buy.as_plain()
@@ -92,8 +96,8 @@ def _assert_decision_and_protection(result: dict, trading) -> None:
     assert stop.symbol == buy.symbol, stop.as_plain()
     assert float(stop.qty) == float(buy.qty), f"stop covers {stop.qty} of {buy.qty} held: {stop.as_plain()}"
     assert str(stop.time_in_force).lower() == "gtc", stop.as_plain()
-    assert stop.stop_price is not None and 0 < stop.stop_price < buy.limit_price, (
-        f"a long's stop must sit below its entry {buy.limit_price}: {stop.as_plain()}"
+    assert stop.stop_price is not None and 0 < stop.stop_price < buy_price, (
+        f"a long's stop must sit below its entry {buy_price}: {stop.as_plain()}"
     )
     assert submitted.index(stop) > submitted.index(buy), "the protective stop must follow the fill it protects"
     recorded = result["orders"][0]

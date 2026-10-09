@@ -1513,6 +1513,7 @@ def _execution_pipeline(
     multiple of the price and nothing hides in a rounding."""
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = EXEC_PRICE
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": EXEC_PRICE, "ask_price": EXEC_PRICE}
     pipeline.broker.submit_order.return_value = {"id": "ord", "status": "accepted"}
     pipeline.broker.get_shortability.return_value = {
         "shortable": True,

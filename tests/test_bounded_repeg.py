@@ -38,6 +38,13 @@ REFERENCE = 100.0  # verified reference price at submission
 CEILING_40BPS = 100.40  # REFERENCE * (1 + 40/10_000)
 
 
+@pytest.fixture(autouse=True)
+def limit_entries(monkeypatch):
+    """Entries default to plain market orders (owner ruling 2026-10-09); this
+    test exercises the marketable-limit path behind `execution.entry_order_type`."""
+    monkeypatch.setattr("src.stage_execution_parts.entry_order_pricing.entry_orders_are_market", lambda _p: False)
+
+
 @pytest.fixture
 def db(tmp_path):
     database = Database(str(tmp_path / "repeg.db"))
