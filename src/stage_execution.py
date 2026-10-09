@@ -16,6 +16,7 @@ from src.entry_evidence import (
     resolve_entry_pins as _resolve_entry_pins,
 )
 from src.entry_record import insert_pending_entry
+from src.exit_quote import read_exit_quote
 from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
 from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
@@ -252,7 +253,11 @@ class ExecutionStage:
                     continue
                 qty, action_label = resolved
                 sell_price = existing[0].current_price
-                sell_limit = round(sell_price * 0.995, 2)
+                # A decided exit is a plain DAY MARKET order (no limit); the
+                # live quote is read only to MEASURE what the fill cost.
+                # See src/exit_quote.py.
+                sell_limit = None
+                exit_quote = read_exit_quote(pipeline.broker, decision.symbol)
                 position_qty = existing[0].qty
                 # Single protected-sell discipline (cancel-WAL → submit →
                 # accept → restore-on-failure) lives in one helper so this path
@@ -262,7 +267,7 @@ class ExecutionStage:
                     symbol=decision.symbol,
                     qty=qty,
                     limit_price=sell_limit,
-                    reference_price=existing[0].current_price,
+                    reference_price=sell_price,
                     position_qty_before_sell=position_qty,
                     label=action_label,
                 )
@@ -292,19 +297,21 @@ class ExecutionStage:
                     qty=qty,
                     limit_price=sell_limit,
                     side="sell",
+                    quote_bid=exit_quote["bid"],
+                    quote_ask=exit_quote["ask"],
                 )
                 record_rotation_close(
                     pipeline,
                     ctx,
-                    SellLeg(decision, qty, sell_limit, rotation_final_reason),
+                    SellLeg(decision, qty, sell_price, rotation_final_reason),
                     order,
                 )
                 logger.info(
-                    "Executed: %s %s %s @ limit $%.2f",
+                    "Executed: %s %s %s @ %s",
                     action_label.lower(),
                     pipeline._format_qty(qty),
                     decision.symbol,
-                    sell_limit,
+                    "market",
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
@@ -329,16 +336,15 @@ class ExecutionStage:
                     continue
                 qty, action_label = resolved
                 cover_price = existing[0].current_price
-                # Buy-to-cover needs headroom ABOVE the reference to fill on
-                # the way up — the mirror of the SELL loop's limit sitting
-                # 0.5% BELOW (same reasoning as `_EMERGENCY_LIMIT_CUSHION_PCT`
-                # in pipeline.py, applied here to the ordinary decision path).
-                cover_limit = round(cover_price * 1.005, 2)
+                # The SELL loop's twin: a plain DAY MARKET buy-to-cover, the
+                # live quote read only to measure the fill.
+                cover_limit = None
+                exit_quote = read_exit_quote(pipeline.broker, decision.symbol)
                 sale = pipeline._submit_protected_sell(
                     symbol=decision.symbol,
                     qty=qty,
                     limit_price=cover_limit,
-                    reference_price=existing[0].current_price,
+                    reference_price=cover_price,
                     position_qty_before_sell=held_qty,
                     label=action_label,
                     side="buy",
@@ -369,13 +375,15 @@ class ExecutionStage:
                     qty=qty,
                     limit_price=cover_limit,
                     side="buy",
+                    quote_bid=exit_quote["bid"],
+                    quote_ask=exit_quote["ask"],
                 )
                 logger.info(
-                    "Executed: %s %s %s @ limit $%.2f",
+                    "Executed: %s %s %s @ %s",
                     action_label.lower(),
                     pipeline._format_qty(qty),
                     decision.symbol,
-                    cover_limit,
+                    "market",
                 )
             except Exception as e:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)

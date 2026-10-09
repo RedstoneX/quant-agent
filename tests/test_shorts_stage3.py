@@ -1380,8 +1380,8 @@ def test_midday_reviewer_covers_a_short_end_to_end():
     assert submit_kwargs["side"] == "buy"
     assert submit_kwargs["qty"] == 40.0
     assert submit_kwargs["symbol"] == "TSLA"
-    # Buy-to-cover limit sits ABOVE the reference (mirror of SELL's below).
-    assert submit_kwargs["limit_price"] > 240.0
+    # A plain market buy-to-cover since 2026-10-09 (no limit to sit above).
+    assert submit_kwargs["limit_price"] is None
 
 
 def test_midday_cover_refused_without_named_trigger():
@@ -1475,7 +1475,7 @@ def test_long_only_midday_actions_unchanged_with_no_shorts_anywhere():
     submit_kwargs = pipeline.broker.submit_order.call_args.kwargs
     assert submit_kwargs["side"] == "sell"
     assert submit_kwargs["qty"] == 31.0
-    assert submit_kwargs["limit_price"] == 149.25  # 150 * 0.995
+    assert submit_kwargs["limit_price"] is None  # a plain market order since 2026-10-09
 
 
 def test_cancel_open_entry_orders_long_only_book_cancels_only_the_buy():

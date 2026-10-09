@@ -2972,7 +2972,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     assert sell_kw["symbol"] == "SPY"
     assert sell_kw["qty"] == 30.0
     assert sell_kw["side"] == "sell"
-    assert sell_kw["limit_price"] == 99.5
+    assert sell_kw["limit_price"] is None  # a plain market order since 2026-10-09
     # reference_price is plumbed through for fat-finger guard; value will be
     # the position's current price at sell time.
     assert sell_kw.get("reference_price") is not None

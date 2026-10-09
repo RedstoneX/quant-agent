@@ -594,9 +594,12 @@ def test_execution_stage_sells_the_fresh_reduced_qty_not_the_run_open_snapshot()
     assert call_kwargs["qty"] == 40.0, (
         f"SELL sized off the stale run-open qty (100) instead of the fresh read (40): got {call_kwargs['qty']}"
     )
-    assert call_kwargs["limit_price"] == round(340.0 * 0.995, 2), (
-        f"SELL limit priced off the stale run-open price ($300) instead of "
-        f"the fresh read ($340): got {call_kwargs['limit_price']}"
+    # 2026-10-09: an ordinary SELL is a plain market order; the fresh price
+    # still travels as its reference.
+    assert call_kwargs["limit_price"] is None
+    assert call_kwargs["reference_price"] == 340.0, (
+        f"SELL referenced the stale run-open price ($300) instead of "
+        f"the fresh read ($340): got {call_kwargs['reference_price']}"
     )
 
 
@@ -680,9 +683,10 @@ def test_execution_stage_covers_the_fresh_reduced_qty_not_the_run_open_snapshot(
     assert call_kwargs["qty"] == 20.0, (
         f"COVER sized off the stale run-open qty (50) instead of the fresh read (20): got {call_kwargs['qty']}"
     )
-    assert call_kwargs["limit_price"] == round(210.0 * 1.005, 2), (
-        f"COVER limit priced off the stale run-open price ($200) instead of "
-        f"the fresh read ($210): got {call_kwargs['limit_price']}"
+    assert call_kwargs["limit_price"] is None
+    assert call_kwargs["reference_price"] == 210.0, (
+        f"COVER referenced the stale run-open price ($200) instead of "
+        f"the fresh read ($210): got {call_kwargs['reference_price']}"
     )
 
 

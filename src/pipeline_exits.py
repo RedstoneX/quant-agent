@@ -41,6 +41,7 @@ from src.exits_parts.midday_holding_discipline import midday_holding_discipline
 from src.exits_parts.midday_spent_trigger import midday_spent_trigger
 from src.exits_parts.midday_state import SKIP, MiddayLoop
 from src.models import ReasoningChain, TradeDecision
+from src.exit_quote import read_exit_quote
 from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
 
@@ -1173,12 +1174,9 @@ class ExitEngineMixin:
                     qty = self._full_sell_qty(abs(existing[0].qty))
                     if qty is None:
                         continue
-                    # Buy-to-cover needs headroom ABOVE the reference to
-                    # fill on the way up — the mirror of the SELL limit
-                    # sitting 0.5% BELOW (same reasoning as
-                    # _EMERGENCY_LIMIT_CUSHION_PCT; matches ExecutionStage's
-                    # COVER loop in src/pipeline_stages.py).
-                    order_limit = round(existing[0].current_price * 1.005, 2)
+                    # A plain DAY MARKET buy-to-cover — see
+                    # src/exit_quote.py.
+                    order_limit = None
                     position_qty = abs(existing[0].qty)
                     close_side = "buy"
                 else:
@@ -1188,9 +1186,12 @@ class ExitEngineMixin:
                         qty = self._full_sell_qty(existing[0].qty)
                     if qty is None:
                         continue
-                    order_limit = round(existing[0].current_price * 0.995, 2)
+                    # A plain DAY MARKET sell — see src/exit_quote.py.
+                    order_limit = None
                     position_qty = existing[0].qty
                     close_side = "sell"
+                # Measure what the market order costs; never blocks the exit.
+                read_exit_quote(self.broker, symbol)
                 # audit F1 review #1: snapshot -> persist WAL -> cancel.
                 sale = self._submit_protected_sell(
                     symbol=symbol,
