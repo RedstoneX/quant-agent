@@ -34,5 +34,6 @@ src.protection_parts.reprotect_scan -> src.execution.stop_records
 src.protection_parts.restore_drain -> src.execution.scale_in
 src.stage_decision -> src.execution.cash_sweep
 src.stage_execution -> src.execution.scale_in
-src.stage_execution -> src.execution.stop_records
+src.stage_execution_parts.protect_entry_stops -> src.execution.scale_in
+src.stage_execution_parts.protect_entry_stops -> src.execution.stop_records
 src.stage_risk -> src.execution.cash_sweep

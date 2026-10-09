@@ -94,7 +94,7 @@ def test_an_unreadable_bar_stores_no_guess(bars):
 def test_the_recorder_is_actually_wired_into_the_entry_path():
     """A recorder nothing calls would pass its own tests vacuously."""
     import os
-    src = os.path.join(os.path.dirname(mod.__file__), "stage_execution.py")
+    src = os.path.join(os.path.dirname(mod.__file__), "stage_execution_parts", "entry_quote.py")
     text = open(src, encoding="utf-8").read()
     assert "from src.entry_slippage_bound import entry_bound" in text
     assert text.count("entry_bound(") >= 2

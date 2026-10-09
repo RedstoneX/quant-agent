@@ -729,10 +729,16 @@ def _recorded_skip_reasons_outside_the_rotation_gate() -> set[str]:
     comparison mean anything.
     """
     # `ExecutionStage` moved to `src/stage_execution.py` verbatim (item 210,
-    # step 10); the rotation gate stayed in `pipeline_stages.py`.
+    # step 10); the rotation gate stayed in `pipeline_stages.py`. Its per-name
+    # phases (sizing, quote, cover/sell legs) live in `stage_execution_parts/`
+    # since the 2026-10-09 split, so their skip calls are walked too.
     tree = ast.parse(
         (REPO_ROOT / "src" / "pipeline_stages.py").read_text()
         + (REPO_ROOT / "src" / "stage_execution.py").read_text()
+        + "".join(
+            p.read_text()
+            for p in sorted((REPO_ROOT / "src" / "stage_execution_parts").glob("*.py"))
+        )
     )
     excluded = set()
     for node in ast.walk(tree):
