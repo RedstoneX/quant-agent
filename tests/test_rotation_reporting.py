@@ -218,3 +218,18 @@ def test_an_opportunity_without_a_replacement_is_not_the_outranked_outcome():
         min_order_usd=500.0,
     )
     assert precheck_outcome(precheck) == ROTATION_HOLDING_BELOW_BAR
+
+
+def test_the_intraday_message_carries_the_pruning_pass(monkeypatch):
+    """The 30-minute message used to omit the pass the morning one reports."""
+    from src import trader_feed
+    from src.trader_feed import intraday
+
+    snap = trader_feed._empty_snapshot()
+    snap["rotation"] = _record()
+    monkeypatch.setattr(intraday, "_read_run", lambda *a, **kw: snap)
+    monkeypatch.setattr(trader_feed, "_lookup_company_profiles", lambda *a, **kw: {})
+    nested = {"status": "ok", "run_id": "r"}
+    text = intraday._format_intraday({"status": "ok", "run_id": "r"}, nested, 1.0)
+    assert "Considered and kept" in text
+    assert "AAA, BBB, CCC" in text

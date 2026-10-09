@@ -64,6 +64,7 @@ from src.trader_feed.decision import (
     _append_intraday_evidence_freshness,
     _append_pm,
     _append_risk,
+    _append_rotation,
     _append_signals,
     _signal_row_line,
 )
@@ -161,6 +162,8 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
+    # Same pruning-pass report the morning message carries (board item 219).
+    _new_block(lines, _append_rotation, snap)
     # Held back and spliced in here — see `_budgeted_sections`.
     looked_at_slot = len(lines)
 
