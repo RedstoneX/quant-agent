@@ -1138,7 +1138,7 @@ universe_screen:
   # same checks over every listed name once per trading day after the close and
   # RECORDS each verdict under <data_dir>/daily/. Record-only: it admits and
   # removes nothing and does not read 'enabled'. It reuses data_dir,
-  # screen_deadline_s and bars_batch_size (Alpaca symbols per bar request).
+  # screen_deadline_s and bars_batch_size (symbols per bar request).
   enabled: false
   data_dir: "data/universe"
   min_price_usd: 5

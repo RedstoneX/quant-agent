@@ -4,9 +4,6 @@ and SEC are all fakes: nothing here touches the network."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from types import SimpleNamespace
-
 from src import universe_daily as ud
 from tests.test_universe_screen import GOOD_ASSET, TH, TODAY, _bars, _good_bars
 
@@ -189,26 +186,3 @@ def test_write_record_is_durable_and_marks_the_day(tmp_path):
     assert rows[1]["failures"] == ["asset_not_tradable"]
     on_disk = json.loads((tmp_path / "daily" / f"{TODAY.isoformat()}.summary.json").read_text())
     assert on_disk["names_listed"] == summary["names_listed"] == 2
-
-
-def test_alpaca_bars_one_request_for_many_symbols_and_counts_pages():
-    ts = datetime(2026, 9, 17, 4, tzinfo=timezone.utc)
-    bar = SimpleNamespace(timestamp=ts, open=10, high=11, low=9, close=10.5, volume=100)
-    requests = []
-
-    class FakeClient:
-        def _one_request(self, *a, **k):
-            return None
-
-        def get_stock_bars(self, req):
-            requests.append(req)
-            self._one_request()
-            self._one_request()  # the SDK paging twice
-            return SimpleNamespace(data={"BRK.B": [bar], "AAA": [bar]})
-
-    fetch = ud.AlpacaDailyBars(FakeClient(), 400, TODAY)
-    out = fetch(["AAA", "BRK-B", "NONE"])
-    assert len(requests) == 1
-    assert sorted(requests[0].symbol_or_symbols) == ["AAA", "BRK.B", "NONE"]
-    assert out["BRK-B"][0].close == 10.5 and out["NONE"] == []
-    assert fetch.calls == 2

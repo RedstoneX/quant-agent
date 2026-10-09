@@ -6,18 +6,21 @@ with every dropped name recorded with its reason. The "is anything
 happening" cut-off is not designed yet, so this module only RECORDS: it runs
 the existing eligibility checks of `src/universe_screen.py` (asset, history,
 price, spread, volatility, size, sector, plain equity fund, takeover) over the
-whole Alpaca active US-equity asset list and writes one durable record per
+whole Alpaca active US-equity asset list (read through the read-only broker
+the API uses) and writes one durable record per
 name. It sends nothing to any AI, admits nothing, removes nothing and never
 touches `universe_state.json`; `universe_screen.enabled` still governs the
 session path alone. No new threshold: every limit is `ScreenThresholds`.
 
 Data and call budget:
   asset list   one Alpaca GET (`broker.list_assets`).
-  daily bars   Alpaca multi-symbol `StockBarsRequest`, `universe_screen.
-               bars_batch_size` symbols per request; the SDK pages at its
-               10,000-bar maximum (alpaca.common.constants.DATA_V2_MAX_LIMIT,
-               docs.alpaca.markets/reference/stockbars) and retries an HTTP
-               429 itself. Every HTTP page is counted.
+  daily bars   `MarketDataProvider.get_ohlcv_batch` — the desk's existing
+               multi-symbol daily-bar path, which the rehearsal replay seam
+               already covers (the weekly screen reads bars the same way):
+               `universe_screen.bars_batch_size` symbols per request. Alpaca
+               multi-symbol bars are NOT used: no broker method fetches them
+               and a direct Alpaca client here would be a live outbound site
+               with no replay seam. Every batch request is counted.
   size/sector  Yahoo company profile, one call per name that reaches it,
                CACHED: a profile read this ISO week is reused, an older one is
                re-read while time remains and otherwise reused with its date
@@ -42,7 +45,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -62,70 +65,6 @@ logger = logging.getLogger(__name__)
 
 UNREACHED = "unreached_time_limit"
 UNREACHED_TEXT = "unreached: time limit"
-
-
-# --------------------------------------------------------------------------
-# Alpaca multi-symbol daily bars
-# --------------------------------------------------------------------------
-
-
-class AlpacaDailyBars:
-    """Daily bars for many symbols per request, on the broker's existing
-    Alpaca data client. `calls` counts HTTP pages actually sent."""
-
-    def __init__(self, data_client, lookback_days: int, today: date):
-        self.client = data_client
-        self.lookback_days = int(lookback_days)
-        self.today = today
-        self.calls = 0
-        original = data_client._one_request
-
-        def _counted(*args, **kwargs):
-            self.calls += 1
-            return original(*args, **kwargs)
-
-        data_client._one_request = _counted
-
-    def __call__(self, symbols: list[str]) -> dict[str, list]:
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
-
-        from src.execution.broker_parts.stop_place import _alpaca_symbol
-        from src.models import OHLCV
-
-        to_alpaca = {s: _alpaca_symbol(s) for s in symbols}
-        raw = self.client.get_stock_bars(
-            StockBarsRequest(
-                symbol_or_symbols=sorted(set(to_alpaca.values())),
-                timeframe=TimeFrame.Day,
-                start=self.today - timedelta(days=self.lookback_days),
-                end=self.today,
-            )
-        )
-        data = raw.data if hasattr(raw, "data") else raw
-        out: dict[str, list] = {}
-        for symbol, alpaca_symbol in to_alpaca.items():
-            parsed = []
-            for bar in (data or {}).get(alpaca_symbol) or []:
-                ts = getattr(bar, "timestamp", None)
-                if ts is None:
-                    continue
-                try:
-                    parsed.append(
-                        OHLCV(
-                            date=ts.date(),
-                            open=float(bar.open or 0),
-                            high=float(bar.high or 0),
-                            low=float(bar.low or 0),
-                            close=float(bar.close or 0),
-                            volume=int(bar.volume or 0),
-                        )
-                    )
-                except (TypeError, ValueError, AttributeError):
-                    continue
-            parsed.sort(key=lambda b: b.date)
-            out[symbol] = parsed
-        return out
 
 
 # --------------------------------------------------------------------------
@@ -186,7 +125,7 @@ class DailyRun:
     today: date
     records: dict[str, dict] = field(default_factory=dict)
     calls: dict[str, int] = field(
-        default_factory=lambda: {"alpaca_assets": 0, "alpaca_bars": 0, "yahoo_profile": 0, "sec_filings": 0}
+        default_factory=lambda: {"alpaca_assets": 0, "bar_batches": 0, "yahoo_profile": 0, "sec_filings": 0}
     )
     seconds: float = 0.0
     deadline_hit: bool = False
@@ -293,7 +232,7 @@ class _DailyScreen:
         return needs_bars
 
     def bars_phase(self, symbols: list[str], get_bars_batch, step: int) -> dict[str, list]:
-        """Bars, many symbols per Alpaca request; then the bar checks (no network)."""
+        """Bars, many symbols per request; then the bar checks (no network)."""
         passed: dict[str, list] = {}
         for start in range(0, len(symbols), step):
             chunk = symbols[start : start + step]
@@ -419,13 +358,10 @@ def _due_today(broker, data_dir, today: date) -> bool:
     return True
 
 
-def _profile_reader():
+def _profile_reader(market):
     """Yahoo company profile in the shape `check_profile` reads, including the
     quote type and fund category the ETF check needs."""
-    from src.data.market import MarketDataProvider
     from src.sector_reference import _canonicalize_sector, _get_sector
-
-    market = MarketDataProvider()
 
     def _profile(symbol: str):
         raw = market.get_company_profile(symbol)
@@ -468,25 +404,25 @@ def _filings_reader(config, deadline: float):
     return _filings
 
 
-def _data_client(broker, key: str, secret: str):
-    """The broker's existing Alpaca historical-data client, made the way
-    `get_bars` makes it when it does not exist yet."""
-    if broker._data_client is None:
-        from alpaca.data.historical.stock import StockHistoricalDataClient
+class _CountedBatches:
+    """`get_ohlcv_batch` with a request counter."""
 
-        from src.execution.broker_parts.http_timeout import _install_http_timeout
+    def __init__(self, market, lookback_days: int):
+        self.market = market
+        self.lookback_days = int(lookback_days)
+        self.calls = 0
 
-        broker._data_client = StockHistoricalDataClient(key, secret)
-        _install_http_timeout(broker._data_client)
-    return broker._data_client
+    def __call__(self, symbols: list[str]) -> dict[str, list]:
+        self.calls += 1
+        return self.market.get_ohlcv_batch(symbols, self.lookback_days)
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.api.broker_reads import _get_broker
     from src.config import load_config
-    from src.execution.broker import AlpacaBroker
+    from src.data.market import MarketDataProvider
     from src.universe_screen import HISTORY_FETCH_DAYS
     from src.util.time import et_today
 
@@ -496,17 +432,17 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(Path(parser.parse_args(argv).config))
     cfg = config.universe_screen
     today = et_today()
-    key, secret = get_alpaca_credentials()
-    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+    broker = _get_broker()
     if not _due_today(broker, cfg.data_dir, today):
         return 0
     deadline = time.monotonic() + float(cfg.screen_deadline_s)
-    bars = AlpacaDailyBars(_data_client(broker, key, secret), HISTORY_FETCH_DAYS, today)
+    market = MarketDataProvider()
+    bars = _CountedBatches(market, HISTORY_FETCH_DAYS)
     cache = ReadCache(cfg.data_dir)
     run = run_daily_record(
         broker.list_assets(),
         get_bars_batch=bars,
-        get_profile=_profile_reader(),
+        get_profile=_profile_reader(market),
         get_filings=_filings_reader(config, deadline),
         th=ScreenThresholds.from_config(config),
         today=today,
@@ -515,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         cache=cache,
     )
     run.calls["alpaca_assets"] = 1
-    run.calls["alpaca_bars"] = bars.calls
+    run.calls["bar_batches"] = bars.calls
     cache.save()
     write_record(cfg.data_dir, run)
     return 0
