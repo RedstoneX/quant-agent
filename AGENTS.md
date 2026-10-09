@@ -132,7 +132,8 @@ Use dedicated branches/PRs for substantive work. Do not force-push or push imple
 
 ## Decisions ratified
 
-- Stops were too tight and that was the root cause of two separate failures. The ATR multiple must scale by setup type and macro regime — never a hardcoded constant.
+- Stops were too tight and that was the root cause of two separate failures. Superseded on the multiple itself by the owner ruling of 2026-10-04 (docs/OUTCOME.md, "The protective stop width is settled at 2.5 ATR"): an unbacked stop is 2.5 times the stock's own daily move, with no setup or regime scaling.
+- **Trade history before the market open of Monday 2026-10-12 is NOT evidence** (owner 2026-10-09). Stops and profit targets were set wrongly and much of the desk was not working, so those trades must never be cited to justify sizing, stops, targets, exits or AI confidence. The rows stay in the database for audit; analyses and scorecards count only positions opened on or after that open.
 - Real short selling, not inverse ETFs. Three stages: countable, safe, live.
 - No dev/prod mirror. Production is paper and resets, so the case for enterprise staging collapses. Build the rehearsal harness instead.
 - The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
