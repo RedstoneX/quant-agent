@@ -308,27 +308,9 @@ class DecisionGrounding:
                     stance,
                     wants_bullish=_order_is_buy_side(intent, pos),
                 )
-                # A PARTIAL trim keeps a position. Evidence aligned with the
-                # side still held supports HOLDING that remainder — trimming
-                # a bullish long for concentration is coherent, and must not
-                # need bearish evidence to be grounded (2026-09-17,
-                # intra_check-44594a05: AAPL trimmed with bullish earnings
-                # tagged "supports" rejected the whole plan). Either polarity
-                # may therefore SUPPORT a partial trim. Full closes, opens and
-                # increases are untouched, and the `conflicts` check below
-                # still reads the reduction's own polarity.
-                supports_retained = (
-                    intent == "sell"
-                    and pos is not None
-                    and not target.is_close
-                    and pos.qty != 0
-                    and stance_is_aligned(
-                        source,
-                        symbol,
-                        stance,
-                        wants_bullish=pos.qty > 0,
-                    )
-                )
+                # Owner ruling 2026-10-09: whole exits only. Every sell/cover
+                # is judged as a full close by order side; there is no
+                # partial-trim evidence exception.
                 if claim.relationship == "supports":
                     if source == "smart_money" and not smart_money_correlates:
                         errors.append(
@@ -337,7 +319,7 @@ class DecisionGrounding:
                             "on its own; use context"
                         )
                         continue
-                    if not (polarity_supports or supports_retained):
+                    if not polarity_supports:
                         errors.append(
                             f"{symbol}: {source} stance {stance!r} does not support "
                             f"the proposed {intent}; record a conflict or context"
