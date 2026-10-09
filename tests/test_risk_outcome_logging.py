@@ -162,7 +162,7 @@ def _seed_closed_round_trips(
             stop_loss=90.0 if entry_action == "BUY" else 110.0,
         )
         exit_action = "SELL" if side == "long" else "COVER"
-        db.insert_trade(
+        exit_id = db.insert_trade(
             symbol=sym,
             action=exit_action,
             qty=10,
@@ -171,6 +171,11 @@ def _seed_closed_round_trips(
             run_id="r1",
             fill_status="filled",
         )
+        # by_conviction counts only closes with a known realized P&L (missing
+        # = UNKNOWN), so the fixture records it as the reconciler would.
+        pnl = (exit_price - entry_price) * 10 * (1 if side == "long" else -1)
+        db.conn.execute("UPDATE trades SET realized_pnl = ? WHERE id = ?", (pnl, exit_id))
+        db.conn.commit()
 
 
 # ===========================================================================
