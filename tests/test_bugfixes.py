@@ -1795,12 +1795,9 @@ def test_tech_analysis_rr_computed_for_sell():
 def test_tech_analysis_rr_none_for_neutral_or_missing_target():
     """Neutral clears prices (validator) so R/R is None.
 
-    The "missing target yields None" half of this test's original intent no
-    longer applies: the 2026-08-27 validator makes reference_target REQUIRED
-    for any actionable rating, so an actionable TechAnalysisResult with no
-    target now fails construction outright (ValidationError) instead of
-    constructing and returning risk_reward=None. That's a stronger guarantee
-    against a bogus/absent ratio ever reaching downstream consumers.
+    A missing target on an actionable rating is kept and yields None (owner
+    rule 2026-10-09: a missing target never blocks a trade; the 2026-08-27
+    rejection protected nothing because take-profit is measured).
     """
     neutral = TechAnalysisResult(
         symbol="SPY",
@@ -1813,7 +1810,7 @@ def test_tech_analysis_rr_none_for_neutral_or_missing_target():
         thesis_invalid_if="closes below support",
     )
     assert neutral.risk_reward is None
-    with pytest.raises(ValidationError):
+    assert (
         TechAnalysisResult(
             symbol="SPY",
             rating="buy",
@@ -1827,7 +1824,9 @@ def test_tech_analysis_rr_none_for_neutral_or_missing_target():
             reasoning="x",
             reasoning_chain=_trc(),
             thesis_invalid_if="closes below support",
-        )
+        ).risk_reward
+        is None
+    )
 
 
 def test_tech_analysis_rr_handles_malformed_geometry():

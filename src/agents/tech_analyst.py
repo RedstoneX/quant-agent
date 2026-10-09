@@ -13,6 +13,7 @@ from src.data.levels import (
     format_levels_block,
     structure_coverage,
 )
+from src.models.analysis import NO_TARGET_TEXT
 from src.models import (
     DROP_CODE_MALFORMED_ROW,
     DROP_CODE_SCHEMA_INVALID,
@@ -358,6 +359,8 @@ class TechAnalystAgent(BaseAgent):
             entry = p.get("entry_price")
             stop = p.get("stop_loss")
             target = p.get("reference_target")
+            if target is None:
+                target = NO_TARGET_TEXT
             prices = f"entry {entry} / stop {stop} / target {target}" if entry else "no prior prices"
             return (
                 f"\nPrior rating (context): {p.get('rating', '?')} "

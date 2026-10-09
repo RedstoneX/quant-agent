@@ -595,8 +595,9 @@ class EntryStopResolver:
         # The target is resolved BEFORE any branch, because the reward:risk
         # floor now applies on every one of them. It used to be resolved
         # after two early returns had already carried most stops past it.
-        if target_price is None and analysis is not None:
-            target_price = getattr(analysis, "reference_target", None)
+        # Only the MEASURED target counts. The analyst's `reference_target`
+        # is evidence, never a take-profit or a reward:risk input (owner
+        # rule 2026-10-09): when nothing is measured there is no target.
         had_target = target_price is not None
         try:
             target_price = float(target_price) if target_price else None

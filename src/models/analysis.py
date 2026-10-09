@@ -409,6 +409,12 @@ RATING_MAGNITUDE: dict[str, float] = {
 #: prompt in the same pass — never a constant restored here.
 NO_STATED_STRENGTH: None = None
 
+#: Text recorded (evidence, prompts) when an actionable read has no analyst
+#: target / names no support or resistance (owner rule 2026-10-09: neither
+#: blocks a trade). Prompts print these, never the word "None".
+NO_TARGET_TEXT = "no target"
+NO_LEVEL_NAMED_TEXT = "no level named"
+
 RATING_DIRECTION: dict[str, str] = {
     "strong_buy": "bullish",
     "buy": "bullish",
@@ -709,6 +715,18 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         )
         return None if ratio is None else round(ratio, 2)
 
+    @property
+    def target_text(self) -> str:
+        """The analyst's target as prompt text: the number, or "no target"."""
+        return NO_TARGET_TEXT if self.reference_target is None else str(self.reference_target)
+
+    @property
+    def levels_text(self) -> str:
+        """The analyst-named levels as text, or "no level named"."""
+        if not self.support_levels and not self.resistance_levels:
+            return NO_LEVEL_NAMED_TEXT
+        return f"support {self.support_levels} / resistance {self.resistance_levels}"
+
     def to_verdict(self) -> "AnalystVerdict":
         """This read, restated in the shared Phase 13 verdict shape.
 
@@ -778,6 +796,10 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         # when a tied composite tier has no risk_reward at all, e.g. an
         # all-breakout tier). No entry price, or no computed levels at
         # all, means zero — a real absence, not an invented value.
+        if self.reference_target is None and direction != "neutral":
+            evidence.append(VerdictEvidence(label="reference_target", text=NO_TARGET_TEXT))
+        if not self.support_levels and not self.resistance_levels and direction != "neutral":
+            evidence.append(VerdictEvidence(label="analyst_levels", text=NO_LEVEL_NAMED_TEXT))
         if self.reference_target_wrong_side:
             evidence.append(
                 VerdictEvidence(
@@ -870,21 +892,26 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
                 )
 
         # --- Structural requirements for actionable ratings (2026-08-27) ----
-        # No levels, no trade. Previously the analyst could omit all of this and
-        # PortfolioConstructor would invent a stop and a target; every downstream
-        # measurement was then taken against numbers derived from nothing.
-        if self.reference_target is None or self.reference_target <= 0:
-            raise ValueError(
-                f"{self.symbol}: rating={self.rating} requires reference_target > 0 "
-                f"(derive it from structure, or from a measured move on a breakout)"
-            )
+        # Setup type and horizon stay required. The analyst's target and
+        # named levels no longer are (owner rule 2026-10-09): stop and
+        # take-profit are both built from the desk's measured levels.
+        # A missing or non-positive analyst target is RECORDED as "no
+        # target", not rejected (owner rule 2026-10-09: a missing chart
+        # level or target never blocks a trade). The take-profit is derived
+        # from measured structure (`derive_structural_target`) and the stop
+        # never reads this number, so rejecting here protected nothing.
+        if self.reference_target is not None and self.reference_target <= 0:
+            self.__dict__["reference_target"] = None
         # A wrong-side guess is RECORDED, not rejected (owner rule
         # 2026-10-09): the take-profit is derived from structure, never from
         # this number, so dropping the whole signal over it lost real trades.
-        if self.rating in ("buy", "strong_buy"):
-            wrong_side = self.reference_target <= self.entry_price
-        else:
-            wrong_side = self.reference_target >= self.entry_price
+        # Only checked when a target exists — there is no side to compare.
+        wrong_side = False
+        if self.reference_target is not None:
+            if self.rating in ("buy", "strong_buy"):
+                wrong_side = self.reference_target <= self.entry_price
+            else:
+                wrong_side = self.reference_target >= self.entry_price
         self.__dict__["reference_target_wrong_side"] = bool(wrong_side)
         if self.setup_type is None:
             raise ValueError(
@@ -896,11 +923,12 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
                 f"{self.symbol}: rating={self.rating} requires "
                 f"expected_horizon_sessions > 0 (pinned at entry; pace is measured against it)"
             )
-        if not self.support_levels and not self.resistance_levels:
-            raise ValueError(
-                f"{self.symbol}: rating={self.rating} requires at least one "
-                f"structural level (support_levels and/or resistance_levels)"
-            )
+        # No AI-named support/resistance is RECORDED as "no level named",
+        # not rejected (owner rule 2026-10-09). Stops and the take-profit
+        # are both built from the desk's own measured levels
+        # (`computed_levels`), never from these, so the rejection protected
+        # nothing. A dead feed still fails downstream under its own
+        # data-fault reason (`levels_coverage`), which this does not touch.
         # Never-blank soft-exit (2026-09-17): an actionable rating without a
         # real "I'll sell if" is not a tradeable idea. Empty and `unknown`
         # are missing, not "the analyst had nothing to say". Neutrals may
