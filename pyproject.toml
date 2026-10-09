@@ -49,6 +49,8 @@ dev = [
     # Size/shape limits (tests/test_ruff_clean.py). Pinned EXACTLY: a new ruff
     # release can change what a rule counts, which would move a fixed limit.
     "ruff==0.16.10",
+    # Import-boundary contracts (.importlinter, tests/test_import_contracts.py). Exact pin: a release can change what counts as an import.
+    "import-linter==2.15",
     "httpx>=0.27.0",
     # tests/test_api_*.py import fastapi directly, so the API deps are part of
     # what the test suite needs — not just what the API process needs. Without
