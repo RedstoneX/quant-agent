@@ -14,6 +14,9 @@ MODULES = [
     ("src.stage_execution_parts.cover_loop", "cover_qty_and_label"),
     ("src.stage_execution_parts.cover_loop", "await_cover_and_finalize"),
     ("src.stage_execution_parts.state", "EntryLeg"),
+    ("src.stage_execution_parts.sell_loop", "sell_qty_and_label"),
+    ("src.stage_execution_parts.sell_loop", "record_rotation_close"),
+    ("src.stage_execution_parts.sell_loop", "await_sell_and_finalize"),
 ]
 
 

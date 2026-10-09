@@ -39,3 +39,13 @@ class EntryLeg:
     market_price: Any
     ask: Any
     bid: Any
+
+
+@dataclass(frozen=True)
+class SellLeg:
+    """Per-name facts the rotation-close record reads for one submitted SELL."""
+
+    decision: Any
+    qty: Any
+    sell_limit: Any
+    rotation_final_reason: Any

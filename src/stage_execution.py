@@ -22,7 +22,12 @@ from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
 from src.stage_execution_parts.cover_loop import await_cover_and_finalize, cover_qty_and_label
 from src.stage_execution_parts.protect_entry_stops import protect_pending_entry_stops
-from src.stage_execution_parts.state import SKIP
+from src.stage_execution_parts.sell_loop import (
+    await_sell_and_finalize,
+    record_rotation_close,
+    sell_qty_and_label,
+)
+from src.stage_execution_parts.state import SKIP, SellLeg
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -225,31 +230,10 @@ class ExecutionStage:
                 )
                 if rotation_final_reason is _ROTATION_SELL_REFUSED:
                     continue
-                if decision.allocation_pct == 0:
-                    logger.warning(
-                        "Skipping SELL %s with allocation_pct=0 (ambiguous — use 100 for full exit)",
-                        decision.symbol,
-                    )
+                resolved = sell_qty_and_label(pipeline, decision, existing)
+                if resolved is SKIP:
                     continue
-                if 0 < decision.allocation_pct < 100:
-                    sell_fraction = decision.allocation_pct / 100
-                    qty = existing[0].qty * sell_fraction
-                    if float(existing[0].qty).is_integer():
-                        qty = max(1.0, float(int(qty)))
-                    if qty <= 0:
-                        continue
-                    if qty >= existing[0].qty:
-                        qty = pipeline._full_sell_qty(existing[0].qty)
-                        if qty is None:
-                            continue
-                        action_label = "SELL"
-                    else:
-                        action_label = f"PARTIAL_SELL({decision.allocation_pct:.0f}%)"
-                else:
-                    qty = pipeline._full_sell_qty(existing[0].qty)
-                    if qty is None:
-                        continue
-                    action_label = "SELL"
+                qty, action_label = resolved
                 sell_price = existing[0].current_price
                 sell_limit = round(sell_price * 0.995, 2)
                 position_qty = existing[0].qty
@@ -278,44 +262,11 @@ class ExecutionStage:
                     "broker_accepted", broker_order_id=order.get("id"), qty=qty,
                     limit_price=sell_limit, side="sell",
                 )
-                # Phase 14b — this SELL is the desk's own rotation close.
-                # Record it durably and page the owner NOW: broker
-                # acceptance is the irreversible act, and a position sold
-                # without a human or a model deciding to must never be
-                # silent (see `_alert_rotation_executed`).
-                rotation = ctx.rotation
-                if (
-                    isinstance(rotation, dict)
-                    and decision.symbol.upper() == rotation.get("held_symbol")
-                ):
-                    rotation["sell_order_id"] = order.get("id")
-                    rotation["sell_qty"] = float(qty)
-                    if isinstance(rotation_final_reason, str):
-                        # A SECOND durable fact, not an edit of the first.
-                        # The proposal the Risk Manager reviewed and the
-                        # clearance the sale executed under are two
-                        # different things that happened at two different
-                        # times; overwriting one with the other leaves the
-                        # ledger disagreeing with the alert about what was
-                        # said when. Written once, never edited.
-                        rotation["cleared_reason"] = rotation_final_reason
-                        _record_pipeline_event(
-                            pipeline, ctx, decision.symbol, "rotation",
-                            "sell_cleared_reason", rotation_final_reason,
-                            broker_order_id=order.get("id"),
-                            new_symbol=rotation.get("new_symbol"),
-                        )
-                    _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "rotation",
-                        "sell_submitted", rotation.get("reason", ""),
-                        broker_order_id=order.get("id"), qty=qty,
-                        limit_price=sell_limit,
-                        new_symbol=rotation.get("new_symbol"),
-                    )
-                    _alert_rotation_executed(
-                        rotation=rotation, qty=float(qty),
-                        limit_price=float(sell_limit), order_id=order.get("id"),
-                    )
+                record_rotation_close(
+                    pipeline, ctx,
+                    SellLeg(decision, qty, sell_limit, rotation_final_reason),
+                    order,
+                )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
                     action_label.lower(), pipeline._format_qty(qty), decision.symbol, sell_limit,
@@ -324,46 +275,7 @@ class ExecutionStage:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
             if prot is None:
                 continue
-            # Wait for THIS sell and rebuild THIS name's stop coverage on its
-            # actual fill before the loop cancels the next name's stops —
-            # the per-name discipline the de-lever loops got (docs/WORK.md
-            # item 111). Submitting every SELL first and waiting/finalizing
-            # the batch afterwards left every earlier name with no
-            # protective stop while later names were cancelled, submitted
-            # and waited on. Runs even when the ledger write above raised:
-            # the stops are off and the order is live. Which names are sold,
-            # how much and at what limit are unchanged.
-            order_id = prot["order_id"]
-            # ExecutionStage was the lone SELL path missing this guard
-            # — every other SELL path (force_delever / midday_emergency /
-            # midday_llm / intra_check / take_profit) wraps the wait in
-            # try/except. An uncaught exception here (broker 5xx, DNS
-            # blip mid-poll) would propagate past the finalize loop
-            # below. The audit F1 write-ahead row already covers a hard
-            # process kill; this try/except additionally keeps the
-            # in-process finalize path alive so coverage is rebuilt now
-            # rather than waiting for the next session's drain.
-            try:
-                status = pipeline.broker.wait_for_order_terminal(order_id)
-            except Exception as e:
-                logger.warning(
-                    "ExecutionStage: wait_for_order_terminal failed for %s: %s "
-                    "— treating as unknown status so finalize still runs",
-                    order_id, e,
-                )
-                status = None
-            sell_status_by_id[order_id] = status
-            if status != "filled":
-                logger.warning(
-                    "Sell order %s did not fill before buy phase (status=%s); buys will use current cash only",
-                    order_id, status or "unknown",
-                )
-            # The wait above returned, so the broker's fill_info is final.
-            # Reprotect on actual residual (filled) or restore originals
-            # (no-fill terminal). wait=False: this order was just waited on.
-            pipeline._finalize_pending_protections(
-                [prot], context="ExecutionStage", wait=False,
-            )
+            await_sell_and_finalize(pipeline, prot, sell_status_by_id)
 
         # Stage 3 (shorts): COVER loop — the exit-side twin of the SELL loop
         # just above. Reuses `_submit_protected_sell`'s side="buy" plumbing
