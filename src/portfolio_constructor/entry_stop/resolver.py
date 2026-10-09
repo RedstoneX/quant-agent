@@ -464,11 +464,11 @@ class EntryStopResolver:
         structure by `_derive_target`. It has to be passed in rather than
         read off the analysis, because the whole point of the change is that
         `analysis.reference_target` is the language model's guess and this
-        gate is arithmetic. When it is omitted the old read is kept, for the
-        one caller that legitimately supplies its own structural target: the
-        backtest engine, which computes the nearest level itself and hands it
-        over on a shim (`src/backtest/engine.py`). That path was never
-        exposed to the defect.
+        gate is arithmetic. When it is omitted there is no target: the old
+        read of `analysis.reference_target` is gone (2026-10-09), so the
+        backtest engine, which handed its own nearest level over on that
+        shim (`src/backtest/engine.py`), now gets no take-profit and no
+        reward:risk log line from this step.
 
         **2026-09-12, docs/WORK.md item 54 — the width gate, and a stop
         that is always derivable.** Sourced research (Bulkowski on gaps,
@@ -597,7 +597,8 @@ class EntryStopResolver:
         # after two early returns had already carried most stops past it.
         # Only the MEASURED target counts. The analyst's `reference_target`
         # is evidence, never a take-profit or a reward:risk input (owner
-        # rule 2026-10-09): when nothing is measured there is no target.
+        # rule 2026-09-12: unverifiable numbers never rank or size): when
+        # nothing is measured there is no target.
         had_target = target_price is not None
         try:
             target_price = float(target_price) if target_price else None
