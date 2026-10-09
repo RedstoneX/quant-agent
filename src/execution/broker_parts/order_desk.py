@@ -42,6 +42,7 @@ from src.execution import (
     order_idempotency as _idem,
 )  # session key read via the module so one patch target serves every path
 from src.execution.order_idempotency import _client_order_id, _submit_entry_request_idempotent
+from src.execution.sell_quantity import floor_sell_qty_at_submission
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 
 # Same log channel as before the move: operators and tests filter on the
@@ -607,6 +608,13 @@ class OrderDesk:
                             f"would protect nothing"
                         ),
                     }
+
+        # The ONE rounding point for every SELL (src/execution/sell_quantity.py):
+        # callers compute quantities raw, so floor onto the gate's own decimal
+        # grid here, before the gate, which stays exactly as strict.
+        qty, floor_refusal = floor_sell_qty_at_submission(qty, side=side, symbol=symbol)
+        if floor_refusal is not None:
+            return {"id": None, "status": QTY_REJECTED, "symbol": internal_symbol, "detail": floor_refusal}
 
         # Quantity gate (src/execution/order_gates.py): the stop PRICE was
         # refused here, the quantity never was (2026-10-01 audit).

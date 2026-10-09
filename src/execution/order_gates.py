@@ -56,6 +56,12 @@ from alpaca.trading.enums import TimeInForce
 # that forgets the rule cannot exist, because no path gets to state it.
 _FRACTIONAL_QTY_EPSILON = 1e-9
 
+# The most decimal places an order quantity may carry: the same grid as
+# `_FRACTIONAL_QTY_EPSILON` and the `<= 9` clamp in `src/pipeline_sizing.py`.
+# Shared by the gate below and by `src/execution/sell_quantity.py`, which
+# floors every sell onto this grid before the gate sees it.
+ORDER_QTY_DECIMALS = 9
+
 
 def _split_protective_qty(qty) -> tuple[float, float]:
     """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
@@ -146,8 +152,8 @@ def check_order_quantity(
     # desk's own ceiling: `src/pipeline_sizing.py` clamps
     # `execution.fractional_share_decimals` to <= 9, the grid
     # `_FRACTIONAL_QTY_EPSILON` (1e-9) and `_split_protective_qty` use.
-    if -Decimal(repr(value)).as_tuple().exponent > 9:
-        return f"the quantity {value!r} carries more than the 9 decimal places an order can"
+    if -Decimal(repr(value)).as_tuple().exponent > ORDER_QTY_DECIMALS:
+        return f"the quantity {value!r} carries more than the {ORDER_QTY_DECIMALS} decimal places an order can"
     s = side.lower()
     if fractionable is False and _split_protective_qty(value)[1] > 0:
         return f"the quantity {value:g} is fractional but this name trades in whole shares only"
