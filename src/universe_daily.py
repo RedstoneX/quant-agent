@@ -22,10 +22,13 @@ Data and call budget:
                the rehearsal replay patches it. A failed chunk (HTTP 429 or
                other) is recorded `market_data_unavailable` per name; there
                is no retry loop. No Yahoo bar download is made.
-  size/sector  Yahoo company profile, one call per name that reaches it,
-               CACHED: a profile read this ISO week is reused, an older one is
-               re-read while time remains and otherwise reused with its date
-               on the record. Calls counted.
+  size/sector  The Nasdaq all-listings documents (stocks and ETFs), two GETs
+               per run through `src.data.nasdaq_fetch`; no per-name call.
+               Nasdaq lists no fund category, so every fund is recorded
+               `fund_category_not_listed` (inconclusive: admitted nothing,
+               rejected nothing, re-read next run). If the download fails
+               every name is inconclusive `profile_unavailable` and the day
+               is NOT marked recorded, so the next wake-up retries.
   takeover     SEC issuer filing history, same cache rule. Calls counted.
 
 Records: `<universe_screen.data_dir>/daily/<YYYY-MM-DD>.jsonl` (one line per
@@ -69,7 +72,7 @@ UNREACHED_TEXT = "unreached: time limit"
 
 
 # --------------------------------------------------------------------------
-# Cache (profile and SEC filings change slowly)
+# Cache (SEC filings change slowly)
 # --------------------------------------------------------------------------
 
 
@@ -83,7 +86,7 @@ class ReadCache:
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("universe daily: cache unreadable at %s: %s", self.path, exc)
             raw = {}
-        self.data = {k: dict(raw.get(k) or {}) for k in ("profile", "filings")}
+        self.data = {k: dict(raw.get(k) or {}) for k in ("filings",)}
 
     def get(self, kind: str, symbol: str) -> dict | None:
         return self.data[kind].get(symbol)
@@ -126,10 +129,11 @@ class DailyRun:
     today: date
     records: dict[str, dict] = field(default_factory=dict)
     calls: dict[str, int] = field(
-        default_factory=lambda: {"alpaca_assets": 0, "bar_batches": 0, "yahoo_profile": 0, "sec_filings": 0}
+        default_factory=lambda: {"alpaca_assets": 0, "bar_batches": 0, "nasdaq_listing": 0, "sec_filings": 0}
     )
     seconds: float = 0.0
     deadline_hit: bool = False
+    listing_unavailable: bool = False
 
     def record(self, symbol: str, status: str, failures=(), measured=None, **extra) -> None:
         row = {"symbol": symbol, "status": status, "failures": list(failures), "measured": dict(measured or {})}
@@ -258,7 +262,7 @@ class _DailyScreen:
         return passed
 
     def _age(self, symbol: str) -> tuple:
-        entry = self.cache.get("profile", symbol)
+        entry = self.cache.get("filings", symbol)
         if entry is None:
             return (2, "", symbol)
         return (0 if entry.get("week") == iso_week(self.run.today) else 1, entry.get("on") or "", symbol)
@@ -276,7 +280,7 @@ class _DailyScreen:
         return value, self.run.today.isoformat()
 
     def detail_phase(self, by_symbol: dict[str, Any], bars: dict[str, list]) -> None:
-        """Profile and filings: cached this week first (no network), then the
+        """Filings: cached this week first (no network), then the
         oldest reads, then names never read."""
         for symbol in sorted(bars, key=self._age):
             self.late = self.clock() >= self.deadline
@@ -284,16 +288,12 @@ class _DailyScreen:
                 self.run.deadline_hit = True
             read_on: dict[str, str | None] = {}
 
-            def _profile(s, _r=read_on):
-                value, _r["profile_read_on"] = self._cached_read("profile", s, self.get_profile, "yahoo_profile", False)
-                return value
-
             def _filings(s, _r=read_on):
                 value, _r["filings_read_on"] = self._cached_read("filings", s, self.get_filings, "sec_filings", True)
                 return value
 
             sources = ScreenSources(
-                get_asset=lambda s: None, get_bars=lambda s: [], get_profile=_profile, get_filings=_filings
+                get_asset=lambda s: None, get_bars=lambda s: [], get_profile=self.get_profile, get_filings=_filings
             )
             try:
                 result = screen_symbol(symbol, sources, self.th, asset=by_symbol[symbol], bars=bars[symbol])
@@ -323,6 +323,9 @@ def write_record(data_dir: str | Path, run: DailyRun) -> dict:
     lines = "".join(json.dumps(run.records[s], sort_keys=True, default=str) + "\n" for s in sorted(run.records))
     _atomic_write(folder / f"{stamp}.jsonl", lines)
     summary = run.summary()
+    if run.listing_unavailable:
+        logger.warning("universe daily: %s listing unavailable; day not marked recorded, next run retries", stamp)
+        return summary
     summary["written_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     _atomic_write(folder / f"{stamp}.summary.json", json.dumps(summary, indent=1, sort_keys=True))
     logger.info(
@@ -359,23 +362,24 @@ def _due_today(broker, data_dir, today: date) -> bool:
     return True
 
 
-def _profile_reader(market):
-    """Yahoo company profile in the shape `check_profile` reads, including the
-    quote type and fund category the ETF check needs."""
-    from src.sector_reference import _canonicalize_sector, _get_sector
+def _profile_reader(listing, canonicalize):
+    """Profile in the shape `check_profile` reads, from one Nasdaq listing
+    (None when the download failed: every name is then unavailable)."""
 
     def _profile(symbol: str):
-        raw = market.get_company_profile(symbol)
-        if raw is None:
+        if listing is None:
             return None
-        sector = _canonicalize_sector(raw.get("sector_raw"))
-        if sector == "Unknown":
-            sector = _get_sector(symbol) or "Unknown"
+        rec = listing.get(symbol)
+        if rec is None:
+            return None
+        if rec.is_fund:
+            # Nasdaq has no fund category; never let a placeholder reach check_fund.
+            return {"quote_type": "ETF", "fund_category_not_listed": True}
         return {
-            "market_cap_usd": raw.get("market_cap_usd"),
-            "sector": sector,
-            "quote_type": raw.get("quote_type"),
-            "category": raw.get("category"),
+            "market_cap_usd": float(rec.market_cap) if rec.market_cap is not None else None,
+            "sector": canonicalize(rec.sector_recorded),
+            "quote_type": "EQUITY",
+            "category": None,
         }
 
     return _profile
@@ -425,7 +429,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from src.api.broker_reads import _get_broker
     from src.config import load_config
-    from src.data.market import MarketDataProvider
+    from src.data.nasdaq_fetch import fetch_json
+    from src.data.nasdaq_listing import ListingUnavailable, load_listing
+    from src.sector_reference import _canonicalize_sector
     from src.universe_screen import HISTORY_FETCH_DAYS
     from src.util.time import et_today
 
@@ -439,13 +445,17 @@ def main(argv: list[str] | None = None) -> int:
     if not _due_today(broker, cfg.data_dir, today):
         return 0
     deadline = time.monotonic() + float(cfg.screen_deadline_s)
-    market = MarketDataProvider()
+    try:
+        listing = load_listing(fetch=fetch_json)
+    except ListingUnavailable as exc:
+        logger.warning("universe daily: Nasdaq listing unavailable: %s", exc)
+        listing = None
     bars = _CountedBatches(broker, HISTORY_FETCH_DAYS)
     cache = ReadCache(cfg.data_dir)
     run = run_daily_record(
         broker.list_assets(),
         get_bars_batch=bars,
-        get_profile=_profile_reader(market),
+        get_profile=_profile_reader(listing, _canonicalize_sector),
         get_filings=_filings_reader(config, deadline),
         th=ScreenThresholds.from_config(config),
         today=today,
@@ -454,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
         cache=cache,
     )
     run.calls["alpaca_assets"] = 1
+    run.calls["nasdaq_listing"] = 2
+    run.listing_unavailable = listing is None
     run.calls["bar_batches"] = bars.calls
     cache.save()
     write_record(cfg.data_dir, run)

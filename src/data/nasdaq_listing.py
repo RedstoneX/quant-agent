@@ -96,7 +96,7 @@ def _fetch(fetch: Callable, url: str):
         raise ListingUnavailable(f"fetch failed for {url}: {exc!r}") from exc
 
 
-def load_listing(*, fetch: Callable[[str, dict, float], object]) -> Listing:
+def load_listing(*, fetch: Callable[[str, dict], object]) -> Listing:
     stock_rows = _rows(_fetch(fetch, STOCKS_URL), "data", "rows")
     fund_rows = _rows(_fetch(fetch, FUNDS_URL), "data", "data", "rows")
     records: dict[str, ListingRecord] = {}

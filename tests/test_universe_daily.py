@@ -98,7 +98,7 @@ def test_every_name_gets_a_record_with_its_failing_check(tmp_path):
         "company_too_small": 1,
         "price_below_minimum": 1,
     }
-    assert summary["calls"]["yahoo_profile"] == 3  # GOOD, TINY, DEAL (PENY failed on bars)
+    assert "yahoo_profile" not in summary["calls"]
 
 
 def test_pending_takeover_is_recorded(tmp_path):
@@ -145,20 +145,20 @@ def test_time_limit_marks_every_unreached_name(tmp_path):
     assert run.deadline_hit
 
 
-def test_profile_and_filings_are_cached_within_the_week(tmp_path):
+def test_filings_are_cached_within_the_week_and_profile_never_is(tmp_path):
     cache = ud.ReadCache(tmp_path)
     _, first = _run([_asset("AAA")], tmp_path, cache=cache)
     cache.save()
+    assert "profile" not in json.loads((tmp_path / "daily_cache.json").read_text())
     run, second = _run([_asset("AAA")], tmp_path, cache=ud.ReadCache(tmp_path))
     assert first["profile"] == ["AAA"] and first["filings"] == ["AAA"]
-    assert second["profile"] == [] and second["filings"] == []
+    assert second["profile"] == ["AAA"] and second["filings"] == []
     assert run.records["AAA"]["status"] == "passed"
-    assert run.records["AAA"]["profile_read_on"] == TODAY.isoformat()
+    assert "profile_read_on" not in run.records["AAA"]
 
 
 def test_stale_cache_is_used_after_the_time_limit(tmp_path):
     cache = ud.ReadCache(tmp_path)
-    cache.put("profile", "AAA", PROFILE, TODAY.replace(day=1))
     cache.put("filings", "AAA", [], TODAY.replace(day=1))
     clock = Clock()
 
@@ -166,9 +166,8 @@ def test_stale_cache_is_used_after_the_time_limit(tmp_path):
         clock.now = 10.0
 
     run, calls = _run([_asset("AAA")], tmp_path, cache=cache, deadline=5.0, clock=clock, after_bars=spend_budget)
-    assert calls["profile"] == []
     assert run.records["AAA"]["status"] == "passed"
-    assert run.records["AAA"]["profile_read_on"] == TODAY.replace(day=1).isoformat()
+    assert run.records["AAA"]["filings_read_on"] == TODAY.replace(day=1).isoformat()
     # Without a cache, the same late name is unreached rather than read.
     clock.now = 0.0
     late, _ = _run([_asset("BBB")], tmp_path, deadline=5.0, clock=clock, after_bars=spend_budget)
@@ -242,3 +241,52 @@ def test_rate_limited_chunk_is_recorded_unavailable_per_name(tmp_path):
     for name in ("AAA", "BBB", "CCC"):
         assert run.records[name]["status"] == "inconclusive"
         assert "market_data_unavailable" in run.records[name]["failures"]
+
+
+# --- Nasdaq listing as the profile source ---------------------------------
+
+from src.data import nasdaq_listing as nl  # noqa: E402
+
+_FIX = __import__("pathlib").Path(__file__).parent / "fixtures" / "nasdaq_listing"
+
+
+def _fixture_listing():
+    def fetch(url, headers):
+        return json.loads((_FIX / ("stocks.json" if url == nl.STOCKS_URL else "etf.json")).read_text())
+
+    return nl.load_listing(fetch=fetch)
+
+
+def _canon(raw):
+    return raw or "Unknown"
+
+
+def test_profile_reader_reads_the_listing_not_the_network():
+    reader = ud._profile_reader(_fixture_listing(), _canon)
+    aapl = reader("AAPL")
+    assert aapl["quote_type"] == "EQUITY" and aapl["market_cap_usd"] == 3e12 and aapl["sector"] == "Technology"
+    assert reader("BRK-B")["market_cap_usd"] == 9e11
+    assert reader("NOT-LISTED") is None
+
+
+def test_funds_are_inconclusive_not_admitted_and_not_dropped(tmp_path):
+    reader = ud._profile_reader(_fixture_listing(), _canon)
+    run, _ = _run([_asset("SPY")], tmp_path, profile=reader)
+    row = run.records["SPY"]
+    assert row["status"] == "inconclusive" and row["failures"] == ["fund_category_not_listed"]
+
+
+def test_listing_unavailable_is_inconclusive_and_day_is_not_recorded(tmp_path):
+    reader = ud._profile_reader(None, _canon)
+    cache = ud.ReadCache(tmp_path)
+    run, _ = _run([_asset("AAA"), _asset("BBB")], tmp_path, profile=reader, cache=cache)
+    for name in ("AAA", "BBB"):
+        assert run.records[name]["status"] == "inconclusive"
+        assert run.records[name]["failures"] == ["profile_unavailable"]
+    assert "profile" not in cache.data
+    run.listing_unavailable = True
+    ud.write_record(tmp_path, run)
+    assert not ud.already_recorded(tmp_path, TODAY)
+    run.listing_unavailable = False
+    ud.write_record(tmp_path, run)
+    assert ud.already_recorded(tmp_path, TODAY)
