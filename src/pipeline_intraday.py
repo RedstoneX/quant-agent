@@ -58,10 +58,33 @@ class _HostState:
         setattr(self._host, name, value)
 
 
+#: Most ranked names sent in ONE paid call; the spent-money cap
+#: (`llm_cost_circuit`) is re-checked before every call, so it can be overshot
+#: by at most one call. 5 is the batch size the desk has always sent (the old
+#: per-scan name cap), so that one-call overshoot is measured, not guessed:
+#: the most expensive intraday call on record is a portfolio_manager decision
+#: at $0.389885 [measured: production agent_logs, intraday runs
+#: 2026-08-25..2026-10-09, 117 calls]; the largest intraday tech batch was
+#: $0.1237169 [same source, 139 calls]. Ledgered in config/number_ledger.yaml.
+_NAMES_PER_PAID_CALL = 5
+
+
 def _shim(fn):
     """Mark a mixin method as this module's own shim so a live collaborator can tell it apart."""
     fn._intraday_shim = fn.__name__
     return fn
+
+
+def _merge_call_results(results: list[dict]) -> dict:
+    """One scan result from its paid calls; a single call's result is returned unchanged."""
+    if len(results) == 1:
+        return results[0]
+    merged = dict(results[-1])
+    merged["candidates"] = [s for r in results for s in (r.get("candidates") or [])]
+    if any("orders" in r for r in results):
+        merged["orders"] = [o for r in results for o in (r.get("orders") or [])]
+    merged["calls"] = results
+    return merged
 
 
 class IntradayScanBody:
@@ -150,12 +173,6 @@ class IntradayScanBody:
     def broker(self, value) -> None:
         self._state.set("broker", value)
 
-    def _record_over_cap_drops(self, ctx, candidates, cap: int) -> None:
-        """Every mover past the per-scan name cap gets a recorded reason and its rank."""
-        for rank, (symbol, move_pct) in enumerate(candidates, start=1):
-            if rank > cap:
-                record_dropped_name(self, ctx, symbol, "over_name_cap", rank=rank, cap=cap, move_pct=move_pct)
-
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -207,8 +224,7 @@ class IntradayScanBody:
         # still held at window end, skip with a durable reason that names
         # the movers — never sleep the scan away, never drop them silently.
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
-        mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
-        self._record_over_cap_drops(ctx, candidates, cfg.max_candidates_per_scan)
+        mover_names = [s for s, _ in candidates]
         if self._await_paid_scan_slot(ctx.run_id):
             if getattr(self, "_paid_scan_waited_for", None) == "morning":
                 return self._intraday_open_overlap_skip(ctx, mover_names)
@@ -231,7 +247,6 @@ class IntradayScanBody:
                 _site(self, "post_wait_refresh", exc, log=logger)
                 return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
             candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
-            self._record_over_cap_drops(ctx, candidates, cfg.max_candidates_per_scan)
 
         if not snapshots:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
@@ -239,14 +254,51 @@ class IntradayScanBody:
         if not candidates:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
-        # Largest moves first, capped — bounded per-tick cost regardless of
-        # how many symbols move on a broad market day; not a scan of
-        # everything, a check of the few things that moved most.
-        symbols = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
+        # Largest move in the name's own ATR first, sent in consecutive paid
+        # calls of at most `_NAMES_PER_PAID_CALL` names. The spent-money cap
+        # is re-checked before every call and is the only stop: a refusal
+        # ends sending, and every unsent name is recorded `budget_refused`
+        # with its rank. Nothing sent at all keeps the suspension as the
+        # scan's status, as before.
+        results: list[dict] = []
+        for start in range(0, len(candidates), _NAMES_PER_PAID_CALL):
+            try:
+                self._require_paid_analysis("intraday_tech_analyst")
+            except PaidAnalysisSuspended as exc:
+                for rank, (late, late_move) in enumerate(candidates[start:], start=start + 1):
+                    record_dropped_name(
+                        self, ctx, late, "budget_refused", rank=rank, move_pct=late_move, detail=str(exc)
+                    )
+                if not results:
+                    raise
+                break
+            if start:
+                # A later call must size against what the earlier one did.
+                try:
+                    account, positions, _ = self._refresh_account_state()
+                    ctx.account = account
+                    ctx.positions = positions
+                    ctx.cash = account["cash"]
+                    ctx.deployable_cash = self._compute_deployable_cash(ctx.cash, positions)
+                    ctx.total_value = account.get("portfolio_value", ctx.total_value)
+                    self._sync_positions_from_broker(positions)
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "between_call_refresh", exc, log=logger)
+                    break
+            chunk = candidates[start : start + _NAMES_PER_PAID_CALL]
+            results.append(self._intraday_scan_call(ctx, chunk, snapshots, include_holds=not start))
+        return _merge_call_results(results)
+
+    def _intraday_scan_call(self, ctx: RunContext, candidates, snapshots, *, include_holds: bool) -> dict:
+        """One paid call's worth of ranked movers through Tech -> PM -> RM -> execution.
+
+        Held-book coverage rides only on the first call, so a hold is read once.
+        """
+        cfg = self.config.intraday_scan
+        symbols = [s for s, _ in candidates]
         logger.info(
-            "Intraday scan: %d symbol(s) moved >= %.1f%% since last close and are outside the %.1fh cooldown: %s",
+            "Intraday scan: %d symbol(s) ranked by move/ATR, outside the %.1fh cooldown, within budget: %s",
             len(symbols),
-            cfg.move_threshold_pct,
             cfg.cooldown_hours,
             symbols,
         )
@@ -274,7 +326,6 @@ class IntradayScanBody:
                 "discovered",
                 "intraday_move_threshold",
                 move_pct=move_by_symbol[symbol],
-                threshold_pct=cfg.move_threshold_pct,
             )
         symbols = ledgered_symbols
         if not symbols:
@@ -284,7 +335,11 @@ class IntradayScanBody:
         # stays mover-capped; coverage for names the PM can increase does
         # not compete with that cap and does not consume mover cooldown.
         # Dropping an ungrounded hold is not the product for missing Tech.
-        held_for_tech = [s for s in self._intraday_held_tech_symbols(ctx) if s not in {x.upper() for x in symbols}]
+        held_for_tech = (
+            [s for s in self._intraday_held_tech_symbols(ctx) if s not in {x.upper() for x in symbols}]
+            if include_holds
+            else []
+        )
         if held_for_tech:
             logger.info(
                 "Intraday scan: producing Technical for %d held name(s) the mover list did not cover: %s",
@@ -691,6 +746,7 @@ class IntradayMixin:
             track_intraday_snapshot_ok=getattr(self, "_track_intraday_snapshot_ok", None),
             track_intraday_snapshot_miss=getattr(self, "_track_intraday_snapshot_miss", None),
             blocking_owner_session=getattr(self, "_blocking_owner_session", None),
+            atr_for_symbol=getattr(self, "_atr_for_symbol", None),
         )
 
     def _intraday_scan_body(self) -> IntradayScanBody:

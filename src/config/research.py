@@ -31,20 +31,10 @@ class IntradayScanConfig(BaseModel):
     reviewed in production — flip on deliberately after reviewing the PR,
     the same rollout pattern cash_sweep followed."""
 
-    move_threshold_pct: float = Field(default=3.0, ge=0.5, le=50)
-    """Minimum |% move| since the last daily close (via a single bulk
-    Alpaca snapshot call) for a symbol to qualify as a candidate."""
-
     cooldown_hours: float = Field(default=3.0, ge=0.5, le=24)
     """Minimum hours between two intraday-scan decisions for the SAME
     symbol — prevents repeated scans from churning the same setup every
     30-minute tick while a move is still developing."""
-
-    max_candidates_per_scan: int = Field(default=5, ge=1, le=20)
-    """Hard cap on how many MOVER symbols get a real tech_analyst call in
-    one tick — keeps discovery bounded even on a broad-market move day.
-    Held names are added on top of this cap so quiet holds still receive
-    current-run Technical; they are coverage, not extra discovery."""
 
 
 class NominationConfig(BaseModel):

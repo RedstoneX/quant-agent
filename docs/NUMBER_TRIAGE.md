@@ -121,7 +121,6 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 **Tier 3 shapes which names reach the seats.** Signal-classification windows, candidate caps and scan cadence; settled from filing-date and screen-demand recordings. They shape which names reach the seats, not size or stops.
 
 - `config.IntradayScanConfig.cooldown_hours` = 3
-- `config.IntradayScanConfig.max_candidates_per_scan` = 5
 - `config.NominationConfig.max_per_seat_per_run` = 3
 - `config.NominationConfig.max_total_per_run` = 6
 - `config.SmartMoneyConfig.cluster_window_days` = 2
@@ -166,7 +165,6 @@ Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusal
 
 **Tier 3 shapes which names reach the seats.** Intraday move trigger, external-candidate dollar-volume and price floors: should be multiples of the name's own ATR, spread and tick.
 
-- `config.IntradayScanConfig.move_threshold_pct` = 3
 - `config.SmartMoneyConfig.min_external_avg_dollar_volume_usd` = 10000000
 - `config.SmartMoneyConfig.min_external_price_usd` = 5
 

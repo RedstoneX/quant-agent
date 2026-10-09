@@ -1071,9 +1071,9 @@ cash_reserve:
 # "the 2026-09-11 audit's unsourced numbers, checked one by one".
 intraday_scan:
   enabled: true
-  move_threshold_pct: 3.0   # min |% move| since last close to qualify
   cooldown_hours: 3.0       # min hours between two decisions for the same symbol
-  max_candidates_per_scan: 5  # hard cap per tick — bounded, not high-frequency
+  # No name cap and no move threshold: movers are ranked by move / own ATR
+  # and sent in that order until llm_cost_circuit's budget refuses.
 
 smart_money:
   # First-party, credentialless SEC Form 4 discovery. The deterministic

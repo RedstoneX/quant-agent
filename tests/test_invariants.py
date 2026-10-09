@@ -552,6 +552,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         ),
         intraday_scan=IntradayScanConfig(enabled=True),
     )
+    p._atr_for_symbol = MagicMock(return_value=2.0)  # the scan ranks by move / own ATR
     p.broker.get_intraday_snapshots.return_value = {
         # `last_trade_at`/`session_bar_at` are board item 120: a payload
         # with no timestamps is correctly not-today and buys no paid
@@ -643,7 +644,7 @@ def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
     # them.
     from tests.intraday_sources import scan_source
 
-    src = scan_source("_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body")
+    src = scan_source("_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body", "_intraday_scan_call")
     assert "self.decision_stage.run(ctx)" in src
     assert "self.risk_stage.run(ctx)" in src
     assert "self.execution_stage.run(ctx)" in src

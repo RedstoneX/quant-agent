@@ -8,9 +8,10 @@ from tests.test_intraday_scan import _intraday_pipeline, _snapshot
 
 
 def test_dropped_names_each_record_their_reason():
-    p = _intraday_pipeline(universe=["QUIET", "HOT", "A", "B"], max_candidates=1, cooldown_hours=3.0)
+    p = _intraday_pipeline(universe=["NOATR", "HOT", "A", "B"], cooldown_hours=3.0)
+    p._atr_for_symbol.side_effect = lambda sym: None if sym == "NOATR" else 2.0
     p.broker.get_intraday_snapshots.return_value = {
-        "QUIET": _snapshot(last=101.0, prev=100.0),
+        "NOATR": _snapshot(last=101.0, prev=100.0),
         "HOT": _snapshot(last=110.0, prev=100.0),
         "A": _snapshot(last=108.0, prev=100.0),
         "B": _snapshot(last=105.0, prev=100.0),
@@ -27,7 +28,6 @@ def test_dropped_names_each_record_their_reason():
         ):
             p._run_intraday_opportunity_scan(ctx)
     got = {e["symbol"]: json.loads(e["evidence_json"]) for e in events if e["kind"] == "pipeline_event"}
-    assert got["QUIET"]["reason"] == "below_move_threshold" and got["QUIET"]["move_pct"] == 1.0
+    assert got["NOATR"]["reason"] == "no_atr" and got["NOATR"]["move_pct"] == 1.0
     assert got["HOT"]["reason"] == "cooling_down" and got["HOT"]["hours_since_last"] > 1
-    assert got["B"]["reason"] == "over_name_cap" and got["B"]["rank"] == 2
-    assert "A" not in got  # the picked name is not a drop
+    assert "A" not in got and "B" not in got  # no name cap: both ranked names are kept

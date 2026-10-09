@@ -133,10 +133,12 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     `src.pipeline_intraday.*`, leaving 3; step 11 (sizing + earnings quality) moved 12 of `src.pipeline_stages.*`'s
     22 ids out, 1 to `src.pipeline_sizing.*` and 11 to
     `src.pipeline_earnings_quality.*`, leaving 10. The point of this assertion is that a
-    later step cannot move ids without the count moving."""
+    later step cannot move ids without the count moving.
+    2026-10-09: `src.pipeline_intraday.*` gains one NEW id, `_NAMES_PER_PAID_CALL`
+    (the rank-by-ATR change's per-call batch size) -- added, not moved."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
-    assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
+    assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 2
     assert (
         len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 0
         and len(ledger_ids_for_module("src.delever.forced", ledger)) == 1

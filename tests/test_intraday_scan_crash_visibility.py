@@ -63,7 +63,7 @@ from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_
 from tests.pipeline_factory import build_pipeline
 
 
-def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0, other_session_rows=None):
+def _pipeline(*, enabled=True, universe=("AAPL",), other_session_rows=None):
     """A TradingPipeline wired for a real, end-to-end `run_intra_check()`
     call — the intra_check preamble (account/position read, reconcilers,
     risk-engine loss check) AND the intraday scan's own dependencies
@@ -96,9 +96,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0, other
         ),
         intraday_scan=IntradayScanConfig(
             enabled=enabled,
-            move_threshold_pct=move_threshold_pct,
             cooldown_hours=3.0,
-            max_candidates_per_scan=5,
         ),
     )
     p.broker.get_account.return_value = {
@@ -122,6 +120,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0, other
     p._reconcile_orphan_pending_submits = MagicMock()
     p._reconcile_stop_out_fills = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
+    p._atr_for_symbol = MagicMock(return_value=2.0)
     return p
 
 

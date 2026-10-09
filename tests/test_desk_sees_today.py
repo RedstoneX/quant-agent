@@ -853,8 +853,8 @@ def test_the_intraday_mover_scan_does_not_buy_a_paid_look_on_yesterdays_move(
         "MSFT": _snap(last_price=400.0, last_trade_at=now, prev_close=440.0),
     }
     p.config = MagicMock()
-    p.config.intraday_scan.move_threshold_pct = 3.0
     p.config.intraday_scan.cooldown_hours = 4
+    p._atr_for_symbol = MagicMock(return_value=8.0)  # the scan ranks by move / own ATR
     p.config.trading.universe = ["ORCL", "MSFT"]
     p._track_intraday_snapshot_miss = MagicMock()
     p._track_intraday_snapshot_ok = MagicMock()
