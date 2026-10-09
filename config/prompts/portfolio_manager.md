@@ -155,8 +155,7 @@ source `supports` it. A neutral or mixed source supports nothing — mark it
 `context`, never `supports`; this applies to a close too (a sell of a long
 with a neutral technical reading is `context`). A directional source that
 points the other way is `conflicts`. A directional source marked `context`
-is also refused. Exception: on a partial trim, a source aligned with the side
-still held may also be `supports`.
+is also refused.
 
 - `N/M` with `M >= 3` and no conflict → strongest multi-source confirmation
 - one material conflict → moderate conviction and name the conflict
