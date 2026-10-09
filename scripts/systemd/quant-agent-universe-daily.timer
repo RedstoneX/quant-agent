@@ -1,0 +1,15 @@
+# Fires the daily universe screen Mon-Fri at 08:30 ET, before the US open.
+[Unit]
+Description=quant-agent daily universe screen — Mon-Fri 08:30 ET
+
+[Timer]
+# 08:30 ET is clear of the other fixed-time units (06:15, 06:30, 08:45,
+# 08:50, 08:55, 09:00, 09:05). systemd resolves the IANA zone, so this stays
+# 08:30 New York across DST. Market holidays: the program decides for itself
+# whether a record is due.
+OnCalendar=Mon..Fri 08:30 America/New_York
+# Run a missed firing on boot (server was down at 08:30).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

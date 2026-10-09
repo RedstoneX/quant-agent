@@ -1,0 +1,20 @@
+# Daily record-only universe screen — pairs with quant-agent-universe-daily.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-universe-daily.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-universe-daily.timer
+[Unit]
+Description=quant-agent daily universe screen (record only, no LLM, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+EnvironmentFile=-/home/qamc/quant-agent/.env
+# Records the screen result only; it places no orders. src.universe_daily
+# skips itself when today's record already exists, so a re-fire is harmless.
+ExecStart=/home/qamc/quant-agent/.venv/bin/python -m src.universe_daily
+# The screen carries its own deadline (universe_screen.screen_deadline_s);
+# this is the systemd safety net above it.
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
