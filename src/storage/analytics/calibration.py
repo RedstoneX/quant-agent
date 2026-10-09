@@ -92,6 +92,12 @@ def conviction_positions(rows, lookback_days: int) -> list[dict]:
     quantity back to zero) are returned; a partial sale is not counted yet.
     A closing exit whose realized_pnl is missing makes the position
     `pnl_known=False` (UNKNOWN) - never zero, never a win or a loss.
+    SWEEP_BUY / SWEEP_SELL are deliberately NOT positions here: they are real
+    broker fills, but of the cash-parking vehicle only (SGOV in production;
+    src/execution/cash_sweep.py, "Ledger isolation"), never a trading
+    decision. They open and close nothing in this record, and no BUY/SHORT
+    row ever shares their symbol, so no decision position is left "open" by
+    one.
     Positions are dated by their final exit; those older than
     `lookback_days` are dropped. Record only: nothing here drives sizing.
     """

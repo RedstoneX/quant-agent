@@ -50,6 +50,17 @@ def test_missing_pnl_is_unknown_not_zero():
     assert out[0]["pnl_known"] is False
 
 
+def test_sweep_rows_are_not_positions():
+    rows = [
+        _row("SGOV", "SWEEP_BUY", 10, 100, "high", ts="2026-10-01 10:00:00"),
+        _row("SGOV", "SWEEP_SELL", 10, 100, pnl=1.0, ts="2026-10-02 10:00:00"),
+        _row("A", "BUY", 10, 10, "low", ts="2026-10-01 10:00:00"),
+        _row("A", "SELL", 10, 11, pnl=10.0, ts="2026-10-03 10:00:00"),
+    ]
+    out = _run(rows)
+    assert [(p["symbol"], p["conviction"]) for p in out] == [("A", "low")]
+
+
 def test_short_uses_opening_short_row():
     rows = [
         _row("S", "SHORT", 5, 20, "low", ts="2026-10-01 10:00:00"),
