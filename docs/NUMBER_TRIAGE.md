@@ -36,10 +36,10 @@ Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate
 **Tier 1 sizes positions or prices/places live orders.** Stop-width floor and the regime/setup scales on it; same stop-touch-frequency measurement, split by regime and setup class (the regime-tagged recording is specified).
 
 - `config.RiskConfig.absolute_min_stop_atr_multiple` = 1
-- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]` = 1.2
-- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]` = 1.1
-- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]` = 0.95
-- `portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]` = 0.9
+- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]` = 1.2 -- REMOVED 2026-10-09 per owner ruling 2026-10-04 (stop width is the stock's own ATR only)
+- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]` = 1.1 -- REMOVED 2026-10-09 per owner ruling 2026-10-04 (stop width is the stock's own ATR only)
+- `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]` = 0.95 -- REMOVED 2026-10-09 per owner ruling 2026-10-04 (stop width is the stock's own ATR only)
+- `portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]` = 0.9 -- REMOVED 2026-10-09 per owner ruling 2026-10-04 (stop width is the stock's own ATR only)
 
 Measured 2026-10-01, `absolute_min_stop_atr_multiple` = 1 (the hard floor): on the universe, a stop k ATR below the close is touched within 10 sessions 61% of the time at k=1.0, 87% at k=0.25, 23% at k=2.5, 7% at k=4.0 (15,744 entry-days per row, every third day) [measured]. The whipsaw share of touches -- price closes back above the stop within 3 sessions -- is FLAT at 73-78% at EVERY distance from 0.25 to 4.0 ATR [measured]; there is no knee at 1.0 or anywhere else. The route's level-touch-count split was NOT done (needs the level engine), so the conditional knee it asks for is still unmeasured. Reading: distance alone does not separate whipsaw from trend break on daily bars; the 1.0 floor is neither vindicated nor falsified by this, and the remaining measurement is the level-conditioned one. On the desk's own 41 entries, 4 shipped with a stop inside 1 ATR (one above the entry price) and 0 sat exactly at 1.0, so the backstop the prompt says is applied in code either did not fire or the recorded `stop_loss` is the pre-floor value -- a recording-truth defect to settle before this number can be [measured].
 

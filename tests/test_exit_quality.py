@@ -511,14 +511,15 @@ def _unprotected_pipeline() -> TradingPipeline:
 
 def test_an_unprotected_position_is_always_left_WITH_a_stop():
     """Board item 185 + board item 80. GE at $360 with ATR14 $8: the widest
-    stop this desk can place is 3.00 x ATR = $24 out, a floor of $336. A
+    stop this desk can place is 2.5 x ATR = $20 out, a floor of $340 (owner ruling 2026-10-04: one
+    2.5 ATR width, no regime or setup scaling). A
     $300 proposal is past it and reads as a typed digit in the wrong place.
 
     The FIRST draft of this change REFUSED it — and the branch it runs on
     is the one where the live broker stop could not be read, i.e. exactly
     where the position may have no protection at all, so refusing ended the
     loop with the name naked. That is the owner's board-item-80 ruling
-    inverted. The proposal is CLAMPED to $336 and placed instead.
+    inverted. The proposal is CLAMPED to $340 and placed instead.
     """
     pipeline = _unprotected_pipeline()
     pipeline._record_exit_refusal = MagicMock()
@@ -529,7 +530,7 @@ def test_an_unprotected_position_is_always_left_WITH_a_stop():
     )
     # A stop IS placed, at the widest the desk's own rules can produce.
     assert len(orders) == 1
-    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 336.0)
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 340.0)
     # And the substitution is durable and per-symbol, not just a log line.
     from src.risk.exit_refusal import CODE_TRAIL_CLAMPED_TO_WIDEST
 
@@ -537,7 +538,7 @@ def test_an_unprotected_position_is_always_left_WITH_a_stop():
     assert kwargs["symbol"] == "GE"
     assert kwargs["code"] == CODE_TRAIL_CLAMPED_TO_WIDEST
     assert kwargs["dropped"] is False
-    assert "336" in kwargs["detail"]
+    assert "340" in kwargs["detail"]
 
 
 def test_a_stop_the_desk_could_legitimately_place_is_left_alone():
@@ -554,7 +555,7 @@ def test_a_stop_the_desk_could_legitimately_place_is_left_alone():
 
 
 def test_the_clamped_stop_cannot_then_be_thrown_out_by_the_noise_band():
-    """The clamped price is 3.00 x ATR below price and the noise floor is
+    """The clamped price is 2.5 x ATR below price and the noise floor is
     1.25 x ATR below it, so the clamp can never hand the noise-band clamp a
     stop it will reject — which would put the naked position back."""
     pipeline = _unprotected_pipeline()
@@ -565,7 +566,7 @@ def test_the_clamped_stop_cannot_then_be_thrown_out_by_the_noise_band():
         review=_trail_review("GE", 10.0, "trimming risk into the close"),
     )
     assert len(orders) == 1
-    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 336.0)
+    pipeline.broker.replace_stop_loss.assert_called_once_with("GE", 340.0)
 
 
 def test_a_readable_live_stop_is_governed_by_the_ratchet_not_the_clamp():

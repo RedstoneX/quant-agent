@@ -24,8 +24,8 @@ bindings:
       constructor will do to the stop it places: honoured exactly when it
       rests on a bar that drew a computed structural level AND that
       level's measured span is narrower than the trade's own stop
-      distance, otherwise pushed out to `risk.min_stop_atr_multiple` (base 2.5,
-      scaled by setup and regime, reachable range 2.14-3.00), with a
+      distance, otherwise pushed out to `risk.min_stop_atr_multiple` (2.5
+      ATRs for every trade, no setup or regime scaling since 2026-10-09), with a
       separate tighter absolute backstop at 1 ATR. Every one of those is a
       claim about code in `src/portfolio_constructor.py`, hand-typed into
       the sheet, and the base has already moved twice (3.0 -> 1.5 -> 2.5).
@@ -42,5 +42,5 @@ bindings:
           - "the stop is honoured exactly as you placed it"
           - "pushed out to a deterministic minimum distance"
           - "Absolute backstop, applied in code even to a level-backed stop"
-    code_digest: "c88a422a03b311f4"
-    prose_digest: "348d051a74f32042"
+    code_digest: "cde147356d52819b"
+    prose_digest: "468b95227d437632"

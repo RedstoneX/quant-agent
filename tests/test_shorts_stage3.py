@@ -483,14 +483,14 @@ def test_long_stop_breached_by_live_price_since_analysis_is_rejected():
 def test_short_stop_inside_noise_band_is_widened_upward():
     """D5: a short's stop inside `min_stop_atr_multiple` ATRs of entry is
     pushed UP (away from entry) — the mirror of a long's stop being pushed
-    DOWN. `_short_analysis`'s default setup_type='range' scales the 2.5x
-    base by 0.90 (see `_stop_atr_multiple`) -> 2.25 x ATR(5.0) = 11.25 ->
-    band edge = entry 250 + 11.25 = 261.25. The R:R at that wider stop must
-    still clear the floor: reward 50.00 / risk 11.25 = 4.44.
+    DOWN. Since 2026-10-09 no setup or regime scaling applies to the 2.5x
+    base (owner ruling 2026-10-04) -> 2.5 x ATR(5.0) = 12.5 ->
+    band edge = entry 250 + 12.5 = 262.5. The R:R at that wider stop must
+    still clear the floor: reward 50.00 / risk 12.5 = 4.00.
 
     Band history on this one fixture: 3.45 x ATR = 17.25 -> $267.25 until
-    2026-09-04; 1.35 x ATR = 6.75 -> $256.75 until 2026-09-10; 2.25 x ATR =
-    11.25 -> $261.25 since, when the base went 1.5 -> 2.5 on published
+    2026-09-04; 1.35 x ATR = 6.75 -> $256.75 until 2026-09-10; 2.5 x ATR =
+    12.5 -> $262.5 since, when the base went 1.5 -> 2.5 on published
     swing-trading doctrine."""
     constructor = PortfolioConstructor()
     widened = constructor._widen_stop_past_noise(
@@ -500,7 +500,7 @@ def test_short_stop_inside_noise_band_is_widened_upward():
         stop_loss=252.0,
         direction="short",
     )
-    assert widened == 261.25
+    assert widened == 262.5
     assert widened > 252.0
     assert widened > 250.0
 
@@ -508,11 +508,11 @@ def test_short_stop_inside_noise_band_is_widened_upward():
 def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** D5's mirroring is
     unchanged and is still what this test protects: widening a short's stop
-    pushes it UP, away from entry, to the noise-band edge — 261.25 (entry
-    250 + 2.25 x 5 ATR = 11.25 of risk). Against a 241 target that is reward
-    9.00 / risk 11.25 = R:R 0.80.
+    pushes it UP, away from entry, to the noise-band edge — 262.5 (entry
+    250 + 2.5 x 5 ATR = 12.5 of risk). Against a 241 target that is reward
+    9.00 / risk 12.5 = R:R 0.72.
 
-    That 0.80 used to reject the trade. It does not any more: for a range
+    That 0.72 used to reject the trade. It does not any more: for a range
     setup the real ratio is a ranking signal, never a refusal or a
     size-cap, and it is mirrored for a short exactly as it is for a long. The
     STOP the function returns is the assertion now."""
@@ -524,7 +524,7 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
         stop_loss=252.0,
         direction="short",
     )
-    assert widened == 261.25
+    assert widened == 262.5
 
 
 # ==========================================================================
@@ -542,16 +542,16 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
 # range scaler 1.15 -> 0.90.) Every number recomputed by hand, mirroring the
 # same rework on the long side.
 #
-# Shared geometry: entry $250.00, ATR $5.00, a "range" setup (2.5 base x 0.90
-# = 2.25 ATRs), so:
-#   band distance   2.25 x 5.00 = $11.25 ->  band edge   $261.25
+# Shared geometry: entry $250.00, ATR $5.00, a "range" setup (2.5 base, no setup scaling
+# = 2.5 ATRs), so:
+#   band distance   2.5 x 5.00 = $12.5 ->  band edge   $262.5
 #   absolute floor  1.00 x 5.00 = $5.00  ->  hard floor  $255.00  (unchanged)
 #   match tolerance 0.25 x 5.00 = $1.25                           (unchanged)
 # The computed support at $220.00 becomes the derived target (reward $30.00).
 #
 # The tight-stop fixture moved $256.00 -> $260.00. The exemption window — the
 # stop distances where being level-backed is the ONLY thing that decides the
-# outcome — is (hard floor, band edge) = ($255.00, $261.25), i.e. [1.00, 2.25]
+# outcome — is (hard floor, band edge) = ($255.00, $262.5), i.e. [1.00, 2.5]
 # ATRs. It was [1.00, 1.35] ATRs ($255.00-$256.75) at the 1.5 base and
 # [1.00, 3.45] before that. The old $256.00 (1.20 ATRs) is still inside the
 # new window, but it now sits $5.25 from the band edge and only $1.00 from
@@ -563,20 +563,20 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
 #
 # Worked by hand, on the fixed $30.00 reward:
 #   honoured:  30.00 / (260.00 - 250.00) = 30.00 / 10.00 = 3.00
-#   widened:   30.00 / (261.25 - 250.00) = 30.00 / 11.25 = 2.6667 -> 2.67
+#   widened:   30.00 / (262.5 - 250.00) = 30.00 / 12.5 = 2.40
 # Both clear the 1.5 floor (the short block has never used the long side's
 # straddle design — see that block's comment for the pair that does).
 
 _S_ENTRY = 250.0
 _S_ATR = 5.0
-_S_BAND_EDGE = 261.25  # 2.25 x ATR above entry — the unconditional stop
+_S_BAND_EDGE = 262.5  # 2.5 x ATR above entry — the unconditional stop
 _S_HARD_FLOOR = 255.0  # 1.00 x ATR above entry — the deterministic floor
 _S_TIGHT_STOP = 260.0  # 2.00 x ATR out — inside the band, outside the floor
 _S_TARGET_LEVEL = 220.0  # computed support below entry; the derived target
 
 
 def test_short_level_backed_tight_stop_is_honoured_not_widened():
-    """§12.1, short side. A stop 2.00 ATRs above entry sits inside the 2.25
+    """§12.1, short side. A stop 2.00 ATRs above entry sits inside the 2.5
     ATR band and would have been overwritten. A COMPUTED resistance level at
     that price means it is real, so it survives.
 
@@ -606,8 +606,8 @@ def test_short_level_backed_tight_stop_is_honoured_not_widened():
 def test_short_unbacked_tight_stop_is_still_widened_to_the_band():
     """The old behaviour, intact. Same trade, but nothing computed sits above
     the $260.00 stop — the analyst simply placed it there — so the band
-    applies exactly as it always did and the stop ships at $261.25 (2.25 x
-    ATR above entry). Reward $30.00 over the widened risk of $11.25 is 2.67,
+    applies exactly as it always did and the stop ships at $262.5 (2.25 x
+    ATR above entry). Reward $30.00 over the widened risk of $12.5 is 2.40,
     which still clears the floor, so the trade ships WIDENED rather than
     being refused — the assertion is on the stop price, not on survival."""
     constructor = PortfolioConstructor()
@@ -633,13 +633,13 @@ def test_short_unbacked_tight_stop_is_still_widened_to_the_band():
 def test_short_reward_risk_is_measured_against_the_stop_that_will_ship():
     """The point of §12.1 on the short side. Reward $30.00 is fixed by the
     computed target; the risk is whichever stop actually ships. Honoured:
-    30.00 / 10.00 = 3.00. Widened: 30.00 / 11.25 = 2.6667 -> 2.67. Both clear
+    30.00 / 10.00 = 3.00. Widened: 30.00 / 12.5 = 2.40. Both clear
     the floor here, and the honoured one is worth more — which is also what
     lets it carry a bigger position for the same risk budget.
 
     The GAP between the two is a function of the band width and has moved
     twice: 3.53 vs 1.74 at the 3.45-ATR band, 5.00 vs 4.44 at the 1.35-ATR
-    band, 3.00 vs 2.67 now at 2.25 ATRs. §12.1's exemption exists to stop a
+    band, 3.00 vs 2.67 now at 2.5 ATRs. §12.1's exemption exists to stop a
     fabricated band stop from destroying the ratio, so the gap is SUPPOSED to
     track how much ratio the band has to destroy. It is not a threshold."""
     constructor = PortfolioConstructor()
@@ -662,7 +662,7 @@ def test_short_reward_risk_is_measured_against_the_stop_that_will_ship():
 
     widened = stop_for([_S_TARGET_LEVEL])
     assert widened == _S_BAND_EDGE
-    assert round((_S_ENTRY - _S_TARGET_LEVEL) / (widened - _S_ENTRY), 2) == 2.67
+    assert round((_S_ENTRY - _S_TARGET_LEVEL) / (widened - _S_ENTRY), 2) == 2.4
 
 
 def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
@@ -670,7 +670,7 @@ def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
     a rule written in `config/prompts/tech_analyst.md`, and Invariant 2
     requires the deterministic layer to be the final authority. A real
     resistance level $2.00 above entry is genuine structure AND a guaranteed
-    whipsaw, so the stop moves out to exactly 1x ATR — not to the 2.25x
+    whipsaw, so the stop moves out to exactly 1x ATR — not to the 2.5x
     band. (The gap between the two has narrowed and widened again as the base
     floor moved 3.0 -> 1.5 -> 2.5, but the destination rule is unchanged.)"""
     constructor = PortfolioConstructor()

@@ -132,16 +132,3 @@ def test_the_check_actually_fires(question: str) -> None:
 )
 def test_the_check_leaves_legitimate_questions_alone(question: str) -> None:
     assert _offending(question) is None
-
-
-def test_the_three_regime_scalers_are_the_rows_this_came_from() -> None:
-    """Regression pin for board item 185. The risk-off scaler multiplies into
-    every stop AND into `widest_reachable_stop_atr_multiple`, so its open
-    question is the one most likely to be answered by someone reaching for the
-    desk's own trade history."""
-    ids = {f"src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[{i}][1]" for i in (0, 1, 2)}
-    seen = {row["id"] for row in _rows()} & ids
-    assert seen == ids, f"regime scaler rows missing from the ledger: {ids - seen}"
-    for row in _rows():
-        if row["id"] in ids:
-            assert _offending(str(row.get("open_question") or "")) is None

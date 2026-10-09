@@ -486,7 +486,7 @@ def test_resolve_stop_returns_none_and_the_funnel_reads_one_from_the_instrument(
         direction="long",
         target_price=110.0,
     )
-    band = 100.0 - constructor._stop_atr_multiple(fake_analysis, None) * 2.0
+    band = 100.0 - constructor._stop_atr_multiple() * 2.0
     assert placed is not None and abs(placed - band) < 1e-9
 
 
@@ -676,38 +676,20 @@ def test_no_atr_wide_structural_stop_is_held_not_refused_on_width():
 
 
 def test_widest_reachable_stop_atr_multiple_is_computed_not_chosen():
-    """Board item 185. The widest stop the desk can place is the base
-    multiple scaled by the largest setup and regime scalers — 2.5 x 1.00 x
-    1.20 = 3.00 — and `_stop_atr_multiple` must never return more."""
+    """Board item 185. The widest stop the desk can place is the owner-ruled
+    base (2.5 ATR, ruling 2026-10-04) -- no setup or regime scaler since
+    2026-10-09 -- and `_stop_atr_multiple` returns exactly that."""
     import pytest
-    from types import SimpleNamespace
     from src.portfolio_constructor import (
         ConstructorConfig,
         widest_reachable_stop_atr_multiple,
     )
 
     cfg = ConstructorConfig()
-    widest = widest_reachable_stop_atr_multiple(
-        cfg.min_stop_atr_multiple,
-        cfg.stop_atr_setup_scale,
-        cfg.stop_atr_regime_scale,
-    )
-    assert widest == pytest.approx(3.0)
+    widest = widest_reachable_stop_atr_multiple(cfg.min_stop_atr_multiple)
+    assert widest == pytest.approx(2.5)
     assert widest_reachable_stop_atr_multiple() == pytest.approx(widest)
-    constructor = PortfolioConstructor()
-    setups = [None, "", "breakout", "range", "unlabelled"]
-    tapes = [None, "", "risk-off", "risk-on", "transitional", "unlabelled"]
-    for setup in setups:
-        for tape in tapes:
-            got = constructor._stop_atr_multiple(
-                SimpleNamespace(setup_type=setup),
-                tape,
-            )
-            assert got <= widest + 1e-12, (setup, tape, got)
-    assert constructor._stop_atr_multiple(
-        SimpleNamespace(setup_type="breakout"),
-        "risk-off",
-    ) == pytest.approx(widest)
+    assert PortfolioConstructor()._stop_atr_multiple() == pytest.approx(widest)
 
 
 def test_no_atr_nothing_typed_derives_and_holds():

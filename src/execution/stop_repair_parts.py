@@ -118,7 +118,7 @@ def derive_protective_level(
         atr = atr_for_symbol(source, symbol)
         if not atr or atr <= 0:
             return None, ""
-        multiple = float(stop_atr_multiple(ConstructorConfig(), None, None))
+        multiple = float(stop_atr_multiple(ConstructorConfig()))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "coverage repair: could not derive a stop width for %s: %s",

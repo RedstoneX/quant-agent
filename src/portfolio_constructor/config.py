@@ -789,92 +789,18 @@ class ConstructorConfig:
     # Tharp specifically — noted so the two aren't conflated later.
     #
     # Known tension, disclosed rather than hidden: `min_reward_risk_after_
-    # widening` (1.5) requires roughly `sqrt(H) >= 1.5 x effective_multiple`
-    # to clear (H = hold in sessions). At the tightest reachable case (range
-    # setup, risk-on: 2.5 x 0.90 x 0.95 = 2.14) that needs H >= ~10 sessions
-    # — in line with this desk's real observed holds (e.g. ORCL, 10-session
-    # horizon). At the widest case (breakout, risk-off: 2.5 x 1.00 x 1.20 =
-    # 3.0) it needs H >= ~20 sessions — a real ask, not a free pass. This is
-    # the same shape of tension the old 3.0 constant created (which needed
-    # ~27 sessions and effectively passed nothing); 2.5 does not eliminate
-    # it, it moves the binding constraint back into a range doctrine and this
-    # desk's own stated horizons can plausibly both satisfy. Re-measure once
-    # honest post-fix trade history exists — this is a doctrine-grounded
-    # placeholder, not a permanent constant.
+    # widening` (1.5) requires roughly `sqrt(H) >= 1.5 x 2.5` to clear
+    # (H = hold in sessions), i.e. H >= ~14 sessions. Re-measure once honest
+    # post-fix trade history exists.
+    #
+    # ONE WIDTH FOR EVERY UNBACKED STOP (owner ruling 2026-10-04; mandate
+    # 2026-10-09). A stock's stop width comes from that stock's own
+    # behaviour -- its ATR -- times this 2.5, and nothing else. The setup
+    # scaler (range 0.90) and the macro-regime scalers (risk-off 1.20 /
+    # transitional 1.10 / risk-on 0.95) were removed 2026-10-09: none was
+    # measured, and market mood is one weighted input to the decision
+    # elsewhere, never a stop-width scaler.
     min_stop_atr_multiple: float = 2.5
-    #: Multipliers ON the base, by `TechAnalysisResult.setup_type`.
-    #:
-    #: DIRECTION CORRECTED 2026-09-04 — these used to read breakout 0.85 /
-    #: range 1.15, i.e. the desk's calmest and most common setup was given the
-    #: WIDEST floor. That is backwards on both doctrine and the data. A range
-    #: trade is a mean-reversion structure inside a defined band: it is the
-    #: LOWER-volatility setup, its invalidation is the band edge, and it is
-    #: where the too-wide floor did all its damage (0 of 222 real signals
-    #: cleared). A breakout enters on volatility EXPANSION, and the ATR
-    #: reading at entry is computed over the quiet consolidation that preceded
-    #: it — so ATR systematically UNDERSTATES a breakout's post-entry range.
-    #: A breakout therefore earns at least the base, never a discount.
-    #:
-    #: HOW THESE TWO NUMBERS WERE PICKED, and how far to trust them.
-    #: The relative direction (range tighter than breakout) is the
-    #: well-grounded part — it is doctrine, not this desk's own data: a range
-    #: setup invalidates at its own band edge (lower-volatility, mean-
-    #: reversion structure), while a breakout enters on volatility EXPANSION
-    #: whose ATR reading (taken over the quiet pre-break consolidation)
-    #: systematically UNDERSTATES its post-entry range. There is still no
-    #: per-setup-type MAE breakdown in this repo to size the magnitudes from,
-    #: so they are unchanged from the 2026-09-04 correction:
-    #:   breakout 1.00 — runs at the base; no measurement supports a specific
-    #:     widening beyond it.
-    #:   range 0.90 — a modest tightening off the base, not a specific
-    #:     measured number.
-    #: Net effect with the 2.5 base (2026-09-10): reachable floor spans
-    #: [2.14, 3.00] ATR (range/risk-on to breakout/risk-off) — see
-    #: `min_stop_atr_multiple`'s comment for why that range is now judged
-    #: against published doctrine rather than this desk's own (suspect)
-    #: noise-band/MAE measurements.
-    stop_atr_setup_scale: tuple[tuple[str, float], ...] = (
-        ("breakout", 1.00),
-        ("range", 0.90),
-    )
-    #: Multipliers ON the base, by macro regime. A risk-off or transitional
-    #: tape produces wider ordinary swings for the same ATR reading, so the
-    #: same structural stop is nearer the noise than it looks.
-    stop_atr_regime_scale: tuple[tuple[str, float], ...] = (
-        ("risk-off", 1.20),
-        ("transitional", 1.10),
-        ("risk-on", 0.95),
-    )
-
-    @classmethod
-    def widest_reachable_stop_atr_multiple(cls, base: float) -> float:
-        """The widest unbacked-stop multiple `_stop_atr_multiple` can return.
-
-        Introduces NO number. It is `base` times the largest factor each
-        scaler axis can contribute, and `1.0` is included on each axis
-        because an unrecognised `setup_type` or `regime` applies no scaler
-        at all — so the bare base is always reachable too. At today's
-        settings that is `2.5 x 1.00 x 1.20 = 3.00`, which is exactly the
-        top of the range `_stop_atr_multiple`'s own docstring states.
-
-        WHY THIS EXISTS (board item 90, 2026-09-30). `src/universe_screen.py`
-        derived its ATR/price ceiling as `STOP_SANITY_FLOOR_FRACTION /
-        base`, i.e. off the BASE, while the midday stop-sanity guard binds
-        on the multiple actually used — which the scalers can push to
-        `base x 1.20`. The two disagreed by exactly the risk-off scaler, so
-        names whose ATR/price sat between the two figures passed the screen
-        and then had their widest legitimate stop refused as a model typo.
-        The screen's own stated rationale for the gate is "the name fails by
-        construction"; over that band it did not fail by construction, so
-        the rationale was false there. Dividing by this instead of by the
-        base makes the claim true again and needs no decision from anyone:
-        the discrepancy was never an appetite question, it was two
-        expressions for one quantity.
-        """
-        widest_setup = max([1.0, *(s for _, s in cls.stop_atr_setup_scale)])
-        widest_regime = max([1.0, *(s for _, s in cls.stop_atr_regime_scale)])
-        return float(base) * widest_setup * widest_regime
-
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
     # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
@@ -983,55 +909,18 @@ class ConstructorConfig:
     # actionable rating, so "nothing typed" is the rare case, not the norm.
 
 
-def widest_reachable_stop_atr_multiple(
-    base_multiple: float | None = None,
-    setup_scales: tuple[tuple[str, float], ...] | None = None,
-    regime_scales: tuple[tuple[str, float], ...] | None = None,
-) -> float:
-    """The widest stop, in ATRs, `_stop_atr_multiple` can actually return.
+def widest_reachable_stop_atr_multiple(base_multiple: float | None = None) -> float:
+    """The widest stop, in ATRs, `_stop_atr_multiple` can return.
 
-    NOT a new number. `_stop_atr_multiple` multiplies the base
-    (`risk.min_stop_atr_multiple`) by AT MOST one setup scale and AT MOST
-    one regime scale, and applies neither when the label matches no key --
-    so the reachable maximum is the base times the largest of
-    `{1.0} | setup scales` times the largest of `{1.0} | regime scales`.
-    At today's ratified settings that is 2.5 x 1.00 (breakout) x 1.20
-    (risk-off) = 3.00, the widest end of the `[2.1375, 3.00]` range that
-    method's docstring already states.
-
-    It exists so that every rule needing "the widest stop this desk can
-    legitimately place" COMPUTES it from the constants that already govern
-    stops instead of carrying its own copy. Two rules did carry a copy --
-    the midday TRAIL_STOP typo guard and the universe screen's volatility
-    ceiling -- and they had drifted apart by exactly the risk-off scaler
-    (board item 185).
-
-    **What this is NOT: a derivation of a non-arbitrary number.** 3.00 is
-    2.5 x 1.00 x 1.20. The 2.5 (`min_stop_atr_multiple`) carries
-    `status: arbitrary` in `config/number_ledger.yaml` with a live open
-    question; the 1.00 is only the declared absence of a setup scaler; the
-    1.20 risk-off entry of `stop_atr_regime_scale` is `status: arbitrary`
-    too, its own row recording that no measured regime/MAE breakdown exists
-    in this repo. Composing them removes one independent literal from the
-    ledger and creates a live dependency on two that remain open. It does
-    not reduce the desk's arbitrary CONTENT, and it does not answer board
-    item 185's question -- how volatile a name may this desk hold.
-
-    **Both callers must pass the same values.** The function itself cannot
-    enforce that: the midday guard reads the LIVE `ConstructorConfig`, and
-    `ScreenThresholds.from_config` is handed that same object by the
-    pipeline but falls back to `config.risk.min_stop_atr_multiple` plus the
-    class defaults when no constructor is available. `tests/
-    test_universe_screen.py::test_the_screen_ceiling_and_the_midday_clamp_
-    read_the_same_multiple` pins the agreement so a divergence fails CI
-    rather than passing silently.
+    NOT a new number: it is the base (`risk.min_stop_atr_multiple`, owner
+    ruling 2026-10-04: 2.5 ATR) and nothing else, because the setup and
+    macro-regime scalers were removed 2026-10-09 -- a stock's stop width
+    comes from its own ATR only. It exists so the midday TRAIL_STOP clamp
+    and the universe screen's volatility ceiling compute "the widest stop
+    this desk can place" from the constant that governs stops instead of
+    carrying their own copy (board item 185). `tests/test_universe_screen.py`
+    pins that both callers agree.
     """
     if base_multiple is None:
         base_multiple = ConstructorConfig.min_stop_atr_multiple
-    if setup_scales is None:
-        setup_scales = ConstructorConfig.stop_atr_setup_scale
-    if regime_scales is None:
-        regime_scales = ConstructorConfig.stop_atr_regime_scale
-    widest_setup = max([1.0] + [float(s) for _, s in setup_scales])
-    widest_regime = max([1.0] + [float(s) for _, s in regime_scales])
-    return float(base_multiple) * widest_setup * widest_regime
+    return float(base_multiple)

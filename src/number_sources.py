@@ -114,9 +114,8 @@ Names are now resolved against the module's own constants and against the
 repo modules it imports them from, and constant arithmetic is folded.
 
 Numeric leaves inside tuple, list and dict literals are sites too. That is
-not completeness for its own sake: `stop_atr_setup_scale` holds the
-stop-width scalers as a tuple of pairs, and those multiply into every stop
-distance.
+not completeness for its own sake: `src.risk.gross_ladder.GROSS_LADDER`
+holds trade-governing rungs as a tuple of pairs.
 
 SEVEN THINGS THE LEDGER IS CHECKED FOR:
 

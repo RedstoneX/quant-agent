@@ -161,7 +161,7 @@ def test_a_position_with_no_typed_stop_is_sized_against_the_instruments_own_stop
         price_map={"NVDA": 100.0},
     )
     assert [d.action for d in decisions] == ["BUY"]
-    band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
+    band = 100.0 - constructor._stop_atr_multiple() * 2.0
     assert abs(decisions[0].stop_loss - round(band, 2)) < 1e-9
     # $2,000 of risk over the band's distance, as §2.1 says — not the
     # $10/share the model's (deleted) stop would have implied.
@@ -1063,11 +1063,12 @@ def test_a_stop_inside_the_noise_band_is_pushed_out():
         price_map={"MSFT": 100.0},
     )
     assert len(decisions) == 1
-    # A range setup earns 0.90x the 2.5 base = 2.25 ATRs, so 2.25 x 2.35 =
-    # 5.2875 below entry, replacing the 2.4% structural stop.
+    # Every unbacked stop is 2.5 ATRs (owner ruling 2026-10-04; the 0.90
+    # range scaler was removed 2026-10-09), so 2.5 x 2.35 = 5.875 below
+    # entry, replacing the 2.4% structural stop.
     # (Was 0.90 x 1.5 = 1.35 ATRs = 3.1725 -> $96.83 between 2026-09-04 and
     # 2026-09-10, and 1.15 x 3.0 = 3.45 ATRs = 8.11 before that.)
-    assert abs(decisions[0].stop_loss - 94.71) < 0.01
+    assert abs(decisions[0].stop_loss - 94.12) < 0.01
 
 
 def test_a_stop_already_outside_the_noise_band_is_left_alone():
@@ -1082,57 +1083,6 @@ def test_a_stop_already_outside_the_noise_band_is_left_alone():
         price_map={"OKLO": 100.0},
     )
     assert decisions[0].stop_loss == 60.0
-
-
-def test_the_atr_multiple_is_not_one_constant_for_every_trade():
-    """ATR already adapts the distance to each stock and session. The MULTIPLE
-    adapts how many ATRs the setup earns.
-
-    DIRECTION CORRECTED 2026-09-04. This test used to assert the opposite:
-    that a breakout earned LESS room than a range trade (0.85 vs 1.15 on the
-    base). That was backwards. A range trade is the lower-volatility,
-    mean-reverting structure and invalidates at its own band edge; a breakout
-    enters on volatility EXPANSION, and the ATR reading at entry is measured
-    over the quiet consolidation that preceded the break, so it understates
-    the range the trade is about to see. Breakout 1.00 / range 0.90 now, and
-    the assertion below is flipped to match.
-
-    Worked by hand against entry $100.00, ATR $2.35, base 2.5 (the base went
-    1.5 -> 2.5 on 2026-09-10; the scalers below are unchanged, so every
-    figure is just 5/3 of what it was):
-      breakout / risk-on      2.5 x 1.00 x 0.95 = 2.3750 ATR
-                              2.3750 x 2.35 = 5.58125 -> 100 - 5.58125
-                              = 94.41875 -> $94.42
-      range    / risk-on      2.5 x 0.90 x 0.95 = 2.1375 ATR
-                              2.1375 x 2.35 = 5.023125 -> 94.976875
-                              -> $94.98
-      range    / transitional 2.5 x 0.90 x 1.10 = 2.4750 ATR
-                              2.4750 x 2.35 = 5.81625 -> 94.18375 -> $94.18
-      range    / risk-off     2.5 x 0.90 x 1.20 = 2.7000 ATR
-                              2.7000 x 2.35 = 6.34500 -> 93.65500 -> $93.66
-    A LOWER stop price means MORE room, so breakout sits below range.
-    """
-    constructor = PortfolioConstructor()
-
-    def stop(setup, regime):
-        d = constructor.construct_orders(
-            targets=[_risk_target("MSFT", 1.0)],
-            positions=[],
-            analyses=[_vol_analysis("MSFT", 100.0, 97.6, 200.0, 2.35, setup)],
-            total_value=EQUITY,
-            price_map={"MSFT": 100.0},
-            regime=regime,
-        )
-        return d[0].stop_loss
-
-    # A breakout earns MORE room than a range trade on the same name and tape.
-    assert stop("breakout", "risk-on") < stop("range", "risk-on")
-    assert stop("breakout", "risk-on") == 94.42
-    assert stop("range", "risk-on") == 94.98
-    # And the same setup gets more room as the tape deteriorates.
-    assert stop("range", "risk-on") > stop("range", "transitional") > stop("range", "risk-off")
-    assert stop("range", "transitional") == 94.18
-    assert stop("range", "risk-off") == 93.66
 
 
 def test_widening_a_stop_into_a_sub_parity_payoff_still_ships():
@@ -1300,7 +1250,7 @@ def test_wider_stops_give_conviction_room_to_change_the_size():
 
 _ENTRY = 100.0
 _ATR = 2.35
-_BAND_EDGE = 94.71  # 2.25 x ATR below entry — the unconditional stop
+_BAND_EDGE = 94.12  # 2.5 x ATR below entry — the unconditional stop (2.25 until 2026-10-09)
 _HARD_FLOOR = 97.65  # 1.00 x ATR below entry — the deterministic floor
 _TIGHT_STOP = 95.00  # 2.13 x ATR out — inside the band, outside the floor
 _UPPER_LEVEL = 107.85  # computed resistance; becomes the derived target
@@ -1368,7 +1318,7 @@ def test_an_unbacked_tight_stop_is_still_widened_to_the_band():
     )
     assert len(decisions) == 1
     assert decisions[0].stop_loss == _BAND_EDGE
-    assert decisions[0].reward_risk == 1.48
+    assert decisions[0].reward_risk == 1.34  # 7.85 / 5.875 at the 2.5-ATR band (1.48 at 2.25 until 2026-10-09)
 
 
 def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
@@ -1400,11 +1350,11 @@ def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
 
     # Unbacked: widened to the band edge. The ratio against that widened
     # stop is under 1.5 and is no longer a refusal (item 1(d)).
-    assert stop_for([_UPPER_LEVEL]) == round(_ENTRY - 2.25 * _ATR, 4)
+    assert stop_for([_UPPER_LEVEL]) == round(_ENTRY - 2.5 * _ATR, 4)
     # 2.25 x 2.35 = 5.2875 is the exact band distance the refusal used; the
     # $94.71 constant above is that same edge rounded to a shippable price.
-    assert round((_UPPER_LEVEL - _ENTRY) / (2.25 * _ATR), 4) == 1.4846
-    assert round(_ENTRY - 2.25 * _ATR, 2) == _BAND_EDGE
+    assert round((_UPPER_LEVEL - _ENTRY) / (2.5 * _ATR), 4) == 1.3362
+    assert round(_ENTRY - 2.5 * _ATR, 2) == _BAND_EDGE
 
 
 def test_a_level_backed_stop_inside_one_atr_is_floored_at_one_atr_not_the_band():
@@ -1703,7 +1653,7 @@ class TestSLBStopIsHonoured:
     # unbacked $57.83 is widened to it. (It was $58.30 at the 1.35-ATR band
     # between 2026-09-04 and 2026-09-10, which sat INSIDE $57.83 and left the
     # analyst's stop alone; see the test below for what changed.)
-    NEW_BAND_STOP = 57.10
+    NEW_BAND_STOP = 56.77  # 2.5 x ATR (57.10 at 2.25 until 2026-10-09)
 
     def test_the_new_floor_widens_slbs_stop_but_the_trade_still_ships(self):
         """The refusal this class was written to reproduce still does not
@@ -1739,7 +1689,7 @@ class TestSLBStopIsHonoured:
         own stop — the test below is what proves the exemption delivers it.
         """
         constructor = PortfolioConstructor()
-        assert round(self.ENTRY - 2.25 * self.ATR, 2) == self.NEW_BAND_STOP
+        assert round(self.ENTRY - 2.5 * self.ATR, 2) == self.NEW_BAND_STOP
         assert self.LEVEL_STOP > self.NEW_BAND_STOP  # inside the band
         decisions = constructor.construct_orders(
             targets=[_risk_target("SLB", 1.0)],
@@ -1751,7 +1701,7 @@ class TestSLBStopIsHonoured:
         assert len(decisions) == 1
         assert decisions[0].stop_loss == self.NEW_BAND_STOP
         assert decisions[0].stop_loss != self.LEVEL_STOP
-        assert round(decisions[0].reward_risk, 2) == 1.96
+        assert round(decisions[0].reward_risk, 2) == 1.77  # at the 2.5-ATR band (1.96 at 2.25 until 2026-10-09)
 
     def test_a_level_backed_slb_stop_is_honoured_and_the_trade_passes(self):
         """The same trade with a computed support shelf under the stop. The
@@ -1868,22 +1818,25 @@ def test_xle_a_breakout_is_no_longer_measured_against_any_reward_risk_floor():
     no such number may block or size a trend trade. The stop ships.
 
     The RISK side is untouched and still the reason this fixture is precise.
-    Band arithmetic corrected 2026-09-10: at the 2.5 base a breakout on a
-    risk-on tape earns 2.5 x 1.00 x 0.95 = 2.375 ATRs, so 2.375 x 1.21 =
-    $2.87375 and the band edge is 64.51 - 2.87375 = $61.6363. The stop is
-    $2.97 out (2.4545 ATRs), outside the band — by only $0.10."""
+    Band arithmetic since 2026-10-09: every unbacked stop is 2.5 ATRs
+    (owner ruling 2026-10-04, no regime scaler), so the band edge is
+    64.51 - 2.5 x 1.21 = $61.485. The $2.97 stop (2.4545 ATRs) is inside
+    it and is pushed out to the band; the trade still ships."""
     constructor = PortfolioConstructor()
     assert (
-        constructor._widen_stop_past_noise(
-            "XLE",
-            _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET, atr=_XLE_ATR, setup="breakout"),
-            entry_price=_XLE_LIVE_ENTRY,
-            stop_loss=_XLE_STOP,
-            regime="risk-on",
-            direction="long",
-            target_price=_XLE_TARGET,
+        abs(
+            constructor._widen_stop_past_noise(
+                "XLE",
+                _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, _XLE_TARGET, atr=_XLE_ATR, setup="breakout"),
+                entry_price=_XLE_LIVE_ENTRY,
+                stop_loss=_XLE_STOP,
+                regime="risk-on",
+                direction="long",
+                target_price=_XLE_TARGET,
+            )
+            - (_XLE_LIVE_ENTRY - 2.5 * _XLE_ATR)
         )
-        == _XLE_STOP
+        < 1e-9
     )
 
 
@@ -1892,20 +1845,20 @@ def test_a_wide_stop_that_clears_the_floor_still_ships_untouched():
     with geometry that works returns the structural stop unchanged — the fix
     refuses trades, it never moves a stop it did not previously move."""
     constructor = PortfolioConstructor()
-    # Stop $61.54 (2.97 / 1.21 = 2.4545 ATR out, outside the 2.375x breakout
-    # band — 2.5 x 1.00 x 0.95, edge $61.6363), target $73.00 → reward
-    # 8.49 / risk 2.97 = 2.86.
+    # Stop $61.40 (3.11 / 1.21 = 2.570 ATR out, outside the 2.5x band,
+    # edge $61.485), target $73.00 → reward 8.49 / risk 3.11 = 2.73.
+    wide_stop = 61.40
     assert (
         constructor._widen_stop_past_noise(
             "XLE",
-            _vol_analysis("XLE", _XLE_LIVE_ENTRY, _XLE_STOP, 73.0, atr=_XLE_ATR, setup="breakout"),
+            _vol_analysis("XLE", _XLE_LIVE_ENTRY, wide_stop, 73.0, atr=_XLE_ATR, setup="breakout"),
             entry_price=_XLE_LIVE_ENTRY,
-            stop_loss=_XLE_STOP,
+            stop_loss=wide_stop,
             regime="risk-on",
             direction="long",
             target_price=73.0,
         )
-        == _XLE_STOP
+        == wide_stop
     )
 
 

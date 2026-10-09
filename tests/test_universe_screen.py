@@ -47,7 +47,7 @@ TH = us.ScreenThresholds(
     min_price_usd=5.0,
     min_market_cap_usd=30_000_000,
     max_half_spread_bps=40.0,
-    max_atr_fraction=1.0 / 3.0,
+    max_atr_fraction=1.0 / 2.5,
     min_history_bars=210,
 )
 
@@ -244,10 +244,9 @@ def test_volatility_ceiling_refuses_a_name_whose_widest_stop_cannot_be_placed():
 
 def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
     """Board item 185. The ceiling used to be `0.5 / min_stop_atr_multiple`
-    = 20%, which admitted names the desk's own widest stop (3.00 x ATR, the
-    base scaled by the 1.20 risk-off scaler) could not be placed under. The
-    ceiling is now 1 / that widest multiple, so the screen and the stop
-    rules cannot disagree by construction."""
+    = 20%. The ceiling is now 1 / the widest multiple, so the screen and the
+    stop rules cannot disagree by construction. Since 2026-10-09 the widest
+    multiple IS the owner-ruled 2.5 ATR base: no setup or regime scaler."""
     from src.portfolio_constructor import widest_reachable_stop_atr_multiple
 
     config = SimpleNamespace(
@@ -257,7 +256,7 @@ def test_volatility_ceiling_is_the_widest_reachable_stop_not_the_base_one():
     )
     th = us.ScreenThresholds.from_config(config)
     widest = widest_reachable_stop_atr_multiple(2.5)
-    assert widest == pytest.approx(3.0)
+    assert widest == pytest.approx(2.5)
     assert th.max_atr_fraction == pytest.approx(1.0 / widest)
     # At the ceiling the widest stop sits at exactly zero, so the ceiling
     # itself must FAIL, not pass.
@@ -269,8 +268,7 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
     multiple by DIFFERENT routes — the screen straight off
     `config.risk.min_stop_atr_multiple`, the midday clamp off the live
     `ConstructorConfig` that `pipeline.build_constructor_config` builds with
-    its own (different) fallback — and neither passed the setup/regime
-    scalers, so they agreed only because both landed on the class defaults.
+    its own (different) fallback — and so they agreed only because both landed on the class defaults.
 
     The pipeline now hands the screen the SAME live `ConstructorConfig` the
     clamp reads. This pins that: a divergence has to fail here rather than
@@ -283,11 +281,7 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
 
     cfg = ConstructorConfig()
     # What the midday clamp computes, from the live constructor config.
-    clamp_multiple = widest_reachable_stop_atr_multiple(
-        cfg.min_stop_atr_multiple,
-        cfg.stop_atr_setup_scale,
-        cfg.stop_atr_regime_scale,
-    )
+    clamp_multiple = widest_reachable_stop_atr_multiple(cfg.min_stop_atr_multiple)
     config = SimpleNamespace(
         universe_screen=UniverseScreenConfig(),
         execution=SimpleNamespace(max_entry_slippage_bps=40.0),
@@ -320,12 +314,8 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
         risk=SimpleNamespace(min_stop_atr_multiple=4.0),
     )
     moved_th = us.ScreenThresholds.from_config(moved_config, moved)
-    moved_clamp = widest_reachable_stop_atr_multiple(
-        moved.min_stop_atr_multiple,
-        moved.stop_atr_setup_scale,
-        moved.stop_atr_regime_scale,
-    )
-    assert moved_clamp == pytest.approx(4.8)
+    moved_clamp = widest_reachable_stop_atr_multiple(moved.min_stop_atr_multiple)
+    assert moved_clamp == pytest.approx(4.0)
     assert moved_th.max_atr_fraction == pytest.approx(1.0 / moved_clamp)
 
 
@@ -339,7 +329,7 @@ def test_the_volatility_ceiling_is_not_an_appetite_number():
     never bound and would not. This test exists so that a future reader who
     finds 33.3% does not mistake it for an answered question.
     """
-    assert TH.max_atr_fraction == pytest.approx(1.0 / 3.0)
+    assert TH.max_atr_fraction == pytest.approx(1.0 / 2.5)
     max_observed_atr_fraction = 0.0811
     assert max_observed_atr_fraction < TH.max_atr_fraction
 
@@ -408,7 +398,7 @@ def test_thresholds_are_read_from_existing_desk_numbers():
     assert th.min_price_usd == 5.0
     assert th.min_market_cap_usd == 30_000_000
     assert th.max_half_spread_bps == 40.0
-    assert th.max_atr_fraction == pytest.approx(1.0 / 3.0)
+    assert th.max_atr_fraction == pytest.approx(1.0 / 2.5)
     assert th.min_history_bars == 210
 
 
