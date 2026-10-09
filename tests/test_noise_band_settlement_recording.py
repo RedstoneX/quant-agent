@@ -1,5 +1,10 @@
 """Board item 70 — the noise band's settlement recording must not be censored.
 
+2026-10-09: the midday reviewer's entry-anchored gate (home 1 below) was
+REMOVED on the owner's ruling that no sale is refused for the price the desk
+paid; its recording went with it and is pinned ABSENT here. Home 2, the
+structural-protection fallback, is unchanged. The history below is kept.
+
 The entry-anchored ATR noise band is `arbitrary`: `NOISE_BAND_ATR_MULTIPLE`
 is 1.0 with no published measurement of the quantity it bounds (the adverse
 move at which a move from entry stops being ordinary daily wobble). Item 70's
@@ -38,7 +43,7 @@ from unittest.mock import MagicMock
 from src.models import Position, PositionAction, PositionReasoningChain, PositionReview
 from tests.pipeline_factory import build_pipeline
 from src.risk.exit_guard import (
-    NOISE_BAND_ATR_MULTIPLE,
+    FALLBACK_PROTECTION_ATR_MULTIPLE,
     StructuralProtectionCheck,
     check_structural_protection,
 )
@@ -97,93 +102,19 @@ def _band_rows(db):
 # ---------------------------------------------------------------------------
 
 
-def test_an_adverse_move_that_clears_the_band_is_still_recorded():
-    """THE CENSORED HALF. Entry 100, price 94, ATR 2 -> a 6.00 adverse move,
-    3.0 ATR, far outside a 1.0 ATR band. The exit proceeds (unchanged), and
-    the observation must now reach the durable record anyway: this is exactly
-    the kind of reading that was being thrown away, and exactly the kind that
-    would tell the desk whether 1.0 sits anywhere sensible."""
-    pipeline = _pipeline()
-    pipeline._atr_for_symbol = MagicMock(return_value=2.0)
-
-    pipeline._midday_execute_llm_actions(
-        positions=[_position("AAA", qty=10, avg_entry=100.0, current_price=94.0)],
-        review=_review_with(
-            symbol="AAA",
-            reason="thesis_invalid triggered — lost the level",
-        ),
-        run_id="r1",
-    )
-
-    rows = _band_rows(pipeline.db)
-    assert rows, "the band evaluation left no durable row at all"
-    status, detail = rows[0]
-    assert status == "exit_noise_band_evaluated_not_blocked"
-    assert "blocked=false" in detail
-    # 6.00 / 2.0 == 3.0 ATR, stated in the constant's own unit.
-    assert "adverse_atr_multiple=3.0000" in detail
-    assert "band_multiple=1.0000" in detail
-
-
-def test_a_blocked_exit_keeps_its_status_and_gains_the_atr_multiple():
-    """The blocking branch must be untouched in behaviour and in its status
-    string — the only durable change is the two extra fields."""
-    pipeline = _pipeline()
-    pipeline._atr_for_symbol = MagicMock(return_value=1.6)
-
-    orders = pipeline._midday_execute_llm_actions(
-        positions=[_position("OKLO", qty=25, avg_entry=42.59, current_price=41.51)],
-        review=_review_with(
-            symbol="OKLO",
-            reason="thesis_invalid triggered — lost the level",
-        ),
-        run_id="r1",
-    )
-
-    assert orders == []
-    rows = _band_rows(pipeline.db)
-    assert rows
-    status, detail = rows[0]
-    assert status == "exit_blocked_inside_atr_noise_band"
-    assert "blocked=true" in detail
-    # 1.08 / 1.6 == 0.675 ATR.
-    assert "adverse_atr_multiple=0.6750" in detail
-
-
-def test_both_outcomes_are_written_in_the_same_shape():
-    """The two rows must be comparable field for field, or the sample is
-    still useless: the whole point is to put blocked and not-blocked
-    observations on one axis."""
-    fields = (
-        "rule=atr_noise_band",
-        "blocked=",
-        "adverse=",
-        "adverse_atr_multiple=",
-        "entry=",
-        "price=",
-        "atr14=",
-        "band_multiple=",
-        "band_width=",
-        "sessions_held=",
-        "sessions_measured=",
-    )
-    details = []
+def test_the_midday_reviewer_no_longer_evaluates_or_records_an_entry_band():
+    """Home 1 is gone. A 0.675 ATR loss from entry used to be dropped with
+    `exit_blocked_inside_atr_noise_band`; a 3.0 ATR loss was recorded as
+    evaluated. Neither row is written now, because nothing is evaluated."""
     for entry, price, atr in ((100.0, 94.0, 2.0), (42.59, 41.51, 1.6)):
         pipeline = _pipeline()
         pipeline._atr_for_symbol = MagicMock(return_value=atr)
         pipeline._midday_execute_llm_actions(
             positions=[_position("AAA", qty=10, avg_entry=entry, current_price=price)],
-            review=_review_with(symbol="AAA", reason="thesis_invalid triggered"),
+            review=_review_with(symbol="AAA", reason="thesis_invalid triggered — lost the level"),
             run_id="r1",
         )
-        rows = _band_rows(pipeline.db)
-        assert rows
-        details.append(rows[0][1])
-
-    assert len(details) == 2
-    for detail in details:
-        for field in fields:
-            assert field in detail, f"{field} missing from {detail[:120]}"
+        assert _band_rows(pipeline.db) == []
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +165,9 @@ def test_the_fallback_records_the_breach_too():
     assert "inside_band=false" in result.detail
 
 
-def test_the_two_homes_disagree_about_the_band_width_and_now_say_so():
-    """Not a style point. The reviewer widens the band by sqrt(sessions
-    held); this fallback passes no hold length, so it stays flat at
-    NOISE_BAND_ATR_MULTIPLE forever. A 9-session holding is judged against
-    3.0 ATR in one home and 1.0 ATR in the other under one constant's name.
-    Until both payloads existed, nothing in the record could show that."""
-    from src.risk.exit_guard import noise_band_atr
-
-    assert noise_band_atr(9) == 3.0
-    assert NOISE_BAND_ATR_MULTIPLE == 1.0
-
+def test_the_fallback_states_its_flat_band_width():
+    """This home passes no hold length, so its band is flat at its own
+    multiple, and the payload says so."""
     detail = _fallback(100.0, 99.0, 2.0).detail
-    assert f"band_multiple={NOISE_BAND_ATR_MULTIPLE:g}" in detail
+    assert f"band_multiple={FALLBACK_PROTECTION_ATR_MULTIPLE:g}" in detail
     assert "band_scales_with_hold_length=false" in detail

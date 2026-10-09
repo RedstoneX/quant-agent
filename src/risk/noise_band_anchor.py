@@ -1,4 +1,4 @@
-"""The noise band's geometry: its width and its ANCHOR, as pure functions.
+"""The structural-protection fallback band's ANCHOR, as pure functions.
 
 Lifted out of `src/risk/exit_guard.py` (an oversized file) so this can be
 built and exercised alone. No imports from `exit_guard`, no constants, no
@@ -16,20 +16,17 @@ modelled) — the anchor is NOT a free choice, it is per-home:
     the band the old one was inside it too. There is no early return between
     the two, so a block can only be released, never created. It passes
     `extreme_since_entry`.
-  * The midday position reviewer: re-anchoring ADDS 191 blocks against 51
-    removed — of the added, 96 cost money and 95 saved (a coin flip), and 129
-    never release within 60 sessions. It stays ENTRY-anchored and passes
-    nothing.
-
-The WIDTH (`multiple`, and the sqrt(sessions) widening) is UNCHANGED either
-way, and deleting the band was measured and is NOT supported.
+  * The midday position reviewer was the other home, ENTRY-anchored. That
+    gate was REMOVED on 2026-10-09 (owner ruling: no sale is refused for the
+    price the desk paid), together with its sqrt(sessions) width helper, so
+    this module now serves the fallback alone.
 """
 
 from __future__ import annotations
 
 import math
 
-__all__ = ["anchored_adverse_move", "band_width_atr", "noise_band_anchor"]
+__all__ = ["anchored_adverse_move", "noise_band_anchor"]
 
 
 def _finite(value: object) -> float | None:
@@ -38,38 +35,6 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if math.isfinite(out) else None
-
-
-def band_width_atr(days_held: int | float | None, *, multiple: float) -> float:
-    """The noise-band width, in ATRs, for a position held `days_held` sessions.
-
-    `ATR * sqrt(sessions)` — the exact scaling convention already used by
-    `src/data/levels.py::derive_structural_target` for target projection
-    (`travel = volatility * math.sqrt(horizon)`), on the same random-walk
-    basis: expected price dispersion from a fixed starting point (here,
-    entry) grows with the square root of elapsed time, not linearly.
-
-    Despite the parameter name (kept for call-site compatibility), this
-    MUST be a TRADING-SESSION count, not a calendar-day count — see
-    `AlpacaBroker.trading_sessions_held` (item 165, holiday-aware) for the
-    counter `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
-    function being fed raw calendar days, which silently over-widened the
-    band by sqrt(3) instead of sqrt(1) across a Friday-to-Monday hold (3
-    calendar days, 1 real trading session) — the opposite of this fix's own
-    intent.
-
-    `days_held` is floored at 1 session — None, non-finite, zero, or negative
-    all collapse to 1 — so a brand-new position gets exactly the old flat
-    `multiple` behaviour (sqrt(1) == 1) and only positions held longer than
-    one session see a wider band.
-    """
-    try:
-        days = float(days_held) if days_held is not None else 1.0
-    except (TypeError, ValueError):
-        days = 1.0
-    if not math.isfinite(days) or days < 1.0:
-        days = 1.0
-    return multiple * math.sqrt(days)
 
 
 def noise_band_anchor(

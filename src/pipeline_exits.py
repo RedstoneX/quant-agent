@@ -33,7 +33,6 @@ Nothing here may import `src.pipeline`: this module is one of its bases.
 
 import json as _json
 import logging
-import math
 from datetime import datetime, timedelta
 
 from src.exits_parts.midday_gates import midday_pre_gates
@@ -537,42 +536,21 @@ class ExitEngineMixin:
             if midday_pre_gates(_loop, action_item, act, symbol) is SKIP:
                 continue
 
-            # Phase 3.6 — noise band on exits. A PRICE-DERIVED failure inside
-            # one ATR of entry has not distinguished itself from one ordinary
-            # day's range. OKLO was bought and sold on 2026-08-26 at 0.67 ATR,
-            # on day zero, never given a single day's normal range to breathe.
-            #
-            # Triggers originating outside the tape — earnings, news, regime,
-            # sector, a fired stop — bypass this entirely. ("correlation" and
-            # "circuit breaker" were in this sentence until they were removed
-            # from the accepted list, 2026-09-13 and 2026-09-20; neither
-            # bypasses anything now.) An earnings miss is an earnings miss whether the stock
-            # has moved 0.2 ATR or 3 ATR, and waiting for price confirmation
-            # before acting on information sells the bottom instead of the top.
+            # NO SALE IS REFUSED FOR THE PRICE THE DESK PAID (owner ruling,
+            # 2026-10-09). An entry-anchored ATR "noise band" used to stand
+            # here and drop a discretionary SELL/REDUCE/COVER of a losing
+            # holding whose loss from entry sat inside 1.0 x ATR x
+            # sqrt(sessions held). The desk's own 2026-10-04 measurement found
+            # loss from entry never signalled a finished trend
+            # (docs/RESEARCH_FINDINGS.md), so the gate was removed whole.
             if act in ("SELL", "REDUCE", "COVER"):
-                from src.risk.exit_guard import (
-                    adverse_move_is_noise,
-                    cites_external_information,
-                )
-
                 held_now = next((p for p in positions if p.symbol == symbol), None)
                 reason_for_band = action_item.get("reason", "")
-                # COVER's adverse direction is the mirror of SELL/REDUCE's —
-                # a short is hurt by price RISING, not falling — so the
-                # noise band is measured against the CLOSING side, same
-                # convention as _submit_protected_sell's `side` param.
-                close_side = "buy" if act == "COVER" else "sell"
 
                 # THE ALIGNMENT EXIT (owner ruling 2026-09-30, "exit on
                 # ALIGNMENT, never on a target") — the desk's only sanctioned
-                # way to realise a GAIN, and the one non-news sale allowed
-                # past the entry-anchored noise band below.
-                #
-                # A closed first attempt (PR 837) DELETED that band and
-                # shipped `check_alignment_exit` with no caller anywhere in
-                # src/ — the brake gone and nothing computing the reading
-                # meant to replace it, which is strictly worse than doing
-                # nothing. The band therefore stays, and this is the caller.
+                # way to realise a GAIN. (The entry-anchored noise band this
+                # used to be the one exception to was removed 2026-10-09.)
                 #
                 # A sale claiming the trend is over is now VERIFIED, not trusted:
                 # only a chart that confirms the last mark has been given up by
@@ -591,7 +569,6 @@ class ExitEngineMixin:
                 # evening review cannot tell an unread chart from a chart
                 # that said hold. Only a sale that CLAIMS the alignment
                 # exit is GATED by the verdict.
-                alignment_verdict = None
                 alignment_claimed = _reason_claims_alignment_exit(
                     reason_for_band,
                     action_item.get("exit_trigger"),
@@ -668,7 +645,6 @@ class ExitEngineMixin:
                         verdict.reason,
                     )
                     if alignment_claimed:
-                        alignment_verdict = verdict
                         if not verdict.exit_cleared:
                             continue
                         # Carry the chart's own words into the order reason
@@ -676,135 +652,6 @@ class ExitEngineMixin:
                         # just THAT.
                         if verdict.owner_reason:
                             action_item["reason"] = (f"{action_item.get('reason', '')} | {verdict.owner_reason}")[:2000]
-
-                # The ALIGNMENT EXIT above is the one non-news sale allowed
-                # past this band. The band STAYS for everything else: it is a
-                # real brake on premature exits, and deleting it while
-                # shipping a verdict nothing in src/ ever called (the closed
-                # PR 837) would leave the desk with neither. A chart-verified
-                # alignment exit is simply not judged by its distance from
-                # what the desk PAID, because what the desk paid says nothing
-                # about whether a trend has ended.
-                if (
-                    held_now is not None
-                    and alignment_verdict is None
-                    and not cites_external_information(reason_for_band)
-                ):
-                    from src.risk.exit_guard import noise_band_atr
-                    from src.risk.noise_band_record import midday_payload as midday_band_payload
-
-                    atr = self._atr_for_symbol(symbol)
-                    # Phase 3.6 audit follow-up (2026-09-04, fix #1): the band
-                    # widens with sqrt(sessions_held) — same convention as
-                    # levels.py's target projection — not a flat 1.0x ATR
-                    # however long the position has aged; see
-                    # `exit_guard.noise_band_atr`. Second pass: this MUST
-                    # be `sessions_held` (weekend-aware trading-session count,
-                    # `trading_calendar.trading_sessions_held`), NOT the plain
-                    # calendar-day `days_held` — levels.py's own precedent
-                    # scales by sqrt(TRADING sessions), and a calendar-day
-                    # count silently over-widens the band by sqrt(3/1) after
-                    # every weekend (Friday entry reviewed Monday shows 3
-                    # calendar days but only 1 real session of price action).
-                    sessions_held_for_band = (position_facts or {}).get(symbol, {}).get("sessions_held")
-                    # BOARD ITEM 70, 2026-10-04: the band used to be recorded
-                    # ONLY when it BLOCKED, and a sample truncated at the
-                    # threshold under examination can never locate it. Both
-                    # outcomes now go to `src/risk/noise_band_record.py`.
-                    _band_blocks = adverse_move_is_noise(
-                        held_now.avg_entry,
-                        held_now.current_price,
-                        atr,
-                        side=close_side,
-                        days_held=sessions_held_for_band,
-                    )
-                    adverse_move = (
-                        held_now.current_price - held_now.avg_entry
-                        if close_side == "buy"
-                        else held_now.avg_entry - held_now.current_price
-                    )
-                    band_multiple = noise_band_atr(sessions_held_for_band)
-                    # Board item 70, 2026-09-30 — TRUTH OF THE RECORD.
-                    # `noise_band_atr` SILENTLY FLOORS a missing or sub-1
-                    # session count to 1, so a width quoted beside
-                    # `sessions_held=None` asserted what the record could not
-                    # support. Say which it was.
-                    try:
-                        _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
-                    except (TypeError, ValueError):
-                        _sess = None
-                    sessions_measured = _sess is not None and math.isfinite(_sess) and _sess >= 1.0
-                    sessions_text = (
-                        f"{_sess:g} (measured)"
-                        if sessions_measured
-                        else f"{sessions_held_for_band!r} unusable — floored to 1 session"
-                    )
-                    _atr_f = float(atr or 0.0)
-                    band_width = band_multiple * _atr_f
-                    band_detail = midday_band_payload(
-                        close_side=close_side,
-                        blocked=_band_blocks,
-                        adverse=adverse_move,
-                        entry=held_now.avg_entry,
-                        price=held_now.current_price,
-                        atr=_atr_f,
-                        band_multiple=band_multiple,
-                        sessions_held=_sess if sessions_measured else 1.0,
-                        sessions_measured=sessions_measured,
-                        tail=f"{act}: {reason_for_band[:400]}",
-                    )
-                    try:
-                        self.db.record_intraday_evaluation(
-                            symbol=symbol,
-                            run_id=run_id,
-                            status=(
-                                "exit_blocked_inside_atr_noise_band"
-                                if _band_blocks
-                                else "exit_noise_band_evaluated_not_blocked"
-                            ),
-                            detail=band_detail,
-                        )
-                        record_exit_guard(self, "noise_band.audit_write")
-                    except Exception as e:  # noqa: BLE001
-                        record_exit_guard(
-                            self,
-                            "noise_band.audit_write",
-                            e,
-                            logger,
-                            symbol=symbol,
-                            effect="audit row not written",
-                        )
-                    if _band_blocks:
-                        logger.warning(
-                            "Position reviewer: blocking %s %s — adverse "
-                            "$%.2f move from entry $%.2f is smaller than "
-                            "$%.2f, which is %.2f x ATR14 $%.2f with "
-                            "sessions_held=%s. That comparison, and nothing "
-                            "else, is what refused this exit. "
-                            "External-information triggers bypass this. "
-                            "Reason: %r",
-                            act,
-                            symbol,
-                            adverse_move,
-                            held_now.avg_entry,
-                            band_width,
-                            band_multiple,
-                            _atr_f,
-                            sessions_text,
-                            reason_for_band[:160],
-                        )
-                        from src.risk.exit_refusal import CODE_NOISE_BAND
-
-                        self._record_exit_refusal(
-                            symbol=symbol,
-                            run_id=run_id,
-                            action=act,
-                            code=CODE_NOISE_BAND,
-                            dropped=True,
-                            detail=band_detail,
-                            layer="noise_band",
-                        )
-                        continue
 
             reason_text = action_item.get("reason", "")
             if act in ("SELL", "REDUCE", "COVER"):

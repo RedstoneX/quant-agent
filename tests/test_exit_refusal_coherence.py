@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 import yaml
 
 from src.pipeline import TradingPipeline, _reason_cites_hard_trigger
-from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
 from src.risk.exit_refusal import (
     CODE_AI_RISK_OBJECTION,
     CODE_AI_RISK_UNAVAILABLE,
@@ -128,9 +127,9 @@ def test_deterministic_python_owns_refusal_and_uncertainty_fails_open():
     assert UNCERTAINTY_FAIL == "open"
 
 
-def test_item_70_noise_band_and_stop_floor_untouched():
-    """Item 60 must not quietly retune the two 1.0s that item 70 owns."""
-    assert NOISE_BAND_ATR_MULTIPLE == 1.0
+def test_item_70_stop_floor_untouched():
+    """Item 60 must not quietly retune the 1.0 stop floor item 70 owns. (The
+    entry-anchored noise band, the other 1.0, was removed 2026-10-09.)"""
     from pathlib import Path
 
     settings = yaml.safe_load((Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text())

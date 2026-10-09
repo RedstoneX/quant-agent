@@ -76,6 +76,9 @@ CODE_UNRECOGNIZED_TRIGGER = "unrecognized_trigger"
 # 2026-10-09) when an AI Risk reject still dropped the exit. Nothing writes
 # it now; kept so readers can still name those rows.
 CODE_AI_RISK_REJECT = "ai_risk_reject"
+# Historical only: rows written before 2026-10-09, when the entry-anchored
+# ATR noise band still dropped a losing sale. Nothing writes it now; kept so
+# readers can still name those rows.
 CODE_NOISE_BAND = "inside_atr_noise_band"
 CODE_CONTRADICTS_METRICS = "contradicts_own_metrics"
 CODE_HOLDING_DISCIPLINE_FALSE = "holding_discipline_claim_false"
