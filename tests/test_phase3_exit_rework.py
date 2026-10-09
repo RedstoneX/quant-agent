@@ -941,60 +941,9 @@ def test_executor_drops_a_symbol_vetoed_by_ai_risk():
 #
 # 2026-10-09: the entry-anchored midday gate is REMOVED (owner ruling: no sale
 # is refused for the price the desk paid). Its sqrt(sessions held) widening
-# tests went with it. `adverse_move_is_noise` survives only as the FLAT
-# mechanism behind the structural-protection fallback, tested below with that
-# home's own multiple.
-
-
-def test_a_move_inside_one_atr_is_inside_the_fallback_band():
-    from src.risk.exit_guard import FALLBACK_PROTECTION_ATR_MULTIPLE as M, adverse_move_is_noise
-
-    assert adverse_move_is_noise(42.59, 41.51, atr=1.6, multiple=M) is True
-
-
-def test_a_real_break_beyond_one_atr_is_not_noise():
-    from src.risk.exit_guard import FALLBACK_PROTECTION_ATR_MULTIPLE as M, adverse_move_is_noise
-
-    assert adverse_move_is_noise(42.59, 38.00, atr=1.6, multiple=M) is False
-
-
-def test_a_winning_position_is_not_this_guards_business():
-    from src.risk.exit_guard import FALLBACK_PROTECTION_ATR_MULTIPLE as M, adverse_move_is_noise
-
-    assert adverse_move_is_noise(100.0, 120.0, atr=2.0, multiple=M) is False
-    assert adverse_move_is_noise(100.0, 100.0, atr=2.0, multiple=M) is False
-
-
-def test_missing_atr_never_manufactures_a_block():
-    """This guard stops premature exits; it must never strand a position the
-    reviewer has real reason to leave."""
-    from src.risk.exit_guard import FALLBACK_PROTECTION_ATR_MULTIPLE as M, adverse_move_is_noise
-
-    assert adverse_move_is_noise(100.0, 99.0, atr=None, multiple=M) is False
-    assert adverse_move_is_noise(100.0, 99.0, atr=0.0, multiple=M) is False
-    assert adverse_move_is_noise(float("nan"), 99.0, atr=2.0, multiple=M) is False
-
-
-def test_external_information_is_still_classified():
-    """An earnings miss is an earnings miss whether the stock has moved 0.2
-    ATR or 3 ATR. Waiting for price confirmation before acting on information
-    sells the bottom instead of the top."""
-    from src.risk.exit_guard import cites_external_information
-
-    for reason in (
-        "bearish earnings, revenue missed",
-        "adverse news: FDA rejection",
-        "sector shock hit the whole group",
-        "macro regime flip to risk-off",
-        "stopped out at the broker",
-    ):
-        assert cites_external_information(reason) is True, reason
-
-    for reason in (
-        "thesis_invalid triggered: closed below MA50",
-        "thesis broken on the chart",
-    ):
-        assert cites_external_information(reason) is False, reason
+# tests went with it, and so did the flat structural-protection fallback copy
+# of the band and the free-text "external information" bypass that existed
+# only to skip it (owner mandate 2026-10-09: cut losers fast).
 
 
 def _band_statuses(pipeline) -> list:

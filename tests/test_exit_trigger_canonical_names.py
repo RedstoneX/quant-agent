@@ -288,56 +288,6 @@ def test_the_recorded_verifier_gap_is_four_of_the_seven_triggers():
     )
 
 
-def test_clamp_bypass_divergence_is_pinned_per_trigger():
-    """THE FOURTH VOCABULARY, AND THE FACT THAT THIS PR WIDENS THE SPLIT.
-
-    `exit_guard.EXTERNAL_INFORMATION_PATTERNS` is a FOURTH hand-written
-    list, and it is the one that matters most: `cites_external_information`
-    waves a SELL/REDUCE/COVER past the noise band and the ratchet clamp
-    when the reason matches it. #791 does not touch that list, so deriving
-    the canonical enum names into the phrase gate splits the two further
-    apart: `"adverse news"` bypasses the clamps, `"adverse_news"` passes the
-    named-trigger gate and does not. Same claim, two behaviours, decided by
-    an underscore.
-
-    Unifying them was considered and NOT done here: adding the canonical
-    spellings to `EXTERNAL_INFORMATION_PATTERNS` would WIDEN a clamp
-    bypass, which is a live-money change and a separate, ratifiable
-    decision — not a side effect of fixing a naming gate.
-
-    So the divergence is RECORDED instead, per trigger, and any NEW
-    divergence fails here. Every count in this test is recomputed from the
-    code; no figure is written in prose, which is how the "26 hard-trigger
-    keywords" in `pipeline.py` came to be wrong twice over.
-    """
-    import re
-
-    from src.risk.exit_guard import EXTERNAL_INFORMATION_PATTERNS
-
-    def bypasses(phrase: str) -> bool:
-        return any(re.search(p, phrase) for p in EXTERNAL_INFORMATION_PATTERNS)
-
-    split = {
-        t.value
-        for t, phrases in TRIGGER_PHRASES.items()
-        if any(bypasses(p) for p in phrases) and not all(bypasses(p) for p in phrases)
-    }
-    assert split == {
-        "bearish_state_change",
-        "adverse_news",
-        "sector_shock",
-        "regime_shift",
-        "stop_fired",
-    }, (
-        "A trigger's phrases must be all-clamp-bypassing or none, or the "
-        "divergence must be recorded here on purpose. New entry means a "
-        "keyword now behaves differently from its own synonyms."
-    )
-    # Triggers whose phrases agree with themselves, either way.
-    coherent = {t.value for t in TRIGGER_PHRASES} - split
-    assert coherent == {"thesis_invalid", "earnings", "trend_alignment_over"}
-
-
 def test_no_soft_signal_was_admitted_by_the_widening():
     """The banned soft flags stay banned — this change must not have let one
     in through the enum."""

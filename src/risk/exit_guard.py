@@ -40,14 +40,9 @@ import math
 import re
 from dataclasses import dataclass
 from typing import Literal
-from src.risk.noise_band_record import fallback_outcome as noise_band_fallback_outcome
 from src.risk.exit_guard_structural import (  # noqa: F401 -- lifted verbatim, re-exported
     _consecutive_prior_break_count,
     _structural_level_backing_stop,
-)
-from src.risk.noise_band_anchor import (  # noqa: F401 -- noise_band_anchor re-exported
-    anchored_adverse_move,
-    noise_band_anchor,
 )
 from src.risk.exit_guard_claims import (  # noqa: F401 -- re-exported, lifted verbatim
     _REGIME_FLIP_CLAIM_RE,
@@ -116,11 +111,6 @@ __all__ = [
     "is_deterioration_claim",
     "veto_contradicted_exit",
     "DETERIORATION_PATTERNS",
-    "EXTERNAL_INFORMATION_PATTERNS",
-    "cites_external_information",
-    "adverse_move_is_noise",
-    "noise_band_anchor",
-    "FALLBACK_PROTECTION_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
     "check_thesis_invalid_if",
@@ -137,72 +127,8 @@ __all__ = [
 ]
 
 
-#: Phrases that assert a position is going backwards. Deliberately narrow:
-# ---------------------------------------------------------------------------
-# Noise band on exits — spec Phase 3.6
-# ---------------------------------------------------------------------------
-
-#: THE ENTRY-ANCHORED MIDDAY GATE IS GONE (owner ruling, 2026-10-09). Until
-#: this date a constant here, `NOISE_BAND_ATR_MULTIPLE` (1.0, widened by
-#: sqrt(sessions held)), refused a discretionary SELL/REDUCE/COVER of a losing
-#: holding whenever the loss FROM AVERAGE ENTRY sat inside that band. The
-#: desk's own measurement (docs/RESEARCH_FINDINGS.md, "Does the band's
-#: sqrt(sessions_held) widening match the tape?", 2026-10-04) found a larger
-#: adverse move from entry never marked a finished trend, at any holding
-#: length, and the owner ruled that no sale is measured from the price paid
-#: ("sell anything below the bar, always"). The gate, its constant, its
-#: sqrt widening and its midday recording were removed together.
-#:
-#: What REMAINS below is a different quantity that only shared the old name:
-#: the structural-protection fallback's own flat multiple, anchored on the
-#: running extreme since entry, and the trailing band in `src/risk/trailing.py`
-#: (1.25). Neither is measured from the price paid at a sale decision.
-
-#: BOARD ITEM 70, THE SECOND SPLIT (2026-10-04). HISTORY: the since-removed
-#: `NOISE_BAND_ATR_MULTIPLE` was still doing TWO jobs, which the settlement
-#: recording added earlier the same day made visible for the first time: the two homes of the "noise
-#: band" do not compute the same quantity, and sharing one name hid that.
-#:
-#:   HOME 1, the midday gate in `src/pipeline_exits.py`, in front of every
-#:   non-external SELL/REDUCE/COVER: band = NOISE_BAND_ATR_MULTIPLE * ATR *
-#:   sqrt(trading sessions held), anchored on AVERAGE ENTRY. It asks how far
-#:   a holding must travel against the price the desk PAID before the move
-#:   stops being ordinary dispersion, and it grows with elapsed trading time
-#:   on the random-walk basis documented above.
-#:
-#:   HOME 2, the `check_structural_protection` fallback below, reached only
-#:   when a holding has neither a checkable `thesis_invalid_if` nor a
-#:   qualifying structural level under its stop: band = this constant * ATR,
-#:   FLAT, with no hold length passed at all, anchored on the RUNNING
-#:   EXTREME SINCE ENTRY rather than on entry. It asks a different question
-#:   -- how far a holding the structure test cannot read must move against
-#:   its own high-water mark before last-resort protection is lifted.
-#:
-#: Two anchors, one time-scaled and one not, so for the SAME holding on the
-#: SAME day the one named constant yielded two different widths. That is the
-#: defect board item 70 exists to end, and the fix is the same one applied to
-#: the break margin on 2026-09-26: give each job its own name at the SAME
-#: value, so nothing the desk does changes, and so that deriving one can
-#: never silently move the other.
-#:
-#: UNDERIVED, and this split does not pretend otherwise. `status: arbitrary`
-#: in `config/number_ledger.yaml`. Nothing published measures the distance a
-#: holding with no readable structure must fall below its own extreme before
-#: protection should lift; the volatility-stop literature (~3 ATR, Wilder /
-#: Chandelier / Kaufman) measures a STOP's distance from a running extreme,
-#: which is the nearest analogue but is a stop width, not a
-#: protection-lifting threshold, and adopting it would be a large loosening
-#: of when this desk gives up on a position. The settlement recording this
-#: home now emits (`src/risk/noise_band_record.py`) is what would locate it;
-#: it has accrued nothing, because the desk is off.
-#:
-#: It was split at the SAME value (1.0) as the midday gate's multiple; that
-#: gate and its constant were removed on 2026-10-09 and this value was not
-#: touched by that removal.
-FALLBACK_PROTECTION_ATR_MULTIPLE = 1.0
-
 #: BOARD ITEM 70, THE SPLIT (2026-09-26). Until this date ONE literal `1.0`
-#: did TWO different jobs in the exit path: the noise band above (how far an
+#: did TWO different jobs in the exit path: the noise band (removed 2026-10-09; how far an
 #: adverse move must travel from ENTRY before it stops being ordinary daily
 #: wobble) and the BREAK MARGIN below (how far a daily CLOSE must sit beyond a
 #: structural LEVEL before that level counts as broken). They are not the same
@@ -226,108 +152,6 @@ FALLBACK_PROTECTION_ATR_MULTIPLE = 1.0
 #: consecutive closes); only this margin is not. Kept at 1.0 and kept
 #: `arbitrary` in config/number_ledger.yaml rather than dressed up as sourced.
 BREAK_CONFIRMATION_ATR_MULTIPLE = 1.0
-
-#: Triggers that come from OUTSIDE the price series. These bypass the noise
-#: band entirely: an earnings miss is an earnings miss whether the stock has
-#: moved 0.2 ATR or 3 ATR, and waiting for price confirmation before acting on
-#: information is how you sell the bottom instead of the top.
-#:
-#: Everything NOT on this list — chiefly thesis invalidation, which in practice
-#: means a level broke on the chart — is price-derived, and a price-derived
-#: failure inside one ATR of entry has not yet distinguished itself from noise.
-EXTERNAL_INFORMATION_PATTERNS: tuple[str, ...] = (
-    r"\badverse news\b",
-    r"\bmaterial news\b",
-    r"\bsector shock\b",
-    r"\bbearish earnings\b",
-    r"\bearnings miss(?:ed)?\b",
-    r"\bbearish filing\b",
-    r"\bguidance cut\b",
-    r"\bregime (?:shift|flip|flipped)\b",
-    r"\brisk[- ]off\b",
-    r"\bhigh[- ]?conviction bearish\b",
-    r"\bhigh bearish\b",
-    # `correlation (cluster) breach` was REMOVED here 2026-09-13 (WORK.md
-    # item 44) alongside its removal from `pipeline._HARD_TRIGGER_KEYWORDS`.
-    # Two reasons, and the second is the interesting one: (1) nothing in the
-    # desk computes a correlation-breach event, so the claim was never
-    # checkable; (2) a correlation IS a function of the price series, so even
-    # taken at face value it is price-derived, not external — it never
-    # belonged on a list whose defining property is "comes from OUTSIDE the
-    # price series". An earnings miss is true regardless of the tape; a
-    # correlation number is the tape.
-    # `circuit breaker` / `daily loss` / `daily-loss` were REMOVED here
-    # 2026-09-20 (WORK.md item 32), alongside their removal from
-    # `pipeline._HARD_TRIGGER_KEYWORDS` and `exit_trigger.ExitTrigger`, and
-    # for the first of the two correlation-breach reasons above: the owner
-    # deleted the whole account-level loss alarm, so nothing in the desk
-    # computes a daily-loss or circuit-breaker event and the claim was no
-    # longer checkable. This list is the more dangerous of the two to leave
-    # stale, because membership here BYPASSES the noise-band and ratchet
-    # clamps rather than merely admitting a phrase.
-    r"\bstop hit\b",
-    r"\bstopped out\b",
-)
-
-_EXTERNAL_RE = re.compile("|".join(EXTERNAL_INFORMATION_PATTERNS), re.IGNORECASE)
-
-
-def cites_external_information(reason: str) -> bool:
-    """True when the reason names a trigger originating outside the tape."""
-    return bool(reason) and bool(_EXTERNAL_RE.search(reason))
-
-
-def adverse_move_is_noise(
-    entry: float,
-    current_price: float,
-    atr: float | None,
-    *,
-    multiple: float,
-    side: str = "sell",
-    extreme_since_entry: float | None = None,
-) -> bool:
-    """True when the position has moved ADVERSELY from its anchor by less
-    than `multiple * ATR`. Its one caller is the `check_structural_protection`
-    fallback, with `FALLBACK_PROTECTION_ATR_MULTIPLE`; the entry-anchored
-    midday sale gate that also used it was removed on 2026-10-09.
-
-    ANCHOR: ENTRY by default; a caller that can read the running extreme
-    since entry may pass `extreme_since_entry` (rule and the per-home
-    measurement: `noise_band_anchor`). `None` is the entry-anchored
-    behaviour bit for bit.
-
-    The band is FLAT, `multiple * ATR`: the sqrt(sessions held) widening
-    belonged to the removed midday gate and was never applied by the fallback.
-
-    `side` is the CLOSING side, same convention as
-    `TradingPipeline._submit_protected_sell` / `_forced_close_side_and_qty`:
-    "sell" (default, unchanged for every pre-shorts caller) means a long,
-    where adverse is price falling (`entry - current`); "buy" means a
-    short's cover, where adverse is the mirror — price rising
-    (`current - entry`), since a short is hurt by the tape going up.
-
-    Returns False — i.e. "not noise, let the caller proceed" — whenever the
-    question cannot be answered: no ATR, non-finite inputs, or a position that
-    is flat or in profit. This guard exists to stop premature exits on
-    positions that have barely moved; it must never manufacture a block out of
-    missing data, because that would strand a position the reviewer has real
-    reason to leave.
-    """
-    ent = _finite(entry)
-    cur = _finite(current_price)
-    atr_f = _finite(atr) if atr is not None else None
-    if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
-        return False
-    adverse = anchored_adverse_move(
-        ent,
-        cur,
-        extreme_since_entry,
-        is_short=str(side).lower() == "buy",
-    )[1]
-    if adverse <= 0:
-        return False  # flat or winning — not this guard's business
-    return adverse < multiple * atr_f
-
 
 # ---------------------------------------------------------------------------
 # Structural (data-driven) holding protection — spec item 25, 2026-09-03
@@ -455,17 +279,9 @@ class StructuralProtectionCheck:
         "structural_level_broken",
         "structural_level_pending_confirmation",
         "structural_level_intact",
-        "noise_band_intact",
-        "noise_band_broken",
-        # Board item 70, 2026-09-30. These two used to be reported as
-        # `noise_band_intact`, which was untrue in the machine-readable
-        # field even though the prose `detail` was honest: on neither path
-        # is the noise band evaluated at all. One is a position that has
-        # not moved against entry (nothing to compare to a band); the other
-        # is missing price/ATR (the band cannot be computed). A refusal must
-        # say which rule actually fired, so they now have their own names.
-        "no_adverse_move_from_entry",
-        "noise_band_unevaluable_no_data",
+        # No chart level backs the thesis (or no data to read one): never
+        # protected. Replaced the four ATR noise-band fallback bases 2026-10-09.
+        "no_chart_level",
     ]
     detail: str
     #: The structural level price this read found CONFIRMED broken, on the
@@ -484,7 +300,7 @@ class StructuralProtectionCheck:
     #: The confirmation REGIME this read selected — one of
     #: `classify_trend_context`'s labels (against_or_weak / with_trend_moderate
     #: / with_trend_strong / insufficient_context), or "" on a basis where it
-    #: does not apply (a non-broken level, the noise-band fallback). Recorded so
+    #: does not apply (a non-broken level, no chart level). Recorded so
     #: the audit trail and the owner message can say WHICH regime the desk read.
     trend_context: str = ""
     #: How many consecutive confirming daily closes this regime needs before it
@@ -496,12 +312,19 @@ class StructuralProtectionCheck:
     #: PLAIN-LANGUAGE, owner-facing reason for a DECISIVE break outcome — a
     #: confirmed break that lifts protection ("real breakdown"), or a break
     #: held pending confirmation ("possible shakeout, waiting"). Empty on every
-    #: non-decisive basis (intact level, thesis intact, noise-band, no data).
+    #: non-decisive basis (intact level, thesis intact, no chart level).
     #: Carries the trigger, the trend context and the confirmation state in
     #: words, no bare numbers standing alone. `render_owner_break_message`
     #: composes the symbol and action verb around it for the Telegram/board
     #: surfaces; this field is the reusable clause.
     owner_reason: str = ""
+
+    @property
+    def confirmed_chart_break(self) -> bool:
+        """True only when a CONFIRMED chart break (thesis level or structural
+        level, past the confirmation gate) backs a cut. A record, not a gate:
+        a cut without one still proceeds, bounded by the protective stop."""
+        return self.basis in ("thesis_invalid_if_triggered", "structural_level_broken")
 
 
 def check_structural_protection(
@@ -527,7 +350,6 @@ def check_structural_protection(
     prior_break_streak: int | None = None,
     prior_break_records: list | None = None,
     prior_session_dates: list | None = None,
-    extreme_since_entry: float | None = None,
 ) -> StructuralProtectionCheck:
     """Decide whether a position's thesis-backing level is still intact.
 
@@ -590,7 +412,7 @@ def check_structural_protection(
     own date, and feeding the prior TRADING DAY's value back in as
     `break_seen_prior_close`; this module holds no state of its own and
     does not know what a "day" or a "cycle" is. This gate applies ONLY to
-    the thesis/level basis below — the no-level noise-band fallback, and
+    the thesis/level basis below — the no-level case (never protected), and
     the two independent regime-flip / bearish-state-change triggers in
     `holding_discipline_false_claim`, all lift protection immediately,
     unaffected by this gate.
@@ -910,83 +732,19 @@ def check_structural_protection(
             )
 
     # Neither a checkable thesis_invalid_if nor a qualifying structural
-    # level under the stop. Owner refinement 2026-09-04: this must NOT
-    # default to zero protection — that would systematically strip
-    # protection from breakout/momentum trades that don't have classic
-    # multi-touch support/resistance by design. Fall back instead to the
-    # noise-band MECHANISM already used elsewhere in this module
-    # (`adverse_move_is_noise`), with this home's own named multiple
-    # `FALLBACK_PROTECTION_ATR_MULTIPLE` (board item 70, 2026-10-04 — the
-    # two homes ask different questions and no longer share one name). A position with nothing concrete backing its
-    # thesis stays protected unless the adverse move against it exceeds
-    # that already-ratified band. This fallback lifts protection
-    # immediately — it is not gated by the confirmation rule above, which
-    # applies only to the thesis/level basis.
-    cur = _finite(current_price)
-    if ent is not None and atr_f is not None and atr_f > 0 and cur is not None:
-        # Re-anchored on the running extreme since entry; why this home may
-        # (and the midday reviewer may not): `noise_band_anchor` docstring.
-        _anchor, adverse = anchored_adverse_move(ent, cur, extreme_since_entry, is_short=is_short)
-        _anchor_kind = "extreme_since_entry" if _anchor != ent else "entry"
-        if adverse <= 0:
-            # Flat or in profit — never this fallback's business.
-            return StructuralProtectionCheck(
-                protected=True,
-                basis="no_adverse_move_from_entry",
-                detail=(
-                    "no thesis_invalid_if and no verified structural level "
-                    "under the stop, but price is flat/favourable versus "
-                    "its running extreme since entry — protected; the "
-                    "noise band was NOT evaluated "
-                    "(there is no adverse move to compare against it)"
-                ),
-                raw_broken=False,
-            )
-        # BOARD ITEM 70 (2026-10-04, the second split): this home uses its
-        # OWN named multiple, `FALLBACK_PROTECTION_ATR_MULTIPLE`; the midday
-        # gate's entry-anchored multiple it was split from was removed on
-        # 2026-10-09. This home's band is FLAT and always was.
-        is_noise = adverse_move_is_noise(
-            ent,
-            cur,
-            atr_f,
-            side=("buy" if is_short else "sell"),
-            multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
-            extreme_since_entry=extreme_since_entry,
-        )
-        # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
-        # outcomes, is built by `src/risk/noise_band_record.py` so the band's
-        # two homes write one comparable shape. RECORDING ONLY — `is_noise`
-        # above is the unchanged decision.
-        _protected, _basis, _detail = noise_band_fallback_outcome(
-            ent=ent,
-            cur=cur,
-            atr_f=atr_f,
-            is_short=is_short,
-            is_noise=bool(is_noise),
-            band_multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
-            anchor=_anchor,
-            anchor_kind=_anchor_kind,
-        )
-        return StructuralProtectionCheck(
-            protected=_protected,
-            basis=_basis,
-            detail=_detail,
-            raw_broken=False,
-        )
-
-    # No basis AND no usable price/ATR to even judge the noise band —
-    # cannot say the position has moved against it at all. Fail toward
-    # protection rather than manufacture a block out of missing data (same
-    # posture `adverse_move_is_noise` itself takes).
+    # level under the stop, or the data to read either is missing. NOT
+    # protected (owner mandate 2026-10-09: cut losers fast; the protective
+    # stop bounds every loss). No chart level backing the thesis is never a
+    # reason to refuse a cut, and missing data never manufactures protection.
+    # An ATR "noise band" fallback used to stand here and keep such a holding
+    # protected until its adverse move cleared 1.0 x ATR; it was removed whole.
     return StructuralProtectionCheck(
-        protected=True,
-        basis="noise_band_unevaluable_no_data",
+        protected=False,
+        basis="no_chart_level",
         detail=(
-            "no thesis_invalid_if, no verified structural level under the "
-            "stop, and insufficient price/ATR data to evaluate the noise "
-            "band — the band was NOT evaluated; treated as protected "
-            "because missing data must never manufacture a block"
+            "no thesis_invalid_if and no verified structural level under the "
+            "stop (or no data to read one) — not protected; no confirmed "
+            "chart break backs a cut here"
         ),
         raw_broken=False,
     )
