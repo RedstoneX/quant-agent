@@ -6,7 +6,7 @@ two documents from a recording and a live run passes a real fetcher. The live
 fetcher is built where the daily screen is wired (a later change) and must go
 through the rehearsal seam before it lands.
 
-``fetch(url, headers, timeout_s)`` returns the parsed JSON body and raises on an
+``fetch(url, headers)`` returns the parsed JSON body (the fetcher owns its timeout) and raises on an
 HTTP error or timeout. Any failure, malformed body or empty row list raises
 ``ListingUnavailable``; an empty ``Listing`` is never returned.
 """
@@ -26,9 +26,6 @@ HEADERS = {
     "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
     "Accept": "application/json",
 }
-#: Same per-request timeout as the repo's other one-shot document fetch
-#: (src/cost_table.py _FETCH_TIMEOUT_S).
-TIMEOUT_S = 10.0
 
 FUND_CATEGORY_UNKNOWN = "UNKNOWN"
 _PREFERRED_WORDS = {"preferred", "depositary"}
@@ -94,7 +91,7 @@ def _rows(body, *path: str) -> list[dict]:
 
 def _fetch(fetch: Callable, url: str):
     try:
-        return fetch(url, HEADERS, TIMEOUT_S)
+        return fetch(url, HEADERS)
     except Exception as exc:  # any transport failure is the same outcome
         raise ListingUnavailable(f"fetch failed for {url}: {exc!r}") from exc
 

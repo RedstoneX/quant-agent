@@ -13,18 +13,17 @@ def _load(name):
     return json.loads((FIX / name).read_text())
 
 
-def _fetch(url, headers, timeout_s):
+def _fetch(url, headers):
     assert headers["Accept"] == "application/json" and "Mozilla" in headers["User-Agent"]
-    assert timeout_s == nl.TIMEOUT_S
     return _load("stocks.json") if url == nl.STOCKS_URL else _load("etf.json")
 
 
 def test_parse_counts_and_one_call_per_endpoint():
     calls = []
 
-    def fetch(url, headers, timeout_s):
+    def fetch(url, headers):
         calls.append(url)
-        return _fetch(url, headers, timeout_s)
+        return _fetch(url, headers)
 
     listing = nl.load_listing(fetch=fetch)
     assert len(listing) == 7 and sorted(calls) == sorted([nl.STOCKS_URL, nl.FUNDS_URL])
@@ -56,7 +55,7 @@ def test_etfs_are_funds_with_unknown_category():
 
 
 def test_fetch_failure_raises():
-    def boom(url, headers, timeout_s):
+    def boom(url, headers):
         raise TimeoutError("slow")
 
     with pytest.raises(nl.ListingUnavailable):
@@ -64,7 +63,7 @@ def test_fetch_failure_raises():
 
 
 def test_second_endpoint_failure_raises():
-    def half(url, headers, timeout_s):
+    def half(url, headers):
         if url == nl.FUNDS_URL:
             raise OSError("500")
         return _load("stocks.json")
@@ -76,4 +75,4 @@ def test_second_endpoint_failure_raises():
 @pytest.mark.parametrize("body", [{"data": {"rows": []}}, {"data": None}, "garbage", []])
 def test_empty_or_bad_rows_raise(body):
     with pytest.raises(nl.ListingUnavailable):
-        nl.load_listing(fetch=lambda u, h, t: body)
+        nl.load_listing(fetch=lambda u, h: body)
