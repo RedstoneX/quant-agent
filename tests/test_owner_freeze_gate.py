@@ -124,11 +124,21 @@ def test_unreadable_flag_blocks_entry_but_allows_exit(tmp_path, monkeypatch):
         Path(f"{p}.owner_flags.json").unlink(missing_ok=True)
 
 
-def test_unreadable_position_is_treated_as_an_entry(frozen_db):
+def test_unreadable_position_refuses_entry_but_allows_exit(frozen_db):
     d, calls = _door({})
     type(d).get_positions = lambda self: (_ for _ in ()).throw(RuntimeError("broker down"))
-    assert _halted(d.submit_order(symbol="XYZ", qty=1, side="sell"))
-    assert not calls
+    refused = d.submit_order(symbol="XYZ", qty=1, side="buy")
+    assert _halted(refused) and refused["reason"].startswith("positions_unreadable")
+    assert d.close_position("XYZ") == "THROUGH"  # exits need no position read
+    assert d.replace_stop_loss("XYZ", 9.0) == "THROUGH"
+    assert calls == ["close_position", "replace_stop_loss"]
+
+
+def test_fractional_quantities_compare_exactly(frozen_db):
+    d, calls = _door({"XYZ": 0.3})
+    assert d.submit_order(symbol="XYZ", qty=0.1 + 0.2, side="sell") != "THROUGH"  # 0.30000000000000004 > held
+    assert d.submit_order(symbol="XYZ", qty=0.3, side="sell") == "THROUGH"
+    assert calls == ["submit_order"]
 
 
 def test_not_frozen_lets_entries_through(frozen_db):

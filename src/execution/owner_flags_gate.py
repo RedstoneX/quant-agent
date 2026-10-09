@@ -45,6 +45,7 @@ names (PAUSE / RESUME, `paused`) so existing intent rows replay unchanged.
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
+from decimal import Decimal, InvalidOperation
 
 from src import owner_flags
 
@@ -65,7 +66,6 @@ WRITE_PREFIXES = (
 FREEZE_BLOCKS = frozenset({"replace_entry_limit"})
 #: Judged per order against the held position: entry refused, exit allowed.
 FREEZE_JUDGES = frozenset({"submit_order"})
-_QTY_EPS = 1e-9
 _HALT = lambda why: {"id": None, "status": "owner_flag_halted", "reason": why}  # noqa: E731
 
 # method -> the value returned in place of the call when it is refused
@@ -143,27 +143,35 @@ def _order_terms(args, kwargs):
     """(symbol, qty, side) of a `submit_order` call, or None if unreadable."""
     try:
         symbol = kwargs["symbol"] if "symbol" in kwargs else args[0]
-        qty = float(kwargs["qty"] if "qty" in kwargs else args[1])
+        qty = Decimal(str(kwargs["qty"] if "qty" in kwargs else args[1]))
         side = str(kwargs["side"] if "side" in kwargs else args[2]).lower()
-    except (IndexError, KeyError, TypeError, ValueError):
+    except (IndexError, KeyError, TypeError, ValueError, InvalidOperation):
         return None
-    if not isinstance(symbol, str) or not qty > 0:
+    if not isinstance(symbol, str) or not qty.is_finite() or not qty > 0:
         return None
     return symbol, qty, side
 
 
-def _held_qty(broker, symbol):
-    """Signed quantity held in `symbol` (0.0 if none), or None if unreadable."""
+class PositionsUnreadable(RuntimeError):
+    """The broker position read failed, so entry vs exit cannot be told."""
+
+
+def _held_qty(broker, symbol) -> Decimal:
+    """Signed quantity held in `symbol` (0 if none), compared exactly as Decimal.
+
+    Raises PositionsUnreadable when the broker read fails; `_verdict` turns
+    that into a refusal ("positions_unreadable").
+    """
     want = symbol.strip().upper().replace("/", "")
     try:
-        total = 0.0
-        for p in broker.get_positions():
-            if str(p.symbol).strip().upper().replace("/", "") == want:
-                total += float(p.qty)
-        return total
-    except Exception as exc:  # noqa: BLE001 - cannot tell: the caller treats it as an entry
-        logger.error("freeze gate cannot read positions (%s): treating the order as an entry", exc)
-        return None
+        positions = list(broker.get_positions())
+    except Exception as exc:  # noqa: BLE001 - re-raised as a named failure, never swallowed
+        raise PositionsUnreadable(f"{type(exc).__name__}: {exc}") from exc
+    total = Decimal(0)
+    for p in positions:
+        if str(p.symbol).strip().upper().replace("/", "") == want:
+            total += Decimal(str(p.qty))
+    return total
 
 
 def is_entry(broker, name, args, kwargs) -> bool:
@@ -179,11 +187,9 @@ def is_entry(broker, name, args, kwargs) -> bool:
     if side not in ("buy", "sell"):
         return True  # sell_short (and anything unrecognised) opens or adds
     held = _held_qty(broker, symbol)
-    if held is None:
-        return True
     if side == "sell":
-        return not (held > 0 and qty <= held + _QTY_EPS)
-    return not (held < 0 and qty <= -held + _QTY_EPS)
+        return not (held > 0 and qty <= held)
+    return not (held < 0 and qty <= -held)
 
 
 def _verdict(name, broker=None, args=(), kwargs=None):
@@ -196,12 +202,16 @@ def _verdict(name, broker=None, args=(), kwargs=None):
     if flags.unknown:
         unknown_flag_state_calls += 1
         logger.error("desk running on an UNKNOWN owner-flag state (%s)", name)
-        if is_entry(broker, name, args, kwargs):
-            return "owner Freeze flag unreadable: treated as frozen, no new exposure"
+        why = "owner Freeze flag unreadable: treated as frozen, no new exposure"
+    elif flags.frozen:
+        why = "desk is frozen by the owner: no new exposure"
+    else:
         return None
-    if flags.frozen and is_entry(broker, name, args, kwargs):
-        return "desk is frozen by the owner: no new exposure"
-    return None
+    try:
+        return why if is_entry(broker, name, args, kwargs) else None
+    except PositionsUnreadable as exc:
+        logger.error("freeze gate refused %s: positions_unreadable (%s)", name, exc)
+        return f"positions_unreadable: {why}"
 
 
 def _wrap(name, orig):
