@@ -28,9 +28,10 @@ whose quantity exceeds the long freshly read from the broker is refused with a
 per-symbol `oversell_refused` reason. A short is only ever opened with
 `sell_short`, so a plain sell bigger than the long is never legitimate -- it is
 an exit sized from a stale read (e.g. the resting stop filled in between) and
-would open a short. Both sides are compared as Decimal quantized to 9 dp (the
-broker's quantity precision), so float noise such as 0.1+0.2 against 0.3 held
-is not an oversell. Each refusal is recorded per symbol as a guarded pass
+would open a short. Both door rules (freeze and oversell) compare quantities as
+Decimal quantized to 9 dp (the broker's quantity precision, one shared helper),
+so float noise such as 0.1+0.2 against 0.3 held is neither an oversell nor a flip.
+Each refusal is recorded per symbol as a guarded pass
 (`owner_flags_gate.oversell_refused` / `.positions_unreadable`); a failed
 position read refuses the sell as `positions_unreadable`, the freeze's rule.
 
@@ -150,11 +151,20 @@ def _note_state(unknown: bool, name: str) -> None:
         record_guarded_pass(NO_LEDGER, "owner_flags_gate.unknown_state_recorder", exc)
 
 
+#: The broker's quantity precision (Alpaca: 9 decimal places).
+QTY_QUANTUM = Decimal("1e-9")
+
+
+def _at_broker_precision(q: Decimal) -> Decimal:
+    """The ONE precision both door rules (freeze and oversell) compare at."""
+    return q.quantize(QTY_QUANTUM, rounding=ROUND_HALF_EVEN)
+
+
 def _order_terms(args, kwargs):
     """(symbol, qty, side) of a `submit_order` call, or None if unreadable."""
     try:
         symbol = kwargs["symbol"] if "symbol" in kwargs else args[0]
-        qty = Decimal(str(kwargs["qty"] if "qty" in kwargs else args[1]))
+        qty = _at_broker_precision(Decimal(str(kwargs["qty"] if "qty" in kwargs else args[1])))
         side = str(kwargs["side"] if "side" in kwargs else args[2]).lower()
     except (IndexError, KeyError, TypeError, ValueError, InvalidOperation):
         return None
@@ -168,7 +178,7 @@ class PositionsUnreadable(RuntimeError):
 
 
 def _held_qty(broker, symbol) -> Decimal:
-    """Signed quantity held in `symbol` (0 if none), compared exactly as Decimal.
+    """Signed quantity held in `symbol` (0 if none), as Decimal at the broker's 9 dp precision.
 
     Raises PositionsUnreadable when the broker read fails; `_verdict` turns
     that into a refusal ("positions_unreadable").
@@ -182,7 +192,7 @@ def _held_qty(broker, symbol) -> Decimal:
     for p in positions:
         if str(p.symbol).strip().upper().replace("/", "") == want:
             total += Decimal(str(p.qty))
-    return total
+    return _at_broker_precision(total)
 
 
 def is_entry(broker, name, args, kwargs) -> bool:
@@ -201,14 +211,6 @@ def is_entry(broker, name, args, kwargs) -> bool:
     if side == "sell":
         return not (held > 0 and qty <= held)
     return not (held < 0 and qty <= -held)
-
-
-#: The broker's quantity precision (Alpaca: 9 decimal places).
-QTY_QUANTUM = Decimal("1e-9")
-
-
-def _at_broker_precision(q: Decimal) -> Decimal:
-    return q.quantize(QTY_QUANTUM, rounding=ROUND_HALF_EVEN)
 
 
 class DoorRefusal(RuntimeError):
@@ -236,7 +238,7 @@ def oversell_reason(broker, name, args, kwargs):
     if terms is None or terms[2] != "sell":
         return None
     symbol, qty, _side = terms
-    qty, held = _at_broker_precision(qty), _at_broker_precision(_held_qty(broker, symbol))
+    held = _held_qty(broker, symbol)
     if qty <= held:
         return None
     return (
