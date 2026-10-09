@@ -1,0 +1,98 @@
+"""FREEZE step 2: resting exposure-adding orders are cancelled; exits and stops never are."""
+
+from types import SimpleNamespace as NS
+
+from src.execution import freeze_cancel as fc
+
+
+class FakeBroker:
+    def __init__(self, positions, orders, positions_error=None):
+        self._positions = positions
+        self._positions_error = positions_error
+        self.cancelled = []
+        self.client = NS(get_orders=lambda filter=None: list(orders))
+
+    def get_positions(self):
+        if self._positions_error:
+            raise self._positions_error
+        return self._positions
+
+    def cancel_entry_order(self, order_id):
+        self.cancelled.append(order_id)
+        return True
+
+
+def _pos(symbol, qty):
+    return NS(symbol=symbol, qty=qty)
+
+
+def _order(oid, symbol, side, qty, order_type="limit", filled="0"):
+    return NS(id=oid, symbol=symbol, side=NS(value=side), qty=qty, filled_qty=filled, order_type=NS(value=order_type))
+
+
+def test_resting_long_entry_cancelled():
+    broker = FakeBroker([], [_order("e1", "AAPL", "buy", "10"), _order("e2", "MSFT", "buy", "5", "stop")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == ["e1", "e2"]
+    assert res.cancelled == ["e1", "e2"] and res.ok
+
+
+def test_add_to_long_cancelled_but_protective_stop_kept():
+    broker = FakeBroker(
+        [_pos("AAPL", "10")],
+        [_order("stop", "AAPL", "sell", "10", "stop"), _order("add", "AAPL", "buy", "3")],
+    )
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == ["add"]
+    assert res.kept == ["stop"]
+
+
+def test_partial_close_sell_kept():
+    broker = FakeBroker([_pos("AAPL", "10")], [_order("trim", "AAPL", "sell", "4")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == [] and res.kept == ["trim"] and res.ok
+
+
+def test_short_cover_buy_kept_and_short_entry_cancelled():
+    broker = FakeBroker(
+        [_pos("TSLA", "-8")],
+        [
+            _order("cover", "TSLA", "buy", "8", "stop"),
+            _order("more_short", "TSLA", "sell", "2"),
+            _order("new_short", "NVDA", "sell_short", "1"),
+        ],
+    )
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == ["more_short", "new_short"]
+    assert res.kept == ["cover"]
+
+
+def test_positions_unreadable_cancels_nothing_and_names_fault():
+    broker = FakeBroker(None, [_order("e1", "AAPL", "buy", "10")], positions_error=ConnectionError("down"))
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == []
+    assert [f[0] for f in res.faults] == [fc.POSITIONS_UNREADABLE]
+    assert not res.ok
+
+
+def test_oversized_stop_kept_with_named_fault():
+    # Stop left at 10 after a partial close to 6: cancelling it would strip protection.
+    broker = FakeBroker([_pos("AAPL", "6")], [_order("stop", "AAPL", "sell", "10", "stop")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == []
+    assert res.faults == [(fc.OVERSIZED_EXIT, "stop")]
+
+
+def test_exact_decimal_partial_fill_uses_remaining_qty():
+    # 0.3 ordered, 0.1 filled: 0.2 remaining <= 0.2 held -> exit, kept (float would misjudge).
+    broker = FakeBroker([_pos("BTC/USD", "0.2")], [_order("x", "BTCUSD", "sell", "0.3", filled="0.1")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == [] and res.ok
+
+
+def test_sweep_runs_only_when_frozen_or_unknown(monkeypatch):
+    broker = FakeBroker([], [_order("e1", "AAPL", "buy", "1")])
+    monkeypatch.setattr(fc.owner_flags, "read_flags", lambda db: fc.owner_flags.Flags(paused=False))
+    assert fc.sweep_if_frozen(broker, "db") is None and broker.cancelled == []
+    monkeypatch.setattr(fc.owner_flags, "read_flags", lambda db: fc.owner_flags.Flags(unknown=True))
+    assert fc.sweep_if_frozen(broker, "db").cancelled == ["e1"]
