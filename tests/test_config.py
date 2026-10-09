@@ -476,7 +476,6 @@ def test_risk_config_rejects_position_and_sector_bound_violations():
         base = dict(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
         )
         base.update(overrides)
@@ -486,10 +485,6 @@ def test_risk_config_rejects_position_and_sector_bound_violations():
         RiskConfig(**kw(max_position_pct=0))
     with pytest.raises(ValueError):
         RiskConfig(**kw(max_position_pct=150))
-    with pytest.raises(ValueError):
-        RiskConfig(**kw(max_sector_pct=0))
-    with pytest.raises(ValueError):
-        RiskConfig(**kw(max_sector_pct=200))
     with pytest.raises(ValueError):
         RiskConfig(**kw(max_total_position_pct=0))
     # 150% total exposure is legal when allow_margin=true (just the
@@ -1126,7 +1121,6 @@ def _live_risk_kwargs(**overrides):
     base = dict(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_sector_pct=40,
         require_stop_loss=True,
     )
     base.update(overrides)

@@ -191,8 +191,8 @@ class RiskGate:
                 logger.warning("Hard risk block for %s %s: %s", decision.action, decision.symbol, "; ".join(messages))
                 # sector_unresolved_* is advisory (never in HARD_BLOCK_RULES)
                 # but must stay visible even when THIS decision is blocked
-                # for a different reason (e.g. the pooled "Unknown" bucket
-                # itself tripping max_sector_hard_pct) — the whole point is
+                # for a different reason (e.g. the single-name or gross
+                # cap) — the whole point is
                 # that an unresolved sector must never go quiet, and the
                 # loop `continue`s past the ordinary remaining_violations
                 # .extend below for a blocked decision.

@@ -79,7 +79,6 @@ def _sweep_pipeline(enabled=True, min_order_usd=500.0):
         risk=RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
             allow_margin=False,
         ),

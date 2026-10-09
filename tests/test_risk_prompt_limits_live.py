@@ -101,7 +101,6 @@ from src.pipeline import build_constructor_config, build_risk_config
 WIRED_SETTINGS = (
     "max_position_pct",
     "max_total_position_pct",
-    "max_sector_pct",
     # `effective_max_daily_loss_pct` was here until 2026-09-20. The sheet no
     # longer states that limit because the limit no longer exists: the
     # account-level daily-loss halt was removed entirely on the owner's
@@ -119,7 +118,6 @@ PM_WIRED_SETTINGS = (
     "min_position_risk_pct",
     "max_portfolio_risk_pct",
     "max_cluster_risk_share_pct",
-    "max_sector_pct",
     "max_gross_exposure_x",
 )
 
@@ -439,10 +437,10 @@ def test_a_null_optional_setting_is_refused_rather_than_blanked():
     builds the unset case rather than reading it off settings.yaml. The
     refusal is the behaviour under test, not which field happens to be
     optional."""
-    cfg = _live_risk_config().model_copy(update={"max_sector_hard_pct": None})
-    assert cfg.max_sector_hard_pct is None
+    cfg = _live_risk_config().model_copy(update={"max_position_pct": None})
+    assert cfg.max_position_pct is None
     with pytest.raises(PromptPlaceholderError) as exc:
-        resolve_placeholder("risk.max_sector_hard_pct", cfg)
+        resolve_placeholder("risk.max_position_pct", cfg)
     assert "None" in str(exc.value)
 
 

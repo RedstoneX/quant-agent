@@ -51,7 +51,6 @@ def _risk_config(**overrides) -> RiskConfig:
     fields = dict(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_sector_pct=40,
         require_stop_loss=True,
     )
     fields.update(overrides)

@@ -159,7 +159,6 @@ class RiskLimits(BaseModel):
 
     max_position_pct: float | None = None
     max_total_position_pct: float | None = None
-    max_sector_pct: float | None = None
     # Spec §11.2. The STANDING gross-exposure cap as a multiple of equity
     # (long market value + absolute short market value, cash park excluded).
     # Distinct from max_total_position_pct, which bounds NET exposure — a

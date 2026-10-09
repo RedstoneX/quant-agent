@@ -125,7 +125,6 @@ def test_correlation_cluster_advisory_fires():
         RiskConfig(
             max_position_pct=30,
             max_total_position_pct=95,
-            max_sector_pct=90,
             require_stop_loss=True,
         )
     )
@@ -199,7 +198,6 @@ def test_correlation_cluster_uses_gross_multiplier_for_leveraged_etfs():
         RiskConfig(
             max_position_pct=80,
             max_total_position_pct=300,
-            max_sector_pct=90,
             require_stop_loss=True,
         )
     )
@@ -281,7 +279,6 @@ def test_correlation_cluster_silent_when_below_threshold():
         RiskConfig(
             max_position_pct=30,
             max_total_position_pct=95,
-            max_sector_pct=90,
             require_stop_loss=True,
         )
     )

@@ -625,65 +625,6 @@ numbers:
     cost_while_unanswered: >-
       As above, plus the cap interacts with the per-seat cap in a way nothing
       measures.
-  - id: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
-    value: 90
-    status: arbitrary
-    site: src/config/__init__.py
-    note: >-
-      The terminal bound on the sector ceiling, deciding when a sector stops
-      accepting new risk. The definition site records that this was NOT in the
-      ratified §12.3 text ("90 was chosen when §12.3 was built and is open for
-      the owner to move"); as of 2026-09-25 it IS owner-ratified appetite
-      (delegated to the adversary), value unchanged. Ratified, not sourced: no
-      measurement picks 90 over any other terminal cap.
-      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
-      is never a global dial and re-affirmed as OUT of its scope. This is an
-      AGGREGATE rationing ceiling over the whole book, not a per-name risk
-      read: there is no single instrument whose behaviour it could be read
-      off, so the ruling's remedy (read it per name) does not apply and it is
-      not converted into a defect. It remains owner-ratified appetite with no
-      measurement behind it, which is why the status stays `arbitrary`.
-    open_question: >-
-      NOT AN OWNER QUESTION ANY MORE. Under the owner's 2026-09-30 ruling that
-      risk is never a global dial, the appetite question previously routed
-      here ("what terminal sector concentration does the owner accept") is
-      WITHDRAWN, not pending. ITEM 186 PASS 2026-10-01, and BOTH derivation
-      attempts failed. (1) THE ALGEBRA CANCELS: this is already a cap ON a
-      derivation — the live ceiling is min(1.5 x `max_sector_pct`, 90), so
-      deriving the 90 reduces to deriving either the 1.5 multiplier or the
-      §12.3 target of 75 it multiplies, both of which are themselves
-      unsourced. The chain never reaches a measured quantity. (2) NO
-      RECORDING: the desk stores sector only on the current-position
-      snapshot, so there is no series of realised sector concentration.
-      MEASURED 2026-10-01 off the production database, as one observation and
-      not a distribution: across the 11 open positions the largest sector
-      share of gross market value is 44.3% (Technology), 30.5% Industrials,
-      20.0% Communication Services — the terminal 90 was not within 45
-      points of binding, and nothing records whether it ever has been.
-    cost_while_unanswered: >-
-      A concentrated sector book is capped at a number the spec never set
-      (src/config/__init__.py::RiskConfig says 90 was chosen when section 12.3 was built and
-      is open for the owner to move).
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/board_notes/ (item 186, the 2026-10-01 pass)
-      records: >-
-        each session's sector shares of gross notional with the session date,
-        so concentration becomes a series rather than whatever the book
-        happens to look like the day somebody asks
-      closes_when: >-
-        a run of sessions shows the realised maximum sector share, so the
-        terminal bound is set above observed behaviour with the observation
-        named, instead of being a number the spec never stated
-  - id: src.config.RiskConfig.SECTOR_HARD_MULTIPLE
-    value: 1.5
-    status: sourced
-    site: src/config/__init__.py
-    source: >-
-      docs/QAMC_REMEDIATION_SPEC.md section 10.3, ratified: the hard sector
-      ceiling is defined there as a multiple of the sector target. Definition
-      site: src/config/__init__.py::RiskConfig. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
     settles_by:
       kind: measurement
@@ -1126,7 +1067,7 @@ numbers:
       that a global risk constant is a defect rather than a value to ratify.
       That ruling was already applied to the two neighbouring aggregate rows
       -- `src.config.RiskConfig.max_portfolio_risk_pct` and
-      `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX` both carry an "ITEM 186
+      the sector hard ceiling (deleted 2026-10-09) both carried an "ITEM 186
       PASS 2026-09-30" paragraph withdrawing their owner questions -- and it
       was not applied here, which is how this row kept routing the one
       question the ruling forbids. UNLIKE those two it is NOT exempt as an
@@ -3292,68 +3233,6 @@ numbers:
         and no tolerance chosen. The per-name reading of the same gap history is the
         build item 186 names and supersedes this pooled bound once it exists. Until a
         measured figure is written down the desk pays a round 65 nobody derived
-  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
-    value: 90
-    status: derived
-    site: src/portfolio_constructor/config.py
-    derived_from: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
-    base_value: 90
-    note: >-
-      NOT A SECOND NUMBER. 2026-10-02: this field is overwritten on every
-      live run. `build_constructor_config` sets
-      `max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct`
-      (src/pipeline_config_build.py::build_constructor_config), and `sector_hard_ceiling_pct`
-      (src/config/__init__.py::RiskConfig.sector_hard_ceiling_pct) returns
-      `min(100.0, max(max_sector_pct, min(SECTOR_HARD_CEILING_MAX,
-      max_sector_pct * SECTOR_HARD_MULTIPLE)))`. With the deployed
-      `max_sector_pct` of 75 and `SECTOR_HARD_MULTIPLE` of 1.5 the inner
-      product is 112.5, so the cap binds and the live value is exactly
-      `SECTOR_HARD_CEILING_MAX` = 90. The literal here is the fallback for a
-      `ConstructorConfig` built without the pipeline (the backtest engine,
-      src/backtest/engine.py), and it is the same ceiling, not an
-      independently chosen one. Recorded as `derived` so that moving the base
-      without moving this fails `base-drift` instead of leaving two ceilings
-      that silently disagree -- which is the state
-      `src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)` is
-      still in and is the reason the mirror rule exists. The open question
-      about the MAGNITUDE of 90 is not answered here and has not moved: it
-      lives on the base row, `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX`,
-      which stays `arbitrary` with its settlement route.
-  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
-    value: 75
-    status: arbitrary
-    site: src/portfolio_constructor/config.py
-    note: >-
-      The soft sector target and the hard sector ceiling. Owner-accepted
-      figures with no measurement behind either; approval does not make a flat
-      percent non-arbitrary (docs/OUTCOME.md). Board item 104 separately
-      records that the prompts describe the soft bound as if it were the hard
-      one.
-    open_question: >-
-      And the soft sector target - what concentration is the desk aiming at,
-      on survival rather than portfolio-construction grounds?
-    cost_while_unanswered: >-
-      A diversification-shaped number on a desk whose mandate explicitly
-      rejects diversification as a goal.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
-      records: >-
-        the common component of same-sector drawdown in the eligible universe: for
-        each sector, the size of the simultaneous adverse move across its names on
-        the worst days of a stated window, read off public daily bars. This measures
-        whether a sector share behaves as one position or as several, which is the
-        only survival-grounded reason this desk -- which rejects diversification as
-        a goal -- would cap a sector at all
-      closes_when: >-
-        the measurement shows the sector share at which a one-day sector shock
-        reaches the same single-name tolerance the max_position_pct route elicits;
-        the soft target is set there and the ceiling behind it follows from the same
-        number. If same-sector names do not move together enough for any share to
-        reach that tolerance, the soft target is DELETED rather than re-picked,
-        because then it is a diversification number the mandate does not want. Board
-        item 104 separately owns the prompt wording defect
   - id: src.portfolio_constructor.config.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived

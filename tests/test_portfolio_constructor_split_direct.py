@@ -44,19 +44,6 @@ def test_sector_dial_weights_and_accrual(monkeypatch):
     assert "B" not in seen
 
 
-def test_sector_dial_leaves_an_unresolved_sector_alone(monkeypatch):
-    monkeypatch.setattr("src.sector_reference._get_sector", lambda sym: "Unknown")
-    out = sector_dial._apply_sector_dial(
-        ConstructorConfig(),
-        lambda *a, **k: None,
-        "ZZZ",
-        4.0,
-        sector_weights={},
-        total_value=1000.0,
-    )
-    assert out == (4.0, "")
-
-
 def test_target_derivation_without_analysis_is_a_named_data_fault():
     faults = []
     derivation = target_derivation._derive_target(

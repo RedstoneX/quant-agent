@@ -310,7 +310,7 @@ def _findings(*rules):
 
 
 def test_an_advisory_does_not_render_as_a_violation():
-    text = _findings("max_sector_pct")
+    text = _findings("correlation_cluster")
     assert "VIOLATION" not in text
     assert "ADVISORY" in text
     assert "NO order was blocked" in text
@@ -322,22 +322,8 @@ def test_a_hard_limit_still_reads_as_a_breach_the_engine_enforced():
     assert "ALREADY REFUSED" in text
 
 
-def test_the_class_is_read_from_the_rule_set_never_from_the_rule_name():
-    """`max_sector_pct` and `max_sector_hard_pct` differ by one word and sit
-    on opposite sides of the line. A name-based split gets this wrong."""
-    from src.risk.rules import HARD_BLOCK_RULES
-
-    assert "max_sector_pct" not in HARD_BLOCK_RULES
-    assert "max_sector_hard_pct" in HARD_BLOCK_RULES
-    soft = _findings("max_sector_pct")
-    hard = _findings("max_sector_hard_pct")
-    assert "ADVISORY (nothing blocked) [max_sector_pct]" in soft
-    assert "HARD LIMIT BREACHED [max_sector_hard_pct]" in hard
-
-
 def test_a_hard_limit_can_never_rank_below_an_advisory():
     text = _findings(
-        "max_sector_pct",
         "correlation_cluster",
         "data_degraded",
         "max_position_pct",
@@ -362,7 +348,6 @@ def test_every_advisory_the_pipeline_can_raise_renders_as_an_advisory():
     """Whatever new non-blocking rule a future change adds, it classifies
     correctly for free — membership of HARD_BLOCK_RULES is the only test."""
     for rule in (
-        "max_sector_pct",
         "correlation_cluster",
         "deployment_gap",
         "data_degraded",

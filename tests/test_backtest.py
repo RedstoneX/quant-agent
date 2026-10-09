@@ -66,7 +66,6 @@ def _risk_config(**overrides) -> SimpleNamespace:
     fields = dict(
         max_position_pct=100.0,
         max_total_position_pct=100.0,
-        max_sector_pct=100.0,
         require_stop_loss=True,
         max_portfolio_risk_pct=25.0,
         max_position_risk_pct=5.0,

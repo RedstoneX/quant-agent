@@ -181,7 +181,6 @@ def _cfg(**kw) -> RiskConfig:
     base = dict(
         max_position_pct=20.0,
         max_total_position_pct=90.0,
-        max_sector_pct=40.0,
         require_stop_loss=True,
         allow_margin=False,
     )

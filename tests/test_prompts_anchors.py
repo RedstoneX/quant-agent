@@ -59,30 +59,6 @@ _HARD_ANCHORS = (
         "derivation; see settings.yaml) and HARD_BLOCK_RULES['max_position_pct']",
     ),
     (
-        # Spec §12.3 (owner-ratified 2026-09-01) moved the sector limit
-        # 40 -> 75. The old "40%" anchor was NOT simply retargeted: 40% still
-        # appears in the prompt twice for unrelated mechanisms (the
-        # 40%-per-correlated-cluster risk budget, and the "R/R 1.5 breaks even
-        # at a 40% hit rate" arithmetic), so an anchor on the bare string
-        # would have passed while the sector number was wrong. Anchor the
-        # sector figure by its own phrase instead.
-        # RETARGETED 2026-09-13 for the same reason as the cap above, and it
-        # also fixes the weakness this entry's own comment describes: "75%"
-        # was a bare string that other, unrelated mechanisms could satisfy.
-        # The placeholder cannot be satisfied by accident.
-        "portfolio_manager.md",
-        "{{risk.max_sector_pct}}%",
-        "sector cap is RENDERED from RiskConfig.max_sector_pct (spec §12.3) + HARD_BLOCK_RULES['max_sector_hard_pct']",
-    ),
-    (
-        "portfolio_manager.md",
-        "sector notional PER SIDE",
-        "spec §12.2 — long and short sector exposure are separate budgets "
-        "against the same limit and must never be netted; the prompt has to "
-        "say PER SIDE or the PM reasons about a book the engine does not "
-        "enforce",
-    ),
-    (
         "portfolio_manager.md",
         "JUST FILED",
         "the queued-earnings tag that REFUSES the BUY — the 5% weight cap "

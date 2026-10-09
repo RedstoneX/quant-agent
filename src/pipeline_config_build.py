@@ -60,16 +60,6 @@ def build_risk_config(config) -> RiskConfig:
             getattr(config.risk, "max_position_risk_pct", None),
             5.0,
         ),
-        max_sector_pct=config.risk.max_sector_pct,
-        # Spec §10.3 — the absolute ceiling behind the sector dial.
-        # Read through the same MagicMock guard `_risk_setting` applies
-        # below (many tests build the pipeline against a mock config, and
-        # a child mock coerces to 1.0, which would trip the "ceiling must
-        # sit above the target" validator with a number nobody chose).
-        # `None` means "derive 1.5x the target", which RiskConfig does.
-        max_sector_hard_pct=_optional_risk_number(
-            getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
-        ),
         require_stop_loss=config.risk.require_stop_loss,
         # Codex r11 P2: previously omitted, defaulting to False even
         # when settings.yaml said True. Prompts + force_delever read
@@ -190,14 +180,6 @@ def build_constructor_config(config, risk_engine_config):
         # constructor sizes under the ceiling rather than proposing orders
         # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
         max_position_pct=_risk_setting("max_position_pct", 65.0),
-        # Spec §10.3 "concentration scales size". Read back off the risk
-        # ENGINE's own resolved config rather than re-derived from
-        # settings, so the number the constructor shrinks against is
-        # provably the identical number the engine will enforce — the
-        # drift `max_position_pct`'s "keep in sync" comment can only ask
-        # for, this one gets structurally.
-        max_sector_pct=risk_engine_config.max_sector_pct,
-        max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
         # No `min_order_usd`: board item 183 deleted
         # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
         # constructor read it — the one call that forwarded it reached an

@@ -64,8 +64,6 @@ tests/test_rotation_execute.py
 tests/test_scale_in.py
 tests/test_seat_heal.py
 tests/test_seat_heal_wiring.py
-tests/test_sector_cap_unresolved.py
-tests/test_sector_dial.py
 tests/test_shorts_countable.py
 tests/test_shorts_emergency_close.py
 tests/test_shorts_safe.py

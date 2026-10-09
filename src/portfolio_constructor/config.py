@@ -551,11 +551,8 @@ STOP_REFUSAL_NO_STRUCTURAL_TARGET = "no_structural_target"
 #: it measured does not pay for this direction.
 STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY = "target_not_above_entry"
 STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY = "target_not_below_entry"
-#: §10.3's two sector-crowding refusals. The dial normally SHRINKS a trade;
-#: these are the two ends where it has nothing left to shrink to. Both
-#: already logged a sentence the regex happened to match, which is how they
-#: escaped the first pass — a matched sentence is still not a code.
-STOP_REFUSAL_SECTOR_AT_HARD_CEILING = "sector_at_absolute_ceiling"
+#: Retired sector-crowding refusal; never raised since 2026-09-24 and the dial
+#: itself was deleted 2026-10-09. Kept so historical log rows still decode.
 STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER = "sector_crowding_leaves_below_min_order"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
@@ -711,19 +708,6 @@ class ConstructorConfig:
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
     max_position_pct: float = 65.0
-    # Spec §10.3 "concentration scales size, it does not veto". The sector
-    # diversification target and the absolute ceiling behind it. Unlike every
-    # other ceiling in this dataclass these do not merely make the constructor
-    # size UNDER a hard block — between the two the block no longer exists at
-    # all, and this is the only place the shrinking happens. See
-    # `src/risk/rules.py::sector_size_scale` for the dial and the reasoning
-    # behind the ceiling. Kept in sync with `risk.max_sector_pct` /
-    # `risk.max_sector_hard_pct` — pipeline.py wires them from the same
-    # settings the risk engine reads; these defaults exist only for callers
-    # that construct a `ConstructorConfig` directly. Spec §12.3 moved them
-    # 40 -> 75 and 60 -> 90.
-    max_sector_pct: float = 75.0
-    max_sector_hard_pct: float = 90.0
     # NO LONGER used to reject a sector-crowded trade for being small (fixed
     # 2026-09-24: a genuine ~$295 / 2.95%-of-equity MRVL trade was refused
     # here as "under the $500 minimum order ... pays full commission" — the

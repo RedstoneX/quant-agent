@@ -744,9 +744,7 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
     ledger = load_ledger()
     ceilings = (
         "src.config.RiskConfig.max_portfolio_risk_pct",
-        "src.config.RiskConfig.SECTOR_HARD_CEILING_MAX",
         "src.config.RiskConfig.max_cluster_risk_share_pct",
-        "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
     )
     for site_id in ceilings:
         if (entry := ledger[site_id])["status"] == "owner-ruled":

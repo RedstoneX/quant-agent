@@ -32,7 +32,6 @@ def _risk_config() -> RiskConfig:
     return RiskConfig(
         max_position_pct=15.0,
         max_total_position_pct=100.0,
-        max_sector_pct=40.0,
         require_stop_loss=True,
     )
 
@@ -495,7 +494,6 @@ def test_invariant_cash_only_no_margin_still_enforced_on_deployable_cash():
     cfg = RiskConfig(
         max_position_pct=100.0,
         max_total_position_pct=100.0,
-        max_sector_pct=100.0,
         require_stop_loss=True,
         allow_margin=False,
     )

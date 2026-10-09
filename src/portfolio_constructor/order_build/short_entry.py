@@ -22,7 +22,6 @@ class ShortEntryBuilder:
         cfg,
         derive_target,
         resolve_entry_and_stop,
-        apply_sector_dial,
         note_refusal,
         shipped_stop_rule,
         shipped_stop_level_basis,
@@ -31,7 +30,6 @@ class ShortEntryBuilder:
         self.cfg = cfg
         self._derive_target = derive_target
         self._resolve_entry_and_stop = resolve_entry_and_stop
-        self._apply_sector_dial = apply_sector_dial
         self._note_refusal = note_refusal
         self.shipped_stop_rule = shipped_stop_rule
         self.shipped_stop_level_basis = shipped_stop_level_basis
@@ -47,7 +45,6 @@ class ShortEntryBuilder:
         market_price: float | None,
         plan: RiskPlan | None = None,
         regime: str | None = None,
-        sector_weights: dict[tuple[str, str], float] | None = None,
     ) -> TradeDecision | None:
         """The BUY-side mirror (Stage 3, D1): open or add to a short.
 
@@ -164,27 +161,6 @@ class ShortEntryBuilder:
                 f"Deterministic, not PM inconsistency]"
             )
             allocation_pct = name_headroom_pct
-
-        # Spec §10.3, identical to `_build_buy`: a short crowds its sector
-        # exactly as a long does, and gets scaled for crowding exactly as a
-        # long does. Spec §12.2 is what differs — the budget it is measured
-        # against is the SHORT side's own, not a shared gross bucket. That is
-        # what keeps a pair trade (long the leader, short the laggard in one
-        # hot sector) legal: two opportunities that share a label, not a hedge
-        # and not one budget.
-        if sector_weights is not None:
-            allocation_pct, sector_note = self._apply_sector_dial(
-                target.symbol,
-                allocation_pct,
-                sector_weights=sector_weights,
-                total_value=total_value,
-                action="SHORT",
-            )
-            cap_note += sector_note
-            if allocation_pct < 0:
-                # drop-reason: delegated — `_apply_sector_dial` files the
-                # refusal, because only it knows which of its two ends fired.
-                return None
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:

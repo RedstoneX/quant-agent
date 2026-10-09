@@ -333,7 +333,6 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
             RiskConfig(
                 max_position_pct=20,
                 max_total_position_pct=90,
-                max_sector_pct=40,
                 require_stop_loss=False,
             )
         ),
@@ -1029,65 +1028,6 @@ def _projection_pipeline(target_pct: float | None = None):
             config=SimpleNamespace(max_sector_pct=target_pct),
         )
     return pipeline
-
-
-def test_projected_portfolio_flags_sector_overweight(tmp_path):
-    """3 Tech BUYs on top of 30% held Tech, and NO projected weight at all.
-
-    REWRITTEN for board item 221. This test used to assert 3 x a FLAT 5%
-    = 45%, which is exactly the defect: no candidate is ever given a flat
-    slice. Each candidate here has entry 100 / stop 95, so its stop-derived
-    size is 5% x 100/5 = 100% of equity, clamped by the 65% single-name
-    ceiling the constructor also clamps to — 30 + 3 x 65 = 225%. The new
-    expectation is right because it is computed from the candidates' own
-    geometry, not chosen.
-
-    The warning threshold comes from `risk.max_sector_pct` (spec §12.3 put
-    it at 75) rather than the hardcoded 35 this preview once carried. Set
-    to 40 here, and asserted through the config so the two cannot drift.
-    """
-    pipeline = _projection_pipeline(target_pct=20.0)
-    # Existing 30% Tech position
-    positions = [
-        Position(
-            symbol="MSFT",
-            qty=10,
-            avg_entry=400,
-            current_price=400,
-            market_value=3000,
-            unrealized_pnl=0,
-            sector="Technology",
-        ),
-    ]
-    with patch("src.execution.broker._get_sector") as mock_get_sector:
-        out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline)
-        )
-    # `invested` is capital at work (unsigned, un-leveraged) and `net
-    # direction` is the signed leverage-aware figure, both from the one
-    # `book_exposure` call. Long-only book, so the two agree at 30%.
-    assert "Current: 30% invested (capital at work)" in out
-    assert "net direction +30%" in out
-    assert "Technology long 30%" in out
-    # The candidate set is described by its SECTOR COMPOSITION, not by a
-    # projected weight.
-    assert (
-        "3 BUY-rated candidate(s) on offer, by sector: Technology 3 of 3 (100% of the candidate set: NVDA, AMD, AAPL)"
-    ) in out
-    # Each name carries its OWN stop distance and stop-implied ceiling.
-    # The stop implies 100%; what is PRINTED is clamped to the 65%
-    # single-name ceiling, because an unreachable number beside a sector
-    # label is an invitation to add up.
-    assert "NVDA stop -5.0% → ≤65%" in out
-    assert "board item\n    222" not in out
-    assert "which limit actually binds is unsettled" in out
-    # And the preview says, in the prompt, that it cannot project a weight.
-    assert "CANNOT tell you what these candidates would weigh" in out
-    # Exactly one invested figure: the measured, held one.
-    assert out.count("invested") == 1
-    assert "over the 20% concentration target" in out
-    assert "Technology (long)" in out
-    mock_get_sector.assert_not_called()
 
 
 def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path):
