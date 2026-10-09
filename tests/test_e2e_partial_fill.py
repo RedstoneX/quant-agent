@@ -172,6 +172,16 @@ def _session(tmp_path, monkeypatch, *, plan=0.4, finish_after=None, book_qty=0.0
         def answers():
             a = real_answers()
             a["portfolio"]["targets"][0]["target_weight_pct"] = target_pct
+            if target_pct == 0.0 and "risk_allocation_pct" in a["portfolio"]["targets"][0]:
+                # A whole-position close (owner ruling 2026-10-09: a held
+                # position is kept whole or sold whole).
+                a["portfolio"]["targets"][0]["risk_allocation_pct"] = 0.0
+            if target_pct == 0.0:
+                # A close against a 'buy' technical read is recorded as a
+                # conflict, as the PM's grounding check requires.
+                for prov in a["portfolio"]["targets"][0].get("provenance") or []:
+                    if prov.get("source") == "technical":
+                        prov["relationship"] = "conflicts"
             return a
 
         monkeypatch.setattr(morning, "_scripted_answers", answers)
@@ -202,7 +212,11 @@ def test_buy_fills_partly_then_cancelled_the_stop_covers_only_the_part(tmp_path,
 
 
 def test_sell_fills_partly_the_smaller_position_keeps_one_correctly_sized_stop(tmp_path, monkeypatch):
-    result, _, trading = _session(tmp_path, monkeypatch, book_qty=60.0, target_pct=3.0)
+    # A WHOLE-position sell that the broker only partly fills. The desk no
+    # longer decides partial sells (owner ruling 2026-10-09), but a partial
+    # FILL of a full sell still leaves shares held, and the stop must be
+    # resized to exactly what is left.
+    result, _, trading = _session(tmp_path, monkeypatch, book_qty=60.0, target_pct=0.0)
     sells = [o for o in trading.submitted if o.side == "sell" and "stop" not in o.order_type]
     assert len(sells) == 1, [o.as_plain() for o in trading.submitted]
     assert sells and 0 < trading._filled[sells[0].order_id] < sells[0].qty
