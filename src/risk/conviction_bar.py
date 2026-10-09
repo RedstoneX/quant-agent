@@ -85,12 +85,51 @@ def _is_broadcast_macro_verdict(v: "AnalystVerdict") -> bool:
     flip broadcasts "macro opposed" onto every held long that has no bullish
     sector row, culling the whole non-price-protected long book on a single
     review and blocking every new entry in any cautious-macro regime. A
-    sector-SPECIFIC bearish macro stance is a genuine name-level opposition and
-    still counts.
+    sector-SPECIFIC bearish macro stance casts one opposing vote, weighed
+    against the name-level seats (`_nontechnical_opposition_reason`) — never a
+    veto on its own (owner mandate 2026-10-09).
     """
     if v.seat != "macro":
         return False
     return not any(str(getattr(ev, "label", "") or "").startswith("sector_stance:") for ev in (v.evidence or []))
+
+
+def _nontechnical_opposition_reason(
+    seat_verdicts: list["AnalystVerdict"],
+    *,
+    aligned: str,
+    opposed: str,
+) -> str | None:
+    """The non-technical opposition test, ONE definition for ENTRY and STAY.
+
+    A name-level seat (news, earnings, smart money) opposed is still an
+    outright block: that is the stock's own evidence pointing the other way.
+
+    A SECTOR-SPECIFIC bearish macro stance is NOT a veto (owner mandate
+    2026-10-09, `docs/OUTCOME.md`: each stock's own behaviour decides; macro
+    is one weighted input, never the decider). It is ONE opposing vote,
+    weighed against the name-level seats (technical and macro excluded) that
+    point the trade's way. Simple majority, no new number: it blocks only
+    when those supporters do not outnumber it. A broadcast macro view
+    (`_is_broadcast_macro_verdict`) casts no vote at all.
+    """
+    name_opposed = sorted(
+        {v.seat for v in seat_verdicts if v.direction == opposed and v.seat not in ("technical", "macro")}
+    )
+    if name_opposed:
+        return f"{OWN_BAR_REASON_PREFIX} — {', '.join(name_opposed)} opposed (mandate: no seat may be opposed)"
+    macro_against = sum(
+        1 for v in seat_verdicts if v.seat == "macro" and v.direction == opposed and not _is_broadcast_macro_verdict(v)
+    )
+    if not macro_against:
+        return None
+    supporters = {v.seat for v in seat_verdicts if v.direction == aligned and v.seat not in ("technical", "macro")}
+    if len(supporters) > macro_against:
+        return None
+    return (
+        f"{OWN_BAR_REASON_PREFIX} — macro opposed (sector stance) and only "
+        f"{len(supporters)} name-level seat(s) support; one vote, not outweighed"
+    )
 
 
 def own_bar_block_reason(
@@ -115,12 +154,12 @@ def own_bar_block_reason(
          name, wrong time". Absence is treated as "cannot confirm", the
          CONSERVATIVE choice: a name with no chart read this review does not get
          the benefit of the doubt on timing.
-      2. NO seat opposed. A single seat pointing the other way fails the name
-         outright — the mandate is "no seat opposed". ONE carve-out
-         (`_is_broadcast_macro_verdict`): a MACRO seat whose direction is the
-         market-wide `equity_outlook` broadcast (no sector-specific stance) is
-         NOT counted as opposition, because a market-wide view is not a
-         name-specific edge; a sector-SPECIFIC bearish macro stance still is.
+      2. NO name-level seat opposed (`_nontechnical_opposition_reason`). A
+         news/earnings/smart-money seat pointing the other way fails the name
+         outright. Macro is never a veto (owner mandate 2026-10-09): a
+         market-wide `equity_outlook` broadcast casts no vote, and a
+         sector-SPECIFIC bearish stance is one opposing vote that blocks only
+         when the name-level supporters do not outnumber it.
       3. At least one NON-technical seat took a SUPPORTED DIRECTIONAL side
          (see `_has_supported_directional_thesis`) — a real directional call
          backed by evidence and an invalidation, not a bare neutral shrug.
@@ -156,15 +195,9 @@ def own_bar_block_reason(
             "chart neutral/broken (right name, wrong time)"
         )
 
-    other_opposed = sorted(
-        {
-            v.seat
-            for v in seat_verdicts
-            if v.direction == opposed and v.seat != "technical" and not _is_broadcast_macro_verdict(v)
-        }
-    )
-    if other_opposed:
-        return f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed (mandate: no seat may be opposed)"
+    opposition = _nontechnical_opposition_reason(seat_verdicts, aligned=aligned, opposed=opposed)
+    if opposition:
+        return opposition
 
     supporting = sorted({v.seat for v in seat_verdicts if _has_supported_directional_thesis(v, aligned)})
     if not supporting:
@@ -245,14 +278,8 @@ def own_bar_opposition_reason(
     if any(v.direction == opposed for v in tech):
         return f"{OWN_BAR_REASON_PREFIX} — technical opposed; chart hostile to the trade (right name, wrong time)"
 
-    other_opposed = sorted(
-        {
-            v.seat
-            for v in seat_verdicts
-            if v.direction == opposed and v.seat != "technical" and not _is_broadcast_macro_verdict(v)
-        }
-    )
-    if other_opposed:
-        return f"{OWN_BAR_REASON_PREFIX} — {', '.join(other_opposed)} opposed (mandate: no seat may be opposed)"
+    opposition = _nontechnical_opposition_reason(seat_verdicts, aligned=aligned, opposed=opposed)
+    if opposition:
+        return opposition
 
     return None
