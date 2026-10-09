@@ -60,6 +60,13 @@ class HoldingBroker:
         if self.holding(excluding) + extra > abs(self.held) + 1e-9:
             raise ApiErr("insufficient qty available for order (held_for_orders)", 403)
 
+    def wash_check(self, side):
+        """Alpaca refuses an order while an OPPOSITE-side order is open on the
+        same symbol (the block src/execution/scale_in.py documents: a resting
+        SELL stop and a new BUY cannot both be working)."""
+        if any(o.side != side and o.status in ("new", "accepted", "pending_cancel") for o in self.orders.values()):
+            raise ApiErr("potential wash trade detected. use complex order", 403)
+
     def rest(self, qty, stop=OLD):
         o = Order(self.new_id(), float(qty), stop, self.closing_side())
         self.hold_check(o.qty)
@@ -110,6 +117,7 @@ class HoldingBroker:
         if self.refuse_submits:
             self.refuse_submits -= 1
             raise ApiErr("422: submit refused", 422)
+        self.wash_check(side)
         self.hold_check(float(qty))
         o = Order(self.new_id(), float(qty), float(stop_price), side)
         self.orders[o.id] = o
@@ -134,6 +142,7 @@ class HoldingBroker:
         """The trim order itself: refused like Alpaca when the shares it would
         shed are still held by a resting stop; otherwise filled at once."""
         self.calls.append(("sell", float(qty), side))
+        self.wash_check(side)
         self.hold_check(float(qty))
         self.held -= float(qty) if self.held > 0 else -float(qty)
         o = Order(self.new_id(), float(qty), 0.0, side)
