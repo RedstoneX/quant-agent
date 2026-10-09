@@ -121,7 +121,7 @@ def ott_run(s):
     for m, lot, q in jobs:
         ott_buy(s, lot + m, q)
     time.sleep(2)
-    th = [threading.Thread(target=sell, args=(s, m, lot, q)) for m, lot, q in jobs]
+    th = [threading.Thread(target=ott_sell, args=(s, m, lot, q)) for m, lot, q in jobs]
     [t.start() for t in th]
     [t.join() for t in th]
 
@@ -137,7 +137,7 @@ def main():
     if not str(a.get("account_number", "")).endswith(suffix):
         raise SystemExit("ABORT account mismatch")
     print("account ok")
-    th = [threading.Thread(target=run, args=(s,)) for s in ["AAPL", "MSFT", "NVDA", "AMD", "META"]]
+    th = [threading.Thread(target=ott_run, args=(s,)) for s in ["AAPL", "MSFT", "NVDA", "AMD", "META"]]
     [t.start() for t in th]
     [t.join() for t in th]
     print(ott_req("DELETE", T + "/v2/positions?cancel_orders=true"))
