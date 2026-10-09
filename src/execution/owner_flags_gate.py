@@ -16,6 +16,8 @@ is readable again -- never once per order.
 
 An UNAIMED door (no desk session: tools, tests, after `release`) reads no flag
 and lets calls through; a desk session aimed at no database is UNKNOWN.
+`main.main` aims the door (at nothing) before anything else runs, so a desk
+session is never unaimed; an empty or missing path blocks like a pause.
 
 There is deliberately no per-position or per-symbol exclusion of any kind: the
 desk manages every position it holds. Owner actions are instructions it carries
