@@ -376,6 +376,15 @@ STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: the largest silent bucket on the sheet. Verified on this branch before the
 #: fix by running the capture's own regex against the real message.
 STOP_REFUSAL_BUDGET_EXHAUSTED = "risk_budget_exhausted"
+#: Defect 2026-10-09: some holding's risk is UNKNOWN (no usable price, or
+#: the book could not be read at all), so the 25% total-risk ceiling cannot
+#: be checked. Every risk-ADDING order is refused under this code until the
+#: holding is read; closes, exits and stops are never blocked by it.
+STOP_REFUSAL_BOOK_RISK_UNKNOWN = "book_risk_unknown"
+#: Defect 2026-10-09: a dollar-only (weight, no risk %) target that would
+#: add exposure, for which no stop could be resolved, so it cannot be
+#: converted to risk and charged against the 25% ceiling. Refused by name.
+STOP_REFUSAL_DOLLAR_TARGET_NO_STOP = "dollar_target_no_stop"
 #: Board item 10 (2026-09-14): the same defect item 49 fixed for the
 #: PORTFOLIO-level budget allocator, found again by statically running
 #: `_DropReasonCapture._SYMBOL` against every other constructor drop message

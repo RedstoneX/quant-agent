@@ -219,7 +219,7 @@ LEVELS_COVERAGE_MIN_SAMPLE = 10
 
 
 def _book_risk_inputs(ctx, total_value: float):
-    """Per-symbol budget risk (% of equity) and correlation clusters, or Nones.
+    """Per-symbol budget risk (% of equity) and correlation clusters.
 
     Spec §2.2. Both are already computed for the PM's own facts block — the
     heat roll-up in `src/risk/metrics.py` and the clusters in
@@ -227,37 +227,65 @@ def _book_risk_inputs(ctx, total_value: float):
     precisely the numbers the plan was made against, rather than a second
     view assembled a moment later.
 
-    Returns `(None, None)` when the facts are unavailable. That leaves the
-    portfolio ceilings UNENFORCED, which is the correct failure direction
-    here: enforcing a 25% ceiling against a book we cannot actually see would
-    either block every trade or wave everything through, and both are worse
-    than the per-position sizing that still applies regardless.
-
-    The same reasoning applies when only ONE of the two fails: this can also
-    return `(None, clusters)` — heat missing, correlation clusters present —
-    when `facts.heat` is `None` or building the per-symbol map raises.
-    `clusters` on its own says nothing about what the book currently holds,
-    so the caller (`PortfolioConstructor._plan_risk_targets`) must treat a
-    missing `existing` the same as a missing pair and leave the ceilings
-    unenforced rather than run the allocator against a book it wrongly
-    presumes to be empty (2026-09-03 incident — see
-    `docs/INCIDENT_HISTORY.md`).
+    Never returns `None` for the book (defect 2026-10-09: `None` made the
+    constructor SKIP the 25% ceiling). When the book cannot be read — no PM
+    facts, no account value, no heat — it is either charged holding by
+    holding at full market value, or returned as an UNKNOWN book
+    (`BookRiskPct.unknown` non-empty), on which the constructor refuses every
+    risk-adding order by name while closes, trims, exits and stops pass.
+    `clusters` is `None` whenever correlation clusters are unavailable.
     """
+    from src.risk.metrics import BookRiskPct, full_value_charge
+
     facts = getattr(ctx, "facts", None)
-    if facts is None:
-        return (None, None)
+    if facts is None or not (total_value > 0):
+        logger.error(
+            "risk budget: the book cannot be read (%s) — its risk is UNKNOWN; every new buy is refused this run",
+            "no PM facts" if facts is None else f"account value {total_value!r}",
+        )
+        clusters = getattr(facts, "correlation_clusters", None) if facts is not None else None
+        return (BookRiskPct({}, unknown={"*BOOK*"}), list(clusters) if clusters else None)
     heat = getattr(facts, "heat", None)
     clusters = getattr(facts, "correlation_clusters", None)
-    existing: dict[str, float] | None = None
-    if heat is not None and total_value > 0:
-        try:
-            existing = {row.symbol: row.budget_risk_dollars / total_value * 100 for row in heat.per_position}
-        except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
-            record_stage(ctx, "book_risk_map", e)
-            existing = None
-        else:
-            record_stage(ctx, "book_risk_map")
+    existing: dict[str, float]
+    try:
+        if heat is None:
+            raise RuntimeError("portfolio heat unavailable")
+        existing = BookRiskPct(
+            {row.symbol: row.budget_risk_dollars / total_value * 100 for row in heat.per_position},
+            unknown=set(getattr(heat, "unknown_risk", ()) or ()),
+        )
+    except Exception as e:  # noqa: BLE001 — degrade to the worst case, never skip the ceiling
+        # Defect 2026-10-09: this used to return None, which SKIPPED the
+        # 25% ceiling for every trade. The worst case is still a view of
+        # the book: each holding charged at its full market value, and a
+        # holding with no price marked UNKNOWN (buys refused while so).
+        record_stage(ctx, "book_risk_map", e)
+        existing = _full_value_book(getattr(ctx, "positions", None), total_value, BookRiskPct, full_value_charge)
+    else:
+        record_stage(ctx, "book_risk_map")
     return (existing, list(clusters) if clusters else None)
+
+
+def _full_value_book(positions, total_value: float, book_cls, charge_fn):
+    """Every holding charged at full market value; unreadable positions → UNKNOWN."""
+    if positions is None:
+        logger.error("risk budget: the held book could not be read at all — every new buy is refused this run")
+        return book_cls({}, unknown={"*BOOK*"})
+    out: dict[str, float] = {}
+    unknown: set[str] = set()
+    for p in positions:
+        sym = str(getattr(p, "symbol", "") or "").upper()
+        if not sym:
+            continue
+        charge, is_unknown = charge_fn(
+            getattr(p, "qty", 0.0), getattr(p, "current_price", None), getattr(p, "avg_entry", None)
+        )
+        out[sym] = charge / total_value * 100
+        if is_unknown:
+            logger.error("risk budget: %s has no usable price — its risk is UNKNOWN; new buys refused", sym)
+            unknown.add(sym)
+    return book_cls(out, unknown=unknown)
 
 
 def _sizing_read(pipeline, read, arg, symbol: str, what: str):

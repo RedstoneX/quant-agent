@@ -457,19 +457,21 @@ def test_book_risk_inputs_convert_heat_into_percent_of_equity():
     assert clusters == [["OKLO", "CEG"]]
 
 
-def test_book_risk_inputs_return_none_when_the_book_cannot_be_seen():
-    """Enforcing a 25% ceiling against a book we cannot measure would either
-    block every trade or wave everything through. Leaving the portfolio
-    ceilings unenforced is the correct failure direction — per-position
-    sizing and the single-name cap still apply."""
+def test_book_risk_inputs_mark_the_book_unknown_when_heat_cannot_be_seen():
+    """Defect 2026-10-09: returning None here SKIPPED the 25% ceiling for
+    every trade. A heat failure, or no PM facts at all, now yields a book
+    whose risk is UNKNOWN, so the constructor refuses new buys (closes,
+    trims, exits and stops still pass)."""
     from types import SimpleNamespace
 
     from src.pipeline_stages import _book_risk_inputs
 
-    assert _book_risk_inputs(SimpleNamespace(facts=None), 100_000.0) == (None, None)
-    assert _book_risk_inputs(SimpleNamespace(), 100_000.0) == (None, None)
+    for ctx in (SimpleNamespace(facts=None), SimpleNamespace()):
+        existing, clusters = _book_risk_inputs(ctx, 100_000.0)
+        assert existing == {} and existing.unknown and clusters is None
     ctx = SimpleNamespace(facts=SimpleNamespace(heat=None, correlation_clusters=[]))
-    assert _book_risk_inputs(ctx, 100_000.0) == (None, None)
+    existing, clusters = _book_risk_inputs(ctx, 100_000.0)
+    assert existing == {} and existing.unknown and clusters is None
 
 
 def test_book_risk_inputs_return_clusters_alone_when_only_heat_fails():
@@ -489,7 +491,7 @@ def test_book_risk_inputs_return_clusters_alone_when_only_heat_fails():
         )
     )
     existing, clusters = _book_risk_inputs(ctx, total_value=100_000.0)
-    assert existing is None
+    assert existing is not None and existing.unknown  # unknown, never skipped
     assert clusters == [["OKLO", "CEG"]]
 
 
