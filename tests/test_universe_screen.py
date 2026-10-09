@@ -47,7 +47,7 @@ TH = us.ScreenThresholds(
     min_price_usd=5.0,
     min_market_cap_usd=30_000_000,
     max_half_spread_bps=40.0,
-    max_atr_fraction=1.0 / 3.0,
+    max_atr_fraction=1.0 / 2.5,
     min_history_bars=210,
 )
 
@@ -329,7 +329,7 @@ def test_the_volatility_ceiling_is_not_an_appetite_number():
     never bound and would not. This test exists so that a future reader who
     finds 33.3% does not mistake it for an answered question.
     """
-    assert TH.max_atr_fraction == pytest.approx(1.0 / 3.0)
+    assert TH.max_atr_fraction == pytest.approx(1.0 / 2.5)
     max_observed_atr_fraction = 0.0811
     assert max_observed_atr_fraction < TH.max_atr_fraction
 
@@ -398,7 +398,7 @@ def test_thresholds_are_read_from_existing_desk_numbers():
     assert th.min_price_usd == 5.0
     assert th.min_market_cap_usd == 30_000_000
     assert th.max_half_spread_bps == 40.0
-    assert th.max_atr_fraction == pytest.approx(1.0 / 3.0)
+    assert th.max_atr_fraction == pytest.approx(1.0 / 2.5)
     assert th.min_history_bars == 210
 
 

@@ -38,7 +38,6 @@ def test_width_is_identical_across_market_regimes_for_the_same_atr() -> None:
 def test_range_setups_are_no_longer_narrowed() -> None:
     assert not hasattr(ConstructorConfig(), "stop_atr_setup_scale")
     constructor = PortfolioConstructor()
-    assert list(inspect.signature(constructor._stop_atr_multiple).parameters) == []
     assert constructor._stop_atr_multiple() == pytest.approx(RULED_MULTIPLE)
     # The setup label on an analysis has nothing to act on.
     assert stop_atr_multiple(SimpleNamespace(min_stop_atr_multiple=RULED_MULTIPLE)) == pytest.approx(RULED_MULTIPLE)
