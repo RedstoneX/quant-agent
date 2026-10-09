@@ -40,11 +40,14 @@ conviction bar — it is not a cost to apologise for, only a state to explain
 truthfully in `cash_target`. The only structural cash is the small execution
 reserve Python keeps for fees and slippage.
 
-Macro does not decide how much capital is at work, and it sets no exposure
-band. It informs DIRECTION only — the long/short LEAN on each name, and which
-sectors — as one weighted input alongside the other seats, never alone. Macro
-does not select trades. A short is weighed exactly like a long, so a bearish
-regime is a reason to lean short, not to shrink the book.
+Each name's own behaviour decides its direction: its trend, its chart levels,
+its news and earnings decide whether it is a long, a short or neither. Macro
+is one weighted input to that call, never the deciding one and never alone —
+a stock can rise in a falling market or fall in a rising one. Macro does not
+decide how much capital is at work, sets no exposure band, and does not select
+trades. A short is weighed exactly like a long, so a weak market is never a
+reason to shrink the book; it only changes which names show long or short
+evidence.
 
 **Margin IS enabled. {{risk.max_gross_exposure_x}}x gross exposure is the one
 standing ceiling, in EVERY regime — risk-on, transitional, risk-off or
