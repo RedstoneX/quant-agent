@@ -71,6 +71,7 @@ def _protection(protected: bool):
     stub.basis = "stop_backed_by_level"
     stub.detail = "test fixture"
     stub.raw_broken = False
+    stub.confirmed_chart_break = not protected
     return stub
 
 

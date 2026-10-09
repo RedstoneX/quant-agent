@@ -43,7 +43,6 @@ from unittest.mock import MagicMock
 from src.models import Position, PositionAction, PositionReasoningChain, PositionReview
 from tests.pipeline_factory import build_pipeline
 from src.risk.exit_guard import (
-    FALLBACK_PROTECTION_ATR_MULTIPLE,
     StructuralProtectionCheck,
     check_structural_protection,
 )
@@ -118,13 +117,12 @@ def test_the_midday_reviewer_no_longer_evaluates_or_records_an_entry_band():
 
 
 # ---------------------------------------------------------------------------
-# Home 2: the structural-protection fallback.
+# Home 2, the structural-protection fallback, is gone too (2026-10-09).
 # ---------------------------------------------------------------------------
 
 
-def _fallback(entry: float, price: float, atr: float) -> StructuralProtectionCheck:
-    """No thesis_invalid_if and no qualifying level -> the noise-band
-    fallback is the only thing left to judge the holding."""
+def _no_level(entry: float, price: float, atr: float | None) -> StructuralProtectionCheck:
+    """No thesis_invalid_if and no qualifying level."""
     return check_structural_protection(
         thesis_invalid_if=None,
         current_price=price,
@@ -138,36 +136,12 @@ def _fallback(entry: float, price: float, atr: float) -> StructuralProtectionChe
     )
 
 
-def test_the_fallback_records_the_band_it_actually_applied():
-    """Entry 100, price 99, ATR 2 -> 0.5 ATR adverse, inside the band, still
-    protected (unchanged). The detail must now say so in machine-readable
-    form, including that this home's band does NOT widen with hold length."""
-    result = _fallback(100.0, 99.0, 2.0)
-
-    assert result.protected is True
-    assert result.basis == "noise_band_intact"
-    assert "rule=atr_noise_band" in result.detail
-    assert "home=structural_protection_fallback" in result.detail
-    assert "adverse_atr_multiple=0.5" in result.detail
-    assert "inside_band=true" in result.detail
-    assert "band_scales_with_hold_length=false" in result.detail
-
-
-def test_the_fallback_records_the_breach_too():
-    """Entry 100, price 94, ATR 2 -> 3.0 ATR adverse, protection lifts
-    (unchanged), and the observation is recorded rather than discarded."""
-    result = _fallback(100.0, 94.0, 2.0)
-
-    assert result.protected is False
-    assert result.basis == "noise_band_broken"
-    assert "rule=atr_noise_band" in result.detail
-    assert "adverse_atr_multiple=3" in result.detail
-    assert "inside_band=false" in result.detail
-
-
-def test_the_fallback_states_its_flat_band_width():
-    """This home passes no hold length, so its band is flat at its own
-    multiple, and the payload says so."""
-    detail = _fallback(100.0, 99.0, 2.0).detail
-    assert f"band_multiple={FALLBACK_PROTECTION_ATR_MULTIPLE:g}" in detail
-    assert "band_scales_with_hold_length=false" in detail
+def test_no_chart_level_is_never_protected():
+    """Owner mandate 2026-10-09: no chart level backing the thesis never
+    refuses a cut of a LOSER — small loss, large loss or missing ATR alike."""
+    for entry, price, atr in ((100.0, 99.0, 2.0), (100.0, 94.0, 2.0), (100.0, 99.0, None)):
+        result = _no_level(entry, price, atr)
+        assert result.protected is False, (entry, price, atr)
+        assert result.basis == "no_chart_level"
+        assert result.confirmed_chart_break is False
+        assert "rule=atr_noise_band" not in result.detail

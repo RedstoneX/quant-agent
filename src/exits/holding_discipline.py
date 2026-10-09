@@ -178,10 +178,6 @@ class HoldingDiscipline:
             symbol=symbol_u,
             thesis_invalid_if=hist.get("thesis_invalid_if"),
             entry_price=hist.get("entry_price"),
-            # The entry SESSION, for the noise-band fallback's running-extreme
-            # anchor; entry price alone cannot locate the extreme. Absent, the
-            # callee looks it up, and failing that the band stays entry-anchored.
-            entry_date=hist.get("entry_date"),
             stop_loss=hist.get("stop_loss"),
             is_short=bool(pos is not None and pos.qty < 0),
             run_id=run_id,
@@ -233,6 +229,9 @@ class HoldingDiscipline:
                             "basis": protection.basis,
                             "detail": str(protection.detail)[:400],
                             "corroborates_exit": corroborated,
+                            # Whether a CONFIRMED chart break backed this cut.
+                            # A record, never a gate (owner mandate 2026-10-09).
+                            "confirmed_chart_break": protection.confirmed_chart_break,
                             "reason": str(reason)[:400],
                             "advisory_only": True,
                         }
