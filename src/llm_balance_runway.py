@@ -219,7 +219,10 @@ def alert_on_state_change(state: dict | None = None, *, path: Path = ALERT_STATE
         sent = False
         if status in ("low", "unknown"):
             if send is None:
-                from src.notifier.owner_alert import send_owner_alert as send
+                # The sender is passed in by the one send seam; importing the
+                # notifier here would close an import cycle through it.
+                logger.error("AI-credit alert has no sender; not recorded, retried on next send")
+                return False
             sent = bool(send(state.get("message", UNKNOWN_LINE)))
             if not sent:
                 return False  # not recorded: try again next morning
