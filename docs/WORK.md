@@ -3,9 +3,7 @@
 
 ## Active finish line
 
-**Desk: ON (restarted 2026-10-09 by the owner; the 09:30 ET morning run executed).** This line is parsed by `scripts/work_queue.py`; change it, never add a second one.
-
-**Owner-directed stabilization reset, 2026-10-06.** The Paper desk was OFF from 2026-10-06 until the owner restarted it on 2026-10-09. Do not run the secondary-account capture or build more rehearsal infrastructure as a gate to Paper beta. First correct this board's stale status, then verify the structural split and its tests, triage real defects, and resolve trade-governing arbitrary numbers by cause and impact. This is a work order, not a claim that any open item is fixed. `docs/OUTCOME.md`'s trading mandate and all deterministic protections are unchanged.
+**Owner-directed stabilization reset, 2026-10-06.** The Paper desk stays OFF until the owner explicitly authorizes a restart after review. Do not run the secondary-account capture or build more rehearsal infrastructure as a gate to Paper beta. First correct this board's stale status, then verify the structural split and its tests, triage real defects, and resolve trade-governing arbitrary numbers by cause and impact. This is a work order, not a claim that any open item is fixed. `docs/OUTCOME.md`'s trading mandate and all deterministic protections are unchanged.
 
 **Audit snapshot, not a standing count:** on 2026-10-06, GitHub had 0 open pull requests; the two original oversized files were 1,756 and 805 lines; this board held 20 numbered open items; the ledger classified 140 numbers as `arbitrary`, all with named settlement routes and none thereby justified. The old ranked defect list in `docs/phases.yaml` is empty, but it is NOT the current work queue. Re-measure these from GitHub, the tree, this board and the ledger before acting; do not copy an old count into a new decision.
 
@@ -73,7 +71,7 @@ Each slice ends with a short evidence report and its unresolved risks. Use dedic
 
 **Top of the backlog. Work the PRIORITY ORDER above; do not reorder from intuition.** The original census items (ranks 1-8) are all retired and written up; the measured census that ranked them is in `docs/INCIDENT_HISTORY.md`.
 
-**55. What IS a structural level: swing-point bars and zone width? OPEN, filed 2026-09-13. [1 of 6 ticked; 3 boxes are constraints; BLOCKED ON A LIVE EVENT: enough positions opened and resolved under the level recording to read the desk's own record.]** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
+**55. What IS a structural level: swing-point bars and zone width? OPEN, filed 2026-09-13. [1 of 6 ticked; 5 not buildable: 2 production-blocked (desk OFF), 3 constraints.]** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
 DONE WHEN:
   - [x] BUILT 2026-10-01, and it replaces the sweep below as the route: the desk RECORDS what every stop was actually based on and what the market then did with that level — `stop_level_basis` on the `trades` row (level price and kind, touch count, pivot window and confirmation span, zone edges and width, signed stop-to-level and entry-to-level distances, written for stops with NO level behind them too, which is the control), plus `level_max_penetration` and `level_closest_approach` accumulated while the position is open
@@ -95,7 +93,7 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-063.md)
 detail: docs/board_notes/item-063.md
 
-**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [7 of 15 ticked; the two SOURCE boxes below are actionable, and neither may be closed by inventing a value; the over-refusal re-measure follows whichever change lands.]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
+**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [7 of 15 ticked; the two SOURCE boxes below are the only ones left that are not desk-OFF-blocked, and neither may be closed by inventing a value; 103 blocked (desk OFF).]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
 
 DONE WHEN:
   - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or a named derivation, recorded in `config/number_ledger.yaml` with that source
@@ -114,7 +112,7 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-070.md)
 detail: docs/board_notes/item-070.md
 
-**75. Profit-taking: whole position answered by the alignment exit; residue is the partial trim and the target's one live effect — OPEN, filed 2026-09-14. [3 of 6 ticked; the rest are constraints, and BLOCKED ON A LIVE EVENT: a record of trims under the alignment exit has to accumulate before any trim fraction is derived.]**
+**75. Profit-taking: whole position answered by the alignment exit; residue is the partial trim and the target's one live effect — OPEN, filed 2026-09-14. [3 of 6 ticked; rest production-blocked (desk OFF, 117) or constraints.]**
 
 (prose moved: docs/board_notes/item-075.md)
 
@@ -129,7 +127,7 @@ DONE WHEN:
   - [ ] nothing here is fitted to the desk's own trading record, and nothing ships alone
 detail: docs/board_notes/item-075.md
 
-**78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle. [BOARD STATE: 1 of 4 ticked (the never-blank path is BUILT); the other 3 boxes need live-session proof and a live-database measurement, which the desk running again since 2026-10-09 makes actionable now.]** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank. Heal outcome now recorded durably (recording only, 2026-10-01); blank rate re-measured 68% on 30 Sep, unchanged, so the isolate stays.
+**78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle. [BOARD STATE: 1 of 4 ticked (the never-blank path is BUILT); the other 3 boxes are PRODUCTION-BLOCKED while the desk is OFF (live-session proof and live-database measurement).]** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank. Heal outcome now recorded durably (recording only, 2026-10-01); blank rate re-measured 68% on 30 Sep, unchanged, so the isolate stays.
 
 DONE WHEN:
   - [x] the never-blank path is live: a falsifier blanked by a later wipe is healed back from the sentence the model already wrote, the seat is re-asked once (paid), and a still-blank name is REFUSED before the book — never invented, and never with skip-and-continue as the product
@@ -138,7 +136,7 @@ DONE WHEN:
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; Detail in the note.
 detail: docs/board_notes/item-078.md
 
-**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, PARTIALLY built 2026-09-18, item stays OPEN. [BOARD STATE: 0 of 11 ticked; the routeless-rows box is DONE (0 routeless, re-measured 2026-10-04), the remaining boxes are the arbitrary rows themselves, 134 and 142 settle only from live closed trades, which accrue now the desk is running again, the rest are status narrative; sourcing the arbitrary rows is actionable.]** Detail in the note. Half one (the gate) landed 2026-09-18; half two is untouched and NONE of the DONE WHEN boxes below is ticked.
+**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, PARTIALLY built 2026-09-18, item stays OPEN. [BOARD STATE: 0 of 11 ticked; the routeless-rows box is DONE (0 routeless, re-measured 2026-10-04), the remaining boxes are the arbitrary rows themselves, 134 and 142 are PRODUCTION-BLOCKED while the desk is OFF (settling recording fills only from live closed trades), the rest are status narrative.]** Detail in the note. Half one (the gate) landed 2026-09-18; half two is untouched and NONE of the DONE WHEN boxes below is ticked.
 
 
 DONE WHEN:
@@ -156,7 +154,7 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-090.md)
 detail: docs/board_notes/item-090.md
 
-**177. Paid intraday tick: trigger, cadence, held book are ONE decision, filed 2026-09-23. [3 of 4 ticked; BLOCKED ON A LIVE EVENT: enough live mover rows carrying `move_atr=` to test the ATR-relative threshold.]** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
+**177. Paid intraday tick: trigger, cadence, held book are ONE decision, filed 2026-09-23. [3 of 4 ticked; 158 blocked (desk OFF).]** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
 
 DONE WHEN:
   - [ ] all 3 leave `status: arbitrary`, `MAX_ARBITRARY_ENTRIES` falls by 3 — NOT MET, and now precisely blocked rather than merely unstarted. `move_threshold_pct` cannot be sourced yet: the desk's own 253 recorded selections show the flat threshold does not discriminate (median move 3.50% when a BUY/SHORT followed, 3.67% when nothing did; the 5-7% band produced zero orders from 51 selections), so re-picking it has no basis, and the ATR-relative form the ledger's own open question asks for was **unmeasurable because the denominator was never recorded**. That is fixed here — a mover's row now carries `atr_pct=` and `move_atr=` alongside `move_pct=`, from bars the scan already paid for, no behaviour changed — so the row can be sourced once the data exists. `max_candidates_per_scan` and `cooldown_hours` are owner-appetite, not research.
@@ -165,7 +163,7 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. …(rest: docs/board_notes/item-177.md)
 detail: docs/board_notes/item-177.md
 
-**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; BLOCKED ON A LIVE EVENT: evidence the desk does not record yet: the short-side haircut needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one), `short_gap_risk_multiple` needs stored daily bars]**
+**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; both open boxes BLOCKED on evidence the desk does not record: the short-side haircut needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one), `short_gap_risk_multiple` needs stored daily bars]**
 
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined
@@ -180,7 +178,7 @@ DONE WHEN:
   - [x] the portfolio and cluster ceilings (25 total at-risk, 90 terminal sector and its constructor mirror, 40 cluster share) each end in a definit — full text: docs/board_notes/item-186.md
 detail: docs/board_notes/
 
-**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — OPEN, filed 2026-09-25, carried out of item 175. Item 175 covered the weekend/holiday overdue-date roll; this is the separate, still-open half. Detail: `docs/board_notes/` ("item 187"). [BOARD STATE: 2 of 4 ticked; both open boxes read real runs (a morning open with full FRED coverage, and the deadline-exceeded rate), which exist again since the 2026-10-09 restart, so reading them is actionable.]** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
+**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — OPEN, filed 2026-09-25, carried out of item 175. Item 175 covered the weekend/holiday overdue-date roll; this is the separate, still-open half. Detail: `docs/board_notes/` ("item 187"). [BOARD STATE: 2 of 4 ticked; both open boxes are PRODUCTION-BLOCKED while the desk is OFF (a real morning open with full FRED coverage, and the deadline-exceeded rate over real runs) — do not dispatch build work.]** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
 
 DONE WHEN:
   - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
@@ -189,7 +187,7 @@ DONE WHEN:
   - [ ] ONE morning open (N = 1, the number this item already stated) recorded in the production table `fred_fetch_coverage_runs` with `full_coverage = 1`: all configured series returned, `series_not_attempted` empty, and every configured release returned with `releases_from_cache` equal to `releases_configured`. Check: `SELECT * FROM fred_fetch_coverage_runs ORDER BY id DESC`. Rows exist only from the first open after this deploys; a row with `full_coverage = 0` does not count, and a missing row is not a pass.
 detail: docs/board_notes/item-187.md
 
-**201. Rest of the cancel+resubmit stop path — filed 2026-09-30. Detail: `docs/board_notes/` ("item 201"). OPEN: no production proof of a two-leg amend. [7 of 9 ticked; BLOCKED ON A LIVE EVENT: a fractional position's two hybrid stop legs both amending in place in production.]** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. 2026-10-02: stop-LIMIT, bracket child and whole-share coverage repair now amend in place; a FRACTIONAL quantity change and lot consolidation still cancel, each recorded as a `stop_unprotected_window` row.
+**201. Rest of the cancel+resubmit stop path — filed 2026-09-30. Detail: `docs/board_notes/` ("item 201"). OPEN: no production proof of a two-leg amend. [7 of 9 ticked; both open boxes production-blocked (desk OFF).]** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. 2026-10-02: stop-LIMIT, bracket child and whole-share coverage repair now amend in place; a FRACTIONAL quantity change and lot consolidation still cancel, each recorded as a `stop_unprotected_window` row.
 
 DONE WHEN:
   - [x] each remaining cancel+resubmit stop path is either converted to an in-place amend, or documented as genuinely unable to amend — converted: [full text: docs/board_notes/item-201.md]
@@ -205,7 +203,7 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-201.md)
 detail: docs/board_notes/item-201.md
 
-**208. Item 18's three residuals — filed 2026-09-30. Detail: `docs/board_notes/` (item 208). OPEN. [3 of 5 ticked; BLOCKED ON THE OWNER: a provider-side spend cap he sets or accepts, and a paid benchmark run he has forbidden unless he asks.]** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
+**208. Item 18's three residuals — filed 2026-09-30. Detail: `docs/board_notes/` (item 208). OPEN. [3 of 5 ticked; both open boxes owner-blocked.]** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
 DONE WHEN:
   - [x] (a) DONE 2026-10-01 — decision recorded: neither joins the composite (see docs/INCIDENT_HISTORY.md 2026-10-01); originally: a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether reward:risk (today a within-tier tiebreak) and net evidence (unused) join the ratified composite score — this is engineering under doctrine, not an owner call; per-seat sizing weights stay refused either way
@@ -220,7 +218,7 @@ DONE WHEN:
 detail: docs/board_notes/
 
 
-**218. Losing geometry is REFUSED — ruled 2026-10-01; one half open. [6 of 7 ticked; BLOCKED ON A LIVE EVENT: post-ruling buys accumulating so the owner's question can be read from live data; listed in docs/MARKET_HOURS_BACKLOG.md.]** His words: "For now, let's refuse a bad risk reward ratio. …(rest: docs/board_notes/item-218.md)
+**218. Losing geometry is REFUSED — ruled 2026-10-01; one half open. [6 of 7 ticked; neither open box is buildable with the desk off, both need live data and both are listed in docs/MARKET_HOURS_BACKLOG.md; the earlier "247 buildable" annotation was stale.]** His words: "For now, let's refuse a bad risk reward ratio. …(rest: docs/board_notes/item-218.md)
 
 DONE WHEN:
   - [x] the OWNER rules on whether an arithmetically losing entry may ship at all — ruled 2026-10-01, refusal, superseding the "wide stop is answered by smaller size, never refusal" response for this case
@@ -233,7 +231,7 @@ DONE WHEN:
 detail: docs/board_notes/
 
 
-**224. The desk records no realised sector weights, so concentration can only be guessed before the fact and never read after it -- filed 2026-10-01 from item 221. [BOARD STATE: 0 of 1 ticked; the recorder is BUILT; the POPULATING proof needs a live session, which runs again since 2026-10-09, so reading it is actionable.]** Item 221 established that the pre-decision preview cannot project a sector mix at all, because sizing depends on a PM target that does not exist when the preview is built; what the desk could record instead, and does not, is the sector weights of the orders the constructor ACTUALLY built, once per run. Without that row nobody can say afterwards whether a session concentrated the book or not. Detail in `docs/board_notes/item-221.md`.
+**224. The desk records no realised sector weights, so concentration can only be guessed before the fact and never read after it -- filed 2026-10-01 from item 221. [BOARD STATE: 0 of 1 ticked; the 1 box is PRODUCTION-BLOCKED (the recorder is BUILT; POPULATING proof needs a live session).]** Item 221 established that the pre-decision preview cannot project a sector mix at all, because sizing depends on a PM target that does not exist when the preview is built; what the desk could record instead, and does not, is the sector weights of the orders the constructor ACTUALLY built, once per run. Without that row nobody can say afterwards whether a session concentrated the book or not. Detail in `docs/board_notes/item-221.md`.
 
 DONE WHEN:
 - [ ] one durable row per run carries the realised `(sector, side)` weights of the orders the constructor built that session, written from executable product code with its call site named, and classified POPULATING rather than UNPROVEN against a real session -- UNPROVEN 2026-10-02: the recorder is built (call site `_record_realised_sector_weights` in `DecisionStage`) but no row count has been independently read from the live store; the quoted 3 rows were not re-read by anyone else
@@ -247,11 +245,11 @@ DONE WHEN:
   - [x] direction is derived from recorded passes (slipped / recovered / steady, and since when) with no cutoff chosen
   - [x] the route is read-only and passes the dashboard-cannot-trade guard
   - [x] the margin each holding sits from failing each rule that has a distance is recorded per session (`src/rotation_margins.py`: R2 in rating steps from neutral, R5 in independent net-evidence points above failing) and shown with day-on-day direction; R3, R6 and R7 are yes-or-no and have none
-  - [ ] a production session is observed writing the margins row and feeding the panel with real rows, and the margin recorder's R5 value is checked against the live eligibility reasons -- proven by test only until a production session since the 2026-10-09 restart is read
+  - [ ] a production session is observed writing the margins row and feeding the panel with real rows, and the margin recorder's R5 value is checked against the live eligibility reasons -- desk is OFF, so proven by test only
   - [x] reasons for below-bar names that were not cut come from item 219's dispositions row (PR 1108, merged 2026-10-02); proven by a writer-to-panel round-trip test
 detail: docs/board_notes/item-228.md
 
-**227. A seat's read carried no record of WHEN or in WHICH run it was taken, so "is this evidence fresh?" could only be inferred -- filed 2026-10-01. [BOARD STATE: 5 of 6 ticked; the last box needs one observed production session, which exists again since the 2026-10-09 restart, so reading it is actionable.]** The evidence gate has classified every seat as fresh / carried / absent since 2026-09-18, but the classification was stamped with nothing: no run id, no timestamp, and no age for a carried answer. That was tolerable while the disclosure only printed a line to the owner. It stopped being tolerable on 2026-10-01, when the owner ruled that any holding failing the desk's own fresh-entry bar is SOLD and that the test is re-run several times a day -- the half-hourly `intra_check` re-reads the technical seat and carries the rest, so a sell could be taken against a reading made before the market opened and nothing in the record would say so. Measured read-only against the production database 2026-10-01: `intra_check` is 63% of lifetime model spend and produced 37 of the desk's 80 trades, so this is where most decisions are taken. This item is the RECORDING, not a rule: no freshness threshold, no expiry window, no decision gated on any of it. A cutoff would be an invented number and is the owner's call, not this item's.
+**227. A seat's read carried no record of WHEN or in WHICH run it was taken, so "is this evidence fresh?" could only be inferred -- filed 2026-10-01. [BOARD STATE: 5 of 6 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF (one observed production session) — do not dispatch build work.]** The evidence gate has classified every seat as fresh / carried / absent since 2026-09-18, but the classification was stamped with nothing: no run id, no timestamp, and no age for a carried answer. That was tolerable while the disclosure only printed a line to the owner. It stopped being tolerable on 2026-10-01, when the owner ruled that any holding failing the desk's own fresh-entry bar is SOLD and that the test is re-run several times a day -- the half-hourly `intra_check` re-reads the technical seat and carries the rest, so a sell could be taken against a reading made before the market opened and nothing in the record would say so. Measured read-only against the production database 2026-10-01: `intra_check` is 63% of lifetime model spend and produced 37 of the desk's 80 trades, so this is where most decisions are taken. This item is the RECORDING, not a rule: no freshness threshold, no expiry window, no decision gated on any of it. A cutoff would be an invented number and is the owner's call, not this item's.
 
 DONE WHEN:
 - [x] every seat read carries the run id, the session mode and the timestamp of the run that produced it, written into the same `evidence_freshness` record the session and intra-check reports already persist -- no second store
@@ -262,7 +260,7 @@ DONE WHEN:
 - [ ] one production session observed where a carried seat reports a real age and a refreshed seat reports this run's id -- cannot be ticked from a test
 detail: docs/board_notes/item-227.md
 
-**226. A payment refusal was retried like an outage and reported as an unbounded-cost mystery -- filed 2026-10-01. [BOARD STATE: 3 of 4 ticked; the last box: BLOCKED ON A LIVE EVENT: one observed out-of-credit refusal in production.]** Measured on the production database 2026-10-01: the paid research account ran out of credit, the provider answered HTTP 402 with a falling affordable allowance (13290, 7311, 843, 811, 775), the desk spent 12 provider attempts on `portfolio_manager` and 9 on `tech_analyst` against an account no retry could revive, and then suspended paid analysis saying "the real cost is unknown and cannot be bounded safely" when the truth was that the account was empty.
+**226. A payment refusal was retried like an outage and reported as an unbounded-cost mystery -- filed 2026-10-01. [BOARD STATE: 3 of 4 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF (one observed out-of-credit refusal) — do not dispatch build work.]** Measured on the production database 2026-10-01: the paid research account ran out of credit, the provider answered HTTP 402 with a falling affordable allowance (13290, 7311, 843, 811, 775), the desk spent 12 provider attempts on `portfolio_manager` and 9 on `tech_analyst` against an account no retry could revive, and then suspended paid analysis saying "the real cost is unknown and cannot be bounded safely" when the truth was that the account was empty.
 
 DONE WHEN:
 - [x] a payment refusal is classified on the STATUS CODE (402), never on the provider wording, and is terminal on the first occurrence: no retry and no further rung of the route ladder on the same account
@@ -272,7 +270,7 @@ DONE WHEN:
 detail: docs/board_notes/item-226.md
 
 
-**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not. 2026-10-01: the cull itself no longer waits for a full book or a replacement (the owner ruled so), and the ordering/freshness/anti-churn ruling that followed is recorded as NOT BUILT. [BOARD STATE: 5 of 6 ticked; the last box needs a real stored session report read back on both surfaces, which exists again since the 2026-10-09 restart, so reading it is actionable.]** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
+**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not. 2026-10-01: the cull itself no longer waits for a full book or a replacement (owner ruling), and the ordering/freshness/anti-churn ruling that followed is recorded as NOT BUILT. [BOARD STATE: 5 of 6 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF (a real stored session report read back on both surfaces) — do not dispatch build work.]** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
 
 DONE WHEN:
   - [x] the session message states that the pass ran and how many holdings it examined, read off the held set the pre-check itself received (`held_examined`), never inferred
@@ -284,7 +282,7 @@ DONE WHEN:
 detail: docs/board_notes/item-219.md
 
 
-**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 1 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is actionable.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
+**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 1 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
 
 DONE WHEN:
 - [x] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04 (corrected 2026-10-04 on branch fix/item-232-citations-point-right, plus 16 more wrong rows found outward; see note)
@@ -301,21 +299,6 @@ DONE WHEN:
 - [ ] a deliberately bounded intraday capture from the same isolated secondary Paper account replays offline through the real half-hourly review and exit seams under the same public-safety and zero-network conditions.
 - [ ] both replays assert the captured verdicts, including proposals, refusals and reasons, Portfolio Manager decisions, exits and protection outcomes where present; every missing captured input stops the replay rather than being fabricated or degraded, with a red test proving each newly closed gap.
 detail: docs/board_notes/item-233.md
-
-**234. Kept shares are unprotected during a part-sale — filed 2026-10-09. IN PROGRESS (build under way).** When the desk sells part of a holding, the stop is cancelled and the kept shares carry no stop until it is replaced.
-
-DONE WHEN:
-- [ ] a part-sale leaves the kept shares under a stop at every moment, proven by a test that fails on today's trunk
-
-**235. Entries are market orders sized off the ask/bid — filed 2026-10-09. IN PROGRESS (build under way).** Entries go in as market orders, sized off the ask for a buy and the bid for a short.
-
-DONE WHEN:
-- [ ] entry orders are market orders sized off the ask (buy) or bid (short), proven by a test
-
-**236. The test fake broker accepts what the real broker refuses — filed 2026-10-09. OPEN.** The fake broker the tests use never refuses an order, so a change the real broker would reject passes every test.
-
-DONE WHEN:
-- [ ] the fake broker models the real broker's refusals, each with a test that a refused order is reported, not assumed filled
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 
