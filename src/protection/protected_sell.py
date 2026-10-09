@@ -415,7 +415,13 @@ class ProtectedSell:
             self._last_stop_clear_refusal = "position_unreadable"
             why = _OWN_REASONS["position_unreadable"]
             logger.warning("%s: skipping %s — %s", label, symbol, why)
-            self._alert_owner_exit_declined(symbol, side=side, why=why)
+            # One alert per outage, not one per symbol: a broker that cannot
+            # list positions fails for every name in the pass at once. The
+            # latch lives on the host (survives this per-call part) and is
+            # cleared by the next successful read.
+            if not self._reread_alerted():
+                self._state.set("_position_reread_alerted", True)
+                self._alert_owner_exit_declined(symbol, side=side, why=why + " (further names this outage: log only)")
             return None
         if held <= 0:
             self._discharge_wal(symbol, wal_row_id)
@@ -445,6 +451,7 @@ class ProtectedSell:
             positions = list(self.broker.get_positions())
             signed = sum(float(p.qty) for p in positions if str(p.symbol).strip().upper().replace("/", "") == want)
             record_guarded_pass((self.broker, self.db), "protected_sell.position_reread", context={"symbol": symbol})
+            self._state.set("_position_reread_alerted", False)
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(
                 (self.broker, self.db), "protected_sell.position_reread", exc, context={"symbol": symbol}
@@ -452,6 +459,13 @@ class ProtectedSell:
             return None
         closable = signed if side == "sell" else -signed
         return closable if closable > 1e-9 else 0.0
+
+    def _reread_alerted(self) -> bool:
+        """True once this outage's single unreadable-position alert has gone out."""
+        try:
+            return self._state.get("_position_reread_alerted") is True
+        except AttributeError:  # host never set it: no alert has gone out
+            return False
 
     def _discharge_wal(self, symbol: str, wal_row_id) -> None:
         """Nothing is held, so the cancelled stops must NOT be restored: drop the recovery row."""

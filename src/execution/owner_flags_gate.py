@@ -28,7 +28,10 @@ whose quantity exceeds the long freshly read from the broker is refused with a
 per-symbol `oversell_refused` reason. A short is only ever opened with
 `sell_short`, so a plain sell bigger than the long is never legitimate -- it is
 an exit sized from a stale read (e.g. the resting stop filled in between) and
-would open a short. The comparison is exact Decimal, as for the freeze; a failed
+would open a short. Both sides are compared as Decimal quantized to 9 dp (the
+broker's quantity precision), so float noise such as 0.1+0.2 against 0.3 held
+is not an oversell. Each refusal is recorded per symbol as a guarded pass
+(`owner_flags_gate.oversell_refused` / `.positions_unreadable`); a failed
 position read refuses the sell as `positions_unreadable`, the freeze's rule.
 
 If the flag cannot be read the state is UNKNOWN: "cannot tell whether the owner
@@ -53,7 +56,7 @@ names (PAUSE / RESUME, `paused`) so existing intent rows replay unchanged.
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
 from src import owner_flags
 
@@ -200,6 +203,28 @@ def is_entry(broker, name, args, kwargs) -> bool:
     return not (held < 0 and qty <= -held)
 
 
+#: The broker's quantity precision (Alpaca: 9 decimal places).
+QTY_QUANTUM = Decimal("1e-9")
+
+
+def _at_broker_precision(q: Decimal) -> Decimal:
+    return q.quantize(QTY_QUANTUM, rounding=ROUND_HALF_EVEN)
+
+
+class DoorRefusal(RuntimeError):
+    """A broker-door refusal, recorded durably per symbol (never raised)."""
+
+
+def _record_refusal(broker, args, kwargs, why: str) -> None:
+    """Durable, machine-readable, per-symbol record of an oversell or unreadable-position refusal."""
+    kind = why.split(":", 1)[0]
+    if kind not in ("oversell_refused", "positions_unreadable"):
+        return
+    terms = _order_terms(args, kwargs or {})
+    context = {"symbol": terms[0] if terms else None, "qty": str(terms[1]) if terms else None, "reason": why}
+    record_guarded_pass(broker, f"owner_flags_gate.{kind}", DoorRefusal(why), context=context)
+
+
 def oversell_reason(broker, name, args, kwargs):
     """Named refusal when a plain `sell` exceeds the long held, else None.
 
@@ -211,7 +236,7 @@ def oversell_reason(broker, name, args, kwargs):
     if terms is None or terms[2] != "sell":
         return None
     symbol, qty, _side = terms
-    held = _held_qty(broker, symbol)
+    qty, held = _at_broker_precision(qty), _at_broker_precision(_held_qty(broker, symbol))
     if qty <= held:
         return None
     return (
@@ -255,6 +280,7 @@ def _wrap(name, orig):
         why = _verdict(name, self, args, kwargs)
         if why is not None:
             logger.warning("owner flag refused %s: %s", name, why)
+            _record_refusal(self, args, kwargs, why)
             return _REFUSALS[name](why)
         return orig(self, *args, **kwargs)
 

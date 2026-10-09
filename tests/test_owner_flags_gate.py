@@ -70,7 +70,21 @@ def test_unreadable_positions_refuse_a_plain_sell_when_not_frozen(open_door):
     assert calls == []
 
 
-def test_fractional_oversell_is_caught_exactly_when_not_frozen(open_door):
+def test_float_noise_is_not_an_oversell_but_a_real_excess_is(open_door):
     d, calls = _door({"XYZ": 0.3})
-    assert _refused(d.submit_order(symbol="XYZ", qty=0.1 + 0.2, side="sell"), "oversell_refused")
-    assert d.submit_order(symbol="XYZ", qty=0.3, side="sell") == "THROUGH"
+    assert d.submit_order(symbol="XYZ", qty=0.1 + 0.2, side="sell") == "THROUGH"  # 0.30000000000000004
+    assert _refused(d.submit_order(symbol="XYZ", qty=0.300000002, side="sell"), "oversell_refused")
+    assert calls == ["submit_order"]
+
+
+def test_door_refusals_are_recorded_per_symbol(open_door, monkeypatch):
+    seen = []
+    monkeypatch.setattr(gate, "record_guarded_pass", lambda owner, where, exc=None, **kw: seen.append((where, kw)))
+    d, _ = _door({"XYZ": 10})
+    d.submit_order(symbol="XYZ", qty=15, side="sell")
+    type(d).get_positions = lambda self: (_ for _ in ()).throw(RuntimeError("broker down"))
+    d.submit_order(symbol="ABC", qty=1, side="sell")
+    assert [(w, kw["context"]["symbol"]) for w, kw in seen] == [
+        ("owner_flags_gate.oversell_refused", "XYZ"),
+        ("owner_flags_gate.positions_unreadable", "ABC"),
+    ]

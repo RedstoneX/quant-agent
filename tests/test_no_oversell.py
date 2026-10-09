@@ -9,6 +9,7 @@ the stop-cancel rollback re-reads it before putting any stop back.
 Hermetic: MagicMock brokers that report what they hold (tests/fakes/held_book.py).
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.execution.broker import AlpacaBroker
@@ -49,6 +50,37 @@ def test_stop_filled_before_the_exit_sends_no_order_and_opens_no_short():
     assert pipe._last_stop_clear_refusal == "stop_fired"
     pipe.db.delete_pending_protection_restore.assert_called_once_with(99)  # nothing to restore onto
     pipe.broker._restore_stop_orders.assert_not_called()
+
+
+def test_the_reread_happens_after_the_stop_cancel_not_before():
+    """The race itself: 73 held when the exit is sized, the stop fills during the cancel."""
+    pipe = _pipe(held=73.0)
+    book = {"NVDA": 73.0}
+    pipe.broker.get_positions.side_effect = lambda: [SimpleNamespace(symbol=s, qty=q) for s, q in book.items()]
+
+    def _cancel_while_the_stop_fills(*a, **k):
+        book["NVDA"] = 0.0
+        return True, list(SPECS), 99
+
+    pipe._cancel_stops_with_write_ahead = MagicMock(side_effect=_cancel_while_the_stop_fills)
+    assert pipe.broker.get_positions()[0].qty == 73.0  # what the caller sized the exit from
+    assert _exit(pipe, 73.0) is None
+    pipe.broker.submit_order.assert_not_called()
+
+
+def test_unreadable_positions_alert_once_per_outage_not_per_symbol():
+    pipe = _pipe(held=73.0)
+    pipe._alert_owner_exit_declined = MagicMock()
+    pipe.broker.get_positions = MagicMock(side_effect=RuntimeError("broker down"))
+    for _ in range(3):
+        assert _exit(pipe, 73.0) is None
+    assert pipe._alert_owner_exit_declined.call_count == 1
+    hold(pipe.broker, {"NVDA": 73.0})
+    _exit(pipe, 73.0)  # a good read ends the outage
+    pipe.broker.get_positions = MagicMock(side_effect=RuntimeError("broker down"))
+    _exit(pipe, 73.0)
+    assert pipe._alert_owner_exit_declined.call_count == 2
+    pipe.broker.submit_order.assert_called_once()
 
 
 def test_partial_stop_fill_sizes_the_sell_to_the_remainder():
@@ -105,3 +137,20 @@ def test_failed_cancel_restores_stops_at_the_held_size_not_the_old_size(mock_tc_
     restored = broker._restore_stop_orders.call_args[0][1]
     assert [(s["id"], s["qty"]) for s in restored] == [("stop-a", 30.0)]
     assert outcome.coverage_shrank is False
+
+
+@patch("src.execution.broker.TradingClient")
+def test_failed_cancel_never_restores_sell_stops_onto_a_flipped_short(mock_tc_cls):
+    broker = _cancel_broker(mock_tc_cls, held=-10.0)  # the book is SHORT now: a SELL stop would add to it
+    outcome = broker.cancel_snapshotted_stops("AMZN", [SPEC_A, SPEC_B])
+    broker._restore_stop_orders.assert_not_called()
+    assert outcome.coverage_shrank is False
+
+
+@patch("src.execution.broker.TradingClient")
+def test_failed_cancel_restores_buy_stops_onto_a_short_at_the_held_size(mock_tc_cls):
+    broker = _cancel_broker(mock_tc_cls, held=-30.0)
+    buy_a, buy_b = {**SPEC_A, "side": "buy"}, {**SPEC_B, "side": "buy"}
+    broker.cancel_snapshotted_stops("AMZN", [buy_a, buy_b])
+    restored, kwargs = broker._restore_stop_orders.call_args[0][1], broker._restore_stop_orders.call_args.kwargs
+    assert [(x["id"], x["qty"]) for x in restored] == [("stop-a", 30.0)] and kwargs == {"side": "buy"}
