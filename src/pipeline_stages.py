@@ -802,26 +802,30 @@ def __dir__():
 # The pieces lifted out of `ExecutionStage._run_session` into
 # `src/stage_execution_parts/` import the same names from here, so they are
 # mirrored exactly like the stage modules themselves.
-_MIRRORED_PART_PREFIX = "src.stage_execution_parts."
-
-
-def _mirrored_module_paths() -> set[str]:
-    paths = set(_STAGE_CLASS_MODULES.values())
-    paths.update(m for m in list(_sys.modules) if m.startswith(_MIRRORED_PART_PREFIX))
-    return paths
+# Listed literally (not discovered from sys.modules) so the patch-target audit
+# can read the mirror's reach from the source.
+_MIRRORED_PART_MODULES = {
+    "src.stage_execution_parts.cover_loop": "src.stage_execution_parts.cover_loop",
+    "src.stage_execution_parts.entry_geometry": "src.stage_execution_parts.entry_geometry",
+    "src.stage_execution_parts.entry_quote": "src.stage_execution_parts.entry_quote",
+    "src.stage_execution_parts.entry_sizing": "src.stage_execution_parts.entry_sizing",
+    "src.stage_execution_parts.protect_entry_stops": "src.stage_execution_parts.protect_entry_stops",
+    "src.stage_execution_parts.sell_loop": "src.stage_execution_parts.sell_loop",
+    "src.stage_execution_parts.state": "src.stage_execution_parts.state",
+}
 
 
 class _StageMirroringModule(_types.ModuleType):
     def __setattr__(self, name: str, value) -> None:
         super().__setattr__(name, value)
-        for module_path in _mirrored_module_paths():
+        for module_path in set(_STAGE_CLASS_MODULES.values()) | set(_MIRRORED_PART_MODULES.values()):
             stage_module = _sys.modules.get(module_path)
             if stage_module is not None and name in vars(stage_module):
                 setattr(stage_module, name, value)
 
     def __delattr__(self, name: str) -> None:
         super().__delattr__(name)
-        for module_path in _mirrored_module_paths():
+        for module_path in set(_STAGE_CLASS_MODULES.values()) | set(_MIRRORED_PART_MODULES.values()):
             stage_module = _sys.modules.get(module_path)
             if stage_module is not None and name in vars(stage_module):
                 delattr(stage_module, name)
