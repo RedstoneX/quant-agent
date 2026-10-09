@@ -128,22 +128,8 @@ def test_a_company_called_united_is_not_mistaken_for_a_unit():
 
 
 # --------------------------------------------------------------- borrow ----
-
-
-def test_not_shortable_is_refused():
-    result = us.screen_symbol("ACME", _sources(asset={**GOOD_ASSET, "shortable": False}), TH)
-    assert result.failures == ["not_shortable"]
-
-
-def test_hard_to_borrow_is_refused_from_borrow_status():
-    asset = {**GOOD_ASSET, "borrow_status": "hard_to_borrow", "easy_to_borrow": True}
-    assert us.check_borrow(asset) == ["hard_to_borrow"]
-
-
-def test_deprecated_easy_to_borrow_flag_is_the_fallback():
-    asset = {k: v for k, v in GOOD_ASSET.items() if k != "borrow_status"}
-    assert us.check_borrow(asset) == []
-    assert us.check_borrow({**asset, "easy_to_borrow": False}) == ["hard_to_borrow"]
+# Borrow is not an admission criterion (owner ruling 2026-10-09); see
+# tests/test_universe_screen_etf.py.
 
 
 # -------------------------------------------------------------- history ----
@@ -546,10 +532,10 @@ def _asset(symbol, **kw):
 
 def test_run_admits_passing_candidates_and_never_screens_configured_ones():
     state = us.empty_state()
-    run = _run(state, [_asset("AAA"), _asset("SPY"), _asset("BBB", shortable=False)], configured=["SPY"])
+    run = _run(state, [_asset("AAA"), _asset("SPY"), _asset("BBB", exchange="OTC")], configured=["SPY"])
     assert set(state["admitted"]) == {"AAA"}
     assert "SPY" not in state["screened"] and "SPY" not in state["admitted"]
-    assert state["screened"]["BBB"]["failures"] == ["not_shortable"]
+    assert state["screened"]["BBB"]["failures"] == ["unsupported_exchange"]
     assert [e["action"] for e in run.events] == ["added"]
 
 
@@ -696,7 +682,7 @@ def test_side_door_keeps_its_old_gate_when_off(tmp_path, monkeypatch):
 def test_nomination_door_uses_the_screen(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
-    pipeline.broker.get_asset_record.return_value = {**GOOD_ASSET, "shortable": False}
+    pipeline.broker.get_asset_record.return_value = {**GOOD_ASSET, "exchange": "OTC"}
     admitted, details = pipeline.admission._admit_nominated_external_symbols(["acme"])
     assert admitted == set()
     pipeline.broker.get_asset_record.return_value = GOOD_ASSET

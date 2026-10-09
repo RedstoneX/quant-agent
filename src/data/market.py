@@ -224,7 +224,7 @@ class MarketDataProvider:
         return out
 
     def get_company_profile(self, symbol: str) -> dict | None:
-        """{"market_cap_usd", "sector_raw", "quote_type"} from yfinance, or None
+        """{"market_cap_usd", "sector_raw", "quote_type", "category"} from yfinance, or None
         when it could not be read. Bounded by the same per-symbol timeout as
         valuations."""
 
@@ -248,6 +248,7 @@ class MarketDataProvider:
             "market_cap_usd": cap,
             "sector_raw": info.get("sector"),
             "quote_type": info.get("quoteType"),
+            "category": info.get("category"),
         }
 
     def get_upcoming_ex_dividend(self, symbol: str) -> dict:
