@@ -138,8 +138,8 @@ def _no_level(entry: float, price: float, atr: float | None) -> StructuralProtec
 
 def test_no_chart_level_is_never_protected():
     """Owner mandate 2026-10-09: no chart level backing the thesis never
-    refuses a cut — small loss, large loss, profit or missing data alike."""
-    for entry, price, atr in ((100.0, 99.0, 2.0), (100.0, 94.0, 2.0), (100.0, 105.0, 2.0), (100.0, 99.0, None)):
+    refuses a cut of a LOSER — small loss, large loss or missing ATR alike."""
+    for entry, price, atr in ((100.0, 99.0, 2.0), (100.0, 94.0, 2.0), (100.0, 99.0, None)):
         result = _no_level(entry, price, atr)
         assert result.protected is False, (entry, price, atr)
         assert result.basis == "no_chart_level"

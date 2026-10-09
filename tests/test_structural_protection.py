@@ -394,10 +394,23 @@ def test_no_basis_large_loss_is_not_protected():
     assert result.basis == "no_chart_level"
 
 
-def test_no_basis_flat_or_winning_is_not_protected():
+def test_no_basis_in_profit_stays_protected():
+    """A WINNER with no chart level stays protected, so a rotation cannot sell
+    it on that ground (owner mandate: take profit early only sideways)."""
     result = _no_basis(current_price=105.0)
-    assert result.protected is False
-    assert result.basis == "no_chart_level"
+    assert result.protected is True
+    assert result.basis == "no_adverse_move_from_entry"
+    assert result.confirmed_chart_break is False
+
+
+def test_no_basis_flat_stays_protected_and_short_mirrors():
+    assert _no_basis(current_price=100.0).protected is True
+    short_winning = _no_basis(current_price=95.0, stop_loss=110.0, is_short=True)
+    assert short_winning.protected is True
+    assert short_winning.basis == "no_adverse_move_from_entry"
+    short_losing = _no_basis(current_price=101.0, stop_loss=110.0, is_short=True)
+    assert short_losing.protected is False
+    assert short_losing.basis == "no_chart_level"
 
 
 def test_no_basis_missing_data_is_never_protected_by_default():

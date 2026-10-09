@@ -282,6 +282,10 @@ class StructuralProtectionCheck:
         # No chart level backs the thesis (or no data to read one): never
         # protected. Replaced the four ATR noise-band fallback bases 2026-10-09.
         "no_chart_level",
+        # No chart level, but the position is flat or in profit versus entry:
+        # protected (owner mandate: take profit early only in sideways
+        # markets, so a rotation may not sell a winner on this ground).
+        "no_adverse_move_from_entry",
     ]
     detail: str
     #: The structural level price this read found CONFIRMED broken, on the
@@ -738,6 +742,26 @@ def check_structural_protection(
     # reason to refuse a cut, and missing data never manufactures protection.
     # An ATR "noise band" fallback used to stand here and keep such a holding
     # protected until its adverse move cleared 1.0 x ATR; it was removed whole.
+    #
+    # The ONE exception is a holding that is NOT a loser: flat or in profit
+    # versus entry stays protected, because the mandate cuts LOSERS fast and
+    # takes profit early only in sideways markets — a rotation must not sell
+    # a winner merely because no chart level backs it.
+    ent = _finite(entry_price)
+    cur = _finite(current_price)
+    if ent is not None and cur is not None and ent > 0:
+        adverse = (cur - ent) if is_short else (ent - cur)
+        if adverse <= 0:
+            return StructuralProtectionCheck(
+                protected=True,
+                basis="no_adverse_move_from_entry",
+                detail=(
+                    "no thesis_invalid_if and no verified structural level "
+                    "under the stop, but price is flat/favourable versus "
+                    "entry — protected (not a loser; no chart break)"
+                ),
+                raw_broken=False,
+            )
     return StructuralProtectionCheck(
         protected=False,
         basis="no_chart_level",
