@@ -10,7 +10,11 @@ class FakeBroker:
         self._positions = positions
         self._positions_error = positions_error
         self.cancelled = []
-        self.client = NS(get_orders=lambda filter=None: list(orders))
+        self.replaced = []
+        self.client = NS(
+            get_orders=lambda filter=None: list(orders),
+            replace_order_by_id=lambda oid, req: self.replaced.append((oid, req.qty)),
+        )
 
     def get_positions(self):
         if self._positions_error:
@@ -75,12 +79,56 @@ def test_positions_unreadable_cancels_nothing_and_names_fault():
     assert not res.ok
 
 
-def test_oversized_stop_kept_with_named_fault():
-    # Stop left at 10 after a partial close to 6: cancelling it would strip protection.
+def test_oversized_stop_shrunk_to_held_never_cancelled():
+    # Stop left at 10 after a partial close to 6: the door calls 10 a flip, so it is
+    # shrunk to 6 in place -- not left oversized, not cancelled.
     broker = FakeBroker([_pos("AAPL", "6")], [_order("stop", "AAPL", "sell", "10", "stop")])
     res = fc.cancel_resting_entries(broker)
     assert broker.cancelled == []
-    assert res.faults == [(fc.OVERSIZED_EXIT, "stop")]
+    assert broker.replaced == [("stop", 6)]
+    assert res.shrunk == [("stop", 6)] and res.ok
+
+
+def test_oversized_fractional_stop_kept_with_named_fault():
+    broker = FakeBroker([_pos("AAPL", "6.5")], [_order("stop", "AAPL", "sell", "10", "stop")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == [] and broker.replaced == []
+    assert res.faults == [(fc.OVERSIZED_EXIT_UNAMENDED, "stop")]
+
+
+def test_unreadable_entry_cancelled_like_the_door():
+    # A notional order has no qty: the door would refuse it as an entry, so the sweep cancels it.
+    broker = FakeBroker([], [_order("notional", "AAPL", "buy", None)])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == ["notional"] and res.ok
+
+
+def test_unreadable_stop_kept_with_named_fault():
+    broker = FakeBroker([_pos("AAPL", "5")], [_order("stop", "AAPL", "weird", "5", "stop")])
+    res = fc.cancel_resting_entries(broker)
+    assert broker.cancelled == []
+    assert res.faults == [(fc.ORDER_UNREADABLE, "stop")]
+
+
+def test_every_action_recorded_durably_per_symbol(monkeypatch):
+    rows = []
+    monkeypatch.setattr(
+        fc,
+        "record_guarded_pass",
+        lambda owner, where, exc=None, context=None: rows.append((where, exc is not None, context)),
+    )
+    broker = FakeBroker(
+        [_pos("AAPL", "6")],
+        [_order("e1", "MSFT", "buy", "1"), _order("stop", "AAPL", "sell", "10", "stop")],
+    )
+    fc.cancel_resting_entries(broker)
+    assert rows == [
+        ("freeze_cancel.cancelled", False, {"symbol": "MSFT", "order": "e1"}),
+        ("freeze_cancel.shrunk", False, {"symbol": "AAPL", "order": "stop"}),
+    ]
+    rows.clear()
+    fc.cancel_resting_entries(FakeBroker(None, [], positions_error=OSError("x")))
+    assert [(w, f) for w, f, _ in rows] == [("freeze_cancel.positions_unreadable", True)]
 
 
 def test_exact_decimal_partial_fill_uses_remaining_qty():
