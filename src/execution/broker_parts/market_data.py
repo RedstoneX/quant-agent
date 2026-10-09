@@ -556,6 +556,7 @@ class MarketData:
 
             self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
             _install_http_timeout(self._data_client)
+        from alpaca.data.enums import Adjustment
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
 
@@ -566,6 +567,10 @@ class MarketData:
             timeframe=TimeFrame.Day,
             start=end - _td(days=int(lookback_days)),
             end=end,
+            # Split-adjusted only, matching the Yahoo auto_adjust=False bars
+            # this replaced. Feed left unset: this account is entitled to IEX,
+            # not SIP (docs/STATE.md), so SIP would be rejected.
+            adjustment=Adjustment.SPLIT,
         )
         fields = req.to_request_fields()
         out: dict[str, list] = {s: [] for s in symbols}

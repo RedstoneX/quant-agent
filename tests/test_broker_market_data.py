@@ -681,3 +681,14 @@ def test_bars_batch_rate_limit_raises_and_is_not_retried():
     with pytest.raises(RuntimeError):
         b.get_bars_batch(["AAA"], 30)
     assert b._data_client.get.call_count == 1
+
+
+def test_bars_batch_requests_split_adjusted_daily_bars():
+    b = _broker()
+    b._data_client = MagicMock()
+    b._data_client.get.return_value = {"bars": {}, "next_page_token": None}
+    b.get_bars_batch(["AAA", "BBB"], 30)
+    data = b._data_client.get.call_args.kwargs["data"]
+    assert data["adjustment"] == "split"
+    assert str(data["timeframe"]) == "1Day"
+    assert data["symbols"] == "AAA,BBB"
