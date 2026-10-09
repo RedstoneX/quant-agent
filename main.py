@@ -112,6 +112,13 @@ def main():
 
         require_desk_disk(PROJECT_ROOT / "data", log=logger)
 
+        # Aim the owner pause door FIRST, at nothing: a desk session whose
+        # intent database is not yet known (or never known) reads UNKNOWN =
+        # paused, so no startup path can place an order past the switch.
+        from src.execution import owner_flags_gate
+
+        owner_flags_gate.configure(None)
+
         config_path = Path(args.config)
         if not config_path.is_absolute():
             config_path = PROJECT_ROOT / config_path
@@ -182,10 +189,10 @@ def main():
 
         # Owner command panel (instalment 1): point the broker door at the
         # intent record and resolve anything raised while the desk was down.
+        owner_flags_gate.configure(watchdog_db_path)
         if watchdog_db_path:
-            from src.execution import owner_flags_gate
             from src.owner_intents import intake
-            owner_flags_gate.configure(watchdog_db_path)
+
             try:
                 intake(watchdog_db_path)
             except Exception as exc:  # noqa: BLE001 - a failed pickup never stops startup

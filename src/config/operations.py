@@ -30,7 +30,8 @@ class TradingConfig(BaseModel):
 
 
 class StorageConfig(BaseModel):
-    db_path: str
+    # Empty would leave the owner pause switch with no database to read.
+    db_path: str = Field(min_length=1, pattern=r"\S")
 
 
 class EvolutionConfig(BaseModel):
