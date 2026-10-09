@@ -9,7 +9,7 @@ identical.
 
 from __future__ import annotations
 
-from src.pipeline_stages import logger
+from src.pipeline_stages import _record_pipeline_event, logger
 from src.stage_execution_parts.state import SKIP
 
 
@@ -41,7 +41,13 @@ def await_cover_and_finalize(pipeline, prot) -> None:
     )
 
 
-def cover_qty_and_label(pipeline, decision, held_qty):
+#: Refusal reason for a partial COVER. Owner ruling 2026-10-09: a held
+#: position is kept whole or closed whole; short-side twin of
+#: `PARTIAL_SELL_REFUSED` in sell_loop.py.
+PARTIAL_COVER_REFUSED = "partial_cover_refused_whole_exits_only"
+
+
+def cover_qty_and_label(pipeline, decision, held_qty, ctx):
     """Resolve the COVER quantity and label; `SKIP` where the loop skipped."""
     if decision.allocation_pct == 0:
         logger.warning(
@@ -50,22 +56,25 @@ def cover_qty_and_label(pipeline, decision, held_qty):
         )
         return SKIP
     if 0 < decision.allocation_pct < 100:
-        cover_fraction = decision.allocation_pct / 100
-        qty = held_qty * cover_fraction
-        if float(held_qty).is_integer():
-            qty = max(1.0, float(int(qty)))
-        if qty <= 0:
-            return SKIP
-        if qty >= held_qty:
-            qty = pipeline._full_sell_qty(held_qty)
-            if qty is None:
-                return SKIP
-            action_label = "COVER"
-        else:
-            action_label = f"PARTIAL_COVER({decision.allocation_pct:.0f}%)"
-    else:
-        qty = pipeline._full_sell_qty(held_qty)
-        if qty is None:
-            return SKIP
-        action_label = "COVER"
-    return qty, action_label
+        logger.error(
+            "Refusing PARTIAL_COVER %s (%.0f%%): a held position is kept whole or closed whole",
+            decision.symbol,
+            decision.allocation_pct,
+        )
+        try:
+            _record_pipeline_event(
+                pipeline,
+                ctx,
+                decision.symbol,
+                "order",
+                "refused",
+                PARTIAL_COVER_REFUSED,
+                allocation_pct=decision.allocation_pct,
+            )
+        except Exception as exc:  # noqa: BLE001 — a record write never changes the refusal
+            logger.error("partial-cover refusal record failed for %s: %s", decision.symbol, exc)
+        return SKIP
+    qty = pipeline._full_sell_qty(held_qty)
+    if qty is None:
+        return SKIP
+    return qty, "COVER"

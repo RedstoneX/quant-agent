@@ -331,7 +331,7 @@ class ExecutionStage:
                 if not existing or existing[0].qty >= 0:
                     continue  # nothing short held — COVER on a long/flat is refused
                 held_qty = abs(existing[0].qty)
-                resolved = cover_qty_and_label(pipeline, decision, held_qty)
+                resolved = cover_qty_and_label(pipeline, decision, held_qty, ctx)
                 if resolved is SKIP:
                     continue
                 qty, action_label = resolved
