@@ -163,12 +163,11 @@ def test_sweep_runs_only_when_frozen_or_unknown(monkeypatch):
 def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monkeypatch, session):
     """The seam: every pipeline session start with Freeze on cancels a resting buy entry first."""
     import sqlite3
-    from unittest.mock import MagicMock
-
     from src.execution.broker import AlpacaBroker
     from src.owner_flags import PAUSE
     from src import pipeline as pl
     from src.storage.schema.owner_intent_tables import apply
+    from tests.pipeline_factory import build_pipeline
 
     db = str(tmp_path / "desk.db")
     conn = sqlite3.connect(db)
@@ -183,6 +182,7 @@ def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monk
         [_pos("MSFT", "5")], [_order("entry", "AAPL", "buy", "10"), _order("stop", "MSFT", "sell", "5", "stop")]
     )
     broker.is_trading_day = lambda: True
+    broker.get_bars = lambda *a, **k: None  # never called: every session body is stubbed below
     broker.sweep_frozen_resting_orders = lambda db_path: AlpacaBroker.sweep_frozen_resting_orders(broker, db_path)
     for helper, fn in (
         (pl._morning_helpers, "run_morning"),
@@ -193,9 +193,8 @@ def test_pipeline_session_start_cancels_resting_entry_when_frozen(tmp_path, monk
         monkeypatch.setattr(
             helper, fn, lambda *a, **k: {"status": "executed", "cancelled_at_start": list(broker.cancelled)}
         )
-    pipe = pl.TradingPipeline.__new__(pl.TradingPipeline)
-    pipe.broker = broker
-    pipe.config = MagicMock(storage=MagicMock(db_path=db))
+    pipe = build_pipeline(broker=broker)
+    monkeypatch.setattr(pipe.config.storage, "db_path", db)
 
     result = getattr(pipe, session)()
 
