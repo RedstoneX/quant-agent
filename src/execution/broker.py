@@ -498,6 +498,9 @@ class AlpacaBroker:
     def read_latest_trade_prints(self, *args, **kwargs):
         return self._market_data().read_latest_trade_prints(*args, **kwargs)
 
+    def get_bars_batch(self, *args, **kwargs):
+        return self._market_data().get_bars_batch(*args, **kwargs)
+
     def get_intraday_snapshots(self, *args, **kwargs):
         return self._market_data().get_intraday_snapshots(*args, **kwargs)
 
