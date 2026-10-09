@@ -115,7 +115,9 @@ def _rederive_on_todays_bars(
         # exactly where it is, and is filed under its own machine code.
         return TargetRevisionOutcome(
             symbol=sym,
-            code=derivation.fault or derivation.refusal or REVISION_NO_TRIGGER,
+            # `basis` names the no-target outcome (owner rule 2026-10-09),
+            # which carries neither a refusal nor a fault code.
+            code=derivation.fault or derivation.refusal or derivation.basis or REVISION_NO_TRIGGER,
             trigger=trigger,
             prior_price=target,
             refusal=derivation.refusal,

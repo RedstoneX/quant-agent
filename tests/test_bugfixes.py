@@ -1831,29 +1831,25 @@ def test_tech_analysis_rr_none_for_neutral_or_missing_target():
 
 
 def test_tech_analysis_rr_handles_malformed_geometry():
-    """Target below entry on a BUY is now rejected at construction time.
-
-    Previously this constructed fine and risk_reward computed None from the
-    malformed geometry defensively. The 2026-08-27 validator now enforces
-    reference_target > entry_price for BUY directly, so the bad geometry
-    never reaches the computed field at all — an even stronger defense
-    against a bogus ratio than the old None-return.
-    """
-    with pytest.raises(ValidationError):
-        TechAnalysisResult(
-            symbol="SPY",
-            rating="buy",
-            entry_price=500,
-            stop_loss=490,
-            reference_target=495,  # target below entry
-            support_levels=[490.0],
-            resistance_levels=[],
-            setup_type="range",
-            expected_horizon_sessions=10,
-            reasoning="x",
-            reasoning_chain=_trc(),
-            thesis_invalid_if="closes below support",
-        )
+    """Target below entry on a BUY is FLAGGED, not rejected (owner rule
+    2026-10-09): the signal survives with `reference_target_wrong_side`, and
+    the ratio from that malformed geometry is still None, never a number."""
+    result = TechAnalysisResult(
+        symbol="SPY",
+        rating="buy",
+        entry_price=500,
+        stop_loss=490,
+        reference_target=495,  # target below entry
+        support_levels=[490.0],
+        resistance_levels=[],
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="x",
+        reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
+    )
+    assert result.reference_target_wrong_side is True
+    assert result.risk_reward is None
 
 
 def test_tech_analysis_thesis_invalid_if_required_on_actionable():

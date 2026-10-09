@@ -154,10 +154,12 @@ class EntryStopResolver:
             entry_price,
             target.direction,
         )
-        if derivation.price is None:
+        if derivation.refused:
             # A data fault has already been recorded and logged as
             # UNMEASURABLE by `_derive_target`; only a genuine refusal is
-            # logged here as a rejection. Both fail closed.
+            # logged here as a rejection. Both fail closed. A `no_target`
+            # derivation (measured chart, no level — owner rule 2026-10-09)
+            # is NOT refused and continues to the stop with no take-profit.
             if not derivation.fault:
                 # Board item 10 (2026-09-14, second pass): this used to be a
                 # bare `logger.warning`. It DOES match the capture's regex,
@@ -310,7 +312,9 @@ class EntryStopResolver:
             entry_price,
             direction,
         )
-        if derivation.price is None:
+        if derivation.refused:
+            # A `no_target` derivation continues: its ratio previews None,
+            # which the PM gate reads as "no ratio", never as a block.
             return None
 
         raw_stop = getattr(analysis, "stop_loss", None)

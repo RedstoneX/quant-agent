@@ -100,7 +100,7 @@ def entry_stop_price(ctx, decision, is_short, sizing_price):
     )
     if payoff_skip is not None:
         raise RuntimeError(f"reward:risk execution skip is retired; got {payoff_skip!r} for {decision.symbol}")
-    if not is_short and geometry_changed and decision.take_profit > 0:
+    if not is_short and geometry_changed and (decision.take_profit or 0) > 0:
         logger.info(
             "BUY %s: execution moved the geometry (entry $%.2f -> "
             "$%.2f, stop $%.2f -> $%.2f) — no reward-side skip "

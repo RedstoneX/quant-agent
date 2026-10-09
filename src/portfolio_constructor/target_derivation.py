@@ -6,6 +6,9 @@ side-channels are passed in as explicit arguments.
 
 from __future__ import annotations
 
+import json
+import logging
+
 from src.data.levels import (
     COVERAGE_UNKNOWN,
     FAULT_NO_ANALYSIS,
@@ -15,6 +18,13 @@ from src.data.levels import (
 from src.models import TargetPosition, TechAnalysisResult
 from src.portfolio_constructor.config import TRIM_REFUSAL_NO_USABLE_LIVE_STOP
 from src.portfolio_constructor.divergence_counter import log_divergence
+
+logger = logging.getLogger(__name__)
+
+#: Stable prefix of the per-symbol "no target" log record (owner rule
+#: 2026-10-09). One line per derivation that found no structural level on a
+#: measured chart: the trade proceeds on its ATR stop with no take-profit.
+NO_TARGET_ROW_TAG = "NO_TARGET_ROW "
 
 
 def _held_trim_entry_and_stop(
@@ -137,6 +147,30 @@ def _derive_target(
     return derivation
 
 
+def log_no_target(symbol: str, direction: str, entry_price: float, derivation: TargetDerivation) -> None:
+    """Write the per-symbol "no target" record for an order that ships with
+    no take-profit. Called by the order builders, once per shipped order —
+    not from `_derive_target`, which runs twice per symbol (preview and
+    build) and would double-count."""
+    if not derivation.no_target:
+        return
+    logger.warning(
+        "%s%s",
+        NO_TARGET_ROW_TAG,
+        json.dumps(
+            {
+                "symbol": symbol,
+                "direction": direction,
+                "entry_price": entry_price,
+                "basis": derivation.basis,
+                "model_target": derivation.model_target,
+                "detail": derivation.detail,
+            },
+            sort_keys=True,
+        ),
+    )
+
+
 def _log_target_divergence(
     cfg,
     refusal_recorder,
@@ -163,6 +197,12 @@ def _target_note(derivation: TargetDerivation) -> str:
     head, which is the class of error that produced two contradictory
     reward:risk figures in one response on 2026-08-31.
     """
+    if derivation.no_target:
+        # The AI Risk Manager must see that the target is ABSENT on purpose,
+        # not lost: no level was found, so nothing was invented.
+        return (
+            " [target ABSENT — no structural level on the measured chart; trend trade on its ATR stop, no take-profit]"
+        )
     if derivation.price is None:
         return ""
     note = f" [target ${derivation.price:,.2f} — {derivation.basis}]"

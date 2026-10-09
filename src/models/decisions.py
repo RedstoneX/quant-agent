@@ -15,7 +15,11 @@ class TradeDecision(LLMOutputModel):
     allocation_pct: float = Field(ge=0, le=100)
     entry_price: float
     stop_loss: float
-    take_profit: float
+    # None = NO take-profit (owner rule 2026-10-09): the chart was measured
+    # and holds no structural level, so the trade runs on its ATR stop as a
+    # trend trade. A missing number is never invented; when one IS present
+    # the side and sign checks below still apply to it.
+    take_profit: float | None
     reasoning: str
     # --- Conviction ledger (QAMC remediation spec §7.2) --------------------
     # Pinned at ENTRY (BUY/SHORT) only, mirroring how `expected_horizon_
@@ -211,11 +215,11 @@ class TradeDecision(LLMOutputModel):
                 raise ValueError("BUY decisions require entry_price > 0")
             if self.stop_loss < 0:
                 raise ValueError("BUY decisions require stop_loss >= 0")
-            if self.take_profit <= 0:
-                raise ValueError("BUY decisions require take_profit > 0")
+            if self.take_profit is not None and self.take_profit <= 0:
+                raise ValueError("BUY decisions require take_profit > 0 when one is given")
             if self.stop_loss > 0 and self.stop_loss >= self.entry_price:
                 raise ValueError("BUY decisions require stop_loss to stay below entry_price")
-            if self.take_profit <= self.entry_price:
+            if self.take_profit is not None and self.take_profit <= self.entry_price:
                 raise ValueError("BUY decisions require take_profit to stay above entry_price")
         elif self.action == "SHORT":
             # Mirror of the BUY geometry: a short's stop protects ABOVE
@@ -225,11 +229,11 @@ class TradeDecision(LLMOutputModel):
                 raise ValueError("SHORT decisions require entry_price > 0")
             if self.stop_loss < 0:
                 raise ValueError("SHORT decisions require stop_loss >= 0")
-            if self.take_profit <= 0:
-                raise ValueError("SHORT decisions require take_profit > 0")
+            if self.take_profit is not None and self.take_profit <= 0:
+                raise ValueError("SHORT decisions require take_profit > 0 when one is given")
             if self.stop_loss > 0 and self.stop_loss <= self.entry_price:
                 raise ValueError("SHORT decisions require stop_loss to stay above entry_price")
-            if self.take_profit >= self.entry_price:
+            if self.take_profit is not None and self.take_profit >= self.entry_price:
                 raise ValueError("SHORT decisions require take_profit to stay below entry_price")
         # SELL and COVER don't need live entry/stop/target — execution uses
         # market price, exactly as SELL always has.

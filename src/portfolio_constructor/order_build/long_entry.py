@@ -10,6 +10,7 @@ from __future__ import annotations
 from src.models import TargetPosition, TechAnalysisResult, TradeDecision, stated_soft_exit
 from src.risk.constants import risk_budget_allocation_pct
 from src.portfolio_constructor.config import logger
+from src.portfolio_constructor.target_derivation import log_no_target
 from src.portfolio_constructor.config import STOP_REFUSAL_SIZED_TO_ZERO, STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY, RiskPlan
 
 
@@ -79,7 +80,9 @@ class LongEntryBuilder:
             entry_price,
             target.direction,
         )
-        if derivation.price is None or derivation.price <= entry_price:
+        # A `no_target` derivation (measured chart, no level — owner rule
+        # 2026-10-09) passes with `take_profit=None`: never invented.
+        if derivation.refused or (derivation.price is not None and derivation.price <= entry_price):
             # A data fault is already recorded/logged as UNMEASURABLE by
             # `_derive_target`; only a real refusal is a rejection here.
             if not derivation.fault:
@@ -97,7 +100,7 @@ class LongEntryBuilder:
                     + (f": {derivation.detail}" if derivation.detail else f" (computed {derivation.price})"),
                 )
             return None
-        take_profit = float(derivation.price)
+        take_profit = float(derivation.price) if derivation.price is not None else None
 
         # `target_pct` and `current_pct` are GROSS-leverage weights (see
         # _current_weights), but every consumer of `allocation_pct` spends it
@@ -236,6 +239,7 @@ class LongEntryBuilder:
         if catalyst:
             reasoning += f" (catalyst: {catalyst})"
 
+        log_no_target(target.symbol, target.direction, entry_price, derivation)
         return TradeDecision(
             action="BUY",
             symbol=target.symbol,

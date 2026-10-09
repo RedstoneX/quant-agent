@@ -270,6 +270,14 @@ class PositionReviewerAgent(BaseAgent):
                 lines.append(
                     f"  Reference target: ${tp:.2f} (a recorded expectation — nothing exits, caps or trails on it)"
                 )
+            else:
+                # No take-profit on record (owner rule 2026-10-09: a chart
+                # with no level trades with none). Said as ABSENT so the
+                # reviewer never reads a missing number as $0.00.
+                lines.append(
+                    "  Reference target: absent (no structural level was found — "
+                    "a trend trade managed by its stop; no number is invented)"
+                )
             entry_reasoning = (ctx.get("reasoning") or "").strip() or (entry_row.get("reasoning") or "").strip()
             if entry_reasoning:
                 lines.append(f"  Entry thesis: {entry_reasoning[:220]}")

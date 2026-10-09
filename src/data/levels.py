@@ -1144,6 +1144,10 @@ BREAKOUT_PROJECTION_ATR_MULTIPLE = 1.0
 #: the trade's geometry does not work. It belongs in the desk's "why didn't
 #: we trade" statistics.
 REFUSAL_NO_HORIZON = "no_expected_horizon"
+#: Kept for historical logs and the census. Never produced since 2026-10-09:
+#: a measured chart with no structural level now TRADES as a no-target trend
+#: trade (`BASIS_NO_TARGET` below). The data-fault twin, an UNUSABLE history,
+#: is still `FAULT_NO_STRUCTURE` and still does not trade.
 REFUSAL_NO_STRUCTURE = "no_structural_levels"
 REFUSAL_NO_LEVEL_IN_DIRECTION = "no_level_in_direction"
 REFUSAL_PROJECTION_IMPLAUSIBLE = "projection_implausible"
@@ -1196,6 +1200,15 @@ REFUSAL_NO_VOLATILITY = "no_volatility_reading"
 #: bars with no repeated turning point within reach", and the derivation
 #: cannot tell which without this. Recorded by the tech analyst, which has
 #: the bars, onto `TechAnalysisResult.levels_coverage`.
+#: Owner rule 2026-10-09: a stock whose chart was read and holds no level
+#: still trades, on the 2.5 ATR stop, with NO take-profit — a missing number
+#: is never invented. The derivation returns `price=None`, this basis,
+#: `no_target=True` and `level_used=None`, so every consumer of
+#: `structural_ceiling=(level_used is not None)` manages it as a trend trade
+#: (trailed, no reward:risk check). Distinct from `FAULT_NO_STRUCTURE`, which
+#: is a data fault (the bars were unusable) and still does not trade.
+BASIS_NO_TARGET = "no_target"
+
 COVERAGE_MEASURED = "measured"  # scan ran; an empty result is about the chart
 COVERAGE_NO_BARS = "no_bars"  # the feed returned nothing
 COVERAGE_UNUSABLE_BARS = "unusable_bars"  # bars arrived; fewer clean ones than MIN_SCAN_BARS
@@ -1283,12 +1296,17 @@ class TargetDerivation:
     #: condition was invisible, because such a level was dropped from the
     #: candidate set and the target was promoted past it instead.
     target_inside_noise: bool = False
+    #: The chart was measured and holds no structural level: the trade goes
+    #: ahead with NO take-profit (`price is None`) — owner rule 2026-10-09.
+    #: Never set together with `refusal` or `fault`.
+    no_target: bool = False
 
     @property
     def refused(self) -> bool:
         """No trade — for EITHER reason. Callers that need to tell the two
-        apart read `unmeasurable` / `fault` and `refusal`."""
-        return self.price is None
+        apart read `unmeasurable` / `fault` and `refusal`. A `no_target`
+        derivation is NOT refused: it trades without a take-profit."""
+        return self.price is None and not self.no_target
 
     @property
     def unmeasurable(self) -> bool:
@@ -1460,9 +1478,10 @@ def derive_structural_target(
         # found no level with the minimum touches within reach (a
         # measurement of the chart: a relentless trend, or every repeated
         # turn further away than the instrument can travel). Only the coverage
-        # recorded beside the levels tells them apart. Neither trades —
-        # a stop needs a level to sit on — but they go into the record and
-        # to the owner as different things.
+        # recorded beside the levels tells them apart. The data fault does
+        # not trade. The measured absence DOES (owner rule 2026-10-09): the
+        # stop is the 2.5 ATR unbacked stop, there is no take-profit, and
+        # `level_used=None` makes it a trend trade downstream.
         coverage = str(levels_coverage or COVERAGE_UNKNOWN).strip().lower()
         if coverage in _FAULT_COVERAGE:
             return _faulted(
@@ -1472,12 +1491,19 @@ def derive_structural_target(
                 f"symbol cannot be measured",
                 guess,
             )
-        return _refused(
-            REFUSAL_NO_STRUCTURE,
-            "the price history was measured and holds no structural level "
-            "(no repeated turning point within reach of the current price), "
-            "so there is nothing for a stop or a target to sit on",
-            guess,
+        return TargetDerivation(
+            price=None,
+            basis=BASIS_NO_TARGET,
+            detail=(
+                "NO TARGET: the price history was measured and holds no "
+                "structural level (no repeated turning point within reach of "
+                "the current price) — the trade has no take-profit and is "
+                "managed as a trend trade on its ATR stop"
+            ),
+            level_used=None,
+            horizon_reach=round(reach, 4),
+            model_target=guess,
+            no_target=True,
         )
 
     # THE WALL: the nearest structural level standing in this trade's way,

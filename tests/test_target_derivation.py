@@ -28,7 +28,6 @@ from src.data.levels import (
     MAX_HORIZON_SESSIONS,
     MIN_SCAN_BARS,
     PIVOT_WINDOW,
-    REFUSAL_NO_STRUCTURE,
     derive_structural_target,
     find_structural_levels,
     structure_coverage,
@@ -304,11 +303,12 @@ class TestRefusals:
         assert result.fault == FAULT_NO_ENTRY
         assert result.refusal == ""
 
-    def test_a_measured_chart_with_no_structure_is_still_a_refusal(self):
+    def test_a_measured_chart_with_no_structure_trades_with_no_target(self):
         """The other half of the split, and the one that keeps this honest:
         enough clean bars for the pivot scan to run, and it found no level
         with the minimum touches within reach. That is a fact about the
-        chart, not about the feed — a trade judgement, filed as one."""
+        chart, not about the feed. Since 2026-10-09 (owner rule) it TRADES
+        with no take-profit — never a refusal, never a fault."""
         result = derive_structural_target(
             entry_price=100.0,
             direction="long",
@@ -319,7 +319,8 @@ class TestRefusals:
             levels_coverage=COVERAGE_MEASURED,
         )
         assert result.price is None
-        assert result.refusal == REFUSAL_NO_STRUCTURE
+        assert result.no_target and not result.refused
+        assert result.refusal == ""
         assert result.fault == ""
         assert not result.unmeasurable
         assert "measured" in result.detail
@@ -356,7 +357,7 @@ class TestRefusals:
             dict(entry_price=100.0, atr=None, horizon_sessions=20, levels=[90.0]),
             dict(entry_price=100.0, atr=2.0, horizon_sessions=None, levels=[90.0]),
             dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[]),
-            dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[], levels_coverage=COVERAGE_MEASURED),
+            # (a measured empty chart is `no_target` since 2026-10-09 — it trades)
             dict(entry_price=100.0, atr=2.0, horizon_sessions=1, levels=[80.0], setup_type="breakout"),
         ]
         for case in cases:
@@ -458,7 +459,7 @@ class TestRefusals:
         )
         assert measured.price is None
         assert measured.basis != "measured_move"
-        assert measured.refusal == REFUSAL_NO_STRUCTURE
+        assert measured.no_target and measured.refusal == ""
 
     def test_the_trend_classification_is_shared_with_the_reward_risk_gate(self):
         """One definition, asserted as one function. If someone adds a second
@@ -681,7 +682,7 @@ class TestDataFaultsAtTheConstructor:
         assert decisions == []
         assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_ENTRY
 
-    def test_a_measured_empty_chart_is_a_refusal_and_not_a_fault(self):
+    def test_a_measured_empty_chart_trades_and_is_not_a_fault(self):
         """The negative case that keeps the fault list honest: a chart the
         desk measured and found structureless is a trade judgement. It is
         dropped and its reason captured, but it must NOT appear among the
@@ -706,16 +707,12 @@ class TestDataFaultsAtTheConstructor:
             total_value=100_000,
             price_map={"NVDA": 100.0},
         )
-        assert decisions == []
+        # Owner rule 2026-10-09: a measured chart with no level trades on
+        # its ATR stop with NO take-profit. Still not a data fault, and no
+        # longer a refusal.
+        assert [d.take_profit for d in decisions if d.action == "BUY"] == [None]
         assert constructor.last_data_faults == {}
-        # Board item 10 (2026-09-14, second pass): the word changed from
-        # "rejected" to "refused" when this path started filing a STRUCTURED
-        # refusal instead of leaning on the log scrape. The verdict did not
-        # change — still dropped, still not a data fault — so the assertion
-        # is strengthened to the durable record rather than loosened to the
-        # new adjective.
-        assert REFUSAL_NO_STRUCTURE in constructor.last_drop_reasons["NVDA"]
-        assert constructor.last_refusals["NVDA"]["refusal"] == REFUSAL_NO_STRUCTURE
+        assert "NVDA" not in constructor.last_refusals
 
     def test_the_eligibility_preview_records_faults_too(self):
         """A symbol becomes unanalysable BEFORE the PM ever sees it: the
