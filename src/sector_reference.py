@@ -17,6 +17,7 @@ import yfinance as yf
 
 from src.models import _ALLOWED_SECTORS, _SECTOR_ALIASES
 from src.sentinel.counted import record_swallowed
+from src.trading_calendar import et_today
 
 # Same logger name the code had inside broker.py, so log capture is unchanged.
 logger = logging.getLogger("src.execution.broker")
@@ -69,6 +70,13 @@ _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _g
 # Cache sector lookups to avoid repeated API calls
 _sector_cache: dict[str, str] = {}
 _sector_lock = threading.Lock()
+
+# An "Unknown" answer is remembered until the US/Eastern trading day rolls over
+# (no existing per-session reset point exists, so the trading day is the
+# boundary; no invented time constant). symbol -> ET date the miss was seen.
+# Stops a throttled name being re-requested on every check, while still
+# re-diagnosing it the next trading day (Codex r11 P1 reason kept).
+_sector_unknown_memo: dict[str, object] = {}
 
 # WHY (2026-09-01 audit): a symbol whose sector never resolves reads
 # identically to one with no exception at all — both come back "Unknown"
@@ -132,9 +140,11 @@ def _get_sector(symbol: str) -> str:
     for un-classifiable names), so macro sector_guidance and position.sector share
     a namespace.
 
-    Caching policy: only KNOWN sectors are cached. "Unknown" is returned but
-    NOT cached, so a transient yfinance outage gets re-diagnosed on every
-    call instead of freezing a stale verdict. Codex r11 P1: a one-shot
+    Caching policy: KNOWN sectors are cached for the process. "Unknown" is
+    memoised only until the US/Eastern trading day rolls over (not cached
+    forever), so a throttled name is not re-requested on every check, but a
+    transient yfinance outage still gets re-diagnosed the next day instead of
+    freezing a stale verdict. Codex r11 P1: a one-shot
     lookup miss in --mode live used to leave the symbol cap-exempt until
     process restart. Re-querying yfinance on every call for an unresolved
     symbol is a small overhead vs. silently disabling a hard risk rule.
@@ -158,6 +168,10 @@ def _get_sector(symbol: str) -> str:
         cached = _sector_cache.get(symbol)
     if cached is not None:
         return cached
+    today = et_today()
+    with _sector_lock:
+        if _sector_unknown_memo.get(symbol) == today:
+            return "Unknown"
     if symbol.upper() in _INDEX_ETFS:
         with _sector_lock:
             _sector_cache[symbol] = "Broad"
@@ -223,5 +237,6 @@ def _get_sector(symbol: str) -> str:
     # data and simply had no `sector` field in it.
     status = "lookup_failed" if (timed_out or fetch_error["raised"] or not info) else "no_sector"
     with _sector_lock:
+        _sector_unknown_memo[symbol] = today
         _sector_resolution_status[symbol] = status
     return canonical

@@ -3,6 +3,7 @@ import time
 from unittest.mock import patch
 
 from src.execution.broker import _canonicalize_sector, _get_sector, _sector_cache
+from src.sector_reference import _sector_unknown_memo
 
 
 def test_canonicalize_passes_through_canonical_names():
@@ -75,6 +76,8 @@ def test_get_sector_does_not_cache_unknown_on_empty_response():
             "Unknown must NOT be cached — that would make a transient miss "
             "permanently exempt the symbol from max_sector_pct"
         )
+        # Unknown is remembered for the ET trading day; simulate the rollover.
+        _sector_unknown_memo.clear()
         # Second call: yfinance now returns real data → resolves correctly.
         assert _get_sector("NVDA") == "Technology"
         assert _sector_cache["NVDA"] == "Technology"
@@ -98,6 +101,7 @@ def test_get_sector_does_not_cache_unknown_on_yfinance_exception():
     with patch("src.execution.broker.yf.Ticker", side_effect=make_ticker):
         assert _get_sector("AAPL") == "Unknown"
         assert "AAPL" not in _sector_cache
+        _sector_unknown_memo.clear()  # simulate the ET trading-day rollover
         assert _get_sector("AAPL") == "Technology"
         assert _sector_cache["AAPL"] == "Technology"
 
