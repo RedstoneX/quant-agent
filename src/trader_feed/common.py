@@ -609,8 +609,20 @@ def _traded_word(done_rows: list[dict] | None) -> str:
     sold. The word is read off the actions that actually reached the
     broker: all exits read SOLD, all entries read BOUGHT, a mix reads
     TRADED. An unknown action falls back to TRADED rather than guessing
-    a direction."""
-    actions = {str(row.get("action", "")).upper() for row in (done_rows or []) if isinstance(row, dict)}
+    a direction.
+
+    2026-10-09: the word is read off FILLS, never off submitted orders. A
+    row that only reached the broker (`submitted` / `pending_new` /
+    `accepted` ...) has sold or bought nothing yet, so it cannot earn SOLD
+    or BOUGHT; when no row has filled at all the word is ORDERED."""
+    filled = [
+        row
+        for row in (done_rows or [])
+        if isinstance(row, dict) and str(row.get("fill_status") or "").lower() in {"filled", "partially_filled"}
+    ]
+    if done_rows and not filled:
+        return "ORDERED"
+    actions = {str(row.get("action", "")).upper() for row in filled}
     exits = {"SELL", "REDUCE", "COVER", "TRIM"}
     entries = {"BUY", "SHORT", "ADD"}
     if actions and actions <= exits:
@@ -644,8 +656,9 @@ def _outcome_word(
                  classified as a fault (`_blocked_rows`).
       PARTIAL    orders reached the broker AND something also broke.
       BOUGHT /   orders reached the broker; the word says which way
-      SOLD /     (`_traded_word`). Correct refusals alongside them do not
-      TRADED     change it: the session traded.
+      SOLD /     (`_traded_word`, read off fills). Correct refusals
+      TRADED     alongside them do not change it: the session traded.
+      ORDERED    orders reached the broker but none has filled yet.
       NO TRADE   nothing reached the broker, and every block was a desk or
                  risk rule declining on purpose. A normal operating state.
       NO CHANGE  nothing reached the broker and nothing was declined.

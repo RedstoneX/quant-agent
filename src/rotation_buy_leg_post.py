@@ -9,15 +9,44 @@ from src.pipeline_stages import (
 )
 
 
-def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float, order_id: str | None) -> None:
-    """Standalone owner alert: the desk closed a position ON ITS OWN.
+def _rotation_sell_outcome(*, qty: float, filled_qty: float | None, terminal_status: str | None) -> str:
+    """Which TRUE thing happened to the sale: 'filled', 'partial', 'unfilled'
+    or 'unknown'. Read off the FILLED QUANTITY, never the status word alone:
+    an order cancelled after a part fill still sold shares, and a submit-time
+    'pending_new' sold nothing. No terminal status from the wait, or no fill
+    quantity from the broker, is 'unknown' — never a guess either way.
+    """
+    if not terminal_status or filled_qty is None:
+        return "unknown"
+    if filled_qty <= 0:
+        return "unfilled"
+    if filled_qty < qty:
+        return "partial"
+    return "filled"
+
+
+def _alert_rotation_executed(
+    *,
+    rotation: dict,
+    qty: float,
+    limit_price: float,
+    order_id: str | None,
+    terminal_status: str | None = None,
+    filled_qty: float | None = None,
+    avg_price: float | None = None,
+    stops_restored: bool | None = None,
+) -> None:
+    """Standalone owner alert for the desk's own rotation close.
 
     Same path and shape as the naked-position, re-peg-exhausted and
     holding-discipline-block alerts (`notifier.send_owner_alert`): its own
     Telegram message, never bundled into the run summary; severity in plain
-    words, never colour alone. Fired the moment the sale is broker-accepted
-    — that is the irreversible act, and a position sold automatically must
-    never be silent. Never raises.
+    words, never colour alone. Sent at the sale's TERMINAL state, never at
+    submit — 2026-10-09 the owner was told a position was "CLOSED" while the
+    sell sat unfilled and was cancelled 15 s later. The headline is read off
+    the filled quantity (`_rotation_sell_outcome`); a restore is claimed only
+    when the finalize step confirmed it (`stops_restored`). Called with no
+    outcome it says UNKNOWN, never CLOSED. Never raises.
     """
     try:
         held = rotation["held_symbol"]
@@ -25,10 +54,35 @@ def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float, 
         rules = "; ".join(rotation.get("held_reasons") or []) or "entry rules"
         protection = str(rotation.get("protection_basis") or "not measured")
         room_for = f" to free room for {new}" if new else ""
-        body = (
-            "POSITION CLOSED AUTOMATICALLY — OPPORTUNITY ROTATION\n"
-            f"{held}: the desk submitted a SELL of {qty:g} share(s) at limit "
-            f"${limit_price:,.2f} (broker order {order_id}){room_for}.\n"
+        order = f"limit ${limit_price:,.2f}, broker order {order_id}"
+        outcome = _rotation_sell_outcome(qty=qty, filled_qty=filled_qty, terminal_status=terminal_status)
+        filled = float(filled_qty or 0.0)
+        avg = f"an average ${avg_price:,.2f}" if avg_price else "an unreported average price"
+        if outcome == "filled":
+            body = (
+                "POSITION CLOSED AUTOMATICALLY — OPPORTUNITY ROTATION\n"
+                f"{held}: the desk SOLD {filled:g} share(s) at {avg} ({order}){room_for}.\n"
+            )
+        elif outcome == "partial":
+            body = (
+                f"PARTLY SOLD {filled:g} of {qty:g} share(s) — OPPORTUNITY ROTATION\n"
+                f"{held}: the desk sold {filled:g} of {qty:g} share(s) at {avg} ({order}){room_for}; "
+                f"the order ended '{terminal_status}' and {qty - filled:g} share(s) are still held.\n"
+            )
+        elif outcome == "unfilled":
+            body = (
+                "SELL NOT FILLED — position kept — OPPORTUNITY ROTATION\n"
+                f"{held}: the desk offered {qty:g} share(s) for sale ({order}){room_for}; "
+                f"nothing filled and the order ended '{terminal_status}'. The position is still held.\n"
+            )
+        else:
+            body = (
+                "SELL OUTCOME UNKNOWN — OPPORTUNITY ROTATION\n"
+                f"{held}: the desk offered {qty:g} share(s) for sale ({order}){room_for}, "
+                "but the broker never confirmed how the order ended or how much filled. "
+                "Whether the position is still held is NOT known.\n"
+            )
+        body += (
             f"Why {held}: it fails the desk's own entry rules today ({rules}) "
             "— it would not be bought now, so it has not earned its place. "
             f"Its structural protection reads: {protection}.\n"
@@ -46,15 +100,20 @@ def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float, 
             body += (
                 "There is NO replacement: nothing un-held ranked well enough "
                 "to buy this session. The cash stays in the book. This sale "
-                "is not funding anything — the position was closed purely "
-                "because it no longer clears the bar it was bought on "
+                "is not funding anything — it was placed purely because the "
+                "position no longer clears the bar it was bought on "
                 "(owner ruling, 2026-10-01).\n"
             )
-        body += (
-            "This sale went through the normal Risk Manager review and the "
-            "protected-sell discipline (stops cancelled write-ahead, restored "
-            "if the sale does not fill)."
-        )
+        body += "This sale went through the normal Risk Manager review and the protected-sell discipline. "
+        if outcome == "filled":
+            body += "No shares remain, so there are no stops to restore."
+        elif stops_restored:
+            body += "Stop coverage on the shares still held was restored and confirmed."
+        else:
+            body += (
+                "Stop coverage on the shares still held was NOT confirmed restored; "
+                "the recovery intent is kept and the desk retries it next session."
+            )
         if new:
             body += (
                 f" The BUY of {new} follows in this session only if the sale "
