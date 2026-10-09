@@ -100,25 +100,17 @@ def _eastern_naive(index_value) -> datetime:
     return index_value.to_pydatetime().replace(tzinfo=None)
 
 
-def _yf_earnings_dates(symbol: str):
-    import yfinance as yf
-
-    # No `limit` passed: yfinance's own default is used.
-    return yf.Ticker(symbol).get_earnings_dates()
-
-
 def fetch_earnings_gap_history(
     symbol: str,
-    get_ohlcv: Callable[[str, int], list] | None = None,
-    get_earnings_dates: Callable[[str], object] | None = None,
+    get_ohlcv: Callable[[str, int], list],
+    get_earnings_dates: Callable[[str], object],
 ):
-    """Fetch past reports + daily bars and measure each gap. Returns (records, unmeasured)."""
-    if get_earnings_dates is None:
-        get_earnings_dates = _yf_earnings_dates
-    if get_ohlcv is None:
-        from src.data.market import MarketDataProvider
+    """Measure each past report's gap. Returns (records, unmeasured).
 
-        get_ohlcv = MarketDataProvider().get_ohlcv
+    No outbound client lives here: the caller injects the daily-bar fetcher
+    (e.g. MarketDataProvider.get_ohlcv) and a fetcher returning the earnings
+    frame indexed by tz-aware Eastern report stamps (yfinance's default limit).
+    """
     frame = get_earnings_dates(symbol)
     if frame is None or frame.empty:
         return [], []
