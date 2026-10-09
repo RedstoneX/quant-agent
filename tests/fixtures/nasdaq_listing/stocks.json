@@ -1,0 +1,7 @@
+{"data":{"rows":[
+{"symbol":"AAPL","name":"Apple Inc. Common Stock","marketCap":"3,000,000,000,000.00","sector":"Technology","industry":"Computers","country":"United States","lastsale":"$200.00","volume":"1000"},
+{"symbol":"BRK/B","name":"Berkshire Hathaway Inc. Class B Common Stock","marketCap":"900,000,000,000","sector":"Finance","industry":"Insurance","country":"United States","lastsale":"$450","volume":"5"},
+{"symbol":"NOCAP","name":"No Cap Corp Common Stock","marketCap":"","sector":"","industry":"","country":"","lastsale":"$1","volume":"1"},
+{"symbol":"ZERO","name":"Zero Cap Corp Common Stock","marketCap":"0.00","sector":"Energy","industry":"","country":"","lastsale":"$1","volume":"1"},
+{"symbol":"BAC^B","name":"Bank of America Corp Preferred Stock Series B","marketCap":"1,000,000","sector":"Finance","industry":"","country":"","lastsale":"$20","volume":"1"}
+]}}
