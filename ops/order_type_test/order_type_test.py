@@ -13,7 +13,7 @@ T = os.environ.get("ALPACA_TRADING_URL", "")
 D = "https://data.alpaca.markets"
 
 
-def req(m, u, b=None):
+def ott_req(m, u, b=None):
     r = urllib.request.Request(u, method=m, headers=H, data=json.dumps(b).encode() if b else None)
     try:
         with urllib.request.urlopen(r, timeout=20) as f:
@@ -23,17 +23,17 @@ def req(m, u, b=None):
         return {"error": e.read().decode()[:200]}
 
 
-def quote(s):
-    q = req("GET", f"{D}/v2/stocks/{s}/quotes/latest?feed=iex")["quote"]
-    t = req("GET", f"{D}/v2/stocks/{s}/trades/latest?feed=iex")["trade"]
+def ott_quote(s):
+    q = ott_req("GET", f"{D}/v2/stocks/{s}/quotes/latest?feed=iex")["quote"]
+    t = ott_req("GET", f"{D}/v2/stocks/{s}/trades/latest?feed=iex")["trade"]
     return q["bp"], q["ap"], t["p"]
 
 
-def now():
+def ott_now():
     return time.time()
 
 
-def ts(x):
+def ott_ts(x):
     return dt.datetime.fromisoformat(x.replace("Z", "+00:00")).timestamp() if x else None
 
 
@@ -41,34 +41,34 @@ rows = []
 L = threading.Lock()
 
 
-def submit(s, side, qty, typ, lim=None):
+def ott_submit(s, side, qty, typ, lim=None):
     b = {"symbol": s, "qty": str(qty), "side": side, "type": typ, "time_in_force": "day"}
     if lim is not None:
         b["limit_price"] = f"{lim:.2f}"
-    t0 = now()
-    o = req("POST", T + "/v2/orders", b)
+    t0 = ott_now()
+    o = ott_req("POST", T + "/v2/orders", b)
     return o, t0
 
 
-def wait(oid, sec, cancel=False):
-    end = now() + sec
+def ott_wait(oid, sec, cancel=False):
+    end = ott_now() + sec
     o = {}
-    while now() < end:
-        o = req("GET", T + "/v2/orders/" + oid)
+    while ott_now() < end:
+        o = ott_req("GET", T + "/v2/orders/" + oid)
         if o.get("status") in ("filled", "canceled", "rejected", "expired"):
             return o
         time.sleep(1)
     if cancel:
-        req("DELETE", T + "/v2/orders/" + oid)
+        ott_req("DELETE", T + "/v2/orders/" + oid)
         time.sleep(1.5)
-        o = req("GET", T + "/v2/orders/" + oid)
+        o = ott_req("GET", T + "/v2/orders/" + oid)
     return o
 
 
-def rec(s, side, method, lot, qty, bid, ask, last, o, t0, lim):
+def ott_rec(s, side, method, lot, qty, bid, ask, last, o, t0, lim):
     mid = (bid + ask) / 2
     fa = float(o["filled_avg_price"]) if o.get("filled_avg_price") else None
-    ft = ts(o.get("filled_at"))
+    ft = ott_ts(o.get("filled_at"))
     with L:
         rows.append(
             dict(
@@ -93,33 +93,33 @@ def rec(s, side, method, lot, qty, bid, ask, last, o, t0, lim):
         )
 
 
-def buy(s, lot, qty):
-    bid, ask, last = quote(s)
-    o, t0 = submit(s, "buy", qty, "market")
+def ott_buy(s, lot, qty):
+    bid, ask, last = ott_quote(s)
+    o, t0 = ott_submit(s, "buy", qty, "market")
     if "id" not in o:
-        rec(s, "buy", "market", lot, qty, bid, ask, last, o, t0, None)
+        ott_rec(s, "buy", "market", lot, qty, bid, ask, last, o, t0, None)
         return False
-    o = wait(o["id"], 30)
-    rec(s, "buy", "market", lot, qty, bid, ask, last, o, t0, None)
+    o = ott_wait(o["id"], 30)
+    ott_rec(s, "buy", "market", lot, qty, bid, ask, last, o, t0, None)
     return True
 
 
-def sell(s, m, lot, qty):
-    bid, ask, last = quote(s)
+def ott_sell(s, m, lot, qty):
+    bid, ask, last = ott_quote(s)
     mid = (bid + ask) / 2
     lim = {"a": None, "b": round(mid, 2), "c": round(bid, 2), "d": round(last * 0.995, 2)}[m]
-    o, t0 = submit(s, "sell", qty, "market" if m == "a" else "limit", lim)
+    o, t0 = ott_submit(s, "sell", qty, "market" if m == "a" else "limit", lim)
     if "id" not in o:
-        rec(s, "sell", m, lot, qty, bid, ask, last, o, t0, lim)
+        ott_rec(s, "sell", m, lot, qty, bid, ask, last, o, t0, lim)
         return
-    o = wait(o["id"], 60 if m == "b" else 30, cancel=True)
-    rec(s, "sell", m, lot, qty, bid, ask, last, o, t0, lim)
+    o = ott_wait(o["id"], 60 if m == "b" else 30, cancel=True)
+    ott_rec(s, "sell", m, lot, qty, bid, ask, last, o, t0, lim)
 
 
-def run(s):
+def ott_run(s):
     jobs = [(m, lot, q) for m in "abcd" for lot, q in (("whole", 1), ("frac", 0.37))]
     for m, lot, q in jobs:
-        buy(s, lot + m, q)
+        ott_buy(s, lot + m, q)
     time.sleep(2)
     th = [threading.Thread(target=sell, args=(s, m, lot, q)) for m, lot, q in jobs]
     [t.start() for t in th]
@@ -133,16 +133,16 @@ def main():
     if not (key and secret and suffix and T):
         raise SystemExit("ABORT set ALPACA_API_KEY, ALPACA_SECRET_KEY, SANDBOX_ACCOUNT_SUFFIX")
     H.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
-    a = req("GET", T + "/v2/account")
+    a = ott_req("GET", T + "/v2/account")
     if not str(a.get("account_number", "")).endswith(suffix):
         raise SystemExit("ABORT account mismatch")
     print("account ok")
     th = [threading.Thread(target=run, args=(s,)) for s in ["AAPL", "MSFT", "NVDA", "AMD", "META"]]
     [t.start() for t in th]
     [t.join() for t in th]
-    print(req("DELETE", T + "/v2/positions?cancel_orders=true"))
+    print(ott_req("DELETE", T + "/v2/positions?cancel_orders=true"))
     time.sleep(5)
-    print("positions left:", len(req("GET", T + "/v2/positions")))
+    print("positions left:", len(ott_req("GET", T + "/v2/positions")))
     sio = io.StringIO()
     w = csv.DictWriter(sio, fieldnames=list(rows[0]))
     w.writeheader()
