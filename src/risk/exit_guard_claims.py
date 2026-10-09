@@ -280,6 +280,53 @@ class HoldingDisciplineClaimCheck:
         return self.verdict == "false"
 
 
+def _judge_regime_claim(
+    *,
+    name_evidence: bool,
+    macro_regime_today: str | None,
+    macro_status: str | None,
+    contradictions: list[str],
+    unverifiable: list[str],
+) -> None:
+    """Judge a "regime shift to risk-off" exit claim on a PROTECTED position.
+
+    Lifted out of `holding_discipline_claim_check` to keep it under the
+    branch ceiling; behaviour is identical to the inline block it replaced.
+    """
+    if not name_evidence:
+        # Owner mandate 2026-10-09 (docs/OUTCOME.md): each stock's own
+        # behaviour decides; market mood is one input, never the decider.
+        # Control only reaches here when `protected` is True — the existing
+        # per-name check says this name's own thesis-backing level has NOT
+        # broken. A sell resting on the regime alone, with no claim about the
+        # name itself, therefore rests on market mood alone and is refused
+        # whatever today's macro read says. It can be re-proposed citing the
+        # name's own evidence (a bearish state change or thesis invalidation).
+        contradictions.append(
+            "rests on a regime shift to risk-off alone, but market mood cannot "
+            "decide an exit by itself and this name's own structural level is "
+            "intact (position still protected); no name-level evidence was cited"
+        )
+    else:
+        if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
+            if macro_regime_today != "risk-off":
+                contradictions.append(
+                    f"claims a regime flip to risk-off today, but today's "
+                    f"macro read ({macro_status}) shows regime="
+                    f"{macro_regime_today!r}, not risk-off"
+                )
+            # else: the claim is CONFIRMED — say nothing.
+        else:
+            # Macro unavailable/untrusted this run. Recorded so the gap is
+            # visible in the audit trail, but never blocked and never
+            # alerted on: this is the exact case the owner separated out.
+            unverifiable.append(
+                f"claims a regime flip to risk-off today, but this run's "
+                f"macro read (status={macro_status!r}) cannot confirm or "
+                f"deny it"
+            )
+
+
 def holding_discipline_claim_check(
     *,
     action: str,
@@ -367,23 +414,13 @@ def holding_discipline_claim_check(
     )
 
     if _claims_regime:
-        if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
-            if macro_regime_today != "risk-off":
-                contradictions.append(
-                    f"claims a regime flip to risk-off today, but today's "
-                    f"macro read ({macro_status}) shows regime="
-                    f"{macro_regime_today!r}, not risk-off"
-                )
-            # else: the claim is CONFIRMED — say nothing.
-        else:
-            # Macro unavailable/untrusted this run. Recorded so the gap is
-            # visible in the audit trail, but never blocked and never
-            # alerted on: this is the exact case the owner separated out.
-            unverifiable.append(
-                f"claims a regime flip to risk-off today, but this run's "
-                f"macro read (status={macro_status!r}) cannot confirm or "
-                f"deny it"
-            )
+        _judge_regime_claim(
+            name_evidence=bool(_claims_bearish or claims_thesis_invalidation(reason)),
+            macro_regime_today=macro_regime_today,
+            macro_status=macro_status,
+            contradictions=contradictions,
+            unverifiable=unverifiable,
+        )
 
     if _claims_bearish:
         # Named after the claim actually made, so an alert reads truthfully

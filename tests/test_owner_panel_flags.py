@@ -23,7 +23,7 @@ def db_path(tmp_path):
     db.conn.close()
     gate.configure(p)
     yield p
-    gate.configure(None)
+    gate.release()
 
 
 def _raise(db_path, *a, **k):
@@ -141,26 +141,58 @@ def test_wholesale_cancels_are_not_symbol_filtered(db_path):
     assert d.cancel_open_orders() == "THROUGH"  # a pause never blocks a cancel
 
 
-def test_unreadable_flag_uses_last_known_then_refuses_new_exposure_only(db_path, monkeypatch):
+def test_unreadable_flag_is_unknown_and_unknown_blocks_like_paused(db_path, monkeypatch):
+    """Owner ruling 2026-10-09: UNKNOWN behaves exactly like paused, sells included."""
     monkeypatch.setattr(owner_flags.time, "sleep", lambda s: None)
-    _raise(db_path, oi.PAUSE)
-    oi.intake(db_path)
-    assert owner_flags.read_flags(db_path).paused  # primes the durable copy
+    seen = []
+    monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
+    assert not owner_flags.read_flags(db_path).paused  # primes the copy: NOT paused
     Path(db_path).write_bytes(b"not a database")
     cls, calls = _recording_class()
     d = cls()
     owner_flags._CACHE.clear()  # a restarted desk: only the file copy survives
     f = owner_flags.read_flags(db_path)
-    assert f.stale and f.paused and not f.unknown
-    assert d.submit_order("ZZZ")["status"] == "owner_flag_halted"  # the copy says paused
-    Path(owner_flags._cache_file(db_path)).unlink()
-    owner_flags._CACHE.clear()
-    seen = []
-    monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
-    assert owner_flags.read_flags(db_path).unknown
-    assert d.submit_order("ZZZ")["status"] == "owner_flag_halted"  # new exposure refused
-    assert d.replace_entry_limit("o", 1.0)["status"] == "owner_flag_halted"
+    assert f.stale and f.unknown  # a saved "not paused" is never trusted
+    for n in gate.PAUSE_BLOCKS:
+        assert getattr(d, n)("ZZZ")["status"] == "owner_flag_halted"
+    assert d.close_position("ZZZ")["status"] == "owner_flag_halted"  # sells blocked too
     assert d.replace_stop_loss("ZZZ", 1.0) == "THROUGH"  # protection continues
     assert d.cancel_protective_stops("ZZZ") == "THROUGH"
-    assert d.close_position("ZZZ") == "THROUGH"  # reduces exposure
-    assert seen and "unreadable" in seen[0]
+    assert not [c for c in calls if c not in ("replace_stop_loss", "cancel_protective_stops")]
+    assert len(seen) == 1 and "UNREADABLE" in seen[0]  # once per state change, not per order
+
+
+def test_unknown_alert_fires_once_per_change_and_on_recovery(tmp_path, monkeypatch):
+    monkeypatch.setattr(owner_flags.time, "sleep", lambda s: None)
+    seen = []
+    monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
+    p = tmp_path / "desk.db"
+    p.write_bytes(b"not a database")
+    gate.configure(str(p))
+    try:
+        cls, _ = _recording_class()
+        d = cls()
+        for _ in range(3):
+            d.submit_order("ZZZ")
+        assert len(seen) == 1
+        p.unlink()
+        db = Database(str(p))
+        db.initialize()
+        db.conn.close()
+        assert d.submit_order("ZZZ") == "THROUGH"
+        assert len(seen) == 2 and "readable again" in seen[1]
+    finally:
+        gate.release()
+
+
+def test_desk_aimed_at_no_database_is_unknown(monkeypatch):
+    seen = []
+    monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
+    assert owner_flags.read_flags(None).unknown
+    gate.configure(None)
+    try:
+        cls, calls = _recording_class()
+        assert cls().close_position("ZZZ")["status"] == "owner_flag_halted"
+        assert not calls and len(seen) == 1
+    finally:
+        gate.release()
