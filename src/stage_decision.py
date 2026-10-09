@@ -350,6 +350,8 @@ class DecisionStage:
         # calls decide() again, which resets this list.
         _pm_dropped = getattr(pipeline.portfolio_manager, "last_dropped_targets", None)
         pm_dropped_targets = list(_pm_dropped) if isinstance(_pm_dropped, list) else []
+        _pm_blocked = getattr(pipeline.portfolio_manager, "last_blocked", None)
+        pm_blocked = dict(_pm_blocked) if isinstance(_pm_blocked, dict) else {}
         # Board item 78: same "read NOW" reason — the accounting re-ask
         # resets the heal record too. One durable row per name, whether the
         # heal worked or not.
@@ -442,6 +444,8 @@ class DecisionStage:
                 dropped.get("reason", ""),
                 **_details,
             )
+
+        _journal_refused_candidates(pipeline, ctx, pm_blocked)
 
         pm_log_kwargs = agent_log_kwargs(pm_result)
         if portfolio_decision is None:
@@ -844,3 +848,16 @@ class DecisionStage:
             )
         ctx.portfolio_decision = portfolio_decision
         return ctx
+
+
+def _journal_refused_candidates(pipeline, ctx, blocked: dict) -> None:
+    """One durable `candidate_refused` event per name the PM's gates refused."""
+    for symbol, reason in blocked.items():
+        _record_pipeline_event(
+            pipeline,
+            ctx,
+            symbol,
+            "portfolio_manager",
+            "candidate_refused",
+            reason,
+        )

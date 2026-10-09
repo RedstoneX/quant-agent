@@ -121,6 +121,11 @@ class PortfolioManagerAgent(
     #: to its pre-decision ordering rather than having one invented for it.
     last_candidate_ranking: list[RankedCandidate] | None = None
 
+    #: Every name refused this session (symbol -> reason), the whole `blocked`
+    #: map after the conviction bar. Reset with `last_candidate_ranking`;
+    #: `DecisionStage` journals one `candidate_refused` event per name.
+    last_blocked: dict[str, str] | None = None
+
     @property
     def name(self) -> str:
         return "portfolio_manager"
@@ -346,6 +351,7 @@ class PortfolioManagerAgent(
         # previous session's ranking behind for the constructor to spend this
         # session's budget against.
         self.last_candidate_ranking = None
+        self.last_blocked = None
         ranked, blocked = self.rank_candidates(
             analyses=analyses,
             evidence_registry=evidence_registry,
@@ -401,6 +407,7 @@ class PortfolioManagerAgent(
             ),
         )
         self.last_candidate_ranking = list(ranked)
+        self.last_blocked = {str(k): str(v) for k, v in dict(blocked).items()}
 
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
