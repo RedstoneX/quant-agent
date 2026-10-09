@@ -326,39 +326,6 @@ def test_pending_orders_count_toward_deployment_for_both_sides():
 # --------------------------------------------------------------------------
 
 
-def test_pm_position_line_and_pm_facts_drift_flag_agree():
-    """`Weight: 18.0% DRIFT` in the line vs `drift-flagged: 0` in the facts."""
-    # 6% raw of a -3x ETF is 18% gross. Up 20% since entry, so it drifts.
-    position = _pos("SQQQ", 500, 10.0, 12.0)
-    total_value = 100_000.0
-
-    pipeline = _pipeline_for_facts()
-    pipeline._build_position_history = lambda positions: {
-        "SQQQ": {"days_held": 20},
-    }
-    facts = pipeline._build_pm_facts(
-        positions=[position],
-        analyses=[],
-        total_value=total_value,
-        cash=94_000.0,
-        recent_performance={},
-    )
-
-    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
-    line = PortfolioManagerAgent.build_user_message(
-        agent,
-        analyses=[],
-        positions=[position],
-        cash_balance=94_000.0,
-        total_value=total_value,
-        macro_analysis=None,
-    )
-
-    assert "Weight: 18.0%" in line
-    assert "DRIFT" in line
-    assert facts.positions_drift_flagged == 1, "the PM's own facts block contradicts the position line it renders"
-
-
 def test_every_weight_consumer_uses_the_gross_multiplier():
     position = _pos("SQQQ", 500, 10.0, 12.0)
     total_value = 100_000.0

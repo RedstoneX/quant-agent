@@ -14,8 +14,8 @@ v3 upgrades vs the original MiddayReviewerAgent:
     + PM's recent decisions + yesterday's evening insights + recent system
     performance + full earnings analyses (not just queued list).
   - Deterministic pre-compute: per-held-position `thesis_progress_pct` /
-    `pace` / `distance_to_stop_pct` / `distance_to_target_pct` + three
-    winner flags (parabolic / drift / target_breach). Math done in Python
+    `pace` / `distance_to_stop_pct` / `distance_to_target_pct` + one
+    winner flag (parabolic). Math done in Python
     and surfaced as numbers, not asked of the LLM.
   - Session-type awareness: 'midday' and 'close' prompts differ in bias.
   - Anti-flip-flop: "Own Recent Decisions" memory shown so the agent
@@ -35,11 +35,7 @@ from src.models import (
     PositionReview,
 )
 from src.agents.prompt_limits import render_prompt_limits
-from src.risk.metrics import (
-    DRIFT_PNL_PCT,
-    DRIFT_WEIGHT_PCT,
-    unrealized_pnl_pct,
-)
+from src.risk.metrics import unrealized_pnl_pct
 
 logger = logging.getLogger(__name__)
 
@@ -355,12 +351,6 @@ class PositionReviewerAgent(BaseAgent):
             flag_bits: list[str] = []
             if pf.get("parabolic_flag"):
                 flag_bits.append("⚠️ PARABOLIC (+15% in <3d, momentum confirmation needed)")
-            if pf.get("drift_flag"):
-                # Rendered, not typed: the same pair the flag is computed
-                # from (`src.risk.metrics`), board item 107.
-                flag_bits.append(f"⚠️ DRIFT (weight > {DRIFT_WEIGHT_PCT:g}% + PnL > {DRIFT_PNL_PCT:g}%)")
-            if pf.get("target_breach_flag"):
-                flag_bits.append("⚠️ TARGET_BREACH (>150% of reference_target)")
             if flag_bits:
                 lines.append(f"  Flags: {' '.join(flag_bits)}")
 

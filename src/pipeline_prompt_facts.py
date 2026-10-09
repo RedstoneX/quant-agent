@@ -39,7 +39,6 @@ from src.prompt_facts.pm_facts import _PM_PROFILE_SYMBOL_CAP, PromptPMFacts  # n
 from src.prompt_facts.projected import PromptProjected
 from src.prompt_facts.watchlist import PromptWatchlist
 from src.quantities import avg_dollar_volume, dollar_volumes  # noqa: F401 -- re-exported
-from src.risk.metrics import drift_flag as _drift_flag_check  # noqa: F401 -- re-exported
 from src.risk.metrics import unrealized_pnl_pct  # noqa: F401 -- re-exported
 from src.risk.rules import peak_to_trough_pct, position_weight_pct  # noqa: F401 -- re-exported
 from src.trading_calendar import et_today, session_date_key  # noqa: F401 -- re-exported
@@ -617,12 +616,10 @@ class PromptPositionFacts:
 
             # Winner flags. `unrealized_pnl_pct` divides by |entry x qty|;
             # a short's negative qty otherwise flips the sign and feeds the
-            # parabolic/drift flags the wrong side. None = unknowable, which
+            # parabolic flag the wrong side. None = unknowable, which
             # is not a flag either way.
             pnl_pct = unrealized_pnl_pct(p)
             parabolic_flag = pnl_pct is not None and pnl_pct >= 15 and days_held is not None and days_held < 3
-            drift_flag = _drift_flag_check(weight_pct, pnl_pct)
-            target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance
             # in ATRs, not raw % (a 3% gap is roomy for KO, suicidal for
@@ -682,8 +679,6 @@ class PromptPositionFacts:
                 "qty": p.qty,
                 "weight_pct": weight_pct,
                 "parabolic_flag": parabolic_flag,
-                "drift_flag": drift_flag,
-                "target_breach_flag": target_breach_flag,
                 "atr_pct": atr_pct,
                 "stop_distance_atrs": stop_distance_atrs,
                 # Both targets, named for what they are. `take_profit` is the

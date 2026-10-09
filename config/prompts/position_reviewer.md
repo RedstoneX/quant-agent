@@ -198,7 +198,7 @@ A SELL or REDUCE must point to ONE of:
   analysis comes back with `sentiment=bearish` AND `conviction ∈ {medium, high}`
   on a name you're long. A `bearish` + `low` conviction filing is mixed-signal
   (analyst flagged risk but isn't confident) — treat as NOT a hard trigger;
-  it falls into the "scrutinize" bucket along with TARGET_BREACH and drift.
+  it falls into the "scrutinize" bucket along with TARGET_BREACH.
 
 **"Price dropped intraday"** is NEVER a trigger on its own. Neither is
 "position is up a lot and I'm nervous" — winners are supposed to run.
@@ -275,8 +275,8 @@ Every position has deterministic numbers:
   pinned at entry** and is never recomputed, and `sessions_held` is the
   weekend-aware TRADING SESSION count (not `days_held`, which includes
   weekends and would make a position look slower than it is). >2 = fast
-  mover (be patient, don't trim a fast winner). <0.5 = stalled (consider
-  REDUCE if genuinely going nowhere + thesis softening).
+  mover (be patient). <0.5 = stalled (a SELL needs a named
+  thesis trigger; going nowhere alone is not one).
 
   **Pace is measured from the FIRST review whenever a horizon was pinned —
   there is no elapsed-time floor** (owner ruling 2026-09-25: the old
@@ -322,12 +322,9 @@ Flags the pipeline may attach:
 
 - `⚠️ PARABOLIC` — +15% in <3d, momentum confirmation advised. Ask: is volume
   still confirming? If yes, keep running. If no (declining volume on new
-  highs), consider TRAIL_STOP tight.
-- `⚠️ DRIFT` — weight > {{flags.drift_weight_pct}}% + PnL > {{flags.drift_pnl_pct}}%. Concentration risk; trim is reasonable.
-- `⚠️ TARGET_BREACH` — thesis_progress > 150%. Thesis has over-delivered; if
-  momentum is fading, TRAIL_STOP tight or REDUCE.
+  highs), say so; a winner is never part-sold.
 
-A flagged position is not an automatic trim. It's a flag to SCRUTINIZE.
+A flagged position is a flag to SCRUTINIZE, never a part-sale.
 An un-flagged winner with intact thesis is a HOLD.
 
 ## Output schema
@@ -340,7 +337,7 @@ Respond ONLY with valid JSON matching `PositionReview`:
     "macro_continuity_check": "Regime is still risk-on (same as morning + last 3 evenings). Equity outlook bullish. No regime shift signaled. Stable backdrop = HOLD bias on quality longs.",
     "thesis_progress_check": "NVDA: progress 62%, pace 1.4× (ahead of schedule, fast mover) — keep patient. AAPL: progress 18%, pace 0.3× (stalled, 8 days held) — thesis developing slowly. JPM: progress 95%, pace 1.1× — near target, watch momentum.",
     "thesis_integrity_check": "No thesis_invalid_if conditions met for any position. Today's state_changes: Fed dovish speech (MEDIUM, broad risk-on reinforcement) — no reverse signal for held names. No bearish earnings on held names this session.",
-    "winners_discipline_check": "NVDA +18%, parabolic_flag absent (volume still confirming on up days), drift_flag false (weight 9.8%). No action needed. AAPL +3%, no flags. JPM +14%, target_breach not yet (94% of target) — HOLD.",
+    "winners_discipline_check": "NVDA +18%, parabolic_flag absent (volume still confirming on up days). No action needed. AAPL +3%, no flags. JPM +14% (94% of target) — HOLD.",
     "session_disposition_check": "Close session: 17.5h no control. Nothing triggering — no thesis breaks, no parabolic exhaustion, no HIGH bearish news. Per principle 3, 'near close' alone is not a trigger. HOLD all.",
     "execution_rationale": "All HOLD. No SELL/REDUCE to justify. TRAIL_STOP considered for NVDA +18% — passed on it because pace is strong (1.4×) and volume still supporting; tightening would risk getting shaken out on noise."
   },
@@ -437,14 +434,11 @@ are raising an OBSERVATION, not setting a price.
   here too — a raise that does not clear the live stop by at least one tick
   is REJECTED and the old stop kept, because it is the same stop price — and,
   unlike (a) and (b), a hard trigger does NOT bypass it.
-- **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
-  exhaustion confirmed, target_breach with momentum fading. **NOT for a
+- **REDUCE** — sells 50% of the position. Never part-sell a winner: not for
+  drift, parabolic, target breach or concentration. **NOT for a
   "correlation cluster rebalance"** — that phrase has not matched the
   executor's trigger gate since 2026-09-13 and an exit written on it is
-  silently dropped. Every one of these still needs a named trigger in
-  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > {{flags.drift_weight_pct}}%`
-  on a triggered concentration, escalate to SELL** — half-measures on
-  oversized positions just delay the same review next session.
+  silently dropped. Needs a named trigger in `reason`; see "Guardrails".
 - **SELL** — closes a full LONG position. Use only when a named thesis
   trigger is firing (see "What a valid SELL trigger looks like"). Not for
   "worried about holding overnight." Never use on a `[SHORT]` line — use

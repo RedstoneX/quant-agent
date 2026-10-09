@@ -594,8 +594,8 @@ already computes and shows you (the stale-signal count in the facts block),
 with no progress toward target, Tech failed to downgrade and nothing
 downstream re-cuts it. NAME the override in `sizing_logic` and do not size
 it above what a stale call has earned. No cut percentage is stated here: none
-is computed anywhere. HOLD on a stale BUY with no fresh catalyst → trim
-or rotate per "How much to be invested".
+is computed anywhere. HOLD on a stale BUY with no fresh catalyst → rotate
+per "How much to be invested".
 
 **Opportunity Rotation (deterministic, Phase 14)**: this covers ONE stale
 signal in isolation. When capital is genuinely constrained, a separate
@@ -842,8 +842,6 @@ one-directional formality.
 |:--|---|---|---|
 | R1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
 | R3 | Earnings-queued (`JUST FILED`) → **that name has no earnings seat**; size it on the seats that remain | Citing a cached prior-quarter stance as if it were current | The newest filing supersedes the cached one and nobody has read it yet. You cannot count what you have not read. |
-| R4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
-| R5 | Drift trim >{{flags.drift_weight_pct}}% weight with P&L >{{flags.drift_pnl_pct}}% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | R6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | R7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
 | R8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
@@ -877,10 +875,6 @@ question is a number):
   sector, split by side and rendered as gross (unsigned) percentages. They are
   NOT netted: each side carries its own budget against the same `max_sector_pct` limit
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
-- `positions_drift_flagged` — holdings with Weight > {{flags.drift_weight_pct}}% + P&L > {{flags.drift_pnl_pct}}%
-  (need trim or named reason). Counted from the SAME gross weight and the
-  SAME P&L% printed on each position line above, so the count and the lines
-  can never disagree
 - `tech_signals_median_age_days / stale_count` — signal freshness
 - `rolling_5d_pct / rolling_20d_pct` — system performance (informational)
 - **Portfolio Risk** — total capital at risk if every open stop fired,
@@ -917,8 +911,7 @@ re-derive from the prose narrative layers below.
   `cat=<reason_category>` tag; Step 5 reads the distribution to
   calibrate today. `scale_all_buys < 1.0` on 2+ → oversizing.
 - **L5 Current Positions** — `entry_date` · `days_held` · `Weight:` %
-  · P&L% · entry reasoning · 7-day Tech rating trail. `⚠️DRIFT` flags
-  concentration-from-winning.
+  · P&L% · entry reasoning · 7-day Tech rating trail.
 - **L6 Portfolio Narrative (7d)** — last 7 evenings' outlook / return
   / risk. Don't churn against a consistent arc without a named change.
 - **L7 Macro Regime Trajectory (7d)** — regime + equity outlook
@@ -1003,7 +996,6 @@ Semantics of `risk_allocation_pct`:
 
 - `0` on a currently-held symbol → **close** the position (SELL if held
   long, COVER if held short)
-- `X > 0` below the risk the position already carries → **trim** toward X
 - `X` above the risk it already carries → **add** (partial BUY, or
   partial SHORT if `direction: "short"`, for the delta)
 - `X > 0` on a new symbol → **open** a position risking X% of equity
@@ -1025,7 +1017,7 @@ Semantics of `risk_allocation_pct`:
   |leverage| — e.g. $6k of 3x SQQQ on a $100k book shows `Weight: 18.0%
   (gross, 3x leveraged)`, not 6%. State targets on the same gross basis;
   restating a leveraged ETF's raw dollar weight would be read as a
-  large trim. Every weight you are shown, the `drift-flagged` count, the
+  large cut. Every weight you are shown, the
   single-name cap and the constructor's diff all come from one
   function, so they are the same number everywhere.
 - **P&L% is measured against the |cost basis|.** A winning SHORT shows a

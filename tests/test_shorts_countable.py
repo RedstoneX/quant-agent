@@ -654,9 +654,6 @@ def test_position_facts_pnl_pct_long_unchanged():
     parabolic threshold arithmetic the same way."""
     p = _pos("AAA", qty=100, entry=100.0, price=120.0)
     assert _facts_for(p)["weight_pct"] == 12.0
-    # +$2,000 on a $10,000 basis = +20%; weight 12% > 12 is False, so drift
-    # stays off — the pre-change result.
-    assert _facts_for(p)["drift_flag"] is False
 
 
 def test_position_facts_pnl_pct_long_loser_unchanged():
