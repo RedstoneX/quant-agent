@@ -1153,5 +1153,3 @@ def _real_intra_check_targets() -> list[dict]:
             ],
         },
     ]
-
-
