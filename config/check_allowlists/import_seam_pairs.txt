@@ -10,12 +10,12 @@ src.exits_parts.trails -> src.execution.stop_records
 src.notifier.costs -> src.execution.broker
 src.pipeline -> src.execution.broker
 src.pipeline -> src.execution.cash_sweep
-src.pipeline -> src.execution.stop_read
 src.pipeline_entry_orders -> src.execution.broker
 src.pipeline_entry_orders -> src.execution.cash_sweep
 src.pipeline_exits -> src.execution.scale_in
 src.pipeline_exits -> src.execution.stop_read
 src.pipeline_exits -> src.execution.stop_records
+src.pipeline_parts.evening -> src.execution.stop_read
 src.pipeline_prompt_facts -> src.execution.stop_read
 src.pipeline_prompt_facts -> src.execution.stop_records
 src.pipeline_protection -> src.execution.broker

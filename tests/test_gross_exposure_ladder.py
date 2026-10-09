@@ -475,7 +475,7 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # `run_evening`/`_run_evening_body` already used); the preamble this
     # test pins now lives in their bodies.
     for entry_point in (__import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run,
-                        TradingPipeline._run_position_review_body):
+                        __import__("src.pipeline_parts.review", fromlist=["review"])._run_position_review_body):
         source = inspect.getsource(entry_point)
         assert "_enforce_gross_ceiling" in source, (
             f"{entry_point.__name__} must de-lever in its preamble"
@@ -490,7 +490,7 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # The midday/close lane has its own agent (the position reviewer) and the
     # same requirement: the ladder steps on measured drawdown, and a reviewer
     # that returns nothing must not postpone the de-lever to tomorrow.
-    review = inspect.getsource(TradingPipeline._run_position_review_body)
+    review = inspect.getsource(__import__("src.pipeline_parts.review", fromlist=["review"])._run_position_review_body)
     assert review.index("_enforce_gross_ceiling") < review.index("position_reviewer"), (
         "the de-lever must run BEFORE the position reviewer is called, for "
         "the same reason it runs before the Portfolio Manager"

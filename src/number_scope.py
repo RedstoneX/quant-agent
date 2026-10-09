@@ -102,7 +102,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
-    "src/pipeline.py",
+    "src/pipeline.py", "src/pipeline_parts",
     "src/pipeline_delever.py", "src/delever/forced.py", "src/delever/ladder.py", "src/delever/conviction.py",
     "src/delever/enforce.py", "src/delever/trims.py", "src/delever/risk_number.py",
     # The held-position exit engine and the exit-trigger vocabulary -- moved
