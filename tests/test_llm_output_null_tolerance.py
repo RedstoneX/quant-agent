@@ -372,10 +372,11 @@ LOAD_BEARING_NULLS = [
     # (label, callable that must raise)
     ("tech.stop_loss", lambda: TechAnalysisResult(**_tech(stop_loss=None))),
     ("tech.entry_price", lambda: TechAnalysisResult(**_tech(entry_price=None))),
-    ("tech.reference_target", lambda: TechAnalysisResult(**_tech(reference_target=None))),
+    # reference_target and the AI-named level lists are NOT load-bearing
+    # (owner rule 2026-10-09): a null is kept and recorded as "no target" /
+    # "no level named"; see tests/test_analysis_optional_levels.py.
     ("tech.setup_type", lambda: TechAnalysisResult(**_tech(setup_type=None))),
     ("tech.expected_horizon", lambda: TechAnalysisResult(**_tech(expected_horizon_sessions=None))),
-    # Nulling BOTH level lists leaves an actionable rating with no structure.
     ("tech.thesis_invalid_if_null", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=None))),
     ("tech.thesis_invalid_if_empty", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=""))),
     ("tech.thesis_invalid_if_unknown", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))),
