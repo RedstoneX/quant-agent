@@ -80,6 +80,87 @@ _POSITION_OPEN_ACTIONS: dict[str, str] = {"BUY": "long", "SHORT": "short"}
 _CONVICTION_OUTCOME_MIN_N = 20
 
 
+_LONG_EXIT_ACTIONS = ("EMERGENCY_SELL", "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "RECONCILED_EXIT")
+
+
+def conviction_positions(rows, lookback_days: int) -> list[dict]:
+    """Group executed trade rows (chronological) into whole POSITIONS.
+
+    RULE (one, written here): a position's conviction is the conviction on
+    its OPENING entry row (first BUY for a long, first SHORT for a short).
+    Adds at other levels never change it. Only FULLY CLOSED positions (net
+    quantity back to zero) are returned; a partial sale is not counted yet.
+    A closing exit whose realized_pnl is missing makes the position
+    `pnl_known=False` (UNKNOWN) - never zero, never a win or a loss.
+    Positions are dated by their final exit; those older than
+    `lookback_days` are dropped. Record only: nothing here drives sizing.
+    """
+    state: dict[str, dict] = {}
+    out: list[dict] = []
+    for row in rows:
+        sym = row["symbol"]
+        act = row["action"] or ""
+        qty = float(row["fill_qty"] if row["fill_qty"] else row["qty"] or 0)
+        price = float(row["fill_price"] if row["fill_price"] else row["price"] or 0)
+        if qty <= 0 or price <= 0:
+            continue
+        pos = state.get(sym)
+        if act in _POSITION_OPEN_ACTIONS:
+            side = _POSITION_OPEN_ACTIONS[act]
+            if pos is None or pos["side"] != side:
+                pos = state[sym] = {
+                    "side": side,
+                    "net": 0.0,
+                    "conviction": row["conviction"],
+                    "open_ts": row["timestamp"],
+                    "cost": 0.0,
+                    "pnl": 0.0,
+                    "pnl_known": True,
+                }
+            pos["net"] += qty
+            pos["cost"] += qty * price
+            continue
+        if pos is None:
+            continue
+        is_long_exit = (
+            act.startswith("SELL")
+            or act.startswith("PARTIAL_SELL")
+            or act in _LONG_EXIT_ACTIONS
+            or _is_filled_trail_stop(row, act)
+        )
+        is_short_exit = act in ("COVER", "EMERGENCY_COVER") or act.startswith("PARTIAL_COVER")
+        if not ((is_long_exit and pos["side"] == "long") or (is_short_exit and pos["side"] == "short")):
+            continue
+        pos["net"] -= qty
+        if row["realized_pnl"] is None:
+            pos["pnl_known"] = False
+        else:
+            pos["pnl"] += float(row["realized_pnl"])
+        if pos["net"] > 1e-9:
+            continue
+        del state[sym]
+        try:
+            open_dt = datetime.fromisoformat(pos["open_ts"].replace(" ", "T"))
+            close_dt = datetime.fromisoformat(row["timestamp"].replace(" ", "T"))
+            hold_days = max(0, (close_dt - open_dt).days)
+            if (datetime.utcnow() - close_dt).days > lookback_days:
+                continue
+        except (ValueError, TypeError, AttributeError):
+            hold_days = 0
+        out.append(
+            {
+                "symbol": sym,
+                "side": pos["side"],
+                "conviction": pos["conviction"],
+                "pnl_known": pos["pnl_known"],
+                "pnl": pos["pnl"],
+                "return_pct": pos["pnl"] / pos["cost"] * 100 if pos["cost"] > 0 else 0.0,
+                "hold_days": hold_days,
+            }
+        )
+    return out
+
+
 class TradeAnalytics:
     """Reads trade/report rows and computes calibration and reporting numbers."""
 
@@ -593,7 +674,7 @@ class TradeAnalytics:
             # reasoning applies to the SHORT/COVER queue below.
             rows = self.conn.execute(
                 "SELECT symbol, action, qty, price, timestamp, fill_qty, "
-                "fill_price, fill_status, conviction, allocated_risk_pct, "
+                "fill_price, fill_status, conviction, allocated_risk_pct, realized_pnl, "
                 "requested_risk_pct, decision_model "
                 "FROM trades "
                 f"WHERE {self._executed_trade_predicate()} "
@@ -851,10 +932,14 @@ class TradeAnalytics:
         # scripts/backfill_conviction_ledger.py) carry conviction=None and
         # are counted in `conviction_unknown_n` rather than silently folded
         # into one of the three real labels.
-        by_conviction_high = [c for c in closed if c["conviction"] == "high"]
-        by_conviction_medium = [c for c in closed if c["conviction"] == "medium"]
-        by_conviction_low = [c for c in closed if c["conviction"] == "low"]
-        conviction_unknown_n = sum(1 for c in closed if not c["conviction"])
+        # Position-level record (see `conviction_positions` for the one rule).
+        positions = conviction_positions(rows, lookback_days)
+        conv_levels = ("high", "medium", "low")
+        conv_known = {lv: [p for p in positions if p["conviction"] == lv and p["pnl_known"]] for lv in conv_levels}
+        conv_unknown = {
+            lv: sum(1 for p in positions if p["conviction"] == lv and not p["pnl_known"]) for lv in conv_levels
+        }
+        conviction_unknown_n = sum(1 for p in positions if not p["conviction"])
 
         # `allocated_risk_pct` is None for every trade built from a legacy
         # notional (target_weight_pct-only) target — which, measured
@@ -882,9 +967,13 @@ class TradeAnalytics:
                 "short": _bucket_stats(short_closed),
             },
             "by_conviction": {
-                "high": _gated_bucket_stats(by_conviction_high, "high conviction"),
-                "medium": _gated_bucket_stats(by_conviction_medium, "medium conviction"),
-                "low": _gated_bucket_stats(by_conviction_low, "low conviction"),
+                lv: {
+                    **_gated_bucket_stats(conv_known[lv], f"{lv} conviction"),
+                    "wins": sum(1 for p in conv_known[lv] if p["pnl"] > 0),
+                    "closed": len(conv_known[lv]),
+                    "unknown": conv_unknown[lv],
+                }
+                for lv in conv_levels
             },
             "conviction_unknown_n": conviction_unknown_n,
             "by_allocated_risk": {
