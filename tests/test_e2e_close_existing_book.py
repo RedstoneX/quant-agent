@@ -15,11 +15,10 @@ expectation is derived from those inputs, never read back from the run:
                 seat sees exactly one position, and exactly one SELL stop
                 rests behind it at the level that was on the book;
   exit          when the chart's own alignment reading says the move is
-                over (`src/risk/alignment_exit.py`: the close sits more
-                than the give-back tolerance below the last chart mark,
-                in this name's ATR) the desk sells the WHOLE position
-                after clearing its stop; when the close sits ABOVE every
-                mark it sells nothing — whatever the seat says;
+                over (`src/risk/alignment_exit.py`: the close sits below
+                the last confirmed higher low) the desk sells the WHOLE
+                position after clearing its stop; when no swing low has
+                been broken it sells nothing — whatever the seat says;
   ratchet       the +1R breakeven ratchet (`src/risk/trailing.py`) moves
                 the stop to the entry price when price >= entry + 1R and
                 does NOT move it when price is short of +1R;
@@ -82,12 +81,12 @@ N_BARS = 160
 def _bars(*, end: float, crash: bool = False) -> list[OHLCV]:
     """Daily bars ending on the session's prior close.
 
-    A straight climb into `end` (the close sits above every average the
-    desk computes, so no alignment reading can call the move over); or,
-    with `crash`, the same climb to `end + 12` followed by ten sessions
-    straight down into `end` — the close then sits far below both
-    averages, by more than the give-back tolerance in any ATR the bar
-    ranges can produce (the test proves this from the inputs).
+    A straight climb into `end` (no swing low is ever confirmed, so the
+    structure test has nothing broken to sell on); or, with `crash`, the
+    same climb to `end + 12` with ONE three-point dip twenty sessions
+    before the top — a confirmed higher low — followed by ten sessions
+    straight down into `end`, which closes below that low (the test proves
+    this from the inputs).
     """
     bars = []
     d = CLOSE_AT.date() - timedelta(days=int(N_BARS * 1.5) + 2)
@@ -100,6 +99,8 @@ def _bars(*, end: float, crash: bool = False) -> list[OHLCV]:
             continue
         if i < climb:
             close = top - 15.0 * (climb - 1 - i) / (climb - 1)
+            if crash and i == climb - 20:
+                close -= 3.0
         else:
             close = top - 12.0 * (i - climb + 1) / 10.0
         bars.append(
@@ -315,24 +316,16 @@ def _assert_untouched(trading, stop: float) -> None:
     assert [(s.stop_price, s.qty) for s in stops] == [(stop, QTY)], [s.as_plain() for s in stops]
 
 
-def _alignment_gap_in_atr(bars: list[OHLCV]) -> float:
-    """How far the last close sits BELOW the lowest chart mark, in ATR —
-    computed from the inputs with the desk's own indicator arithmetic."""
-    from src.data.technical import compute_indicators
-    from src.risk.alignment_exit import CHART_MA_PERIODS, simple_moving_average
+def _swing_lows_of(bars: list[OHLCV]) -> list[float]:
+    """The confirmed swing lows the alignment exit reads, from the inputs."""
+    from src.risk.trail_structure import _swing_lows
 
-    closes = [b.close for b in bars]
-    marks = [m for m in (simple_moving_average(closes, p) for p in CHART_MA_PERIODS) if m is not None]
-    atr = compute_indicators(SYMBOL, bars).atr_14
-    assert marks and atr and atr > 0, (marks, atr)
-    return (min(marks) - closes[-1]) / atr
+    return _swing_lows(bars)
 
 
 def test_trend_intact_short_of_one_r_leaves_the_book_and_its_stop_alone(tmp_path, monkeypatch):
-    from src.risk.alignment_exit import ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
-
     bars = _bars(end=ONE_R_PRICE - 1.0)  # 97.00: below the breakeven trigger
-    assert _alignment_gap_in_atr(bars) < 0 < ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    assert _swing_lows_of(bars) == []
     result, trace, trading, attempts = _run_close(tmp_path, monkeypatch, bars=bars)
     _assert_hermetic(result, trace, trading, attempts)
     _assert_untouched(trading, INITIAL_STOP)
@@ -340,7 +333,7 @@ def test_trend_intact_short_of_one_r_leaves_the_book_and_its_stop_alone(tmp_path
 
 def test_trend_intact_at_one_r_ratchets_the_stop_up_to_breakeven(tmp_path, monkeypatch):
     bars = _bars(end=ONE_R_PRICE + 1.0)  # 99.00: past the breakeven trigger
-    assert _alignment_gap_in_atr(bars) < 0
+    assert _swing_lows_of(bars) == []
     result, trace, trading, attempts = _run_close(tmp_path, monkeypatch, bars=bars)
     _assert_hermetic(result, trace, trading, attempts)
     assert _closing_sells(trading) == [], [o.as_plain() for o in trading.submitted]
@@ -412,15 +405,13 @@ def _assert_whole_position_sold_after_clearing_its_stop(trading) -> None:
     )
 
 
-def test_a_close_below_the_last_chart_mark_exits_the_whole_position(tmp_path, monkeypatch, caplog):
-    from src.risk.alignment_exit import ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
-
+def test_a_close_below_the_last_higher_low_exits_the_whole_position(tmp_path, monkeypatch, caplog):
     import logging
 
     caplog.set_level(logging.INFO, logger="src.pipeline")
     bars = _bars(end=ONE_R_PRICE - 1.0, crash=True)
-    gap = _alignment_gap_in_atr(bars)
-    assert gap > ALIGNMENT_GIVE_BACK_ATR_MULTIPLE, gap
+    lows = _swing_lows_of(bars)
+    assert lows and bars[-1].close < lows[-1], (lows, bars[-1].close)
     result, trace, trading, attempts = _run_close(tmp_path, monkeypatch, bars=bars)
     _assert_hermetic(result, trace, trading, attempts)
     _assert_whole_position_sold_after_clearing_its_stop(trading)

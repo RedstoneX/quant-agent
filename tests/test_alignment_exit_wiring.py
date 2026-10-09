@@ -134,12 +134,31 @@ def test_structural_mark_is_the_level_the_check_named(monkeypatch):
         run_id="r",
     )
     # The chart's own averages are marks as well (the thesis named none),
-    # but the LAST mark price gave up is still the confirmed-broken level,
-    # and that is what the verdict is measured from.
+    # and the confirmed-broken level is recorded exactly once. Since
+    # 2026-10-09 marks are recorded, not decisive: these stub bars carry no
+    # lows, so there is no swing reference and the verdict holds.
     assert 95.0 in [m.price for m in v.marks]
     assert sum("structural" in m.source for m in v.marks) == 1
-    assert v.last_mark is not None and v.last_mark.price == 95.0
-    assert v.status == "EXIT"
+    assert v.status == "HOLD" and v.code == ae.CODE_NO_SWING
+
+
+def test_caller_hands_its_own_bars_to_the_swing_test(monkeypatch):
+    """The swing test reads bar LOWS; the caller must pass the very bars
+    its closes came from, or the exit could never fire in production."""
+    closes = [100.0 + i for i in range(12)]
+    p = _pipeline_stub(monkeypatch, basis="structural_level_broken", broken_level=95.0, closes=closes)
+    seen = {}
+    real = ae.check_alignment_exit
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(ae, "check_alignment_exit", spy)
+    p._alignment_exit_for_holding(
+        symbol="X", thesis_invalid_if=None, is_short=False, entry_price=100.0, stop_loss=90.0, run_id="r"
+    )
+    assert [b.close for b in seen["bars"]] == closes == seen["closes"]
 
 
 def test_no_structural_mark_when_the_level_was_not_confirmed_broken(monkeypatch):
@@ -207,18 +226,18 @@ def test_chart_read_failure_degrades_to_unparseable(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 5. The tolerance is recorded as an appetite dial, not as sourced.
+# 5. The made-up 3.0 ATR give-back is retired from the code AND the ledger.
 # --------------------------------------------------------------------------
-def test_tolerance_is_ledgered_as_arbitrary_not_sourced():
+def test_retired_give_back_has_no_ledger_row_and_no_constant():
     import yaml
 
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent.parent
     led = yaml.safe_load((root / "config" / "number_ledger.yaml").read_text())
-    row = next(n for n in led["numbers"] if n["id"] == "src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE")
-    assert row["status"] == "arbitrary"
-    assert float(row["value"]) == ae.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
+    gone = "src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE"
+    assert all(n["id"] != gone for n in led["numbers"])
+    assert not hasattr(ae, "ALIGNMENT_GIVE_BACK_ATR_MULTIPLE")
 
 
 # --------------------------------------------------------------------------
@@ -572,7 +591,8 @@ def test_chart_supplies_marks_when_the_thesis_names_no_average():
     )
     assert v.thesis_ma_period is None
     assert v.marks, "no thesis average must not mean no mark"
-    assert v.status == "EXIT"
+    # Marks are recorded, not decisive (2026-10-09): no bars, no swing.
+    assert v.status == "HOLD" and v.code == ae.CODE_NO_SWING
 
 
 def test_chart_marks_use_only_periods_the_desk_already_computes():

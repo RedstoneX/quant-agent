@@ -4,49 +4,36 @@ These tests pin the six defects that closed the first attempt (PR 837).
 """
 
 from src.risk.alignment_exit import (
-    ALIGNMENT_GIVE_BACK_ATR_MULTIPLE,
-    CODE_EXIT,
-    CODE_HOLD,
     CODE_NO_ATR,
     CODE_NO_MARK,
+    CODE_NO_SWING,
+    ChartMark,
     check_alignment_exit,
     simple_moving_average,
     thesis_ma_period,
 )
+from src.risk.alignment_exit import _sessions_since_mark_lost
 
 
-def test_tolerance_is_not_the_entry_anchored_noise_band() -> None:
-    """DEFECT 2. The closed attempt inherited `exit_guard`'s 1.0, whose own
-    ledger note records every published analogue at ~2.8-3.5 ATR. Selling
-    on a 1 ATR give-back is roughly three times more eager than the
-    literature the desk itself cites."""
-    # The entry-anchored band (1.0) was removed 2026-10-09; the
-    # tolerance must still not have inherited its value.
-    assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
-    assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE != 1.0
+def test_the_made_up_give_back_is_gone() -> None:
+    """2026-10-09: the 3.0 ATR give-back was never measured; the trigger is
+    now a confirmed swing break (`tests/test_alignment_exit_higher_low.py`)."""
+    import src.risk.alignment_exit as ae
+
+    assert not hasattr(ae, "ALIGNMENT_GIVE_BACK_ATR_MULTIPLE")
 
 
-def test_exit_when_last_mark_given_up_beyond_tolerance() -> None:
-    closes = [100.0] * 25 + [80.0]
+def test_a_mark_given_up_far_beyond_three_atr_no_longer_sells_on_its_own() -> None:
+    """Under the deleted rule this sold (10 ATR under the MA20). With no
+    bars there is no swing to break, so it holds and says why."""
     v = check_alignment_exit(
         thesis_invalid_if="close below the MA20",
-        closes=closes,
+        closes=[100.0] * 25 + [80.0],
         atr=2.0,
     )
-    assert v.status == "EXIT" and v.code == CODE_EXIT
-    assert v.exit_cleared and v.owner_reason
-    assert "target" in v.owner_reason  # says it is NOT a target
-
-
-def test_hold_inside_the_tolerance() -> None:
-    """One ATR under the average would have SOLD under the closed attempt."""
-    closes = [100.0] * 25 + [97.5]
-    v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20",
-        closes=closes,
-        atr=2.0,
-    )
-    assert v.status == "HOLD" and v.code == CODE_HOLD
+    assert v.status == "HOLD" and v.code == CODE_NO_SWING
+    assert v.band_atrs is None
+    assert "no swing reference" in v.reason
 
 
 def test_parsed_period_and_thesis_text_are_recorded_on_every_verdict() -> None:
@@ -82,39 +69,22 @@ def test_sessions_count_uses_the_average_as_it_stood_that_session() -> None:
     them all as 'already lost'. Against the average as it stood at the time,
     only the genuinely-below sessions count."""
     closes = [float(200 - i) for i in range(60)]  # 200 down to 141
-    v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20",
-        closes=closes,
-        atr=1.0,
-    )
-    assert v.sessions_since_mark_lost is not None
-    # Price is below its own MA20 for the whole decline, but nowhere near
-    # the 60 the naive today's-average comparison would have produced for a
-    # mark it never rose back above.
-    assert v.sessions_since_mark_lost < len(closes)
+    mark = ChartMark(simple_moving_average(closes, 20), "SMA20")
+    n = _sessions_since_mark_lost(closes, mark, (20, "SMA"), is_short=False)
+    assert n < len(closes)
 
 
-def test_short_side_is_mirrored() -> None:
-    closes = [100.0] * 25 + [120.0]
-    v = check_alignment_exit(
-        thesis_invalid_if="close above the MA20",
-        closes=closes,
-        atr=2.0,
-        is_short=True,
-    )
-    assert v.status == "EXIT"
-
-
-def test_structural_mark_alone_can_exit() -> None:
-    """No quorum: a position with only a structural mark exits on it."""
+def test_a_broken_structural_mark_alone_no_longer_sells() -> None:
+    """The marks are recorded, not decisive: a confirmed-broken level with
+    no swing reference holds."""
     v = check_alignment_exit(
         thesis_invalid_if=None,
         closes=[100.0] * 5 + [80.0],
         atr=2.0,
         broken_structural_level=95.0,
     )
-    assert v.status == "EXIT"
-    assert v.last_mark and "structural" in v.last_mark.source
+    assert v.status == "HOLD" and v.code == CODE_NO_SWING
+    assert any("structural" in m.source for m in v.marks)
 
 
 def test_helpers() -> None:

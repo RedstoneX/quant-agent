@@ -41,8 +41,10 @@ CONTROL FLOW REPRODUCED, read from `src.risk.alignment_exit` (2026-10-04):
     limitation, not hidden.
   * `is_short=False`: the desk is long-only in the fixtures.
 
-EXIT RULE AS EXERCISED: price must close below the LOWEST of the SMAs it has
-given up, by more than `ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` (3.0) x ATR(14).
+EXIT RULE AS EXERCISED: since 2026-10-09 the live structure test — a lower
+confirmed swing low, or a close below the last confirmed higher low. The
+2026-09-30 numbers recorded at the foot of this file were taken under the
+old 3.0 x ATR(14) give-back rule, now deleted, and do not describe this one.
 
 SWEEP SETTINGS are inherited verbatim from the prior script and are not
 re-justified here: multiples 0.50..5.00 step 0.25, regret = stop hit then a
@@ -54,6 +56,7 @@ control's, the rule contributes nothing beyond its average exit frequency.
 
 Hermetic: committed .json.gz fixtures only. No network, no broker, no writes.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -61,6 +64,7 @@ import json
 import math
 import random
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -69,7 +73,6 @@ sys.path.insert(0, str(REPO))
 from src.data.technical import ATR_PERIOD, atr_series  # noqa: E402
 from src.models.analysis import OHLCV  # noqa: E402
 from src.risk.alignment_exit import (  # noqa: E402
-    ALIGNMENT_GIVE_BACK_ATR_MULTIPLE,
     CHART_MA_PERIODS,
     check_alignment_exit,
 )
@@ -96,8 +99,12 @@ def _load() -> dict[str, list[dict]]:
 def _atrs(bars: list[dict]) -> list[float | None]:
     rows = [
         OHLCV(
-            date=b["date"], open=b["open"], high=b["high"],
-            low=b["low"], close=b["close"], volume=int(b["volume"]),
+            date=b["date"],
+            open=b["open"],
+            high=b["high"],
+            low=b["low"],
+            close=b["close"],
+            volume=int(b["volume"]),
         )
         for b in bars
     ]
@@ -114,6 +121,7 @@ def exit_flags(bars: list[dict], atrs: list[float | None]) -> list[bool]:
         v = check_alignment_exit(
             thesis_invalid_if=None,
             closes=closes[: i + 1],
+            bars=[SimpleNamespace(low=float(b["low"]), high=float(b["high"])) for b in bars[: i + 1]],
             atr=atrs[i],
             broken_structural_level=None,
             is_short=False,
@@ -203,9 +211,11 @@ def main() -> None:
     last = max(b[-1]["date"] for b in data.values())
     total = sum(len(b) for b in data.values())
     print(f"sample: {len(syms)} symbols, {total} daily bars, {first} .. {last}")
-    print(f"alignment rule: live check_alignment_exit, give-back "
-          f"{ALIGNMENT_GIVE_BACK_ATR_MULTIPLE} ATR below the last lost mark; "
-          f"marks = SMA{list(CHART_MA_PERIODS)} (no thesis, no structural level)")
+    print(
+        f"alignment rule: live check_alignment_exit, structure test "
+        f"(lower swing low or close below the last higher low); "
+        f"marks = SMA{list(CHART_MA_PERIODS)} (no thesis, no structural level)"
+    )
     print()
 
     atrs = {s: _atrs(b) for s, b in data.items()}
@@ -222,32 +232,29 @@ def main() -> None:
         usable_days += len(f)
 
     print("=== measured holding length under the live alignment exit ===")
-    print(f"entries measured (every session as an entry): "
-          f"{len(all_holds) + censored}")
-    print(f"exited before data ends: {len(all_holds)}   "
-          f"right-censored (never exited): {censored} "
-          f"({100.0*censored/(len(all_holds)+censored):.2f}%)")
-    print(f"exit sessions: {exit_days} of {usable_days} "
-          f"({100.0*exit_days/usable_days:.3f}% of sessions)")
+    print(f"entries measured (every session as an entry): {len(all_holds) + censored}")
+    print(
+        f"exited before data ends: {len(all_holds)}   "
+        f"right-censored (never exited): {censored} "
+        f"({100.0 * censored / (len(all_holds) + censored):.2f}%)"
+    )
+    print(f"exit sessions: {exit_days} of {usable_days} ({100.0 * exit_days / usable_days:.3f}% of sessions)")
     for p in PERCENTILES:
         print(f"  p{p}: {pct(all_holds, p):.1f} sessions")
-    print(f"  mean {sum(all_holds)/len(all_holds):.1f}   "
-          f"min {min(all_holds)}   max {max(all_holds)}")
+    print(f"  mean {sum(all_holds) / len(all_holds):.1f}   min {min(all_holds)}   max {max(all_holds)}")
     print()
 
     rate = exit_days / usable_days
     rng = random.Random(CONTROL_SEED)
-    ctrl = [1 + int(math.floor(math.log(rng.random()) / math.log(1 - rate)))
-            for _ in range(len(all_holds))]
+    ctrl = [1 + int(math.floor(math.log(rng.random()) / math.log(1 - rate))) for _ in range(len(all_holds))]
     print("=== control: memoryless exit at the SAME measured rate ===")
     for p in PERCENTILES:
         print(f"  p{p}: {pct(ctrl, p):.1f} sessions")
-    print(f"  mean {sum(ctrl)/len(ctrl):.1f}")
+    print(f"  mean {sum(ctrl) / len(ctrl):.1f}")
     print()
 
     print("=== peak-usefulness multiple AT each measured holding length ===")
-    print(f"{'source':>10} {'horizon':>8} {'peak D':>7} {'saved/100':>10} "
-          f"{'plateau(within 1%)':>20}")
+    print(f"{'source':>10} {'horizon':>8} {'peak D':>7} {'saved/100':>10} {'plateau(within 1%)':>20}")
     for label, xs in (("alignment", all_holds), ("control", ctrl)):
         for p in PERCENTILES:
             hz = int(round(pct(xs, p)))
@@ -255,8 +262,7 @@ def main() -> None:
                 print(f"{label:>10} {hz:8d}  horizon below 2 sessions, skipped")
                 continue
             best, plateau, _e = peak_multiple(data, atrs, hz)
-            print(f"{label:>10} {hz:8d} {best[0]:7.2f} {best[1]:10.2f} "
-                  f"{plateau[0]:9.2f}-{plateau[1]:.2f}")
+            print(f"{label:>10} {hz:8d} {best[0]:7.2f} {best[1]:10.2f} {plateau[0]:9.2f}-{plateau[1]:.2f}")
 
 
 if __name__ == "__main__":

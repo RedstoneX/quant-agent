@@ -1,9 +1,12 @@
 """The price target is ONE VOTE toward the alignment exit (owner, 2026-10-08).
 
-"Can tip a close when other signals agree. But never sells alone." Once a
-completed close has reached the current target since it took effect, the
-give-back is measured from the FIRST lost mark instead of the last. No
-lost mark: hold. One lost mark: unchanged. Two: the vote can tip a close.
+"Can tip a close when other signals agree. But never sells alone."
+
+Coordinator ruling, 2026-10-09: the 3.0 ATR give-back was deleted and the
+exit fires only on a confirmed swing break, so there is no give-back mark
+left for the target to choose. The vote is still READ, RECORDED on every
+verdict and COUNTED (`target_vote_applied`); it never sells alone and it
+does not change the structure verdict either way.
 """
 
 import sqlite3
@@ -23,119 +26,77 @@ def _dates(n: int) -> list[date]:
     return [date(2026, 1, 1) + timedelta(days=i) for i in range(n)]
 
 
-# LONG: 30 closes at 100, 19 at 120, then 105. MA20 = 119.25 (lost by
-# 14.25 ATR), SMA50 = 107.7 (lost by 2.7 ATR, inside the 3.0 band). Today's
-# rule reads from the LAST lost mark (SMA50) and holds; with the target
-# (118) reached by the 120 closes, it reads from the FIRST (MA20) and exits.
-LONG = [100.0] * 30 + [120.0] * 19 + [105.0]
-SHORT = [100.0] * 30 + [80.0] * 19 + [95.0]
+def _bars(closes: list[float]) -> list[types.SimpleNamespace]:
+    return [types.SimpleNamespace(low=c - 0.5, high=c + 0.5) for c in closes]
 
 
-def _long(**kw):
+# LONG: a rising tape with ONE dip to 105 (a confirmed higher low, three
+# rising bars each side), last close 120 — structure intact. BROKEN adds a
+# close at 104, below that higher low. SHORT / SHORT_BROKEN mirror it.
+LONG = [100.0 + i for i in range(10)] + [105.0] + [111.0 + i for i in range(10)]
+LONG_BROKEN = LONG + [104.0]
+SHORT = [100.0 - i for i in range(10)] + [95.0] + [89.0 - i for i in range(10)]
+SHORT_BROKEN = SHORT + [96.0]
+
+
+def _read(closes, *, is_short=False, **kw):
     return check_alignment_exit(
-        thesis_invalid_if="close below the MA20",
-        closes=LONG,
+        thesis_invalid_if=None,
+        closes=closes,
         atr=ATR,
-        bar_dates=_dates(len(LONG)),
+        is_short=is_short,
+        bar_dates=_dates(len(closes)),
+        bars=_bars(closes),
         **kw,
     )
 
 
-def _short(**kw):
-    return check_alignment_exit(
-        thesis_invalid_if="close above the MA20",
-        closes=SHORT,
-        atr=ATR,
-        is_short=True,
-        bar_dates=_dates(len(SHORT)),
-        **kw,
-    )
-
-
-def test_today_holds_inside_the_band_from_the_last_lost_mark() -> None:
-    for v in (_long(), _short()):
+def test_no_target_is_recorded_loudly_and_structure_decides() -> None:
+    for v in (_read(LONG), _read(SHORT, is_short=True)):
         assert v.status == "HOLD" and v.code == CODE_HOLD
-        assert v.last_mark and "SMA50" in v.last_mark.source
         assert v.target_vote_applied is False
         assert "NOT APPLIED, no target to read" in v.target_vote
         assert v.target_vote in v.reason
 
 
-def test_target_not_reached_is_todays_behaviour() -> None:
-    for v in (
-        _long(target=125.0, target_effective_date=date(2026, 1, 1)),
-        _short(target=75.0, target_effective_date=date(2026, 1, 1)),
-    ):
-        assert v.status == "HOLD" and "SMA50" in v.last_mark.source
-        assert v.target_vote_applied is False
-        assert "not applied" in v.target_vote and "not reached" in v.target_vote
-
-
-def test_reached_with_two_lost_marks_tips_the_close() -> None:
-    for v in (
-        _long(target=118.0, target_effective_date=date(2026, 1, 1), target_version="entry record"),
-        _short(target=82.0, target_effective_date=date(2026, 1, 1), target_version="entry record"),
-    ):
-        assert v.status == "EXIT" and v.code == CODE_EXIT
-        assert v.last_mark and "MA20" in v.last_mark.source
-        assert v.target_vote_applied is True
+def test_reached_target_is_recorded_and_counted_but_never_sells_alone() -> None:
+    long_v = _read(LONG, target=115.0, target_effective_date=date(2026, 1, 1), target_version="entry record")
+    short_v = _read(
+        SHORT, is_short=True, target=85.0, target_effective_date=date(2026, 1, 1), target_version="entry record"
+    )
+    for v in (long_v, short_v):
+        assert v.status == "HOLD" and v.code == CODE_HOLD  # reached — and still a hold
+        assert v.target_vote_applied is True  # counted
         assert "APPLIED" in v.target_vote and "entry record" in v.target_vote
         assert "2026-01-01" in v.target_vote
-        assert v.owner_reason and "voted with the chart" in v.owner_reason
-        assert "first lost mark" in v.owner_reason
+        assert v.target_vote in v.reason  # recorded
 
 
-def test_reached_with_one_lost_mark_is_unchanged() -> None:
-    """A single mark is both first and last, so the vote moves nothing."""
-    base = dict(
-        thesis_invalid_if=None, closes=[100.0] * 5 + [98.0], atr=ATR, broken_structural_level=99.0, bar_dates=_dates(6)
-    )
-    today = check_alignment_exit(**base)
-    voted = check_alignment_exit(
-        **base,
-        target=100.0,
-        target_effective_date=date(2026, 1, 1),
-    )
-    assert today.status == voted.status == "HOLD"
-    assert voted.target_vote_applied is True
-    assert today.breach_atrs == voted.breach_atrs
+def test_the_vote_never_changes_a_structure_verdict() -> None:
+    """With or without a reached target, the swing break alone decides."""
+    for closes, short, tgt in ((LONG_BROKEN, False, 115.0), (SHORT_BROKEN, True, 85.0)):
+        bare = _read(closes, is_short=short)
+        voted = _read(closes, is_short=short, target=tgt, target_effective_date=date(2026, 1, 1))
+        assert bare.status == voted.status == "EXIT" and voted.code == CODE_EXIT
+        assert voted.target_vote_applied is True and bare.target_vote_applied is False
+        assert (bare.last_mark, bare.breach_atrs) == (voted.last_mark, voted.breach_atrs)
+        assert voted.owner_reason and "not because price reached any target" in voted.owner_reason
+    for closes, short, tgt in ((LONG, False, 115.0), (SHORT, True, 85.0)):
+        bare = _read(closes, is_short=short)
+        voted = _read(closes, is_short=short, target=tgt, target_effective_date=date(2026, 1, 1))
+        assert bare.status == voted.status == "HOLD"
 
 
-def test_reached_with_no_lost_mark_never_sells_alone() -> None:
-    closes = [100.0] * 30 + [120.0] * 20
-    v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20",
-        closes=closes,
-        atr=ATR,
-        bar_dates=_dates(50),
-        target=110.0,
-        target_effective_date=date(2026, 1, 1),
-    )
-    assert v.status == "HOLD" and v.code == CODE_HOLD
-    assert v.target_vote_applied is True  # reached — and still a hold
-    assert "APPLIED" in v.target_vote
-    short = check_alignment_exit(
-        thesis_invalid_if="close above the MA20",
-        is_short=True,
-        atr=ATR,
-        closes=[100.0] * 30 + [80.0] * 20,
-        bar_dates=_dates(50),
-        target=90.0,
-        target_effective_date=date(2026, 1, 1),
-    )
-    assert short.status == "HOLD" and short.target_vote_applied is True
-
-
-def test_missing_target_is_loud_and_otherwise_today() -> None:
-    today = _long()
-    missing = _long(target=None, target_version="no target on the opening row")
+def test_missing_target_is_loud_and_otherwise_unchanged() -> None:
+    today = _read(LONG)
+    missing = _read(LONG, target=None, target_version="no target on the opening row")
     assert (today.status, today.last_mark, today.breach_atrs) == (
         missing.status,
         missing.last_mark,
         missing.breach_atrs,
     )
     assert "NOT APPLIED, no target to read (no target on the opening row)" in missing.reason
-    undated = _long(target=118.0, target_effective_date=None)
+    undated = _read(LONG, target=115.0, target_effective_date=None)
     assert undated.status == "HOLD" and "no dates" in undated.target_vote
 
 
@@ -143,11 +104,12 @@ def test_revision_after_the_reach_resets_reached() -> None:
     """A target revised on the last session was never reached since it
     took effect, so the vote does not apply even though earlier closes
     stood beyond it."""
-    last_day = _dates(len(LONG))[-1]
-    v = _long(target=118.0, target_effective_date=last_day, target_version="applied revision")
+    pulled_long, pulled_short = LONG + [118.0], SHORT + [82.0]  # 120 / 80 stood beyond earlier
+    last_day = _dates(len(pulled_long))[-1]
+    v = _read(pulled_long, target=119.5, target_effective_date=last_day, target_version="applied revision")
     assert v.status == "HOLD" and v.target_vote_applied is False
     assert "not reached" in v.target_vote
-    s = _short(target=82.0, target_effective_date=last_day)
+    s = _read(pulled_short, is_short=True, target=80.5, target_effective_date=last_day)
     assert s.status == "HOLD" and s.target_vote_applied is False
 
 

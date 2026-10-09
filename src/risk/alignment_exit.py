@@ -18,43 +18,35 @@ So this is NOT a three-way vote and NOT a quorum. It is ONE READING.
   * VOLATILITY supplies the UNIT and the TOLERANCE. It is not a condition;
     it is how the single distance below the last mark is judged real.
 
-ONE comparison decides: how far below the LAST mark price has closed, in
-this name's own ATR, against the give-back tolerance below. A position
-with only a structural mark can exit on it; a position with only its
-averages can exit on it. Neither waits for the other.
+ONE comparison decides, and it is STRUCTURE, not a give-back: the trend
+is broken when the chart has confirmed it. For a long that is either the
+most recent confirmed swing low printing BELOW the one before it (a lower
+low), or a completed close BELOW the last confirmed higher low; a short
+mirrors both against swing highs. The swings are the trailing stop's own
+(`src.risk.trail_structure._swing_lows` / `_swing_highs`), confirmed with
+its existing `src.risk.trailing.PIVOT_WINDOW` (3 bars each side). No new
+number is introduced. When no swing is confirmed yet the rule does not
+fire and says so ("no swing reference"); the trailing stop still protects.
+
+The marks (structure and trend) are still read and recorded, because they
+are what the review and the owner report show; they no longer decide.
 
 It never exits on a price TARGET alone, never summarises the instrument's
 past into a statistic, and is never anchored to what the desk paid. The
-target is ONE VOTE (owner, 2026-10-08): once a completed close has reached
-the current target since it took effect, the give-back is read from the
-FIRST lost mark instead of the last — see `src.risk.target_vote`. No lost
-mark still holds; one lost mark is unchanged; two or more can tip a close.
+target is ONE VOTE (owner, 2026-10-08): it is read, recorded on every
+verdict and counted, and it never sells alone. Since 2026-10-09 it no
+longer picks a give-back mark, because there is no give-back mark.
 
-WHY THE TOLERANCE IS AN UNSETTLED LEDGER ROW, NOT A SOURCED NUMBER AND
-NOT AN OWNER DIAL
------------------------------------------------------------------
-An earlier draft of this module claimed 3.0 was SOURCED to Wilder's
-Volatility System and Le Beau's Chandelier Exit. That claim was
-overstated, and it is withdrawn:
-
-  1. Wilder and Le Beau measure give-back from a running EXTREME — the
-     highest high since entry. This module measures it from a MOVING
-     AVERAGE, which in any trend sits materially BELOW the extreme. The
-     same multiple off a lower reference is a different, looser stop, so
-     their calibration does not transfer.
-  2. Chandelier's 3.0 is calibrated on ATR(22). This module divides by
-     ATR(14). Even the unit differs.
-
-A later draft then called 3.0 an OWNER APPETITE DIAL. That is stale too:
-the owner withdrew the risk dials on 2026-09-30, and the ledger's
-2026-10-04 route audit settled the row on its MEASUREMENT route — the
-give-back distributions of trends that resumed and trends that ended, in
-the name's own ATR, read off the tradable universe. Until that runs the
-value stays `arbitrary` in `config/number_ledger.yaml`, waiting on a
-measurement, not on a person. The published 2.5-3.5 ATR band is kept
-only as CONTEXT for the order of magnitude. It is NOT reused from
-`exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and measures excess
-over noise FROM ENTRY — a different quantity from a different anchor.
+WHY THE 3.0 ATR GIVE-BACK WAS DELETED (2026-10-09)
+--------------------------------------------------
+The old trigger sold when the close sat more than 3.0 x ATR(14) below the
+last lost chart mark. That 3.0 was never measured: the published 2.5-3.5
+band (Wilder 1978; Le Beau's Chandelier) is calibrated from a running
+EXTREME on ATR(22), not from a moving average on ATR(14), so the citation
+did not transfer, and its ledger row sat `arbitrary` waiting on a
+measurement that was never run. The exit was KEPT, not deleted, because
+it can fire before the 3.0 ATR Chandelier trail in at least four cases;
+only its made-up trigger was replaced by the structure test above.
 """
 
 from __future__ import annotations
@@ -65,15 +57,17 @@ from typing import Literal
 from src.risk.chart_averages import _finite, exponential_moving_average
 from src.risk.chart_averages import moving_average, simple_moving_average
 from src.risk.exit_guard import _MA_REF_RE
-from src.risk.target_vote import reference_mark, target_vote
+from src.risk.target_vote import target_vote
+from src.risk.trail_structure import _swing_highs, _swing_lows
+from src.risk.trailing import PIVOT_WINDOW
 
 __all__ = [
-    "ALIGNMENT_GIVE_BACK_ATR_MULTIPLE",
     "AlignmentExitCheck",
     "CHART_MA_PERIODS",
     "SMA_LADDER",
     "ChartMark",
     "check_alignment_exit",
+    "CODE_NO_SWING",
     "exponential_moving_average",
     "moving_average",
     "simple_moving_average",
@@ -81,25 +75,6 @@ __all__ = [
     "thesis_ma_ref",
 ]
 
-
-#: Give-back below the last chart mark, in this name's own ATR, before the
-#: desk reads the move as over.
-#:
-#: UNSETTLED — ledger status `arbitrary` with a MEASUREMENT route (see the
-#: module note); NOT sourced and NOT an owner dial. The published 2.5-3.5
-#: ATR band (Wilder 1978; Le Beau's Chandelier) measures give-back from a
-#: running EXTREME on ATR(22), while this measures it from a MOVING
-#: AVERAGE on ATR(14), so the citation does not transfer and is context
-#: for the order of magnitude only. Tightening realises gains sooner and
-#: whipsaws more often. It is deliberately NOT `exit_guard`'s 1.0, which
-#: is anchored to ENTRY rather than to the chart.
-#:
-#: NO sqrt(sessions) widening is applied. That scaling belongs to the
-#: entry-anchored band, where the question is how long a position has had
-#: to prove itself. The reference here moves with the tape every session,
-#: so widening the tolerance as well would double-count the same passage of
-#: time and let a trend that ended weeks ago keep earning slack.
-ALIGNMENT_GIVE_BACK_ATR_MULTIPLE: float = 3.0
 
 #: thesis-named period -> the next longer period the pipeline computes.
 #: Not a tunable: 20/50/200 are the only averages computed anywhere
@@ -123,6 +98,10 @@ CODE_HOLD = "alignment_intact"
 CODE_NO_MARK = "alignment_unreadable_no_mark"
 CODE_NO_ATR = "alignment_unreadable_no_atr"
 CODE_NO_CLOSES = "alignment_unreadable_no_closes"
+#: No confirmed swing low (high, for a short) in the bars handed in, so the
+#: structure test has nothing to break. A HOLD, recorded as its own code so
+#: the desk can tell "trend intact" from "nothing to judge it against".
+CODE_NO_SWING = "alignment_no_swing_reference"
 
 
 @dataclass(frozen=True)
@@ -138,11 +117,11 @@ class ChartMark:
 class AlignmentExitCheck:
     """Verdict on whether the chart says this position's move is over.
 
-    "EXIT"        - price has given up the last mark holding the trend by
-                    more than `ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` ATR (the
-                    FIRST lost mark once the target has voted).
-    "HOLD"        - the last mark still holds, or the slip through it is
-                    inside the tolerance.
+    "EXIT"        - the chart confirmed the trend broken: a lower swing
+                    low, or a close below the last confirmed higher low
+                    (mirrored for a short).
+    "HOLD"        - structure intact, or no confirmed swing to judge it
+                    against (`CODE_NO_SWING`).
     "UNPARSEABLE" - no live mark, no ATR, or no closes. Treated as HOLD by
                     callers; a separate value so the desk can report the
                     true state instead of a silent hold.
@@ -153,6 +132,8 @@ class AlignmentExitCheck:
     marks: tuple[ChartMark, ...]
     last_mark: ChartMark | None
     breach_atrs: float | None
+    #: Always None since 2026-10-09: the 3.0 ATR give-back tolerance was
+    #: deleted. Kept so the stored reading and its readers stay unchanged.
     band_atrs: float | None
     reason: str
     #: The MA period PARSED OUT OF THE POSITION'S THESIS PROSE at the moment
@@ -253,13 +234,14 @@ def check_alignment_exit(
     target_effective_date=None,
     target_version: str = "",
     bar_dates: list | None = None,
+    bars: list | None = None,
 ) -> AlignmentExitCheck:
     """Read one position's chart and say whether its move is over.
 
     `closes` are that symbol's daily closes in ascending date order, ending
     on the latest COMPLETED session — the same close-based basis
     `pipeline._structural_protection_for_holding` insists on, because a
-    level, an average and a give-back all have to be read off a finished
+    level, an average and a swing all have to be read off a finished
     bar or a routine intraday wick reads as the end of a trend.
 
     `broken_structural_level` is the level `check_structural_protection`
@@ -271,6 +253,10 @@ def check_alignment_exit(
     take-profit, when it took effect and which record set it; `bar_dates`
     run parallel to `closes`. See `src.risk.target_vote`: one vote, never
     a sale alone, and a missing target is today's rule, said so.
+
+    `bars` are the same sessions as `closes`, as OHLCV objects; only their
+    `low` / `high` are read, to find confirmed swings. None or too few bars
+    means no swing reference and no exit on this rule.
     """
     a = _finite(atr)
     ref = thesis_ma_ref(thesis_invalid_if)
@@ -355,7 +341,7 @@ def check_alignment_exit(
             None,
             None,
             None,
-            "no ATR for this name — the tolerance that judges a give-back cannot be read off the instrument",
+            "no ATR for this name — the distance through a swing cannot be stated in this name's own unit",
             thesis_ma_period=fast,
             thesis_ma_kind=kind,
             thesis_text=thesis_text,
@@ -369,87 +355,94 @@ def check_alignment_exit(
         target_version,
         is_short=is_short,
     )
-    breached = [m for m in marks if (last > m.price if is_short else last < m.price)]
-    if not breached:
-        held = min(marks, key=lambda m: m.price) if is_short else max(marks, key=lambda m: m.price)
-        return AlignmentExitCheck(
-            "HOLD",
-            CODE_HOLD,
-            tuple(marks),
-            None,
-            None,
-            None,
-            f"close {last:.4f} is still holding against {held.price:.4f} "
-            f"[{held.source}] — the move is not over; {vote}",
-            thesis_ma_period=fast,
-            thesis_ma_kind=kind,
-            thesis_text=thesis_text,
-            target_vote_applied=bool(reached),
-            target_vote=vote,
-        )
-
-    # THE LAST THING HOLDING THE TREND UP: of the marks price has given up,
-    # the one it gave up LAST is the lowest (highest, for a short) — or,
-    # once the target has voted, the one it gave up FIRST.
-    last_mark = reference_mark(breached, reached, is_short=is_short)
-    breach = (last - last_mark.price) if is_short else (last_mark.price - last)
-    breach_atrs = breach / a
-    band_atrs = ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
-    band = band_atrs * a
-    sessions = _sessions_since_mark_lost(series, last_mark, mark_periods.get(last_mark.source), is_short=is_short)
-
-    detail = (
-        f"close {last:.4f} is {breach:.4f} ({breach_atrs:.2f} ATR) "
-        f"{'above' if is_short else 'below'} {last_mark.price:.4f} "
-        f"[{last_mark.source}], the {'first' if reached else 'last'} of "
-        f"{len(marks)} chart mark(s) it was standing on, lost {sessions} "
-        f"session(s) ago; the give-back tolerance is {band_atrs:.2f} ATR "
-        f"({band:.4f}); {vote}"
-    )
-    if breach > band:
-        return AlignmentExitCheck(
-            "EXIT",
-            CODE_EXIT,
-            tuple(marks),
-            last_mark,
-            breach_atrs,
-            band_atrs,
-            detail,
-            thesis_ma_period=fast,
-            thesis_ma_kind=kind,
-            thesis_text=thesis_text,
-            sessions_since_mark_lost=sessions,
-            target_vote_applied=bool(reached),
-            target_vote=vote,
-            owner_reason=(
-                f"Trend alignment over: the {'first' if reached else 'last'} line "
-                f"this position was standing on — {last_mark.source} at "
-                f"{last_mark.price:.2f} — has been given up, and price has closed "
-                f"{breach_atrs:.1f}x this name's own ATR "
-                f"{'above' if is_short else 'below'} it, more than the "
-                f"{band_atrs:.1f}x give-back the desk reads as the end of a "
-                f"move. Selling because the move it was riding has ended on "
-                f"the chart, not because price reached any target"
-                + (
-                    f"; the target ({_finite(target):.2f}) voted with the chart, "
-                    f"so the give-back was read from the first lost mark."
-                    if reached
-                    else "."
-                )
-            ),
-        )
-    return AlignmentExitCheck(
-        "HOLD",
-        CODE_HOLD,
-        tuple(marks),
-        last_mark,
-        breach_atrs,
-        band_atrs,
-        f"holding — the slip through the last mark is inside the give-back tolerance. {detail}",
+    common = dict(
         thesis_ma_period=fast,
         thesis_ma_kind=kind,
         thesis_text=thesis_text,
-        sessions_since_mark_lost=sessions,
         target_vote_applied=bool(reached),
         target_vote=vote,
+    )
+    return _structure_verdict(series, bars, a, tuple(marks), common, is_short=is_short, vote=vote)
+
+
+def _structure_verdict(
+    series: list[float],
+    bars: list | None,
+    a: float,
+    marks: tuple[ChartMark, ...],
+    common: dict,
+    *,
+    is_short: bool,
+    vote: str,
+) -> AlignmentExitCheck:
+    """The structure test on its own: EXIT on a confirmed swing break, HOLD
+    otherwise, and HOLD with `CODE_NO_SWING` when nothing is confirmed."""
+    last = series[-1]
+    side = "high" if is_short else "low"
+    pivots = (_swing_highs if is_short else _swing_lows)(bars or [])
+    if not pivots:
+        return AlignmentExitCheck(
+            "HOLD",
+            CODE_NO_SWING,
+            marks,
+            None,
+            None,
+            None,
+            f"no swing reference — no swing {side} is confirmed ({PIVOT_WINDOW} bars "
+            f"each side) in the {len(bars or [])} bar(s) read, so structure cannot "
+            f"call the trend broken; the trailing stop still protects; {vote}",
+            **common,
+        )
+
+    # THE STRUCTURE TEST. The most recent confirmed swing is the reference;
+    # the trend is broken when it printed beyond the one before it (a lower
+    # low / higher high), or when the latest close has gone through it.
+    latest = pivots[-1]
+    previous = pivots[-2] if len(pivots) > 1 else None
+    swing_broken = previous is not None and (latest > previous if is_short else latest < previous)
+    closed_through = (last > latest) if is_short else (last < latest)
+    ref = ChartMark(latest, f"last confirmed swing {side}")
+    breach = (last - latest) if is_short else (latest - last)
+    breach_atrs = breach / a
+    if not (swing_broken or closed_through):
+        return AlignmentExitCheck(
+            "HOLD",
+            CODE_HOLD,
+            marks,
+            ref,
+            breach_atrs,
+            None,
+            f"structure intact — close {last:.4f} is still "
+            f"{'below' if is_short else 'above'} the last confirmed swing {side} "
+            f"{latest:.4f} and no {'higher high' if is_short else 'lower low'} is "
+            f"confirmed; {vote}",
+            **common,
+        )
+    if swing_broken:
+        why = (
+            f"the latest confirmed swing {side} {latest:.4f} is "
+            f"{'above' if is_short else 'below'} the one before it ({previous:.4f}) "
+            f"— a {'higher high' if is_short else 'lower low'}"
+        )
+    else:
+        why = (
+            f"close {last:.4f} is {'above' if is_short else 'below'} the last "
+            f"confirmed {'lower high' if is_short else 'higher low'} {latest:.4f}"
+        )
+    sessions = _sessions_since_mark_lost(series, ref, None, is_short=is_short)
+    return AlignmentExitCheck(
+        "EXIT",
+        CODE_EXIT,
+        marks,
+        ref,
+        breach_atrs,
+        None,
+        f"trend broken on structure: {why} ({breach_atrs:.2f} ATR from it, {sessions} session(s) through it); {vote}",
+        sessions_since_mark_lost=sessions,
+        owner_reason=(
+            f"Trend over on the chart: {why}. Selling because the structure "
+            f"the position was riding has broken, not because price reached "
+            f"any target."
+        ),
+        **common,
     )
