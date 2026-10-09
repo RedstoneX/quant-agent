@@ -156,7 +156,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
 
     stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
     # The exit pads themselves were DELETED 2026-10-09 (every ordinary exit is
-    # a plain market order, src/execution/exit_pricing.py); the
+    # a plain market order, src/exit_quote.py); the
     # 0.5% survives only in the rotation projection, now rooted there.
     exit_offset = "src.rotation_projection._projected_post_sale_book:factor[1]"
 
@@ -566,7 +566,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
     # The decision-path and midday exit pads were DELETED 2026-10-09: every
     # ordinary exit is now a plain market order
-    # (src/execution/exit_pricing.py). The rotation projection's own pad is
+    # (src/exit_quote.py). The rotation projection's own pad is
     # still an inline factor site, so rule (e) is still proven on a live one.
     assert "src.stage_execution.ExecutionStage._run_session:factor[0]" not in ids
     assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" not in ids

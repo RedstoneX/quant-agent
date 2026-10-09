@@ -41,7 +41,7 @@ from src.exits_parts.midday_holding_discipline import midday_holding_discipline
 from src.exits_parts.midday_spent_trigger import midday_spent_trigger
 from src.exits_parts.midday_state import SKIP, MiddayLoop
 from src.models import ReasoningChain, TradeDecision
-from src.execution.exit_pricing import read_exit_quote
+from src.exit_quote import read_exit_quote
 from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
 
@@ -1175,7 +1175,7 @@ class ExitEngineMixin:
                     if qty is None:
                         continue
                     # A plain DAY MARKET buy-to-cover — see
-                    # src/execution/exit_pricing.py.
+                    # src/exit_quote.py.
                     order_limit = None
                     position_qty = abs(existing[0].qty)
                     close_side = "buy"
@@ -1186,7 +1186,7 @@ class ExitEngineMixin:
                         qty = self._full_sell_qty(existing[0].qty)
                     if qty is None:
                         continue
-                    # A plain DAY MARKET sell — see src/execution/exit_pricing.py.
+                    # A plain DAY MARKET sell — see src/exit_quote.py.
                     order_limit = None
                     position_qty = existing[0].qty
                     close_side = "sell"

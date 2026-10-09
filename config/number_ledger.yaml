@@ -8284,7 +8284,7 @@ numbers:
       gate projects the equity the account will hold once this session's exits
       have gone through, crediting each sale price x 0.995. It mirrored the
       decision-path SELL limit, which no longer exists: every ordinary exit is
-      now a plain DAY MARKET order (src/execution/exit_pricing.py, after the
+      now a plain DAY MARKET order (src/exit_quote.py, after the
       2026-10-09 open left NET, AAPL and VLO exits unfilled). The 0.5% is now
       this projection's own number, and it describes a fill price the desk no
       longer places.

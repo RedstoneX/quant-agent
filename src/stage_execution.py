@@ -16,7 +16,7 @@ from src.entry_evidence import (
     resolve_entry_pins as _resolve_entry_pins,
 )
 from src.entry_record import insert_pending_entry
-from src.execution.exit_pricing import read_exit_quote
+from src.exit_quote import read_exit_quote
 from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
 from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
@@ -255,7 +255,7 @@ class ExecutionStage:
                 sell_price = existing[0].current_price
                 # A decided exit is a plain DAY MARKET order (no limit); the
                 # live quote is read only to MEASURE what the fill cost.
-                # See src/execution/exit_pricing.py.
+                # See src/exit_quote.py.
                 sell_limit = None
                 exit_quote = read_exit_quote(pipeline.broker, decision.symbol)
                 position_qty = existing[0].qty

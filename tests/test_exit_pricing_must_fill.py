@@ -10,7 +10,7 @@ live-bid pricer left exactly as it was.
 
 from unittest.mock import MagicMock, patch
 
-from src.execution.exit_pricing import read_exit_quote
+from src.exit_quote import read_exit_quote
 from src.models import PortfolioDecision, Position, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage

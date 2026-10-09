@@ -1,4 +1,4 @@
-"""src.execution.exit_pricing -- what an ordinary decided exit is sent at, and
+"""src.exit_quote -- what an ordinary decided exit is sent at, and
 the live quote it is measured against.
 
 Every ordinary decided exit (the decision-path SELL and COVER, the midday
