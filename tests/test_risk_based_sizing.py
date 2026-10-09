@@ -161,7 +161,7 @@ def test_a_position_with_no_typed_stop_is_sized_against_the_instruments_own_stop
         price_map={"NVDA": 100.0},
     )
     assert [d.action for d in decisions] == ["BUY"]
-    band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
+    band = 100.0 - constructor._stop_atr_multiple() * 2.0
     assert abs(decisions[0].stop_loss - round(band, 2)) < 1e-9
     # $2,000 of risk over the band's distance, as §2.1 says — not the
     # $10/share the model's (deleted) stop would have implied.

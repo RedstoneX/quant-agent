@@ -1,34 +1,15 @@
-"""How many ATRs of room a stop gets — ONE definition, no constructor needed.
+"""How many ATRs of room a stop gets -- ONE definition, no constructor needed.
 
-Lifted out of `PortfolioConstructor._stop_atr_multiple` unchanged on
-2026-10-02 so the coverage repair can ask the same question without
-building a constructor. No new number: with no setup and no regime it
-returns the declared base `src.config.RiskConfig.min_stop_atr_multiple`
-(recorded in `config/number_ledger.yaml`).
+Owner ruling 2026-10-04: an unbacked stop is 2.5 ATR. A stock's stop width
+comes from that stock's own behaviour (its ATR) only; the setup and
+macro-regime scalers were removed 2026-10-09 (mandate: market mood is one
+weighted input elsewhere, never a stop-width scaler). The multiple is the
+declared base `min_stop_atr_multiple` (recorded in `config/number_ledger.yaml`).
 """
 
 from __future__ import annotations
 
 
-def stop_atr_multiple(cfg, analysis, regime) -> float:
-    """The body of `_stop_atr_multiple`, callable with a config alone.
-
-    Extracted 2026-10-02 (no behaviour change) so the coverage repair can
-    ask the SAME question without building a `PortfolioConstructor`. With
-    no setup and no regime it returns the declared base,
-    `src.config.RiskConfig.min_stop_atr_multiple` (recorded in
-    `config/number_ledger.yaml`) — neither scaler applies when the label
-    matches no key, which is already this function's documented behaviour.
-    """
-    multiple = cfg.min_stop_atr_multiple
-    setup = (getattr(analysis, "setup_type", None) or "").strip().lower()
-    for key, scale in cfg.stop_atr_setup_scale:
-        if setup == key:
-            multiple *= scale
-            break
-    tape = (regime or "").strip().lower()
-    for key, scale in cfg.stop_atr_regime_scale:
-        if tape == key:
-            multiple *= scale
-            break
-    return multiple
+def stop_atr_multiple(cfg) -> float:
+    """The unbacked-stop width in ATRs: the configured base, unscaled."""
+    return float(cfg.min_stop_atr_multiple)

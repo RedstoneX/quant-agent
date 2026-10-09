@@ -41,13 +41,13 @@ THE CRITERIA, and where each threshold comes from (every number is in
               absurd (src/pipeline_stages.py, the CCJ 15%-spread note).
   volatility  ATR(14) / price < 1 / the widest stop multiple the desk's
               own rules can reach (`portfolio_constructor.
-              widest_reachable_stop_atr_multiple`, 1/3.00 = 33.3% at
+              widest_reachable_stop_atr_multiple`, 1/2.5 = 40% at
               today's ratified settings). At or past it the widest
               legitimate stop — that multiple of ATR under price — sits at
               or below ZERO, so no stop this desk would place can be
               placed at all and the name fails by construction. Nothing is
               chosen here: the bound is arithmetic, and it moves by itself
-              if the stop multiple or its setup/regime scalers move.
+              if the owner-ruled stop multiple moves.
   size        market capitalisation >= `min_market_cap_usd` ($30M, the
               Russell US indexes' eligibility floor).
   sector      resolves to a real sector — the sector cap needs one. Kept
@@ -292,10 +292,10 @@ class ScreenThresholds:
             # item 185: this used to read `0.5 / min_stop_atr_multiple`,
             # borrowing the midday typo guard's flat half-of-price floor
             # and dividing it by the BASE stop multiple (2.5) rather than
-            # the widest one the desk can reach (3.00). The two sides
-            # disagreed by exactly the 1.20 risk-off scaler, so names with
-            # ATR14/price between 16.67% and 20% passed a screen whose
-            # stated rationale did not hold for them. Both halves are gone:
+            # the widest one the desk could then reach (3.00). Since
+            # 2026-10-09 no scaler widens the stop (owner ruling 2026-10-04:
+            # 2.5 ATR from the stock's own ATR only), so widest == base.
+            # Both halves are gone:
             # the guard now reads the instrument, and this ceiling is the
             # arithmetic point where the widest legitimate stop would sit
             # at or below zero.
@@ -303,8 +303,6 @@ class ScreenThresholds:
             / (
                 widest_reachable_stop_atr_multiple(
                     constructor_cfg.min_stop_atr_multiple,
-                    constructor_cfg.stop_atr_setup_scale,
-                    constructor_cfg.stop_atr_regime_scale,
                 )
                 if constructor_cfg is not None
                 else widest_reachable_stop_atr_multiple(

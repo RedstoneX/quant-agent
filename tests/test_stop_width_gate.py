@@ -268,7 +268,7 @@ class TestNoFloorIsNotARefusal:
         analysis = _analysis("NVDA", entry=100.0, stop=98.0, levels=[110.0, 120.0])
         decisions = _orders(constructor, analysis)
         assert [d.action for d in decisions] == ["BUY"]
-        band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
+        band = 100.0 - constructor._stop_atr_multiple() * 2.0
         assert decisions[0].stop_loss == round(band, 2)
         assert constructor.last_refusals == {}
 
@@ -283,7 +283,7 @@ class TestNoFloorIsNotARefusal:
         )
         decisions = _orders(constructor, analysis, direction="short")
         assert [d.action for d in decisions] == ["SHORT"]
-        band = 100.0 + constructor._stop_atr_multiple(analysis, None) * 2.0
+        band = 100.0 + constructor._stop_atr_multiple() * 2.0
         assert decisions[0].stop_loss == round(band, 2)
         assert constructor.last_refusals == {}
 
@@ -375,7 +375,7 @@ class TestTheStopIsAlwaysDerivable:
         analysis.__dict__["stop_loss"] = None
         decisions = _orders(constructor, analysis)
         assert [d.action for d in decisions] == ["BUY"]
-        band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
+        band = 100.0 - constructor._stop_atr_multiple() * 2.0
         assert decisions[0].stop_loss == round(band, 2)
 
     def test_the_signal_bar_wins_when_it_is_wider_than_the_band(self):
@@ -383,7 +383,7 @@ class TestTheStopIsAlwaysDerivable:
         decides when that low sits past the band — a climactic bar."""
         constructor = PortfolioConstructor()
         probe = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0])
-        band_edge = 100.0 - constructor._stop_atr_multiple(probe, None) * 2.0
+        band_edge = 100.0 - constructor._stop_atr_multiple() * 2.0
         wide_bar = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0], bar_low=band_edge - 3.0)
         placed = constructor._widen_stop_past_noise(
             "BAR",
@@ -408,7 +408,7 @@ class TestTheStopIsAlwaysDerivable:
     def test_the_short_mirror_uses_the_signal_bars_high(self):
         constructor = PortfolioConstructor()
         a = _analysis("SHRT", entry=100.0, stop=102.0, levels=[90.0], rating="sell")
-        band_edge = 100.0 + constructor._stop_atr_multiple(a, None) * 2.0
+        band_edge = 100.0 + constructor._stop_atr_multiple() * 2.0
         a.signal_bar_high = band_edge + 2.0
         placed = constructor._widen_stop_past_noise(
             "SHRT",

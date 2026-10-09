@@ -17,9 +17,6 @@ src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT	src/pipeline_earnings
 src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]	src/pipeline.py::TradingPipeline._collab	no_mention
 src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT	src/pipeline_sizing.py@`# connected the two, so this independent recheck`	dead
 src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE	src/pipeline_stages.py@`STARTER_POSITION_RISK_PCT,`	dead
-src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
-src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[0][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
-src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]	src/portfolio_constructor/config.py::RiskPlan	no_mention
 src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)	docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`	no_mention
 src.prompt_facts.decisions.PromptDecisions._build_pm_recent_decisions(limit)	docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`	no_mention
 src.prompt_facts.decisions.PromptDecisions._build_pm_recent_decisions(limit)	src/stage_decision.py::DecisionStage.run	no_mention

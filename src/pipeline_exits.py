@@ -927,8 +927,6 @@ class ExitEngineMixin:
                         _cfg = self.portfolio_constructor.cfg
                         widest = widest_reachable_stop_atr_multiple(
                             _cfg.min_stop_atr_multiple,
-                            _cfg.stop_atr_setup_scale,
-                            _cfg.stop_atr_regime_scale,
                         )
                         widest_stop = existing[0].current_price - widest * atr
                         if widest_stop > 0 and new_stop < widest_stop:

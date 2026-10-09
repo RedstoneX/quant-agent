@@ -749,7 +749,7 @@ class EntryStopResolver:
             # the reward:risk tail does NOT run on a Type B / breakout
             # trade -- see the note where the branches are introduced.
         else:
-            multiple = self._stop_atr_multiple(analysis, regime)
+            multiple = self._stop_atr_multiple()
             band_edge = entry_price + multiple * atr if is_short else entry_price - multiple * atr
             # The instrument's own fallback (item 54): the WIDER of the
             # noise band and the signal bar's far edge — Kullamägi's

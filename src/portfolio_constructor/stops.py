@@ -105,26 +105,11 @@ class StopRules:
         """Thin shim: body moved to src/portfolio_constructor/entry_stop/resolver.py."""
         return self._entry_stop_resolver()._resolve_entry_and_stop(*args, **kwargs)
 
-    def _stop_atr_multiple(
-        self,
-        analysis: TechAnalysisResult | None,
-        regime: str | None,
-    ) -> float:
-        """How many ATRs of room THIS trade deserves, not a global constant.
-
-        ATR already scales the distance to the stock and the session. This
-        scales how many of them the setup earns: a range trade reverts inside
-        a defined band and does not need breakout room, and a risk-off tape
-        swings wider for the same ATR reading than a trending one does.
-
-        Reachable output is [2.1375, 3.00] ATR — narrowest is a range setup on
-        a risk-on tape (2.5 x 0.90 x 0.95), widest a breakout on a risk-off
-        one (2.5 x 1.00 x 1.20). (This docstring still read [1.2825, 1.80]
-        off the old 1.5 base until 2026-09-17; the base moved to 2.5 on
-        2026-09-10.) Both ends are pinned to real measurements;
-        see `ConstructorConfig.stop_atr_setup_scale` for the derivation.
-        """
-        return stop_atr_multiple(self.cfg, analysis, regime)
+    def _stop_atr_multiple(self) -> float:
+        """How many ATRs of room an unbacked stop gets: the owner-ruled base
+        (2.5, ruling 2026-10-04). The ATR already carries the stock's own
+        behaviour; no setup or market-mood scaler applies."""
+        return stop_atr_multiple(self.cfg)
 
     def _level_backing_stop(
         self,

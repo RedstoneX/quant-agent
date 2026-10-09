@@ -40,14 +40,13 @@ def test_one_atr_is_not_treated_as_an_identity() -> None:
     assert "src.config.CashReserveConfig.pct" in ids
 
 
-def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:
-    """The stop-width scalers live as numbers inside a tuple of pairs, not as
-    bare field defaults, and they multiply into every stop distance. A scanner
-    that only reads top-level defaults would not see them.
+def test_numbers_inside_a_tuple_of_pairs_are_sites() -> None:
+    """Trade-governing numbers can live inside a tuple of pairs (the gross
+    ladder's rungs), not as bare field defaults. A scanner that only reads
+    top-level defaults would not see them.
     """
     ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
-    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
+    assert "src.risk.gross_ladder.GROSS_LADDER[1][1]" in ids
 
 
 def test_named_dictionary_keys_keep_distinct_number_identities() -> None:

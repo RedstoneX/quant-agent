@@ -175,8 +175,8 @@ def _leaves(
 
     A bare literal yields one leaf. A tuple, list or dict literal yields one
     leaf per numeric element, keyed by index, by its literal key, or by the
-    explicit name used as its key, so `stop_atr_setup_scale`'s
-    `("range", 0.90)` is addressable as `...stop_atr_setup_scale[1][1]` and
+    explicit name used as its key, so `GROSS_LADDER`'s second rung is
+    addressable as `...GROSS_LADDER[1][1]` and
     `_WEIGHTS[INDETERMINATE]` does not collide with the other named keys in
     the same mapping.
 
