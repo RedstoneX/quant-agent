@@ -54,6 +54,15 @@ def _completed_only(bars: list, cutoff, symbol: str, source: str) -> list:
     return kept
 
 
+class NoBarsSourceError(RuntimeError):
+    """`get_ohlcv` was called on a provider with no broker bars source wired.
+
+    Raised, never swallowed: a provider built without `bars_source` (e.g. a
+    script that forgot to wire the broker) would otherwise report every
+    symbol as "no data", and a backtest would run on nothing and look fine.
+    """
+
+
 class MarketDataProvider:
     def __init__(self, bars_source=None, fallback_bars=None):
         """
@@ -94,15 +103,18 @@ class MarketDataProvider:
         here (Alpaca does return one mid-session), so it can never be
         silently mixed into the series.
 
-        Failure shape: no source wired, or the source raising, is logged and
-        COUNTED for that symbol (`record_swallowed`) and returns [] — the
-        same shape a Yahoo outage produced before, which callers handle by
-        skipping that one name.
+        Failure shape: the source raising is logged and COUNTED for that
+        symbol (`record_swallowed`) and returns [] — the same shape a Yahoo
+        outage produced before, which callers handle by skipping that one
+        name. NO source wired is a wiring defect, not a feed failure, and
+        raises `NoBarsSourceError` so it cannot pass for "no data".
         """
-        cutoff = last_completed_bar_date()
         if self._bars_source is None:
-            logger.warning("get_ohlcv %s: no bars source wired (broker daily bars); returning []", symbol)
-            return []
+            raise NoBarsSourceError(
+                f"get_ohlcv({symbol!r}): no bars source wired — pass bars_source=broker.get_bars "
+                "(src/execution/broker_parts/market_data.py) or call set_bars_source()"
+            )
+        cutoff = last_completed_bar_date()
         try:
             bars = list(self._bars_source(symbol, lookback_days) or [])
         except Exception as e:  # noqa: BLE001 — counted, per-symbol; a feed error must not halt the desk

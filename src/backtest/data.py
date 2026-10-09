@@ -8,14 +8,14 @@ bars get to those functions in the first place (see
 `src/agents/tech_analyst.py`), so the backtest reads prices through the
 identical path the live system does.
 
-`MarketDataProvider.get_ohlcv(symbol, lookback_days)` fetches yfinance daily
-COMPLETED bars — ending at the previous session while the market is open,
-today after the 16:00 ET close — going back `lookback_days` calendar days, falling back
-to `broker.get_bars` (Alpaca) when yfinance is empty and a fallback was
-wired in. This module does not wire the Alpaca fallback by default — doing
-so needs live Alpaca credentials this tool has no other reason to require —
-so an unwired call here is yfinance-only. The caller (`scripts/backtest.py`)
-reports which source was actually used.
+`MarketDataProvider.get_ohlcv(symbol, lookback_days)` reads COMPLETED daily
+bars from the broker (Alpaca; owner 2026-10-09: stock data from Alpaca, not
+Yahoo) — ending at the previous session while the market is open, today
+after the 16:00 ET close — going back `lookback_days` calendar days. The
+provider must be wired to a broker; `broker_backed_provider()` builds one
+from the same credentials every standalone script uses (paper account,
+read-only — this tool never places an order). An unwired provider raises
+`NoBarsSourceError` rather than reporting every symbol as "no data".
 """
 
 from __future__ import annotations
@@ -28,6 +28,18 @@ from src.models import OHLCV
 logger = logging.getLogger(__name__)
 
 
+def broker_backed_provider() -> MarketDataProvider:
+    """A provider reading daily bars from the broker, wired exactly as the
+    live pipeline wires it (`set_fallback_bars(broker.get_bars)`). Market
+    data reads only; the broker object is never asked to trade."""
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.execution.broker import AlpacaBroker
+
+    key, secret = get_alpaca_credentials()
+    broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+    return MarketDataProvider(bars_source=broker.get_bars)
+
+
 def fetch_universe_history(
     symbols: list[str],
     *,
@@ -36,12 +48,12 @@ def fetch_universe_history(
 ) -> tuple[dict[str, list[OHLCV]], list[str]]:
     """Fetch daily OHLCV for every symbol in `symbols`.
 
-    Returns `(bars_by_symbol, symbols_with_no_data)`. A symbol yfinance (or
-    the wired fallback) returns nothing for is reported in the second list
-    rather than silently vanishing from the run — the caller is expected to
-    surface it in the tool's own caveats output.
+    Returns `(bars_by_symbol, symbols_with_no_data)`. A symbol the broker
+    returns nothing for is reported in the second list rather than silently
+    vanishing from the run — the caller is expected to surface it in the
+    tool's own caveats output. `market` defaults to `broker_backed_provider()`.
     """
-    provider = market or MarketDataProvider()
+    provider = market or broker_backed_provider()
     bars_by_symbol: dict[str, list[OHLCV]] = {}
     missing: list[str] = []
     for symbol in symbols:

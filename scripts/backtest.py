@@ -156,7 +156,7 @@ def _run_one(
     if cache_key not in bars_cache:
         print(
             f"Fetching history for {len(symbols)} symbol(s) "
-            f"(lookback={lookback_days}d, source=yfinance via MarketDataProvider)...",
+            f"(lookback={lookback_days}d, source=Alpaca daily bars via MarketDataProvider)...",
             file=sys.stderr,
         )
         bars_cache[cache_key] = fetch_universe_history(list(symbols), lookback_days=lookback_days)
@@ -215,8 +215,8 @@ def _report(
         start=args.start,
         end=args.end,
         n_symbols=len(result.symbols_used),
-        data_source="yfinance (live network fetch via MarketDataProvider; no Alpaca "
-        "fallback wired, no local snapshot used)",
+        data_source="Alpaca daily bars (live network fetch via MarketDataProvider wired to "
+        "the broker's get_bars; no Yahoo, no local snapshot used)",
         initial_equity=args.initial_equity,
     )
     print(

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.data.market import MarketDataProvider
+from src.data.market import MarketDataProvider, NoBarsSourceError
 from src.models import OHLCV
 
 CUTOFF = date(2026, 10, 8)  # last completed session while 2026-10-09 is still trading
@@ -81,8 +81,41 @@ def test_a_broker_failure_is_reported_for_that_symbol_only():
     assert counted.call_args.kwargs["symbol"] == "BAD"
 
 
-def test_no_source_wired_returns_empty_not_yahoo():
-    assert MarketDataProvider().get_ohlcv("SPY", 10) == []
+def test_an_unwired_provider_raises_a_named_error_never_empty():
+    """A provider nobody wired to the broker is a wiring defect: it must not
+    look like "no data" (which a backtest would silently run on)."""
+    with pytest.raises(NoBarsSourceError):
+        MarketDataProvider().get_ohlcv("SPY", 10)
+
+
+def test_backtest_history_reads_through_a_broker_backed_provider():
+    from src.backtest.data import fetch_universe_history
+
+    def broker_bars(symbol, lookback_days):
+        return [] if symbol == "GONE" else [_bar(date(2026, 10, 6)), _bar(CUTOFF)]
+
+    provider = MarketDataProvider(bars_source=broker_bars)
+    bars_by_symbol, missing = fetch_universe_history(["NVDA", "GONE"], lookback_days=30, market=provider)
+    assert sorted(bars_by_symbol) == ["NVDA"]
+    assert [b.date for b in bars_by_symbol["NVDA"]] == [date(2026, 10, 6), CUTOFF]
+    assert missing == ["GONE"]
+
+
+def test_backtest_default_provider_is_broker_backed():
+    """`fetch_universe_history` with no provider builds one from the broker
+    (credentials patched); it never falls back to an unwired provider."""
+    import src.backtest.data as bt
+
+    with (
+        patch("src.api.deps.get_alpaca_credentials", return_value=("k", "s")),
+        patch("src.api.deps.get_alpaca_paper", return_value=True),
+        patch("src.execution.broker.TradingClient", return_value=MagicMock()),
+        patch("src.execution.broker.AlpacaBroker.get_bars", return_value=[_bar(CUTOFF)]) as get_bars,
+    ):
+        bars_by_symbol, missing = bt.fetch_universe_history(["SPY"], lookback_days=5)
+    assert get_bars.call_count == 1
+    assert [b.date for b in bars_by_symbol["SPY"]] == [CUTOFF]
+    assert missing == []
 
 
 # ---------------------------------------------------------------------------
