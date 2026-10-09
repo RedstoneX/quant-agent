@@ -24,7 +24,10 @@ def test_timer_is_persistent():
 
 def test_service_runs_the_universe_screen_module():
     text = _text("quant-agent-universe-daily.service")
-    assert "ExecStart=/home/qamc/quant-agent/.venv/bin/python -m src.universe_daily" in text
+    assert "exec /home/qamc/quant-agent/.venv/bin/python -m src.universe_daily" in text
+    # The broker keys arrive as systemd credentials, never from .env.
+    assert "LoadCredential=alpaca_api_key:" in text
+    assert "LoadCredential=alpaca_secret_key:" in text
     assert "WorkingDirectory=/home/qamc/quant-agent" in text
 
 
