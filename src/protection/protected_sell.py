@@ -9,6 +9,7 @@ Host attributes a body reads with a defaulted getattr or ASSIGNS go through `sta
 """
 
 import logging
+from src.protection.trim_amend import TrimAmend, trim_keeps_shares
 from src.sentinel.guarded import record_guarded_pass
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -121,11 +122,23 @@ class ProtectedSell:
                 )
                 logger.warning("%s: entry-order cancel failed for %s: %s", label, symbol, exc)
         stop_side_kwargs = {} if side == "sell" else {"side": side}
-        ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
-            symbol,
-            position_qty_before_sell,
-            **stop_side_kwargs,
-        )
+        kept_leg = None
+        if trim_keeps_shares(label, position_qty_before_sell, qty):
+            # A trim KEEPS shares, so its stop is shrunk in place (whole-share
+            # PATCH, confirmed) rather than cancelled; only a DAY sliver the
+            # sell needs is cancelled. See src/protection/trim_amend.py.
+            ok, stop_specs, wal_row_id, kept_leg = TrimAmend(
+                broker=self.broker,
+                db=self.db,
+                cancel_specs_with_write_ahead=self._cancel_specs_with_write_ahead,
+                state=self._state,
+            ).clear_for_trim(symbol, position_qty_before_sell, qty, side=side)
+        else:
+            ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
+                symbol,
+                position_qty_before_sell,
+                **stop_side_kwargs,
+            )
         if not ok:
             # WHY THE DESK STILL DECLINES THE EXIT, and why it is no longer
             # silent about it.
@@ -163,6 +176,20 @@ class ProtectedSell:
                     "so whether a protective stop is resting on these "
                     "shares is UNKNOWN — the desk will not submit an exit "
                     "against a picture of the broker it could not read"
+                )
+            elif refusal == "stop_fired":
+                why = "its protective stop FILLED while the stop was being shrunk, so the position is already exiting"
+            elif refusal == "amend_unknown":
+                why = (
+                    "the broker gave no answer to the stop-quantity change, so how "
+                    "many shares the stop holds is UNKNOWN and nothing was cancelled"
+                )
+            elif refusal == "held_changed":
+                why = "the broker refused the stop-quantity change and the held quantity had changed, so a stop may have fired"
+            elif refusal == "market_closed":
+                why = (
+                    "the broker refused the stop-quantity change and the market is "
+                    "closed, so cancelling the stop could leave the kept shares naked at the open"
                 )
             else:
                 why = "the protective-stop clear failed for a reason it did not record"
@@ -285,6 +312,11 @@ class ProtectedSell:
             "wal_row_id": wal_row_id,
             "side": side,
         }
+        if kept_leg is not None:
+            # The shrunk stop is LIVE (new broker id after the PATCH); the
+            # finalizer settles the book with the quantity invariant instead
+            # of restoring a stop over it.
+            prot["kept_leg"] = kept_leg
         return order, prot
 
     def _cancel_stops_with_write_ahead(
@@ -333,6 +365,19 @@ class ProtectedSell:
             return False, [], None
         if not specs:
             return True, [], None
+        return self._cancel_specs_with_write_ahead(symbol, position_qty_before_sell, specs, side=side)
+
+    def _cancel_specs_with_write_ahead(
+        self,
+        symbol: str,
+        position_qty_before_sell: float,
+        specs: list[dict],
+        *,
+        side: str = "sell",
+    ) -> tuple[bool, list[dict], int | None]:
+        """WAL row for `specs`, then cancel exactly those legs. The tail of
+        `_cancel_stops_with_write_ahead`, split out so a trim can cancel a
+        DAY sliver alone while its whole-share leg stays live."""
         wal_row_id = self._write_ahead_protection_restore(
             symbol,
             position_qty_before_sell,
