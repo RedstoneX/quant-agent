@@ -10,6 +10,7 @@ with no conflict marker, so nothing failed.
 Refusing is a PASS here. A merge that cannot be made safely must stop for a
 human — writing a plausible-looking file is the defect.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -104,7 +105,7 @@ def _set_retired(text: str, queue: str, gate: str) -> str:
     if last_retired is None:
         raise AssertionError("fixture has no retired bullet lines")
     insert = [f"- retired queue: {queue}\n", f"- retired gate: {gate}\n"]
-    return "".join(lines[:last_retired + 1] + insert + lines[last_retired + 1:])
+    return "".join(lines[: last_retired + 1] + insert + lines[last_retired + 1 :])
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +122,9 @@ def test_two_branches_closing_different_items_keep_every_other_item():
 
     merged = rdc.resolve_work(WORK_BASE, ours, theirs)
 
-    queue = [s for s in rdc.parse_sections(merged)
-             if s.key.startswith("## THE FUNNEL QUEUE")][0]
+    queue = [s for s in rdc.parse_sections(merged) if s.key.startswith("## THE FUNNEL QUEUE")][0]
     assert sorted(queue.order) == [3, 8]
-    gate = [s for s in rdc.parse_sections(merged)
-            if s.key.startswith("## PM TEST GATE")][0]
+    gate = [s for s in rdc.parse_sections(merged) if s.key.startswith("## PM TEST GATE")][0]
     assert sorted(gate.order) == [7, 8], "the gate's own numbering is untouched"
     assert "Queue body three" in merged
 
@@ -138,8 +137,7 @@ def test_two_branches_adding_different_items_keep_both():
 
     merged = rdc.resolve_work(WORK_BASE, ours, theirs)
 
-    queue = [s for s in rdc.parse_sections(merged)
-             if s.key.startswith("## THE FUNNEL QUEUE")][0]
+    queue = [s for s in rdc.parse_sections(merged) if s.key.startswith("## THE FUNNEL QUEUE")][0]
     assert sorted(queue.order) == [1, 2, 3, 8, 9, 10]
     assert "Nine body" in merged and "Ten body" in merged
     # Deterministic placement: both new items anchor after the same existing
@@ -307,8 +305,7 @@ def test_closing_an_item_on_one_side_survives_the_merge_end_to_end():
     theirs = _add_queue_item(WORK_BASE, "**9. A parallel finding — OPEN.** Nine body.\n")
 
     merged = rdc.resolve_work(WORK_BASE, ours, theirs)
-    queue = [s for s in rdc.parse_sections(merged)
-             if s.key.startswith("## THE FUNNEL QUEUE")][0]
+    queue = [s for s in rdc.parse_sections(merged) if s.key.startswith("## THE FUNNEL QUEUE")][0]
     assert sorted(queue.order) == [1, 2, 8, 9]
     assert sorted(set(rdc.parse_retired_lines(queue.retired)[0])) == [3, 4, 5]
 
@@ -409,16 +406,14 @@ def test_both_sides_dated_entries_survive_newest_first_with_separators():
 
     assert "Ours body" in merged and "Theirs body" in merged
     order = rdc.parse_history(merged)[2]
-    assert [rdc._entry_date(k).isoformat() for k in order] == [
-        "2026-09-14", "2026-09-14", "2026-09-13", "2026-09-12"]
+    assert [rdc._entry_date(k).isoformat() for k in order] == ["2026-09-14", "2026-09-14", "2026-09-13", "2026-09-12"]
     # Four entries, so three separators between them plus the preamble's own.
     assert merged.count("\n---\n") == 4
     assert "Body of the oldest entry." in merged
 
 
 def test_deleting_an_entry_from_the_append_only_log_refuses():
-    ours = HISTORY_BASE.replace(
-        "### 2026-09-12 — the oldest thing that broke\n\nBody of the oldest entry.\n", "")
+    ours = HISTORY_BASE.replace("### 2026-09-12 — the oldest thing that broke\n\nBody of the oldest entry.\n", "")
     with pytest.raises(rdc.Refusal) as exc:
         rdc.resolve_history(HISTORY_BASE, ours, HISTORY_BASE)
     assert "append-only" in str(exc.value)
@@ -428,9 +423,7 @@ def test_existing_history_is_never_reordered_by_a_merge():
     """The committed log is not perfectly date-sorted. Re-sorting it would
     rewrite years of history as a side effect of one merge."""
     unsorted = HISTORY_BASE.replace("2026-09-13", "2026-09-11")
-    ours = unsorted.replace(
-        "### 2026-09-11",
-        "### 2026-09-14 — new\n\nNew body.\n\n---\n\n### 2026-09-11", 1)
+    ours = unsorted.replace("### 2026-09-11", "### 2026-09-14 — new\n\nNew body.\n\n---\n\n### 2026-09-11", 1)
     merged = rdc.resolve_history(unsorted, ours, unsorted)
     order = [rdc._entry_date(k).isoformat() for k in rdc.parse_history(merged)[2]]
     assert order == ["2026-09-14", "2026-09-11", "2026-09-12"]
@@ -441,10 +434,13 @@ def test_existing_history_is_never_reordered_by_a_merge():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind,rel", [
-    ("work", "docs/WORK.md"),
-    ("history", "docs/INCIDENT_HISTORY.md"),
-])
+@pytest.mark.parametrize(
+    "kind,rel",
+    [
+        ("work", "docs/WORK.md"),
+        ("history", "docs/INCIDENT_HISTORY.md"),
+    ],
+)
 def test_the_real_documents_round_trip_byte_for_byte(kind: str, rel: str):
     """Merging a document with itself must return it unchanged, byte for byte.
 
@@ -465,8 +461,7 @@ def test_the_real_documents_agree_with_each_other_through_this_tool():
     notes_dir = REPO_ROOT / "docs" / "board_notes"
     if not (work.exists() and notes_dir.is_dir()):
         pytest.skip("board documents are not present in this checkout")
-    notes = "".join(p.read_text() for p in sorted(notes_dir.glob("*.md"))
-                    if p.name != "README.md")
+    notes = "".join(p.read_text() for p in sorted(notes_dir.glob("*.md")) if p.name != "README.md")
     rdc.assert_notes_agree_with_work(work.read_text(), notes)
 
 
@@ -519,8 +514,7 @@ def test_the_merged_file_is_read_back_with_the_boards_own_parsers():
     `status_board.load_funnel_queue` / `load_pm_gate`, so this tool and the
     page the owner reads can never disagree about what is on the board."""
     sb = rdc.status_board()
-    merged = rdc.resolve_work(
-        WORK_BASE, _add_queue_item(WORK_BASE, "**9. New — OPEN.** Nine.\n"), WORK_BASE)
+    merged = rdc.resolve_work(WORK_BASE, _add_queue_item(WORK_BASE, "**9. New — OPEN.** Nine.\n"), WORK_BASE)
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "WORK.md"
         p.write_text(merged)
@@ -536,10 +530,7 @@ def test_the_merged_file_is_read_back_with_the_boards_own_parsers():
 # ---------------------------------------------------------------------------
 
 _NOTE_BASE = (
-    "Preamble.\n\n"
-    "## item 9\n"
-    "First paragraph, written when the item was opened.\n\n"
-    "Second paragraph, the measurement.\n"
+    "Preamble.\n\n## item 9\nFirst paragraph, written when the item was opened.\n\nSecond paragraph, the measurement.\n"
 )
 
 

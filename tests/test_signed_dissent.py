@@ -69,6 +69,7 @@ SEATS = ("technical", "news", "earnings", "macro", "smart_money")
 # The acceptance criterion: the score itself is the aligned count
 # ==========================================================================
 
+
 @pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6, 99])
 def test_every_unanimous_count_is_admitted(count):
     """With nothing opposed there is nothing for the gate to refuse, at any
@@ -105,6 +106,7 @@ def test_the_only_case_the_old_rule_treated_differently_is_a_zero_count():
 # The weight pin — behavioural
 # ==========================================================================
 
+
 @pytest.mark.parametrize("seat", SEATS)
 @pytest.mark.parametrize("direction", ["long", "short"])
 def test_every_seat_enters_the_signed_sum_at_unit_magnitude(seat, direction):
@@ -123,9 +125,7 @@ def test_every_seat_enters_the_signed_sum_at_unit_magnitude(seat, direction):
     chosen weight is exactly what the owner ruled out on 2026-08-31.
     """
     bullish, bearish = "bullish", "bearish"
-    aligned, opposed = (
-        (bullish, bearish) if direction == "long" else (bearish, bullish)
-    )
+    aligned, opposed = (bullish, bearish) if direction == "long" else (bearish, bullish)
     assert signed_source_score("AAPL", {seat: aligned}, direction) == 1, (
         f"seat {seat!r} aligned with a {direction} must score exactly +1; a "
         "non-unit seat weight needs >= "
@@ -151,10 +151,7 @@ def test_seats_are_interchangeable_in_the_score():
     """Equal weighting stated as a symmetry: which seats hold a view cannot
     change the score, only how many and on which side. Catches a weight
     table that happens to average to one."""
-    scores = {
-        seat: signed_source_score("AAPL", {seat: "bullish"}, "long")
-        for seat in SEATS
-    }
+    scores = {seat: signed_source_score("AAPL", {seat: "bullish"}, "long") for seat in SEATS}
     assert len(set(scores.values())) == 1, (
         f"seats scored differently: {scores} — §9.4 weights every seat "
         "equally, and no measured history exists to justify anything else"
@@ -205,16 +202,11 @@ def _seat_keyed_numeric_dicts(tree: ast.AST) -> list[tuple[int, list[str]]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
             continue
-        seat_keys = [
-            k.value for k in node.keys
-            if isinstance(k, ast.Constant) and k.value in SEATS
-        ]
+        seat_keys = [k.value for k in node.keys if isinstance(k, ast.Constant) and k.value in SEATS]
         if not seat_keys:
             continue
         numeric = any(
-            isinstance(v, ast.Constant)
-            and isinstance(v.value, (int, float))
-            and not isinstance(v.value, bool)
+            isinstance(v, ast.Constant) and isinstance(v.value, (int, float)) and not isinstance(v.value, bool)
             for v in node.values
         )
         if numeric:
@@ -261,6 +253,7 @@ def test_the_derivation_rule_this_guard_cites_still_exists():
 # No second veto
 # ==========================================================================
 
+
 def test_the_block_comes_from_the_score_sign_and_nothing_else():
     """S <= 0 must be refused by the SIGN of the score itself. If a
     standalone dissent veto were ever added on top, the dissenting seat
@@ -281,5 +274,5 @@ def test_dissent_and_agreement_are_the_same_magnitude():
     first one."""
     for n in range(1, len(SEATS) // 2 + 1):
         sources = {seat: "bullish" for seat in SEATS[:n]}
-        sources.update({seat: "bearish" for seat in SEATS[n:2 * n]})
+        sources.update({seat: "bearish" for seat in SEATS[n : 2 * n]})
         assert signed_source_score("AAPL", sources, "long") == 0

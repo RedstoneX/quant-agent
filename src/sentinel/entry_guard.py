@@ -6,6 +6,7 @@ stay exactly as they were; these calls only add what they RECORD. A site
 never reached writes no row, a clean pass writes ``agreed``, a swallowed fault
 writes ``disagreed``. Nothing is stored here and nothing is re-raised.
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,8 +19,9 @@ logger = logging.getLogger("src.pipeline_entry_orders")
 
 def _record(pipeline, where, exc, context):
     try:
-        record_guarded_outcome(db=getattr(pipeline, "db", None), where=f"entry_orders.{where}",
-                               exc=exc, log=logger, context=context)
+        record_guarded_outcome(
+            db=getattr(pipeline, "db", None), where=f"entry_orders.{where}", exc=exc, log=logger, context=context
+        )
     except Exception:  # noqa: BLE001 - an observer must never break the order path
         logger.error("entry guard could not record %s", where, exc_info=True)
 

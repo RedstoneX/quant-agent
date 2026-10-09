@@ -41,7 +41,9 @@ import pytest
 from src.data.macro import MacroCoverage, SeriesFailure
 from src.data.macro_store import MacroStore
 from src.models import (
-    MacroAnalysis, MacroPositionGuidance, MacroReasoningChain,
+    MacroAnalysis,
+    MacroPositionGuidance,
+    MacroReasoningChain,
 )
 
 
@@ -63,7 +65,8 @@ def _analysis(**overrides) -> MacroAnalysis:
         confidence="medium",
         equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=75.0, cash_recommendation_pct=25.0,
+            target_invested_pct=75.0,
+            cash_recommendation_pct=25.0,
             reasoning="Hold buffer.",
         ),
         summary="Constructive.",
@@ -76,13 +79,19 @@ def _partial_coverage() -> MacroCoverage:
     """The 2026-09-22 production shape: 7 of 15, the same eight series that
     sit at the tail of `CONFIGURED_SERIES` never attempted."""
     missing = [
-        "PCEPI", "UNRATE", "BAMLH0A0HYM2", "DFII10",
-        "T10YIE", "DTWEXBGS", "BAMLC0A0CM", "ICSA",
+        "PCEPI",
+        "UNRATE",
+        "BAMLH0A0HYM2",
+        "DFII10",
+        "T10YIE",
+        "DTWEXBGS",
+        "BAMLC0A0CM",
+        "ICSA",
     ]
     return MacroCoverage(
-        configured=15, succeeded=7,
-        failed=[SeriesFailure(series_id=s, reason="fetch_deadline_exceeded")
-                for s in missing],
+        configured=15,
+        succeeded=7,
+        failed=[SeriesFailure(series_id=s, reason="fetch_deadline_exceeded") for s in missing],
     )
 
 
@@ -105,7 +114,8 @@ def test_partial_coverage_stamps_partial_and_names_every_missing_series():
 
 def test_total_failure_stamps_failed_not_partial():
     cov = MacroCoverage(
-        configured=15, succeeded=0,
+        configured=15,
+        succeeded=0,
         failed=[SeriesFailure(series_id="VIXCLS", reason="timeout")],
     )
     assert cov.verdict_stamp()[0] == "failed"
@@ -122,12 +132,14 @@ def test_stamp_never_compares_coverage_against_a_threshold():
     """14/15 and 1/15 both stamp `partial`. There is no cutoff between them,
     because no sourceable coverage threshold exists and picking one is
     barred. This pins the absence of a number."""
+
     def cov(succeeded: int) -> MacroCoverage:
         return MacroCoverage(
-            configured=15, succeeded=succeeded,
-            failed=[SeriesFailure(series_id=f"S{i}", reason="fetch_deadline_exceeded")
-                    for i in range(15 - succeeded)],
+            configured=15,
+            succeeded=succeeded,
+            failed=[SeriesFailure(series_id=f"S{i}", reason="fetch_deadline_exceeded") for i in range(15 - succeeded)],
         )
+
     assert cov(14).verdict_stamp()[0] == "partial"
     assert cov(1).verdict_stamp()[0] == "partial"
 
@@ -192,6 +204,7 @@ def test_macro_store_round_trip_defaults_an_unstamped_caller_to_unknown(tmp_path
 
 def test_pm_sheet_marks_a_partial_read_and_names_the_gap():
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     macro = _analysis(
         coverage_state="partial",
@@ -205,6 +218,7 @@ def test_pm_sheet_marks_a_partial_read_and_names_the_gap():
 
 def test_pm_sheet_says_nothing_when_coverage_is_complete():
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     msg = _pm_macro_section(agent, _analysis(coverage_state="complete").model_dump())
     assert "PARTIAL READ" not in msg
@@ -212,6 +226,7 @@ def test_pm_sheet_says_nothing_when_coverage_is_complete():
 
 def test_pm_sheet_says_nothing_when_nobody_stamped():
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     msg = _pm_macro_section(agent, _analysis().model_dump())
     assert "PARTIAL READ" not in msg
@@ -221,23 +236,34 @@ def _pm_macro_section(agent, macro_analysis: dict) -> str:
     """Build the PM user message far enough to read its Macro Analysis
     section. Uses the real builder rather than re-implementing the string."""
     msg = agent.build_user_message(
-        analyses=[], positions=[], cash_balance=10_000.0, total_value=10_000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=10_000.0,
+        total_value=10_000.0,
         macro_analysis=macro_analysis,
     )
     start = msg.find("## Macro Analysis")
     assert start != -1
     end = msg.find("\n## ", start + 3)
-    return msg[start:end if end != -1 else len(msg)]
+    return msg[start : end if end != -1 else len(msg)]
 
 
 def test_owner_market_line_flags_a_partial_read():
     from src.trader_feed import _append_market
+
     lines: list[str] = []
-    _append_market(lines, {"macro": {
-        "regime": "risk-on", "equity_outlook": "bullish", "confidence": "low",
-        "coverage_state": "partial",
-        "coverage_note": "7/15 FRED series; missing: ICSA",
-    }})
+    _append_market(
+        lines,
+        {
+            "macro": {
+                "regime": "risk-on",
+                "equity_outlook": "bullish",
+                "confidence": "low",
+                "coverage_state": "partial",
+                "coverage_note": "7/15 FRED series; missing: ICSA",
+            }
+        },
+    )
     assert len(lines) == 1
     assert "PARTIAL READ" in lines[0]
     assert "ICSA" in lines[0]
@@ -245,20 +271,36 @@ def test_owner_market_line_flags_a_partial_read():
 
 def test_owner_market_line_is_unchanged_on_a_complete_read():
     from src.trader_feed import _append_market
+
     lines: list[str] = []
-    _append_market(lines, {"macro": {
-        "regime": "risk-on", "equity_outlook": "bullish", "confidence": "medium",
-        "coverage_state": "complete",
-    }})
+    _append_market(
+        lines,
+        {
+            "macro": {
+                "regime": "risk-on",
+                "equity_outlook": "bullish",
+                "confidence": "medium",
+                "coverage_state": "complete",
+            }
+        },
+    )
     assert lines == ["📊 Market: risk-on / bullish / medium"]
 
 
 def test_owner_market_line_says_nothing_on_an_unstamped_verdict():
     from src.trader_feed import _append_market
+
     lines: list[str] = []
-    _append_market(lines, {"macro": {
-        "regime": "risk-on", "equity_outlook": "bullish", "confidence": "medium",
-    }})
+    _append_market(
+        lines,
+        {
+            "macro": {
+                "regime": "risk-on",
+                "equity_outlook": "bullish",
+                "confidence": "medium",
+            }
+        },
+    )
     assert "PARTIAL" not in lines[0]
 
 
@@ -274,6 +316,7 @@ def test_a_partial_macro_seat_is_never_eligible_for_a_second_paid_call():
     behaviour mechanically so a future edit to STATUS_CATEGORY cannot switch
     the pay-twice path on by accident."""
     from src import evidence_gate as gate
+
     assert gate.STATUS_CATEGORY["partial"] == gate.CATEGORY_REPORTED
     assert gate.CATEGORY_REPORTED not in gate.HEALABLE_CATEGORIES
 
@@ -282,6 +325,7 @@ def test_a_lost_macro_seat_is_still_eligible_for_its_one_paid_retry():
     """The counterpart: a seat with NO answer is a different case from a seat
     with a partial one, and this fix must not have narrowed it."""
     from src import evidence_gate as gate
+
     assert gate.STATUS_CATEGORY["failed"] in (gate.CATEGORY_LOST,)
     assert gate.CATEGORY_LOST in gate.HEALABLE_CATEGORIES
 
@@ -293,8 +337,11 @@ def test_a_lost_macro_seat_is_still_eligible_for_its_one_paid_retry():
 def test_evidence_json_of_a_stamped_verdict_carries_the_stamp():
     """`trader_feed` builds the owner snapshot from the
     `specialist_evidence` row, which is `MacroAnalysis.model_dump_json()`."""
-    payload = json.loads(_analysis(
-        coverage_state="partial", coverage_note="7/15 FRED series; missing: ICSA",
-    ).model_dump_json())
+    payload = json.loads(
+        _analysis(
+            coverage_state="partial",
+            coverage_note="7/15 FRED series; missing: ICSA",
+        ).model_dump_json()
+    )
     assert payload["coverage_state"] == "partial"
     assert "ICSA" in payload["coverage_note"]

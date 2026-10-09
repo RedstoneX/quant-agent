@@ -19,6 +19,7 @@ its noise floor, so a wider window can cost a tighten. The change is justified
 by consistency with the blended `avg_entry` price, and its cost was measured
 at zero across all 21 recorded refusals (see `src/risk/trailing.py::_swing_lows`).
 """
+
 import pytest
 
 from src.storage.db import Database
@@ -35,14 +36,19 @@ def db(tmp_path):
 
 def _buy(db, symbol, ts, qty=1.0, price=100.0, **kw):
     db.insert_trade(
-        symbol=symbol, action="BUY", qty=qty, price=price,
-        reasoning="entry", run_id="r", stop_loss=price * 0.9,
-        fill_status="filled", **kw,
+        symbol=symbol,
+        action="BUY",
+        qty=qty,
+        price=price,
+        reasoning="entry",
+        run_id="r",
+        stop_loss=price * 0.9,
+        fill_status="filled",
+        **kw,
     )
     with db._lock:
         db.conn.execute(
-            "UPDATE trades SET timestamp = ? WHERE id = "
-            "(SELECT MAX(id) FROM trades WHERE symbol = ?)",
+            "UPDATE trades SET timestamp = ? WHERE id = (SELECT MAX(id) FROM trades WHERE symbol = ?)",
             (ts, symbol),
         )
         db.conn.commit()
@@ -75,8 +81,7 @@ def test_window_only_ever_lengthens(db):
     refuses outright rather than proposing a lower level. The monotonicity
     pinned here is real; the safety conclusion drawn from it was not.
     """
-    for ts in ("2026-09-17 14:26:00", "2026-09-21 16:19:00",
-               "2026-09-23 17:19:00"):
+    for ts in ("2026-09-17 14:26:00", "2026-09-21 16:19:00", "2026-09-23 17:19:00"):
         _buy(db, "ETN", ts)
     last = db.get_symbol_last_buy("ETN")
     assert db.get_position_open_timestamp(last) <= last["timestamp"]
@@ -99,17 +104,20 @@ def test_a_new_position_after_flat_does_not_reach_back(db):
     """
     _buy(db, "RKLB", "2026-08-01 14:00:00", qty=5.0, price=50.0)
     db.insert_trade(
-        symbol="RKLB", action="SELL", qty=5.0, price=55.0,
-        reasoning="exit", run_id="r", fill_status="filled",
+        symbol="RKLB",
+        action="SELL",
+        qty=5.0,
+        price=55.0,
+        reasoning="exit",
+        run_id="r",
+        fill_status="filled",
     )
     _buy(db, "RKLB", "2026-09-21 15:00:00", qty=3.0, price=69.0)
 
     last = db.get_symbol_last_buy("RKLB")
     opened = db.get_position_open_timestamp(last)
     assert opened is not None
-    assert opened.startswith("2026-09-21"), (
-        "the August position was closed; its bars belong to a different trade"
-    )
+    assert opened.startswith("2026-09-21"), "the August position was closed; its bars belong to a different trade"
 
 
 def test_missing_or_unidentified_row_returns_none_not_a_guess(db):
@@ -117,13 +125,19 @@ def test_missing_or_unidentified_row_returns_none_not_a_guess(db):
     invents a date."""
     assert db.get_position_open_timestamp(None) is None
     assert db.get_position_open_timestamp({}) is None
-    assert db.get_position_open_timestamp(
-        {"symbol": "AAPL", "action": "BUY", "position_id": None},
-    ) is None
+    assert (
+        db.get_position_open_timestamp(
+            {"symbol": "AAPL", "action": "BUY", "position_id": None},
+        )
+        is None
+    )
     # A non-opening action is a caller bug, not a position.
-    assert db.get_position_open_timestamp(
-        {"symbol": "AAPL", "action": "SELL", "position_id": "pos-1"},
-    ) is None
+    assert (
+        db.get_position_open_timestamp(
+            {"symbol": "AAPL", "action": "SELL", "position_id": "pos-1"},
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +150,30 @@ def test_missing_or_unidentified_row_returns_none_not_a_guess(db):
 
 def test_open_row_carries_the_first_entrys_target_and_stop(db):
     """An add with a different target/stop must not become the trade's."""
-    db.insert_trade(symbol="MRVL", action="BUY", qty=10, price=242.07,
-                    reasoning="open", run_id="r", stop_loss=218.0,
-                    take_profit=290.0, setup_type="breakout",
-                    fill_status="filled")
-    db.insert_trade(symbol="MRVL", action="BUY", qty=5, price=258.60,
-                    reasoning="add", run_id="r", stop_loss=244.0,
-                    take_profit=310.0, setup_type="range",
-                    fill_status="filled")
+    db.insert_trade(
+        symbol="MRVL",
+        action="BUY",
+        qty=10,
+        price=242.07,
+        reasoning="open",
+        run_id="r",
+        stop_loss=218.0,
+        take_profit=290.0,
+        setup_type="breakout",
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="MRVL",
+        action="BUY",
+        qty=5,
+        price=258.60,
+        reasoning="add",
+        run_id="r",
+        stop_loss=244.0,
+        take_profit=310.0,
+        setup_type="range",
+        fill_status="filled",
+    )
 
     last = db.get_symbol_last_buy("MRVL")
     assert last["take_profit"] == pytest.approx(310.0), "fixture sanity"
@@ -161,9 +191,7 @@ def test_open_row_is_none_without_a_position_id(db):
     row it already had — exactly today's behaviour, never a guess."""
     assert db.get_position_open_row(None) is None
     assert db.get_position_open_row({"symbol": "X", "action": "BUY"}) is None
-    assert db.get_position_open_row(
-        {"symbol": "X", "action": "SELL", "position_id": "pos-1"}
-    ) is None
+    assert db.get_position_open_row({"symbol": "X", "action": "SELL", "position_id": "pos-1"}) is None
 
 
 def test_trailing_pass_reads_the_open_not_the_add(db):
@@ -174,34 +202,51 @@ def test_trailing_pass_reads_the_open_not_the_add(db):
 
     from src.pipeline import TradingPipeline
 
-    db.insert_trade(symbol="MRVL", action="BUY", qty=10, price=242.07,
-                    reasoning="open", run_id="r", stop_loss=218.0,
-                    take_profit=290.0, setup_type="breakout",
-                    fill_status="filled")
-    db.insert_trade(symbol="MRVL", action="BUY", qty=5, price=258.60,
-                    reasoning="add", run_id="r", stop_loss=244.0,
-                    take_profit=310.0, setup_type="range",
-                    fill_status="filled")
+    db.insert_trade(
+        symbol="MRVL",
+        action="BUY",
+        qty=10,
+        price=242.07,
+        reasoning="open",
+        run_id="r",
+        stop_loss=218.0,
+        take_profit=290.0,
+        setup_type="breakout",
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="MRVL",
+        action="BUY",
+        qty=5,
+        price=258.60,
+        reasoning="add",
+        run_id="r",
+        stop_loss=244.0,
+        take_profit=310.0,
+        setup_type="range",
+        fill_status="filled",
+    )
 
     p = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     p.broker.get_current_stop_price.return_value = 244.0
     p.market.get_ohlcv.return_value = []
     p._atr_for_symbol = MagicMock(return_value=5.0)
-    position = SimpleNamespace(symbol="MRVL", avg_entry=247.5,
-                               current_price=265.0, qty=15.0)
+    position = SimpleNamespace(symbol="MRVL", avg_entry=247.5, current_price=265.0, qty=15.0)
 
-    with patch("src.execution.scale_in.pending_protection_symbols",
-               return_value=set()), \
-         patch("src.risk.trailing.evaluate_trailing_stop") as ev:
+    with (
+        patch("src.execution.scale_in.pending_protection_symbols", return_value=set()),
+        patch("src.risk.trailing.evaluate_trailing_stop") as ev,
+    ):
         ev.return_value = SimpleNamespace(
-            proposal=None, code="noop", structural_code=None,
+            proposal=None,
+            code="noop",
+            structural_code=None,
         )
         p._apply_deterministic_trails([position], run_id="r1")
 
     kwargs = ev.call_args.kwargs
     assert kwargs["reference_target"] == pytest.approx(290.0), (
-        "the add's target would sit above the original and re-open room "
-        "the trade had already closed"
+        "the add's target would sit above the original and re-open room the trade had already closed"
     )
     assert kwargs["initial_stop"] == pytest.approx(218.0)
     assert kwargs["setup_type"] == "breakout"

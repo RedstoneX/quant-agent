@@ -20,6 +20,7 @@ No bound here is invented. Each cites its source:
     re-applied here to the FINAL quantity x price;
   * sell ceiling — the quantity the broker itself reports held.
 """
+
 import logging
 import math
 from src.sentinel.guarded import record_guarded_pass
@@ -117,9 +118,14 @@ class BadOrderQuantity(ValueError):
 
 
 def check_order_quantity(
-    qty, *, side: str, fractionable: bool | None = None,
-    price: float | None = None, equity: float | None = None,
-    max_position_pct: float | None = None, held_qty: float | None = None,
+    qty,
+    *,
+    side: str,
+    fractionable: bool | None = None,
+    price: float | None = None,
+    equity: float | None = None,
+    max_position_pct: float | None = None,
+    held_qty: float | None = None,
 ) -> str | None:
     """None when `qty` may be submitted, else the plain-words refusal.
 
@@ -141,33 +147,40 @@ def check_order_quantity(
     # `execution.fractional_share_decimals` to <= 9, the grid
     # `_FRACTIONAL_QTY_EPSILON` (1e-9) and `_split_protective_qty` use.
     if -Decimal(repr(value)).as_tuple().exponent > 9:
-        return (f"the quantity {value!r} carries more than the 9 decimal "
-                f"places an order can")
+        return f"the quantity {value!r} carries more than the 9 decimal places an order can"
     s = side.lower()
     if fractionable is False and _split_protective_qty(value)[1] > 0:
-        return (f"the quantity {value:g} is fractional but this name "
-                f"trades in whole shares only")
+        return f"the quantity {value:g} is fractional but this name trades in whole shares only"
     if s in ("buy", "sell_short") and max_position_pct is not None:
         if equity is None or not math.isfinite(equity) or equity <= 0:
-            return ("the account equity could not be read, so the "
-                    "per-position cap cannot be checked")
+            return "the account equity could not be read, so the per-position cap cannot be checked"
         if price is not None and math.isfinite(price) and price > 0:
             notional, cap = value * price, equity * max_position_pct / 100.0
             if notional > cap:
-                return (f"{value:g} shares at ${price:,.2f} is "
-                        f"${notional:,.0f}, over the {max_position_pct:g}% "
-                        f"per-position cap (${cap:,.0f} of "
-                        f"${equity:,.0f} equity)")
+                return (
+                    f"{value:g} shares at ${price:,.2f} is "
+                    f"${notional:,.0f}, over the {max_position_pct:g}% "
+                    f"per-position cap (${cap:,.0f} of "
+                    f"${equity:,.0f} equity)"
+                )
     if s == "sell" and held_qty is not None:
         if value > held_qty + _FRACTIONAL_QTY_EPSILON:
-            return (f"selling {value:g} shares but only {held_qty:g} "
-                    f"are held")
+            return f"selling {value:g} shares but only {held_qty:g} are held"
     return None
 
 
-def quantity_refusal_live(symbol: str, alpaca_symbol: str, qty, side: str, *,
-                      price: float | None, client, get_fractionability,
-                      get_account, max_position_pct) -> str | None:
+def quantity_refusal_live(
+    symbol: str,
+    alpaca_symbol: str,
+    qty,
+    side: str,
+    *,
+    price: float | None,
+    client,
+    get_fractionability,
+    get_account,
+    max_position_pct,
+) -> str | None:
     """Live inputs for the pure quantity gate, each read only when
     that check applies. Equity: a failed read refuses an entry (gate
     fails closed). Held qty: a failed read is logged and the sell
@@ -182,23 +195,25 @@ def quantity_refusal_live(symbol: str, alpaca_symbol: str, qty, side: str, *,
                 record_guarded_pass(client, "order_gates.equity_read", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
                 record_guarded_pass(client, "order_gates.equity_read", exc, context={"symbol": symbol})
-                logger.error("Quantity gate: equity read failed for %s: %s",
-                             symbol, exc)
+                logger.error("Quantity gate: equity read failed for %s: %s", symbol, exc)
     elif s == "sell":
         try:
             held = 0.0
-            for pos in (client.get_all_positions() or []):
+            for pos in client.get_all_positions() or []:
                 if str(pos.symbol).upper() == alpaca_symbol.upper():
                     held = max(0.0, float(pos.qty))
             record_guarded_pass(client, "order_gates.positions_read", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(client, "order_gates.positions_read", exc, context={"symbol": symbol})
             held = None
-            logger.error("Quantity gate: positions read failed for %s: %s "
-                         "— sell proceeds unchecked.", symbol, exc)
+            logger.error("Quantity gate: positions read failed for %s: %s — sell proceeds unchecked.", symbol, exc)
     return check_order_quantity(
-        qty, side=side, fractionable=fractionable, price=price,
-        equity=equity, max_position_pct=max_position_pct,
+        qty,
+        side=side,
+        fractionable=fractionable,
+        price=price,
+        equity=equity,
+        max_position_pct=max_position_pct,
         held_qty=held,
     )
 
@@ -241,8 +256,5 @@ def _outlier_refusal_detail(
     )
     if atr is not None and math.isfinite(atr) and atr > 0:
         atr_pct = atr / reference_price * 100
-        sentence += (
-            f" — {symbol} normally moves about ${atr:,.2f} "
-            f"({atr_pct:.0f}%) in a day"
-        )
+        sentence += f" — {symbol} normally moves about ${atr:,.2f} ({atr_pct:.0f}%) in a day"
     return sentence

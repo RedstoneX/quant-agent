@@ -5,6 +5,7 @@ recorder is built from plain values — three seat lists — and every
 behaviour of the counting half is exercised against that object alone. If
 this file ever needs the gate module back, the boundary was not real.
 """
+
 from src.evidence_name_coverage import (
     NAME_SCOPED_SEATS,
     RUN_SCOPED_SEATS,
@@ -44,6 +45,7 @@ def test_the_recorder_is_built_from_plain_values_and_keeps_each_one():
 
 def test_the_mandate_set_has_no_default_so_it_cannot_be_forgotten():
     import pytest
+
     with pytest.raises(TypeError):
         build_name_coverage_recorder()
 
@@ -94,9 +96,15 @@ def test_name_coverage_holds_no_threshold_ratio_or_verdict():
     # not be read). Neither is a count, a ratio or a bar, and the numeric
     # assertions below still bind on every field.
     assert set(payload) == {
-        "symbol", "covered_seats", "uncovered_seats", "run_scoped_seats",
-        "unreadable_seats", "asked_no_answer_seats", "never_asked_seats",
-        "blocking_seats_missing", "summary",
+        "symbol",
+        "covered_seats",
+        "uncovered_seats",
+        "run_scoped_seats",
+        "unreadable_seats",
+        "asked_no_answer_seats",
+        "never_asked_seats",
+        "blocking_seats_missing",
+        "summary",
     }
     for value in payload.values():
         assert not isinstance(value, (int, float, bool)), payload
@@ -120,8 +128,7 @@ def test_unreadable_answer_is_not_coverage_and_is_named():
     """
     cov = _recorder().coverage(
         ["AAA", "BBB"],
-        {"tech": ["BBB"], "news": ["AAA", "BBB"],
-         "earnings": ["AAA", "BBB"], "smart_money": ["AAA", "BBB"]},
+        {"tech": ["BBB"], "news": ["AAA", "BBB"], "earnings": ["AAA", "BBB"], "smart_money": ["AAA", "BBB"]},
         unreadable_by_seat={"tech": ["AAA"]},
     )
     assert "tech" not in cov["AAA"].covered
@@ -136,7 +143,9 @@ def test_unreadable_answer_is_not_coverage_and_is_named():
 
 def test_unreadable_record_says_did_not_answer_never_neutral():
     cov = _recorder().coverage(
-        ["AAA"], {"news": ["AAA"]}, unreadable_by_seat={"tech": ["AAA"]},
+        ["AAA"],
+        {"news": ["AAA"]},
+        unreadable_by_seat={"tech": ["AAA"]},
     )["AAA"]
     text = cov.summary.lower()
     assert "no answer about this name from" in text
@@ -154,8 +163,7 @@ def test_unreadable_record_says_did_not_answer_never_neutral():
 def test_names_missing_blocking_seat_lists_only_the_blocked_names():
     cov = _recorder().coverage(
         ["AAA", "BBB"],
-        {"tech": ["BBB"], "news": ["AAA"], "earnings": ["BBB"],
-         "smart_money": ["BBB"]},
+        {"tech": ["BBB"], "news": ["AAA"], "earnings": ["BBB"], "smart_money": ["BBB"]},
         unreadable_by_seat={"tech": ["AAA"]},
     )
     gaps = _recorder().names_missing_blocking_seat(cov)
@@ -169,9 +177,15 @@ def test_names_missing_blocking_seat_never_raises():
 
 def test_coverage_record_carries_no_numeric_bar_for_the_new_fields():
     """The per-name half is disclosure; item 220 must not smuggle in a ratio."""
-    cov = _recorder().coverage(
-        ["AAA"], {"news": ["AAA"]}, unreadable_by_seat={"tech": ["AAA"]},
-    )["AAA"].to_evidence()
+    cov = (
+        _recorder()
+        .coverage(
+            ["AAA"],
+            {"news": ["AAA"]},
+            unreadable_by_seat={"tech": ["AAA"]},
+        )["AAA"]
+        .to_evidence()
+    )
     for value in cov.values():
         assert not isinstance(value, (int, float)) or isinstance(value, bool)
 
@@ -186,8 +200,7 @@ def test_three_causes_of_a_missing_seat_are_told_apart_by_the_fields():
     """
     cov = _recorder().coverage(
         ["AAA", "BBB", "CCC"],
-        {"news": ["AAA", "BBB", "CCC"], "earnings": ["AAA", "BBB", "CCC"],
-         "smart_money": ["AAA", "BBB", "CCC"]},
+        {"news": ["AAA", "BBB", "CCC"], "earnings": ["AAA", "BBB", "CCC"], "smart_money": ["AAA", "BBB", "CCC"]},
         unreadable_by_seat={"tech": ["AAA"]},
         asked_no_answer_by_seat={"tech": ["BBB"]},
     )
@@ -204,7 +217,8 @@ def test_three_causes_of_a_missing_seat_are_told_apart_by_the_fields():
 
 def test_a_row_that_came_back_outranks_asked_and_silent():
     cov = _recorder().coverage(
-        ["AAA"], {"news": ["AAA"]},
+        ["AAA"],
+        {"news": ["AAA"]},
         unreadable_by_seat={"tech": ["AAA"]},
         asked_no_answer_by_seat={"tech": ["AAA"]},
     )["AAA"]

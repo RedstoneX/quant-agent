@@ -45,7 +45,10 @@ from src.backtest.engine import (
     run_backtest,
 )
 from src.backtest.metrics import (
-    compute_metrics, format_ab_table, format_caveats, format_metrics_report,
+    compute_metrics,
+    format_ab_table,
+    format_caveats,
+    format_metrics_report,
 )
 from src.config import RiskConfig
 from src.models import OHLCV
@@ -61,10 +64,14 @@ def _risk_config(**overrides) -> SimpleNamespace:
     clamp) so a test that isn't specifically about a gate doesn't
     accidentally trip one."""
     fields = dict(
-        max_position_pct=100.0, max_total_position_pct=100.0,
-        max_sector_pct=100.0, require_stop_loss=True,
-        max_portfolio_risk_pct=25.0, max_position_risk_pct=5.0,
-        min_position_risk_pct=0.5, max_cluster_risk_share_pct=40.0,
+        max_position_pct=100.0,
+        max_total_position_pct=100.0,
+        max_sector_pct=100.0,
+        require_stop_loss=True,
+        max_portfolio_risk_pct=25.0,
+        max_position_risk_pct=5.0,
+        min_position_risk_pct=0.5,
+        max_cluster_risk_share_pct=40.0,
         # Tracks the production default (2.5 since 2026-09-10, 1.5 before
         # that from 2026-09-04); a backtest fixture pinned to a stale floor
         # would silently backtest a rule the desk no longer runs.
@@ -160,32 +167,54 @@ def _build_long_win_series() -> list[OHLCV]:
             # below is unchanged (2.5 x 3 = 7.5 < the $10 structural stop).
             o, h, l, c = 99.9 + drift, 101.5 + drift, 98.5 + drift, 100.0 + drift
         vol = 5_000_000 if i >= n_pad - 5 else 1_000_000
-        bars.append(OHLCV(date=d, open=round(o, 4), high=round(h, 4),
-                           low=round(l, 4), close=round(c, 4), volume=vol))
+        bars.append(OHLCV(date=d, open=round(o, 4), high=round(h, 4), low=round(l, 4), close=round(c, 4), volume=vol))
         d += timedelta(days=1)
 
     drift = 0.0002 * n_pad
-    bars.append(OHLCV(  # bar 209: signal day
-        date=d, open=round(99.9 + drift, 4), high=round(101.5 + drift, 4),
-        low=round(98.5 + drift, 4), close=round(100.0 + drift, 4), volume=5_000_000,
-    ))
+    bars.append(
+        OHLCV(  # bar 209: signal day
+            date=d,
+            open=round(99.9 + drift, 4),
+            high=round(101.5 + drift, 4),
+            low=round(98.5 + drift, 4),
+            close=round(100.0 + drift, 4),
+            volume=5_000_000,
+        )
+    )
     d += timedelta(days=1)
 
-    bars.append(OHLCV(  # bar 210: entry fill at the open
-        date=d, open=105.00, high=106.0, low=104.0, close=105.5, volume=1_000_000,
-    ))
+    bars.append(
+        OHLCV(  # bar 210: entry fill at the open
+            date=d,
+            open=105.00,
+            high=106.0,
+            low=104.0,
+            close=105.5,
+            volume=1_000_000,
+        )
+    )
     d += timedelta(days=1)
 
-    bars.append(OHLCV(  # bar 211: target breached, stop untouched
-        date=d, open=106.0, high=126.0, low=110.0, close=125.5, volume=1_000_000,
-    ))
+    bars.append(
+        OHLCV(  # bar 211: target breached, stop untouched
+            date=d,
+            open=106.0,
+            high=126.0,
+            low=110.0,
+            close=125.5,
+            volume=1_000_000,
+        )
+    )
     return bars
 
 
 def _run(bars: list[OHLCV], **risk_overrides) -> tuple:
     params = BacktestParams(
-        start=bars[0].date, end=bars[-1].date, max_hold_days=20,
-        initial_equity=100_000.0, slippage_bps=0.0,
+        start=bars[0].date,
+        end=bars[-1].date,
+        max_hold_days=20,
+        initial_equity=100_000.0,
+        slippage_bps=0.0,
     )
     config = _risk_config(**risk_overrides)
     result = run_backtest(config=config, bars_by_symbol={SYMBOL: bars}, params=params)
@@ -195,6 +224,7 @@ def _run(bars: list[OHLCV], **risk_overrides) -> tuple:
 # ---------------------------------------------------------------------------
 # Hand-computed single LONG trade, through the full engine
 # ---------------------------------------------------------------------------
+
 
 def test_hand_computed_long_trade():
     bars = _build_long_win_series()
@@ -207,9 +237,9 @@ def test_hand_computed_long_trade():
     assert t.direction == "long"
     assert t.signal_date == BASE_DATE + timedelta(days=209)
     assert t.entry_date == BASE_DATE + timedelta(days=210)
-    assert t.entry_price == 105.0          # next day's OPEN, not the signal day's close
-    assert t.stop_price == 95.0            # the structural support, unwidened
-    assert t.target_price == 125.0         # the structural resistance
+    assert t.entry_price == 105.0  # next day's OPEN, not the signal day's close
+    assert t.stop_price == 95.0  # the structural support, unwidened
+    assert t.target_price == 125.0  # the structural resistance
     assert t.exit_date == BASE_DATE + timedelta(days=211)
     assert t.exit_price == 125.0
     assert t.exit_reason == "target"
@@ -231,6 +261,7 @@ def test_hand_computed_long_trade():
 # Hand-computed single SHORT trade — engine exit/close mechanics directly
 # ---------------------------------------------------------------------------
 
+
 def test_hand_computed_short_trade():
     """entry $50.00, stop $55.00 (above entry, risk $5/share), target
     $40.00. The day's LOW reaches $39.00, breaching the target; P&L is
@@ -238,10 +269,18 @@ def test_hand_computed_short_trade():
     $2,000.00. r_multiple = pnl / (shares * risk_per_share) =
     2000 / (200 * 5) = 2.0."""
     pos = _OpenPosition(
-        symbol="SHRT", direction="short", signal_date=date(2021, 2, 1),
-        entry_date=date(2021, 2, 2), entry_index=20, entry_price=50.0,
-        stop_initial=55.0, stop=55.0, target=40.0, setup_type="breakout",
-        shares=200, risk_pct=5.0,
+        symbol="SHRT",
+        direction="short",
+        signal_date=date(2021, 2, 1),
+        entry_date=date(2021, 2, 2),
+        entry_index=20,
+        entry_price=50.0,
+        stop_initial=55.0,
+        stop=55.0,
+        target=40.0,
+        setup_type="breakout",
+        shares=200,
+        risk_pct=5.0,
     )
     bar = OHLCV(date=date(2021, 2, 3), open=49.0, high=48.0, low=39.0, close=40.5, volume=1000)
 
@@ -249,8 +288,7 @@ def test_hand_computed_short_trade():
     assert reason == "target"
     assert raw_exit == 40.0
 
-    trade = _close_trade(pos, exit_idx=21, exit_date_=bar.date, raw_exit=raw_exit,
-                          exit_reason=reason, slippage_bps=0.0)
+    trade = _close_trade(pos, exit_idx=21, exit_date_=bar.date, raw_exit=raw_exit, exit_reason=reason, slippage_bps=0.0)
     assert trade.direction == "short"
     assert trade.entry_price == 50.0
     assert trade.stop_price == 55.0
@@ -264,6 +302,7 @@ def test_hand_computed_short_trade():
 # No-look-ahead proof
 # ---------------------------------------------------------------------------
 
+
 def test_no_look_ahead_entry_is_next_days_open_not_signal_days_own_move():
     """The signal day's own bar gets an extra, dramatic favourable spike
     (high $112, well above where the position will eventually be bought)
@@ -275,8 +314,12 @@ def test_no_look_ahead_entry_is_next_days_open_not_signal_days_own_move():
     bars = _build_long_win_series()
     signal_bar = bars[209]
     bars[209] = OHLCV(
-        date=signal_bar.date, open=signal_bar.open, high=112.0,
-        low=signal_bar.low, close=signal_bar.close, volume=signal_bar.volume,
+        date=signal_bar.date,
+        open=signal_bar.open,
+        high=112.0,
+        low=signal_bar.low,
+        close=signal_bar.close,
+        volume=signal_bar.volume,
     )
 
     _, _, result = _run(bars)
@@ -296,6 +339,7 @@ def test_no_look_ahead_entry_is_next_days_open_not_signal_days_own_move():
 # Stop-hit: exit price and slippage-bounded loss
 # ---------------------------------------------------------------------------
 
+
 def test_stop_hit_exit_price_and_slippage_bounded_loss():
     """entry $100, stop $90. The day's LOW pierces the stop at $85 — the
     exit fills AT the stop level ($90), not at the bar's low, then
@@ -304,10 +348,18 @@ def test_stop_hit_exit_price_and_slippage_bounded_loss():
     slippage haircut (0.5% of $90 = $0.45) = $10.45 — not by how far the
     bar's low undershot the stop ($15)."""
     pos = _OpenPosition(
-        symbol="STOP", direction="long", signal_date=date(2021, 1, 1),
-        entry_date=date(2021, 1, 2), entry_index=10, entry_price=100.0,
-        stop_initial=90.0, stop=90.0, target=120.0, setup_type="range",
-        shares=100, risk_pct=5.0,
+        symbol="STOP",
+        direction="long",
+        signal_date=date(2021, 1, 1),
+        entry_date=date(2021, 1, 2),
+        entry_index=10,
+        entry_price=100.0,
+        stop_initial=90.0,
+        stop=90.0,
+        target=120.0,
+        setup_type="range",
+        shares=100,
+        risk_pct=5.0,
     )
     bar = OHLCV(date=date(2021, 1, 3), open=95.0, high=96.0, low=85.0, close=88.0, volume=1000)
 
@@ -315,13 +367,14 @@ def test_stop_hit_exit_price_and_slippage_bounded_loss():
     assert reason == "stop"
     assert raw_exit == 90.0  # the stop LEVEL, not the bar's low
 
-    trade = _close_trade(pos, exit_idx=11, exit_date_=bar.date, raw_exit=raw_exit,
-                          exit_reason=reason, slippage_bps=50.0)
+    trade = _close_trade(
+        pos, exit_idx=11, exit_date_=bar.date, raw_exit=raw_exit, exit_reason=reason, slippage_bps=50.0
+    )
     assert trade.exit_price == 89.55
     assert trade.pnl == -1045.0
 
-    stop_distance = pos.entry_price - pos.stop_initial          # 10.0
-    slippage_dollars = pos.stop_initial * (50.0 / 10_000.0)     # 0.45
+    stop_distance = pos.entry_price - pos.stop_initial  # 10.0
+    slippage_dollars = pos.stop_initial * (50.0 / 10_000.0)  # 0.45
     loss = pos.entry_price - trade.exit_price
     assert loss == pytest.approx(stop_distance + slippage_dollars, abs=1e-9)
     # And strictly less than what an unbounded fill at the bar's actual low
@@ -333,13 +386,24 @@ def test_stop_hit_exit_price_and_slippage_bounded_loss():
 # Metrics — hand-computed against a literal 5-trade set
 # ---------------------------------------------------------------------------
 
+
 def _literal_trade(pnl: float, r_multiple: float, hold_days: int, exit_day: int) -> Trade:
     return Trade(
-        symbol="ABCD", direction="long", signal_date=date(2022, 1, 1),
-        entry_date=date(2022, 1, 2), entry_price=100.0, stop_price=90.0,
-        target_price=110.0, exit_date=date(2022, 1, 1) + timedelta(days=exit_day),
-        exit_price=100.0 + pnl / 10.0, exit_reason="target", shares=10,
-        risk_pct=5.0, setup_type="range", hold_days=hold_days, pnl=pnl,
+        symbol="ABCD",
+        direction="long",
+        signal_date=date(2022, 1, 1),
+        entry_date=date(2022, 1, 2),
+        entry_price=100.0,
+        stop_price=90.0,
+        target_price=110.0,
+        exit_date=date(2022, 1, 1) + timedelta(days=exit_day),
+        exit_price=100.0 + pnl / 10.0,
+        exit_reason="target",
+        shares=10,
+        risk_pct=5.0,
+        setup_type="range",
+        hold_days=hold_days,
+        pnl=pnl,
         r_multiple=r_multiple,
     )
 
@@ -406,6 +470,7 @@ def test_metrics_order_independence():
 # Determinism
 # ---------------------------------------------------------------------------
 
+
 def test_determinism_same_inputs_same_output():
     bars = _build_long_win_series()
     _, _, result_1 = _run(bars)
@@ -421,6 +486,7 @@ def test_determinism_same_inputs_same_output():
 # ---------------------------------------------------------------------------
 # A/B — two configs differing in one parameter
 # ---------------------------------------------------------------------------
+
 
 def test_ab_two_configs_one_parameter_produce_different_labelled_results():
     """Configs A and B are identical except `max_position_risk_pct`
@@ -443,7 +509,10 @@ def test_ab_two_configs_one_parameter_produce_different_labelled_results():
     assert metrics_b.expectancy_dollars == 5000.0
 
     table = format_ab_table(
-        "A (risk 5.0)", metrics_a, "B (risk 2.5)", metrics_b,
+        "A (risk 5.0)",
+        metrics_a,
+        "B (risk 2.5)",
+        metrics_b,
         binding_budget_days_a=result_a.binding_budget_days,
         binding_budget_days_b=result_b.binding_budget_days,
         entry_days_a=result_a.entry_days,
@@ -462,6 +531,7 @@ def test_ab_two_configs_one_parameter_produce_different_labelled_results():
 # Small pure-function sanity checks
 # ---------------------------------------------------------------------------
 
+
 def test_fill_price_slippage_direction():
     # Buying (long open / short close) costs MORE than the raw price.
     assert _fill_price(100.0, "long", "open", 100.0) == pytest.approx(101.0)
@@ -477,6 +547,7 @@ def test_fill_price_slippage_direction():
 # Binding-budget day reporting (item 64) — report-only, not a ranking
 # ---------------------------------------------------------------------------
 
+
 def test_budget_binds_when_any_positive_request_is_limited():
     from src.risk.budget import BudgetAllocation, RiskGrant
 
@@ -484,12 +555,16 @@ def test_budget_binds_when_any_positive_request_is_limited():
     cut = RiskGrant("ZZZ", 5.0, 0.0, limited_by="total_ceiling")
     bound = BudgetAllocation(
         grants={"AAA": full, "ZZZ": cut},
-        committed_pct=5.0, ceiling_pct=5.0, cluster_pct={},
+        committed_pct=5.0,
+        ceiling_pct=5.0,
+        cluster_pct={},
     )
     assert _budget_binds(bound)
     free = BudgetAllocation(
         grants={"AAA": full},
-        committed_pct=5.0, ceiling_pct=25.0, cluster_pct={},
+        committed_pct=5.0,
+        ceiling_pct=25.0,
+        cluster_pct={},
     )
     assert not _budget_binds(free)
 
@@ -503,8 +578,11 @@ def test_binding_day_is_counted_and_served_alphabetically():
     bars_a = _build_long_win_series()
     bars_z = _build_long_win_series()
     params = BacktestParams(
-        start=bars_a[0].date, end=bars_a[-1].date, max_hold_days=20,
-        initial_equity=100_000.0, slippage_bps=0.0,
+        start=bars_a[0].date,
+        end=bars_a[-1].date,
+        max_hold_days=20,
+        initial_equity=100_000.0,
+        slippage_bps=0.0,
     )
     config = _risk_config(
         max_portfolio_risk_pct=5.0,
@@ -529,8 +607,13 @@ def test_every_backtest_result_reports_binding_days_and_labels_the_tie_break():
     must not survive — that was the lie item 64 exists to stop.
     """
     caveats = format_caveats(
-        slippage_bps=5.0, slippage_source="test", skipped=0, min_bars=210,
-        symbols_with_no_data=[], binding_budget_days=0, entry_days=10,
+        slippage_bps=5.0,
+        slippage_source="test",
+        skipped=0,
+        min_bars=210,
+        symbols_with_no_data=[],
+        binding_budget_days=0,
+        entry_days=10,
     )
     assert "0 of 10" in caveats
     assert "alphabetical" in caveats.lower()
@@ -539,26 +622,37 @@ def test_every_backtest_result_reports_binding_days_and_labels_the_tie_break():
     assert "the portfolio risk budget, cluster caps" not in caveats
 
     caveats_bound = format_caveats(
-        slippage_bps=5.0, slippage_source="test", skipped=0, min_bars=210,
-        symbols_with_no_data=[], binding_budget_days=3, entry_days=40,
+        slippage_bps=5.0,
+        slippage_source="test",
+        skipped=0,
+        min_bars=210,
+        symbols_with_no_data=[],
+        binding_budget_days=3,
+        entry_days=40,
     )
     assert "3 of 40" in caveats_bound
 
     metrics = compute_metrics([], 100_000.0)
     report = format_metrics_report(
-        "A", metrics,
-        dict(start="2025-01-01", end="2025-12-31", n_symbols=2,
-             data_source="test", initial_equity=100_000.0),
-        binding_budget_days=0, entry_days=10,
+        "A",
+        metrics,
+        dict(start="2025-01-01", end="2025-12-31", n_symbols=2, data_source="test", initial_equity=100_000.0),
+        binding_budget_days=0,
+        entry_days=10,
     )
     assert "0 of 10" in report
     assert "ticker spelling" in report
     assert "not a ranking" in report
 
     table = format_ab_table(
-        "A", metrics, "B", metrics,
-        binding_budget_days_a=1, binding_budget_days_b=3,
-        entry_days_a=10, entry_days_b=10,
+        "A",
+        metrics,
+        "B",
+        metrics,
+        binding_budget_days_a=1,
+        binding_budget_days_b=3,
+        entry_days_a=10,
+        entry_days_b=10,
     )
     assert "Binding-budget days" in table
     assert "1 of 10" in table

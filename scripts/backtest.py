@@ -92,32 +92,48 @@ def _parse_date(text: str) -> date:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--config", default="config/settings.yaml",
-                     help="Settings YAML for config A (default: config/settings.yaml)")
-    ap.add_argument("--config-b", default=None,
-                     help="second Settings YAML — supplying this enables A/B mode")
+    ap.add_argument(
+        "--config", default="config/settings.yaml", help="Settings YAML for config A (default: config/settings.yaml)"
+    )
+    ap.add_argument("--config-b", default=None, help="second Settings YAML — supplying this enables A/B mode")
     ap.add_argument("--start", required=True, type=_parse_date)
     ap.add_argument("--end", required=True, type=_parse_date)
-    ap.add_argument("--symbols", default=None,
-                     help="comma-separated override of trading.universe (default: use the config's universe)")
-    ap.add_argument("--max-hold-days", type=int, default=20,
-                     help="maximum holding horizon in trading sessions (default: 20)")
+    ap.add_argument(
+        "--symbols",
+        default=None,
+        help="comma-separated override of trading.universe (default: use the config's universe)",
+    )
+    ap.add_argument(
+        "--max-hold-days", type=int, default=20, help="maximum holding horizon in trading sessions (default: 20)"
+    )
     ap.add_argument("--initial-equity", type=float, default=100_000.0)
-    ap.add_argument("--slippage-bps", type=float, default=None,
-                     help="basis points applied on both entry and exit fills "
-                          "(default: the config's execution.max_entry_slippage_bps)")
-    ap.add_argument("--out", default=None,
-                     help="CSV path for the per-trade table (config A; "
-                          "config B's table is written alongside with a _b suffix)")
-    ap.add_argument("--sweep", action="append", default=None, metavar="NAME=VALUE",
-                     help="vary a value this engine reads through "
-                          "src/backtest/swept_values.py (repeatable), e.g. "
-                          "--sweep levels.pivot_window=7. Every run prints how "
-                          "many times each such value was actually READ: a "
-                          "sweep reporting 0 reads reached nothing, whatever "
-                          "the numbers look like.")
+    ap.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=None,
+        help="basis points applied on both entry and exit fills "
+        "(default: the config's execution.max_entry_slippage_bps)",
+    )
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="CSV path for the per-trade table (config A; config B's table is written alongside with a _b suffix)",
+    )
+    ap.add_argument(
+        "--sweep",
+        action="append",
+        default=None,
+        metavar="NAME=VALUE",
+        help="vary a value this engine reads through "
+        "src/backtest/swept_values.py (repeatable), e.g. "
+        "--sweep levels.pivot_window=7. Every run prints how "
+        "many times each such value was actually READ: a "
+        "sweep reporting 0 reads reached nothing, whatever "
+        "the numbers look like.",
+    )
     return ap
 
 
@@ -128,7 +144,9 @@ def _universe(config: AppConfig, override: str | None) -> list[str]:
 
 
 def _run_one(
-    config_path: str, args: argparse.Namespace, bars_cache: dict[tuple, tuple],
+    config_path: str,
+    args: argparse.Namespace,
+    bars_cache: dict[tuple, tuple],
 ) -> tuple[AppConfig, BacktestRunResult, Metrics, float, str]:
     config = load_config(Path(config_path))
     symbols = tuple(sorted(_universe(config, args.symbols)))
@@ -136,25 +154,28 @@ def _run_one(
 
     cache_key = (symbols, lookback_days)
     if cache_key not in bars_cache:
-        print(f"Fetching history for {len(symbols)} symbol(s) "
-              f"(lookback={lookback_days}d, source=yfinance via MarketDataProvider)...",
-              file=sys.stderr)
+        print(
+            f"Fetching history for {len(symbols)} symbol(s) "
+            f"(lookback={lookback_days}d, source=yfinance via MarketDataProvider)...",
+            file=sys.stderr,
+        )
         bars_cache[cache_key] = fetch_universe_history(list(symbols), lookback_days=lookback_days)
     bars_by_symbol, missing = bars_cache[cache_key]
 
-    slippage_bps = (
-        args.slippage_bps if args.slippage_bps is not None
-        else config.execution.max_entry_slippage_bps
-    )
+    slippage_bps = args.slippage_bps if args.slippage_bps is not None else config.execution.max_entry_slippage_bps
     slippage_source = (
-        "--slippage-bps override" if args.slippage_bps is not None
+        "--slippage-bps override"
+        if args.slippage_bps is not None
         else "config execution.max_entry_slippage_bps, reused as the flat-slippage "
-             "estimate — there is no dedicated backtest slippage field in Settings"
+        "estimate — there is no dedicated backtest slippage field in Settings"
     )
 
     params = BacktestParams(
-        start=args.start, end=args.end, max_hold_days=args.max_hold_days,
-        initial_equity=args.initial_equity, slippage_bps=slippage_bps,
+        start=args.start,
+        end=args.end,
+        max_hold_days=args.max_hold_days,
+        initial_equity=args.initial_equity,
+        slippage_bps=slippage_bps,
     )
     # Per-run read counts: a sweep that never reached its value must say so
     # in this run's own output rather than quietly matching the baseline.
@@ -181,34 +202,54 @@ def _coerce(raw: str) -> float | int | str:
         return raw
 
 
-def _report(label: str, config_path: str, result: BacktestRunResult, metrics: Metrics,
-            args: argparse.Namespace, slippage_bps: float, slippage_source: str) -> None:
+def _report(
+    label: str,
+    config_path: str,
+    result: BacktestRunResult,
+    metrics: Metrics,
+    args: argparse.Namespace,
+    slippage_bps: float,
+    slippage_source: str,
+) -> None:
     meta = dict(
-        start=args.start, end=args.end, n_symbols=len(result.symbols_used),
+        start=args.start,
+        end=args.end,
+        n_symbols=len(result.symbols_used),
         data_source="yfinance (live network fetch via MarketDataProvider; no Alpaca "
-                     "fallback wired, no local snapshot used)",
+        "fallback wired, no local snapshot used)",
         initial_equity=args.initial_equity,
     )
-    print(format_settleability_verdict(
-        contested_budget_days=result.contested_budget_days,
-        binding_budget_days=result.binding_budget_days,
-        entry_days=result.entry_days, label=f"run {label}",
-    ))
+    print(
+        format_settleability_verdict(
+            contested_budget_days=result.contested_budget_days,
+            binding_budget_days=result.binding_budget_days,
+            entry_days=result.entry_days,
+            label=f"run {label}",
+        )
+    )
     print()
-    print(format_metrics_report(
-        f"{label}: {config_path}", metrics, meta,
-        binding_budget_days=result.binding_budget_days,
-        entry_days=result.entry_days,
-        contested_budget_days=result.contested_budget_days,
-    ))
+    print(
+        format_metrics_report(
+            f"{label}: {config_path}",
+            metrics,
+            meta,
+            binding_budget_days=result.binding_budget_days,
+            entry_days=result.entry_days,
+            contested_budget_days=result.contested_budget_days,
+        )
+    )
     print()
-    print(format_caveats(
-        slippage_bps=slippage_bps, slippage_source=slippage_source,
-        skipped=result.skipped_symbol_days, min_bars=result.params.min_bars_for_signal,
-        symbols_with_no_data=result.symbols_with_no_data,
-        binding_budget_days=result.binding_budget_days,
-        entry_days=result.entry_days,
-    ))
+    print(
+        format_caveats(
+            slippage_bps=slippage_bps,
+            slippage_source=slippage_source,
+            skipped=result.skipped_symbol_days,
+            min_bars=result.params.min_bars_for_signal,
+            symbols_with_no_data=result.symbols_with_no_data,
+            binding_budget_days=result.binding_budget_days,
+            entry_days=result.entry_days,
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -216,14 +257,15 @@ def main(argv: list[str] | None = None) -> int:
 
     filled = _fill_placeholder_env()
     if filled:
-        print(f"(no live credentials found for {', '.join(filled)} — filled with "
-              f"obviously-fake placeholders; this tool calls none of them)",
-              file=sys.stderr)
+        print(
+            f"(no live credentials found for {', '.join(filled)} — filled with "
+            f"obviously-fake placeholders; this tool calls none of them)",
+            file=sys.stderr,
+        )
 
     bars_cache: dict[tuple, tuple] = {}
 
-    config_a, result_a, metrics_a, slip_a, slip_src_a, reads_a = _run_one(
-        args.config, args, bars_cache)
+    config_a, result_a, metrics_a, slip_a, slip_src_a, reads_a = _run_one(args.config, args, bars_cache)
     print()
     _report("A", args.config, result_a, metrics_a, args, slip_a, slip_src_a)
     print()
@@ -233,8 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nPer-trade table (A) written to {args.out}")
 
     if args.config_b:
-        config_b, result_b, metrics_b, slip_b, slip_src_b, reads_b = _run_one(
-            args.config_b, args, bars_cache)
+        config_b, result_b, metrics_b, slip_b, slip_src_b, reads_b = _run_one(args.config_b, args, bars_cache)
         print()
         _report("B", args.config_b, result_b, metrics_b, args, slip_b, slip_src_b)
         print()
@@ -251,14 +292,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"A = {args.config}")
         print(f"B = {args.config_b}")
         print()
-        print(format_ab_table(
-            f"A ({Path(args.config).name})", metrics_a,
-            f"B ({Path(args.config_b).name})", metrics_b,
-            binding_budget_days_a=result_a.binding_budget_days,
-            binding_budget_days_b=result_b.binding_budget_days,
-            entry_days_a=result_a.entry_days,
-            entry_days_b=result_b.entry_days,
-        ))
+        print(
+            format_ab_table(
+                f"A ({Path(args.config).name})",
+                metrics_a,
+                f"B ({Path(args.config_b).name})",
+                metrics_b,
+                binding_budget_days_a=result_a.binding_budget_days,
+                binding_budget_days_b=result_b.binding_budget_days,
+                entry_days_a=result_a.entry_days,
+                entry_days_b=result_b.entry_days,
+            )
+        )
 
     return 0
 

@@ -35,8 +35,9 @@ PROD_DB = "/home/qamc/quant-agent/data/quant_agent.db"
 PRE_FIX_REV = "1c4492a"
 
 
-def _insert(db: Database, symbol: str, action: str, qty: float, price: float,
-            timestamp: str, fill_status: str = "filled"):
+def _insert(
+    db: Database, symbol: str, action: str, qty: float, price: float, timestamp: str, fill_status: str = "filled"
+):
     db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, fill_status, "
         "fill_qty, fill_price, timestamp, run_id, reasoning) "
@@ -50,6 +51,7 @@ def _insert(db: Database, symbol: str, action: str, qty: float, price: float,
 # 1 & 2. Mixed long+short ledger — separate and combined figures, plus the
 # two §7.3 metrics.
 # ==========================================================================
+
 
 def test_mixed_long_and_short_ledger_produces_correct_separate_and_combined_figures(tmp_path):
     db = Database(str(tmp_path / "t.db"))
@@ -102,7 +104,7 @@ def test_short_closing_below_entry_is_a_win_and_above_entry_is_a_loss(tmp_path):
 
     # Three short round-trips so the >=3 floor is cleared by shorts alone.
     _insert(db, "AAA", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
-    _insert(db, "AAA", "COVER", 10, 90.0, "2026-08-02 10:00:00")   # price fell -> WIN
+    _insert(db, "AAA", "COVER", 10, 90.0, "2026-08-02 10:00:00")  # price fell -> WIN
     _insert(db, "BBB", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
     _insert(db, "BBB", "COVER", 10, 110.0, "2026-08-02 10:00:00")  # price rose -> LOSS
     _insert(db, "CCC", "SHORT", 10, 100.0, "2026-08-01 10:00:00")
@@ -137,6 +139,7 @@ def test_partial_and_emergency_cover_labels_close_the_short_lot(tmp_path):
 # 3a. Long-only behaviour unchanged — small fabricated ledger.
 # ==========================================================================
 
+
 def test_long_only_ledger_top_level_numbers_unchanged_by_short_support(tmp_path):
     """A ledger with zero SHORT/COVER rows must produce the exact same
     n / win_rate_pct / avg_return_pct / avg_hold_days / by_size the
@@ -168,6 +171,7 @@ def test_long_only_ledger_top_level_numbers_unchanged_by_short_support(tmp_path)
 # and after this change, compared on the pre-existing fields.
 # ==========================================================================
 
+
 def _prod_db_copy(tmp_path) -> Path | None:
     """A READ-ONLY copy of the real production ledger, made via `sudo -n -u
     qamc cat` (never opening/writing the original). Returns None (test
@@ -178,7 +182,8 @@ def _prod_db_copy(tmp_path) -> Path | None:
     try:
         result = subprocess.run(
             ["sudo", "-n", "-u", "qamc", "cat", PROD_DB],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -198,7 +203,10 @@ def _load_prefix_compute_trade_calibration():
     try:
         old_source = subprocess.run(
             ["git", "show", f"{PRE_FIX_REV}:src/storage/db.py"],
-            capture_output=True, text=True, timeout=30, cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -206,8 +214,7 @@ def _load_prefix_compute_trade_calibration():
         return None
     module = types.ModuleType("_prefix_db_module")
     try:
-        exec(compile(old_source.stdout, f"<{PRE_FIX_REV}:src/storage/db.py>", "exec"),
-             module.__dict__)
+        exec(compile(old_source.stdout, f"<{PRE_FIX_REV}:src/storage/db.py>", "exec"), module.__dict__)
     except Exception:
         return None
     return getattr(module.Database, "compute_trade_calibration", None)
@@ -248,8 +255,7 @@ def test_real_production_ledger_long_only_fields_are_byte_identical_before_and_a
     original_keys = ("n", "win_rate_pct", "avg_return_pct", "avg_hold_days")
     for key in original_keys:
         assert new_result.get(key) == old_result.get(key), (
-            f"{key} changed: before={old_result.get(key)!r} "
-            f"after={new_result.get(key)!r}"
+            f"{key} changed: before={old_result.get(key)!r} after={new_result.get(key)!r}"
         )
     # By-size sub-buckets go through the SAME `_bucket_stats` helper as the
     # top level, so they ALSO gain `expectancy_pct` / `avg_win_loss_ratio` —

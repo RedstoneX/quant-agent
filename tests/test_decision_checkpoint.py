@@ -13,6 +13,7 @@ preamble. Safety contract pinned here:
     ignored;
   - checkpoint failures never crash the session.
 """
+
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -20,7 +21,9 @@ from unittest.mock import MagicMock
 
 from src import decision_checkpoint as dc
 from src.models import (
-    PortfolioDecision, ReasoningChain, TradeDecision,
+    PortfolioDecision,
+    ReasoningChain,
+    TradeDecision,
 )
 from src.pipeline_context import RunContext
 from tests.pipeline_factory import build_pipeline
@@ -28,22 +31,34 @@ from tests.pipeline_factory import build_pipeline
 
 def _pm_rc():
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
 def _decision(symbol="NVDA"):
-    return TradeDecision(action="BUY", symbol=symbol, allocation_pct=10.0,
-                         entry_price=100.0, stop_loss=90.0,
-                         take_profit=130.0, reasoning="test")
+    return TradeDecision(
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=90.0,
+        take_profit=130.0,
+        reasoning="test",
+    )
 
 
 def _ctx_with_plan() -> RunContext:
     ctx = RunContext.start("morning")
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[_decision()], portfolio_view="v",
+        reasoning_chain=_pm_rc(),
+        decisions=[_decision()],
+        portfolio_view="v",
     )
     ctx.analyses = []
     ctx.news_intel = None
@@ -60,6 +75,7 @@ def _point_dir_at(monkeypatch, tmp_path):
 
 
 # ---------- module round-trip ----------
+
 
 def test_checkpoint_roundtrip(monkeypatch, tmp_path):
     _point_dir_at(monkeypatch, tmp_path)
@@ -82,7 +98,9 @@ def test_checkpoint_empty_plan_not_written(monkeypatch, tmp_path):
     _point_dir_at(monkeypatch, tmp_path)
     ctx = _ctx_with_plan()
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[], portfolio_view="v",
+        reasoning_chain=_pm_rc(),
+        decisions=[],
+        portfolio_view="v",
     )
     assert dc.write(ctx) is None
     assert dc.load("morning") is None
@@ -99,9 +117,7 @@ def test_checkpoint_stale_not_loaded(monkeypatch, tmp_path):
     _point_dir_at(monkeypatch, tmp_path)
     path = dc.write(_ctx_with_plan())
     payload = json.loads(path.read_text())
-    payload["created_at_utc"] = (
-        datetime.now(timezone.utc) - timedelta(minutes=120)
-    ).isoformat()
+    payload["created_at_utc"] = (datetime.now(timezone.utc) - timedelta(minutes=120)).isoformat()
     path.write_text(json.dumps(payload))
     assert dc.load("morning") is None
 
@@ -110,7 +126,7 @@ def test_checkpoint_corrupt_is_ignored(monkeypatch, tmp_path):
     _point_dir_at(monkeypatch, tmp_path)
     dc.checkpoint_path("morning").parent.mkdir(parents=True, exist_ok=True)
     dc.checkpoint_path("morning").write_text("{not json")
-    assert dc.load("morning") is None   # no raise
+    assert dc.load("morning") is None  # no raise
 
 
 def test_checkpoint_wrong_version_ignored(monkeypatch, tmp_path):
@@ -124,14 +140,31 @@ def test_checkpoint_wrong_version_ignored(monkeypatch, tmp_path):
 
 # ---------- run_morning resume behavior ----------
 
+
 def _resume_pipeline():
     """__new__-built pipeline with every preamble dependency stubbed."""
-    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), decision_stage=MagicMock(), market=MagicMock())
+    p = build_pipeline(
+        _is_trading_day=lambda: True,
+        _drain_pending_protection_restores=MagicMock(),
+        _reconcile_orphan_pending_submits=MagicMock(),
+        _reconcile_stop_coverage=MagicMock(return_value=[]),
+        _reconcile_fills=MagicMock(),
+        _force_delever=MagicMock(return_value=[]),
+        broker=MagicMock(),
+        risk_engine=MagicMock(),
+        morning_research_stage=MagicMock(),
+        risk_stage=MagicMock(),
+        execution_stage=MagicMock(),
+        decision_stage=MagicMock(),
+        market=MagicMock(),
+    )
     p.broker.get_account.return_value = {
-        "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+        "cash": 50_000.0,
+        "portfolio_value": 100_000.0,
+        "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
-    p.risk_stage.run.return_value = None          # RM approved, proceed
+    p.risk_stage.run.return_value = None  # RM approved, proceed
     p.execution_stage.run.return_value = [{"id": "o1", "action": "BUY"}]
     p.market.get_ohlcv.return_value = []
     p.config = MagicMock()
@@ -165,13 +198,12 @@ def test_run_morning_rm_reject_consumes_checkpoint(monkeypatch, tmp_path):
     dc.write(_ctx_with_plan())
 
     p = _resume_pipeline()
-    p.risk_stage.run.return_value = {"status": "rejected", "orders": [],
-                                     "reason": "cluster risk"}
+    p.risk_stage.run.return_value = {"status": "rejected", "orders": [], "reason": "cluster risk"}
     result = p.run_morning()
 
     assert result["status"] == "rejected"
     p.execution_stage.run.assert_not_called()
-    assert dc.load("morning") is None   # consumed despite the reject
+    assert dc.load("morning") is None  # consumed despite the reject
 
 
 def test_run_morning_without_checkpoint_runs_full_pipeline(monkeypatch, tmp_path):
@@ -180,17 +212,24 @@ def test_run_morning_without_checkpoint_runs_full_pipeline(monkeypatch, tmp_path
     p = _resume_pipeline()
 
     def _research(ctx):
-        ctx.analyses = [SimpleNamespace(
-            symbol="NVDA", rating="buy",
-            model_dump=lambda mode=None: {"symbol": "NVDA", "rating": "buy"},
-        )]
+        ctx.analyses = [
+            SimpleNamespace(
+                symbol="NVDA",
+                rating="buy",
+                model_dump=lambda mode=None: {"symbol": "NVDA", "rating": "buy"},
+            )
+        ]
         ctx.data_status = {"tech": "ok"}
+
     p.morning_research_stage.run.side_effect = _research
 
     def _decide(ctx):
         ctx.portfolio_decision = PortfolioDecision(
-            reasoning_chain=_pm_rc(), decisions=[_decision()], portfolio_view="v",
+            reasoning_chain=_pm_rc(),
+            decisions=[_decision()],
+            portfolio_view="v",
         )
+
     p.decision_stage.run.side_effect = _decide
     p._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
 
@@ -245,7 +284,7 @@ def test_write_returns_none_when_persistence_fails(monkeypatch, tmp_path, caplog
 
 
 def test_mark_consumed_is_true_when_no_checkpoint_exists(monkeypatch, tmp_path):
-    """"Guaranteed dead" includes "never existed"."""
+    """ "Guaranteed dead" includes "never existed"."""
     _point_dir_at(monkeypatch, tmp_path)
     assert dc.mark_consumed("morning") is True
 
@@ -259,7 +298,8 @@ def test_mark_consumed_is_idempotent(monkeypatch, tmp_path):
 
 
 def test_mark_consumed_deletes_the_checkpoint_when_it_cannot_flag_it(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ):
     """Fail-closed: if the consumed flag cannot be written, the checkpoint
     is DELETED rather than left readable. A checkpoint that survives
@@ -284,7 +324,9 @@ def test_mark_consumed_deletes_the_checkpoint_when_it_cannot_flag_it(
 
 
 def test_mark_consumed_reports_false_when_even_the_delete_fails(
-    monkeypatch, tmp_path, caplog,
+    monkeypatch,
+    tmp_path,
+    caplog,
 ):
     """The double-failure case is the one that must NOT be swallowed.
 
@@ -322,6 +364,7 @@ def test_mark_consumed_survives_a_corrupt_checkpoint(monkeypatch, tmp_path):
 
 # ---------- session status (the evening dead-man probe reads this) ----------
 
+
 def test_status_roundtrip(monkeypatch, tmp_path):
     _point_dir_at(monkeypatch, tmp_path)
     dc.write_status("morning", "no_data")
@@ -351,7 +394,7 @@ def test_write_status_never_raises_when_persistence_fails(monkeypatch, tmp_path)
         raise OSError("disk full")
 
     monkeypatch.setattr(dc.Path, "write_text", _boom)
-    dc.write_status("morning", "emergency_sold")   # must not raise
+    dc.write_status("morning", "emergency_sold")  # must not raise
     assert dc.read_status("morning") is None
 
 

@@ -34,10 +34,7 @@ def _efts(pages: dict[tuple[str, int], list[dict]]):
     def _get(url, *, params, deadline):
         key = (str(params.get("startdt")), int(params.get("from") or 0))
         hits = pages.get(key, [])
-        total = sum(
-            len(v) for (day, _from), v in pages.items()
-            if day == str(params.get("startdt"))
-        )
+        total = sum(len(v) for (day, _from), v in pages.items() if day == str(params.get("startdt")))
         response = Mock()
         response.json.return_value = {
             "hits": {"hits": hits, "total": {"value": total}},
@@ -54,7 +51,8 @@ def _provider(tmp_path, **kwargs):
 
 
 def test_watched_filings_already_found_are_emitted_first_when_the_cap_binds(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Watched-first ORDERING, which is all `priority_ciks` still buys.
 
@@ -81,14 +79,20 @@ def test_watched_filings_already_found_are_emitted_first_when_the_cap_binds(
     day0 = et_today().isoformat()
     # One unwatched filing, then the watched one, then more unwatched — the
     # order EFTS returns them in is not ours to choose.
-    monkeypatch.setattr(provider, "_get", _efts({
-        (day0, 0): [
-            _hit("0000000001-26-000001", "9000001"),
-            _hit("0000000004-26-000001", "1045810"),
-            _hit("0000000002-26-000001", "9000002"),
-            _hit("0000000003-26-000001", "9000003"),
-        ],
-    }))
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _efts(
+            {
+                (day0, 0): [
+                    _hit("0000000001-26-000001", "9000001"),
+                    _hit("0000000004-26-000001", "1045810"),
+                    _hit("0000000002-26-000001", "9000002"),
+                    _hit("0000000003-26-000001", "9000003"),
+                ],
+            }
+        ),
+    )
 
     stats: dict = {}
     priority = provider._ciks_for_symbols(listed, ["NVDA"])
@@ -109,7 +113,8 @@ def test_watched_filings_already_found_are_emitted_first_when_the_cap_binds(
 
 
 def test_no_watched_symbols_leaves_discovery_exactly_as_it_was(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     provider = _provider(tmp_path, max_filings_per_refresh=2, lookback_days=1)
     listed = {"9000001": {"ZZZA": "NYSE"}, "9000002": {"ZZZB": "NYSE"}}
@@ -117,17 +122,24 @@ def test_no_watched_symbols_leaves_discovery_exactly_as_it_was(
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    monkeypatch.setattr(provider, "_get", _efts({
-        (day0, 0): [
-            _hit("0000000001-26-000001", "9000001"),
-            _hit("0000000002-26-000001", "9000002"),
-            _hit("0000000003-26-000001", "9000001"),
-        ],
-    }))
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _efts(
+            {
+                (day0, 0): [
+                    _hit("0000000001-26-000001", "9000001"),
+                    _hit("0000000002-26-000001", "9000002"),
+                    _hit("0000000003-26-000001", "9000001"),
+                ],
+            }
+        ),
+    )
 
     found = provider._discover(listed, float("inf"), set(), set(), {})
     assert [f["accession"] for f in found] == [
-        "0000000001-26-000001", "0000000002-26-000001",
+        "0000000001-26-000001",
+        "0000000002-26-000001",
     ]
 
 
@@ -138,18 +150,25 @@ def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    monkeypatch.setattr(provider, "_get", _efts({
-        (day0, 0): [
-            _hit("0000000003-26-000001", "1045810"),
-            _hit("0000000001-26-000001", "9000001"),
-            _hit("0000000002-26-000001", "9000001"),
-        ],
-    }))
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _efts(
+            {
+                (day0, 0): [
+                    _hit("0000000003-26-000001", "1045810"),
+                    _hit("0000000001-26-000001", "9000001"),
+                    _hit("0000000002-26-000001", "9000001"),
+                ],
+            }
+        ),
+    )
     # Submission download fails: the backlog must still be counted, because
     # "read nothing, three waiting" is exactly the state that refuses a
     # midday decision tomorrow.
     monkeypatch.setattr(
-        provider, "_submission",
+        provider,
+        "_submission",
         Mock(side_effect=RuntimeError("submission unavailable")),
     )
 
@@ -185,21 +204,30 @@ def test_deadline_keeps_the_watched_filings_already_found(tmp_path, monkeypatch)
         if calls["n"] > 1:
             raise _RefreshDeadline("refresh_deadline_exceeded")
         response = Mock()
-        response.json.return_value = {"hits": {"hits": [
-            _hit("0000000004-26-000001", "1045810"),
-            _hit("0000000001-26-000001", "9000001"),
-        ], "total": {"value": 999}}}
+        response.json.return_value = {
+            "hits": {
+                "hits": [
+                    _hit("0000000004-26-000001", "1045810"),
+                    _hit("0000000001-26-000001", "9000001"),
+                ],
+                "total": {"value": 999},
+            }
+        }
         return response
 
     monkeypatch.setattr(provider, "_get", _get)
     stats: dict = {}
     found = provider._discover(
-        listed, float("inf"), set(),
-        provider._ciks_for_symbols(listed, ["NVDA"]), stats,
+        listed,
+        float("inf"),
+        set(),
+        provider._ciks_for_symbols(listed, ["NVDA"]),
+        stats,
     )
 
     assert [f["accession"] for f in found] == [
-        "0000000004-26-000001", "0000000001-26-000001",
+        "0000000004-26-000001",
+        "0000000001-26-000001",
     ]
     assert stats["deadline_hit"] is True
 
@@ -211,9 +239,7 @@ def test_combined_provider_passes_watched_names_and_surfaces_the_backlog():
 
         def refresh(self, symbols=None):
             self.seen = symbols
-            return {"status": "ok", "pending_filings": 7,
-                    "watched_pending_filings": 2,
-                    "discovery_cap_reached": True}
+            return {"status": "ok", "pending_filings": 7, "watched_pending_filings": 2, "discovery_cap_reached": True}
 
         def fetch(self, symbols):
             return [], None
@@ -269,7 +295,8 @@ def _submissions(by_cik: dict[str, list[tuple[str, str]]]):
 
 
 def test_freshness_reports_backlog_on_unread_names_without_a_crawl(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """THE ACCEPTANCE CONDITION for the six lost windows, restated per issuer.
 
@@ -287,20 +314,32 @@ def test_freshness_reports_backlog_on_unread_names_without_a_crawl(
     listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
     monkeypatch.setattr(
-        provider, "_discover",
+        provider,
+        "_discover",
         Mock(side_effect=AssertionError("freshness must not run a crawl")),
     )
     from src.data.smart_money import et_today
+
     today = et_today().isoformat()
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": [],
-        "watched_read_through_by_cik": {"1045810": today},
-    }))
-    monkeypatch.setattr(provider, "_get", _submissions({
-        "1045810": [],
-        # AAPL was never read through and 000001 was never read: backlog.
-        "320193": [("0000000001-26-000001", today)],
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "processed_accessions": [],
+                "watched_read_through_by_cik": {"1045810": today},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _submissions(
+            {
+                "1045810": [],
+                # AAPL was never read through and 000001 was never read: backlog.
+                "320193": [("0000000001-26-000001", today)],
+            }
+        ),
+    )
 
     verdict = provider.form4_freshness(["NVDA", "AAPL"])
 
@@ -314,7 +353,8 @@ def test_freshness_reports_backlog_on_unread_names_without_a_crawl(
 
 
 def test_freshness_sees_a_filing_made_on_the_read_through_day(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The false-REUSE hole in the single watermark, reproduced.
 
@@ -328,19 +368,30 @@ def test_freshness_sees_a_filing_made_on_the_read_through_day(
     listed = {"1045810": {"NVDA": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
     from src.data.smart_money import et_today
+
     today = et_today().isoformat()
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": ["0000000001-26-000001"],
-        # Both shapes written, so the single-watermark code reads its own.
-        "watched_read_through": today,
-        "watched_read_through_by_cik": {"1045810": today},
-    }))
-    monkeypatch.setattr(provider, "_get", _submissions({
-        "1045810": [
-            ("0000000002-26-000002", today),     # filed after the morning read
-            ("0000000001-26-000001", today),
-        ],
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "processed_accessions": ["0000000001-26-000001"],
+                # Both shapes written, so the single-watermark code reads its own.
+                "watched_read_through": today,
+                "watched_read_through_by_cik": {"1045810": today},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _submissions(
+            {
+                "1045810": [
+                    ("0000000002-26-000002", today),  # filed after the morning read
+                    ("0000000001-26-000001", today),
+                ],
+            }
+        ),
+    )
 
     verdict = provider.form4_freshness(["NVDA"])
 
@@ -352,17 +403,27 @@ def test_freshness_expires_on_a_filing_after_the_watermark(tmp_path, monkeypatch
     provider = _provider(tmp_path, lookback_days=365)
     listed = {"1045810": {"NVDA": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": ["0000000001-26-000001"],
-        "watched_read_through": "2026-09-15",
-        "watched_read_through_by_cik": {"1045810": "2026-09-15"},
-    }))
-    monkeypatch.setattr(provider, "_get", _submissions({
-        "1045810": [
-            ("0000000002-26-000002", "2026-09-16"),   # after the watermark
-            ("0000000001-26-000001", "2026-09-15"),
-        ],
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "processed_accessions": ["0000000001-26-000001"],
+                "watched_read_through": "2026-09-15",
+                "watched_read_through_by_cik": {"1045810": "2026-09-15"},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        provider,
+        "_get",
+        _submissions(
+            {
+                "1045810": [
+                    ("0000000002-26-000002", "2026-09-16"),  # after the watermark
+                    ("0000000001-26-000001", "2026-09-15"),
+                ],
+            }
+        ),
+    )
 
     verdict = provider.form4_freshness(["NVDA"])
 
@@ -384,12 +445,18 @@ def test_freshness_partial_failure_is_unknown_not_clean(tmp_path, monkeypatch):
     provider = _provider(tmp_path, lookback_days=365)
     listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": [], "watched_read_through": "2026-09-18",
-        "watched_read_through_by_cik": {
-            "1045810": "2026-09-18", "320193": "2026-09-18",
-        },
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "processed_accessions": [],
+                "watched_read_through": "2026-09-18",
+                "watched_read_through_by_cik": {
+                    "1045810": "2026-09-18",
+                    "320193": "2026-09-18",
+                },
+            }
+        )
+    )
     good = _submissions({"1045810": []})
 
     def _get(url, *, params, deadline):
@@ -406,7 +473,8 @@ def test_freshness_partial_failure_is_unknown_not_clean(tmp_path, monkeypatch):
 
 
 def test_drain_reads_watched_residue_and_advances_the_watermark(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The other half. The watermark is only sound if the backlog is driven
     to zero, so the drain is bounded by the desk's own names, not by
@@ -420,10 +488,12 @@ def test_drain_reads_watched_residue_and_advances_the_watermark(
     # The market-wide pass sees only a non-watched filing and its cap binds
     # there — exactly 2026-09-18's shape.
     efts = _efts({(day0, 0): [_hit("0000000009-26-000009", "9000001")]})
-    subs = _submissions({
-        "1045810": [("0000000003-26-000003", day0)],
-        "9000001": [],
-    })
+    subs = _submissions(
+        {
+            "1045810": [("0000000003-26-000003", day0)],
+            "9000001": [],
+        }
+    )
 
     def _get(url, *, params, deadline):
         if "submissions" in url:
@@ -432,7 +502,9 @@ def test_drain_reads_watched_residue_and_advances_the_watermark(
 
     monkeypatch.setattr(provider, "_get", _get)
     monkeypatch.setattr(
-        provider, "_submission", lambda filing, deadline: ("<xml/>", "u"),
+        provider,
+        "_submission",
+        lambda filing, deadline: ("<xml/>", "u"),
     )
     monkeypatch.setattr(provider, "_parse_submission", lambda *a, **k: [])
 
@@ -446,7 +518,8 @@ def test_drain_reads_watched_residue_and_advances_the_watermark(
 
 
 def test_watermark_does_not_advance_when_the_drain_cannot_finish(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """A drain that could not read every watched name must leave the
     watermark where it was — and the stale watermark is what makes the next
@@ -457,9 +530,14 @@ def test_watermark_does_not_advance_when_the_drain_cannot_finish(
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "processed_accessions": [], "watched_read_through": "2026-09-01",
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "processed_accessions": [],
+                "watched_read_through": "2026-09-01",
+            }
+        )
+    )
     efts = _efts({})
     subs = _submissions({"1045810": [("0000000003-26-000003", day0)]})
 
@@ -470,7 +548,8 @@ def test_watermark_does_not_advance_when_the_drain_cannot_finish(
 
     monkeypatch.setattr(provider, "_get", _get)
     monkeypatch.setattr(
-        provider, "_submission",
+        provider,
+        "_submission",
         Mock(side_effect=RuntimeError("submission unavailable")),
     )
 
@@ -506,20 +585,27 @@ def test_pre_open_check_alerts_before_the_day_is_lost(monkeypatch):
     check = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     # Clean morning: silence.
-    check({
-        "watched_read_through": et_today().isoformat(),
-        "watched_pending_filings": 0, "watched_unchecked_names": [],
-        "discovery_cap_reached": False,
-    })
+    check(
+        {
+            "watched_read_through": et_today().isoformat(),
+            "watched_pending_filings": 0,
+            "watched_unchecked_names": [],
+            "discovery_cap_reached": False,
+        }
+    )
     assert sent == []
 
     # The 2026-09-18 shape: cap bound, watched filings unread, watermark stale.
-    check({
-        "watched_read_through": "2026-09-17",
-        "watched_pending_filings": 4, "watched_unchecked_names": [],
-        "discovery_cap_reached": True,
-        "watched_names": 82, "watched_names_read_through": 60,
-    })
+    check(
+        {
+            "watched_read_through": "2026-09-17",
+            "watched_pending_filings": 4,
+            "watched_unchecked_names": [],
+            "discovery_cap_reached": True,
+            "watched_names": 82,
+            "watched_names_read_through": 60,
+        }
+    )
     assert len(sent) == 1
     text = sent[0]
     # CHANGED 2026-09-19: this asserted "will not make a new trading
@@ -557,14 +643,15 @@ def _deadline_aware(get, clock_provider):
     """Wrap a fake `_get` so it honours the deadline exactly like the real one."""
 
     def _get(url, *, params, deadline):
-        clock_provider._remaining(deadline)   # raises _RefreshDeadline
+        clock_provider._remaining(deadline)  # raises _RefreshDeadline
         return get(url, params=params, deadline=deadline)
 
     return _get
 
 
 def test_drain_has_its_own_deadline_after_the_market_wide_pass(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The market-wide pass spending its whole budget must not starve the
     drain. Before 2026-09-19 both shared one deadline, so this refresh ended
@@ -574,7 +661,9 @@ def test_drain_has_its_own_deadline_after_the_market_wide_pass(
     clock = _Clock()
     monkeypatch.setattr(sm.time, "monotonic", clock)
     provider = _provider(
-        tmp_path, lookback_days=365, refresh_deadline_s=180,
+        tmp_path,
+        lookback_days=365,
+        refresh_deadline_s=180,
         watched_drain_deadline_s=859,
     )
     listed = {"1045810": {"NVDA": "Nasdaq"}}
@@ -582,17 +671,22 @@ def test_drain_has_its_own_deadline_after_the_market_wide_pass(
     day0 = sm.et_today().isoformat()
 
     def _slow_discover(listed_, deadline, processed, priority, stats):
-        clock.now += 181   # the market-wide pass uses up its own 180 s
-        stats.update(candidates=0, watched_candidates=0, cap_reached=False,
-                     deadline_hit=True, busiest_day_total=0)
+        clock.now += 181  # the market-wide pass uses up its own 180 s
+        stats.update(candidates=0, watched_candidates=0, cap_reached=False, deadline_hit=True, busiest_day_total=0)
         return []
 
     monkeypatch.setattr(provider, "_discover", _slow_discover)
-    monkeypatch.setattr(provider, "_get", _deadline_aware(
-        _submissions({"1045810": [("0000000003-26-000003", day0)]}), provider,
-    ))
     monkeypatch.setattr(
-        provider, "_submission",
+        provider,
+        "_get",
+        _deadline_aware(
+            _submissions({"1045810": [("0000000003-26-000003", day0)]}),
+            provider,
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_submission",
         lambda filing, deadline: (provider._remaining(deadline), ("<xml/>", "u"))[1],
     )
     monkeypatch.setattr(provider, "_parse_submission", lambda *a, **k: [])
@@ -606,7 +700,8 @@ def test_drain_has_its_own_deadline_after_the_market_wide_pass(
 
 
 def test_drain_keeps_each_finished_issuer_when_the_budget_runs_out(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """One unfinished issuer must not throw away the others' work, and the
     next morning must resume, not restart. Smallest residue goes first so
@@ -616,7 +711,9 @@ def test_drain_keeps_each_finished_issuer_when_the_budget_runs_out(
     clock = _Clock()
     monkeypatch.setattr(sm.time, "monotonic", clock)
     provider = _provider(
-        tmp_path, lookback_days=365, watched_drain_deadline_s=10,
+        tmp_path,
+        lookback_days=365,
+        watched_drain_deadline_s=10,
     )
     listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
@@ -628,14 +725,16 @@ def test_drain_keeps_each_finished_issuer_when_the_budget_runs_out(
         "320193": [("0000000002-26-000001", day0)],
     }
     monkeypatch.setattr(
-        provider, "_get", _deadline_aware(_submissions(history), provider),
+        provider,
+        "_get",
+        _deadline_aware(_submissions(history), provider),
     )
     reads: list[str] = []
 
     def _submission(filing, deadline):
         provider._remaining(deadline)
         reads.append(filing["accession"])
-        clock.now += 4   # each read costs 4 s of a 10 s budget
+        clock.now += 4  # each read costs 4 s of a 10 s budget
         return "<xml/>", "u"
 
     monkeypatch.setattr(provider, "_submission", _submission)
@@ -680,17 +779,29 @@ def test_combined_provider_surfaces_the_drain_outcome_to_the_pre_open_check(
     class _Form4:
         def refresh(self, symbols=None):
             return {
-                "status": "ok", "error": None, "pending_filings": 0,
-                "watched_pending_filings": 0, "discovery_cap_reached": False,
-                "watched_drain_ran": True, "watched_drain_read": 3,
-                "watched_unchecked_names": [], "watched_drain_deadline_hit": False,
-                "watched_read_through": today, "watched_names": 82,
-                "watched_names_read_through": 82, "watched_names_unread": [],
+                "status": "ok",
+                "error": None,
+                "pending_filings": 0,
+                "watched_pending_filings": 0,
+                "discovery_cap_reached": False,
+                "watched_drain_ran": True,
+                "watched_drain_read": 3,
+                "watched_unchecked_names": [],
+                "watched_drain_deadline_hit": False,
+                "watched_read_through": today,
+                "watched_names": 82,
+                "watched_names_read_through": 82,
+                "watched_names_unread": [],
                 # Board item 126: EDGAR's own filing count, read and walked.
                 "edgar_coverage": {
-                    "known": True, "verified": True, "reasons": [],
-                    "edgar_total": 900, "enumerated": 900, "ratio": 1.0,
-                    "days_queried": 15, "days_in_window": 15,
+                    "known": True,
+                    "verified": True,
+                    "reasons": [],
+                    "edgar_total": 900,
+                    "enumerated": 900,
+                    "ratio": 1.0,
+                    "days_queried": 15,
+                    "days_in_window": 15,
                     "days_with_total": 15,
                 },
             }
@@ -721,11 +832,16 @@ def test_pre_market_backlog_is_recorded_where_the_desk_records_status():
             rows.append(kwargs)
 
     obj = SimpleNamespace(db=_Db())
-    TradingPipeline._record_form4_backlog.__get__(obj)("run-1", {
-        "watched_pending_filings": 4, "discovery_cap_reached": True,
-        "watched_names": 82, "watched_names_read_through": 60,
-        "watched_names_unread": ["WMT"],
-    })
+    TradingPipeline._record_form4_backlog.__get__(obj)(
+        "run-1",
+        {
+            "watched_pending_filings": 4,
+            "discovery_cap_reached": True,
+            "watched_names": 82,
+            "watched_names_read_through": 60,
+            "watched_names_unread": ["WMT"],
+        },
+    )
     assert len(rows) == 1
     assert rows[0]["kind"] == "form4_backlog"
     payload = json.loads(rows[0]["evidence_json"])
@@ -750,12 +866,14 @@ def test_drain_budget_fits_inside_the_job_that_runs_it():
     unit = (root / "scripts/systemd/quant-agent-earnings_preprocess.service").read_text()
     timeout = int(re.search(r"^TimeoutStartSec=(\d+)$", unit, re.M).group(1))
     deployed = yaml.safe_load((root / "config/settings.yaml").read_text())["smart_money"]
-    startup_s = 2             # 2026-09-18 journal, 12:00:39 -> 12:00:41 UTC
+    startup_s = 2  # 2026-09-18 journal, 12:00:39 -> 12:00:41 UTC
     after_refresh_max_s = 147  # 2026-09-17 journal, 12:03:14 -> 12:05:41 UTC
     for source in (deployed, SmartMoneyConfig().model_dump()):
         total = (
-            startup_s + float(source["refresh_deadline_s"])
-            + float(source["watched_drain_deadline_s"]) + after_refresh_max_s
+            startup_s
+            + float(source["refresh_deadline_s"])
+            + float(source["watched_drain_deadline_s"])
+            + after_refresh_max_s
         )
         assert total <= timeout, (total, timeout)
     # The config's own ceiling is exactly the room that sum leaves.
@@ -780,7 +898,8 @@ def test_drain_budget_fits_inside_the_job_that_runs_it():
 
 
 def test_discovery_stops_on_the_cap_when_watched_names_are_supplied(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The regression itself: supplying watched names must not remove the
     scan's only reachable exit condition."""
@@ -796,10 +915,7 @@ def test_discovery_stops_on_the_cap_when_watched_names_are_supplied(
     pages = {}
     for days_ago in range(31):
         day = (et_today() - timedelta(days=days_ago)).isoformat()
-        page = [
-            _hit(f"{days_ago:04d}00000{i}-26-000001", f"90000{i:02d}")
-            for i in range(1, 6)
-        ]
+        page = [_hit(f"{days_ago:04d}00000{i}-26-000001", f"90000{i:02d}") for i in range(1, 6)]
         if days_ago == 0:
             page.insert(0, _hit("0000000004-26-000001", "1045810"))
         pages[(day, 0)] = page
@@ -823,7 +939,8 @@ def test_discovery_stops_on_the_cap_when_watched_names_are_supplied(
 
 
 def test_watched_names_are_still_read_by_the_drain_when_the_cap_binds_at_once(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Watched-name behaviour is unchanged. The market-wide bucket fills on
     the first page and the scan stops, and the watched filing is read anyway
@@ -835,17 +952,25 @@ def test_watched_names_are_still_read_by_the_drain_when_the_cap_binds_at_once(
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    monkeypatch.setattr(provider, "_get", _efts({
-        (day0, 0): [
-            _hit("0000000001-26-000001", "9000001"),
-            _hit("0000000002-26-000001", "9000001"),
-            _hit("0000000004-26-000001", "1045810"),
-        ],
-    }))
     monkeypatch.setattr(
-        provider, "watched_form4_index",
+        provider,
+        "_get",
+        _efts(
+            {
+                (day0, 0): [
+                    _hit("0000000001-26-000001", "9000001"),
+                    _hit("0000000002-26-000001", "9000001"),
+                    _hit("0000000004-26-000001", "1045810"),
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
+        "watched_form4_index",
         lambda ciks, deadline: (
-            {"1045810": [("0000000004-26-000001", day0)]}, [],
+            {"1045810": [("0000000004-26-000001", day0)]},
+            [],
         ),
     )
     reads: list[str] = []
@@ -876,34 +1001,46 @@ def _blind_refresh(tmp_path, monkeypatch, *, submissions_fail: bool):
     from src.data.smart_money import et_today
 
     day0 = et_today().isoformat()
-    monkeypatch.setattr(provider, "_get", _efts({
-        (day0, 0): [
-            _hit("0000000001-26-000001", "9000001"),
-            _hit("0000000002-26-000001", "9000001"),
-        ],
-    }))
     monkeypatch.setattr(
-        provider, "watched_form4_index", lambda ciks, deadline: ({}, []),
+        provider,
+        "_get",
+        _efts(
+            {
+                (day0, 0): [
+                    _hit("0000000001-26-000001", "9000001"),
+                    _hit("0000000002-26-000001", "9000001"),
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
+        "watched_form4_index",
+        lambda ciks, deadline: ({}, []),
     )
     if submissions_fail:
         monkeypatch.setattr(
-            provider, "_submission",
+            provider,
+            "_submission",
             Mock(side_effect=RuntimeError("submission unavailable")),
         )
     else:
         monkeypatch.setattr(
-            provider, "_submission",
+            provider,
+            "_submission",
             lambda filing, deadline: ("no parseable body", "url"),
         )
         monkeypatch.setattr(
-            provider, "_parse_submission",
+            provider,
+            "_parse_submission",
             lambda body, *, source_url, listed: [],
         )
     return provider, provider.refresh(["NVDA"])
 
 
 def test_a_market_wide_pass_that_reads_nothing_reports_itself_blind(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The five-session silence, closed. Zero market-wide reads with unread
     candidates outstanding is its own recorded fact, on the result and in
@@ -920,7 +1057,8 @@ def test_a_market_wide_pass_that_reads_nothing_reports_itself_blind(
 
 
 def test_a_market_wide_pass_that_reads_normally_is_not_blind(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The other half, and the one that decides whether this alarm is worth
     having: an ordinary pass must never fire it."""
@@ -939,7 +1077,9 @@ def test_a_quiet_day_with_nothing_unread_is_not_blind(tmp_path, monkeypatch):
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
     monkeypatch.setattr(provider, "_get", _efts({}))
     monkeypatch.setattr(
-        provider, "watched_form4_index", lambda ciks, deadline: ({}, []),
+        provider,
+        "watched_form4_index",
+        lambda ciks, deadline: ({}, []),
     )
 
     result = provider.refresh(["ZZZA"])
@@ -950,7 +1090,8 @@ def test_a_quiet_day_with_nothing_unread_is_not_blind(tmp_path, monkeypatch):
 
 
 def test_blindness_from_an_earlier_pass_is_not_reported_as_todays(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Coverage is a statement about the pass that ran today. A record left
     by an earlier one must not page again — the same ageing rule the EDGAR

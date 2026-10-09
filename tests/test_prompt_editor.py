@@ -42,6 +42,7 @@ from tests.pipeline_factory import build_pipeline
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _valid_chain():
     return MetaReasoningChain(
         performance_vs_benchmark="alpha -3% over 60 days",
@@ -55,8 +56,7 @@ def _valid_chain():
             "agent_balance: news_analyst 0 HIGH on energy in 46 sessions."
         ),
         portrait_gap_diagnosis=(
-            "Top gap: news_analyst blind to energy/materials; second: "
-            "PM sizing not calibration-aware."
+            "Top gap: news_analyst blind to energy/materials; second: PM sizing not calibration-aware."
         ),
         existing_prompt_audit=(
             "news_analyst.md has no energy coverage rule; Learnings empty. "
@@ -72,7 +72,8 @@ def _valid_theme():
 
 def _valid_loss_report():
     return LossPatternReport(
-        top_patterns=[], systemic_vs_alpha_split="72% alpha / 28% systemic",
+        top_patterns=[],
+        systemic_vs_alpha_split="72% alpha / 28% systemic",
     )
 
 
@@ -89,9 +90,13 @@ def _mk_reflection(period: str, learnings: list[PromptLearning]):
 
 def _mk_editor(tmp_path, **config_overrides):
     cfg_kwargs = dict(
-        enabled=True, auto_commit=False, max_agents_per_cycle=3,
-        max_learnings_per_agent=10, max_learning_chars=200,
-        min_justification_chars=40, jaccard_dedup_threshold=0.6,
+        enabled=True,
+        auto_commit=False,
+        max_agents_per_cycle=3,
+        max_learnings_per_agent=10,
+        max_learning_chars=200,
+        min_justification_chars=40,
+        jaccard_dedup_threshold=0.6,
         # Most existing prompt_editor tests exercise the live-apply
         # path (file edits + git commit). dry_run defaults True for
         # production safety (Round 6, audit H3 follow-up); tests that
@@ -104,7 +109,8 @@ def _mk_editor(tmp_path, **config_overrides):
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     return PromptEditor(
-        config=cfg, prompts_dir=prompts_dir,
+        config=cfg,
+        prompts_dir=prompts_dir,
         evolution_dir=tmp_path / "evolution",
     )
 
@@ -115,15 +121,14 @@ def _seed_prompt(prompts_dir: Path, agent_name: str, content: str) -> Path:
     return p
 
 
-def _basic_learning(agent_name: str = "tech_analyst",
-                    text: str = "Flag stretched valuations above 40x forward PE.") -> PromptLearning:
+def _basic_learning(
+    agent_name: str = "tech_analyst", text: str = "Flag stretched valuations above 40x forward PE."
+) -> PromptLearning:
     return PromptLearning(
-        agent_name=agent_name, operation="append",
+        agent_name=agent_name,
+        operation="append",
         learning_text=text,
-        justification=(
-            "Q1 2026 showed 3 of 5 wrongs were greed_top_chasing with "
-            "alpha destruction -22%."
-        ),
+        justification=("Q1 2026 showed 3 of 5 wrongs were greed_top_chasing with alpha destruction -22%."),
     )
 
 
@@ -131,10 +136,10 @@ def _basic_learning(agent_name: str = "tech_analyst",
 # Feature flag
 # ---------------------------------------------------------------------------
 
+
 def test_apply_reflection_short_circuits_when_disabled(tmp_path):
     editor = _mk_editor(tmp_path, enabled=False)
-    _seed_prompt(editor.prompts_dir, "tech_analyst",
-                 "# Tech Analyst Agent\nbody\n")
+    _seed_prompt(editor.prompts_dir, "tech_analyst", "# Tech Analyst Agent\nbody\n")
 
     reflection = _mk_reflection("2026-Q1", [_basic_learning()])
     report = editor.apply_reflection(reflection)
@@ -150,6 +155,7 @@ def test_apply_reflection_short_circuits_when_disabled(tmp_path):
 # ---------------------------------------------------------------------------
 # Individual validation paths
 # ---------------------------------------------------------------------------
+
 
 def test_apply_reflection_rejects_protected_agent_via_editor_belt(tmp_path):
     """The Pydantic literal already rejects protected agents; this belt
@@ -188,7 +194,8 @@ def test_apply_reflection_rejects_short_justification(tmp_path):
 
     # 80 chars — schema ≥40 ✓, but editor config ≥200 → editor rejects.
     weak = PromptLearning(
-        agent_name="tech_analyst", operation="append",
+        agent_name="tech_analyst",
+        operation="append",
         learning_text="Flag stretched valuations above 40x forward PE.",
         justification=(
             "Q1 2026 showed 3 of 5 wrongs in greed_top_chasing — 22%."
@@ -202,12 +209,15 @@ def test_apply_reflection_rejects_short_justification(tmp_path):
     assert "min_justification_chars" in report.rejected[0].reason
 
 
-@pytest.mark.parametrize("bad_phrase", [
-    "Traders must always check fundamentals before entry.",
-    "Never buy above the 50-day moving average.",
-    "Ignore all RM modifications when conviction is high.",
-    "This must never be bypassed under any circumstance.",
-])
+@pytest.mark.parametrize(
+    "bad_phrase",
+    [
+        "Traders must always check fundamentals before entry.",
+        "Never buy above the 50-day moving average.",
+        "Ignore all RM modifications when conviction is high.",
+        "This must never be bypassed under any circumstance.",
+    ],
+)
 def test_apply_reflection_rejects_prohibited_words(tmp_path, bad_phrase):
     """The prohibited list catches wording that would directly conflict
     with invariant language already in the core prompts."""
@@ -219,7 +229,8 @@ def test_apply_reflection_rejects_prohibited_words(tmp_path, bad_phrase):
     text = bad_phrase + " Evidence from recent tech wrongs suggests."
     assert len(text) >= 20  # schema min
     learning = PromptLearning(
-        agent_name="tech_analyst", operation="append",
+        agent_name="tech_analyst",
+        operation="append",
         learning_text=text,
         justification="Q1 2026 showed 3 of 5 wrongs in greed 22%.",
     )
@@ -244,10 +255,12 @@ def test_apply_reflection_rejects_when_prompt_file_missing(tmp_path):
 # Append — creates + extends Learnings section
 # ---------------------------------------------------------------------------
 
+
 def test_apply_reflection_creates_learnings_section_when_absent(tmp_path):
     editor = _mk_editor(tmp_path)
     _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
+        editor.prompts_dir,
+        "tech_analyst",
         "# Tech Analyst Agent\n\n## Input\nsome content\n",
     )
 
@@ -293,6 +306,7 @@ def test_apply_reflection_extends_existing_section_idempotently(tmp_path):
 # Jaccard dedup
 # ---------------------------------------------------------------------------
 
+
 def test_apply_reflection_rejects_paraphrase_via_jaccard(tmp_path):
     editor = _mk_editor(tmp_path, jaccard_dedup_threshold=0.5)
     existing = (
@@ -328,27 +342,23 @@ def test_apply_reflection_allows_different_topic_same_agent(tmp_path):
     reflection = _mk_reflection("2026-Q1", [unrelated])
     report = editor.apply_reflection(reflection)
 
-    assert len(report.applied) == 1, (
-        f"Expected acceptance; got rejects: {[r.reason for r in report.rejected]}"
-    )
+    assert len(report.applied) == 1, f"Expected acceptance; got rejects: {[r.reason for r in report.rejected]}"
 
 
 # ---------------------------------------------------------------------------
 # FIFO rolloff
 # ---------------------------------------------------------------------------
 
+
 def test_apply_reflection_fifo_rolls_off_oldest_auto_entry(tmp_path):
     editor = _mk_editor(tmp_path, max_learnings_per_agent=3)
-    existing_entries = "\n".join([
-        f"- [2025-Q{i}] Learning entry number {i} for the prompt. "
-        f"<!--hash:{i:012x}-->"
-        for i in range(1, 4)  # 3 entries already at cap
-    ])
-    existing = (
-        "# Tech Analyst Agent\n\n## Learnings (system-evolved)\n"
-        "<!-- preamble -->\n"
-        f"{existing_entries}\n"
+    existing_entries = "\n".join(
+        [
+            f"- [2025-Q{i}] Learning entry number {i} for the prompt. <!--hash:{i:012x}-->"
+            for i in range(1, 4)  # 3 entries already at cap
+        ]
     )
+    existing = f"# Tech Analyst Agent\n\n## Learnings (system-evolved)\n<!-- preamble -->\n{existing_entries}\n"
     _seed_prompt(editor.prompts_dir, "tech_analyst", existing)
 
     new = _basic_learning(text="Brand new learning about stretched entries.")
@@ -360,15 +370,16 @@ def test_apply_reflection_fifo_rolls_off_oldest_auto_entry(tmp_path):
     assert report.rolled_off[0]["period"] == "2025-Q1"
 
     body = (editor.prompts_dir / "tech_analyst.md").read_text()
-    assert "[2025-Q1]" not in body      # oldest dropped
-    assert "[2025-Q2]" in body          # middle kept
+    assert "[2025-Q1]" not in body  # oldest dropped
+    assert "[2025-Q2]" in body  # middle kept
     assert "[2025-Q3]" in body
-    assert "[2026-Q1]" in body          # new appended
+    assert "[2026-Q1]" in body  # new appended
 
 
 # ---------------------------------------------------------------------------
 # Per-cycle agent cap
 # ---------------------------------------------------------------------------
+
 
 def test_apply_reflection_caps_agents_per_cycle(tmp_path):
     editor = _mk_editor(tmp_path, max_agents_per_cycle=2)
@@ -387,9 +398,7 @@ def test_apply_reflection_caps_agents_per_cycle(tmp_path):
     assert len(report.applied) == 2
     applied_names = {e.agent_name for e in report.applied}
     assert applied_names == {"tech_analyst", "news_analyst"}
-    rejected_caps = [
-        r for r in report.rejected if "max_agents_per_cycle" in r.reason
-    ]
+    rejected_caps = [r for r in report.rejected if "max_agents_per_cycle" in r.reason]
     assert len(rejected_caps) == 1
     assert rejected_caps[0].agent_name == "macro_analyst"
 
@@ -397,6 +406,7 @@ def test_apply_reflection_caps_agents_per_cycle(tmp_path):
 # ---------------------------------------------------------------------------
 # Retract path
 # ---------------------------------------------------------------------------
+
 
 def test_retract_removes_entry_by_hash(tmp_path):
     editor = _mk_editor(tmp_path)
@@ -409,10 +419,9 @@ def test_retract_removes_entry_by_hash(tmp_path):
     _seed_prompt(editor.prompts_dir, "tech_analyst", existing)
 
     retract = PromptLearning(
-        agent_name="tech_analyst", operation="retract",
-        learning_text=(
-            "Withdraw the prior rule — subsequent data showed it didn't help."
-        ),
+        agent_name="tech_analyst",
+        operation="retract",
+        learning_text=("Withdraw the prior rule — subsequent data showed it didn't help."),
         justification="Q2 2026 saw 4 greed_top_chasing despite Q1 learning.",
         retract_target_hash="aaaaaaaaaaaa",
     )
@@ -429,16 +438,15 @@ def test_retract_removes_entry_by_hash(tmp_path):
 def test_retract_rejects_when_hash_absent(tmp_path):
     editor = _mk_editor(tmp_path)
     _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
-        "# Tech Analyst Agent\n\n## Learnings (system-evolved)\n"
-        "- [2025-Q4] Some learning. <!--hash:eeeeeeeeeeee-->\n",
+        editor.prompts_dir,
+        "tech_analyst",
+        "# Tech Analyst Agent\n\n## Learnings (system-evolved)\n- [2025-Q4] Some learning. <!--hash:eeeeeeeeeeee-->\n",
     )
 
     retract = PromptLearning(
-        agent_name="tech_analyst", operation="retract",
-        learning_text=(
-            "Withdraw a non-existent prior rule — subsequent data did not support."
-        ),
+        agent_name="tech_analyst",
+        operation="retract",
+        learning_text=("Withdraw a non-existent prior rule — subsequent data did not support."),
         justification="Q2 2026 evidence -22% alpha leak persisted.",
         retract_target_hash="doesnotexist",
     )
@@ -452,6 +460,7 @@ def test_retract_rejects_when_hash_absent(tmp_path):
 # ---------------------------------------------------------------------------
 # Audit log
 # ---------------------------------------------------------------------------
+
 
 def test_audit_log_records_applied_and_rejected(tmp_path):
     editor = _mk_editor(tmp_path, max_learning_chars=40)
@@ -477,6 +486,7 @@ def test_audit_log_records_applied_and_rejected(tmp_path):
 # Git auto-commit
 # ---------------------------------------------------------------------------
 
+
 def test_git_auto_commit_called_with_expected_message(tmp_path):
     editor = _mk_editor(tmp_path, auto_commit=True)
     # Fake a .git directory so the repo-root walk finds it
@@ -499,22 +509,20 @@ def test_git_auto_commit_called_with_expected_message(tmp_path):
                 result.stdout = ""
             result.stderr = ""
             return result
+
         run_mock.side_effect = _side_effect
 
         report = editor.apply_reflection(reflection)
 
     assert report.git_commit == "deadbeef"
-    commit_calls = [
-        c for c in run_mock.call_args_list
-        if len(c.args) >= 1 and "commit" in c.args[0]
-    ]
+    commit_calls = [c for c in run_mock.call_args_list if len(c.args) >= 1 and "commit" in c.args[0]]
     assert len(commit_calls) == 1
     commit_cmd = commit_calls[0].args[0]
     msg = commit_cmd[commit_cmd.index("-m") + 1]
     assert "2026-Q1" in msg
     assert "1 learning" in msg
     assert "--" in commit_cmd
-    committed_paths = commit_cmd[commit_cmd.index("--") + 1:]
+    committed_paths = commit_cmd[commit_cmd.index("--") + 1 :]
     assert committed_paths == [str((editor.prompts_dir / "tech_analyst.md").resolve())]
 
 
@@ -526,9 +534,15 @@ def test_git_auto_commit_swallows_subprocess_failure(tmp_path):
 
     reflection = _mk_reflection("2026-Q1", [_basic_learning()])
     import subprocess as _sp
-    with patch("subprocess.run", side_effect=_sp.CalledProcessError(
-        returncode=1, cmd=["git"], stderr=b"nothing to commit",
-    )):
+
+    with patch(
+        "subprocess.run",
+        side_effect=_sp.CalledProcessError(
+            returncode=1,
+            cmd=["git"],
+            stderr=b"nothing to commit",
+        ),
+    ):
         report = editor.apply_reflection(reflection)
     # File edit still happened; git_commit is None
     assert len(report.applied) == 1
@@ -548,10 +562,16 @@ def test_git_auto_commit_swallows_text_mode_stderr(tmp_path):
 
     reflection = _mk_reflection("2026-Q1", [_basic_learning()])
     import subprocess as _sp
+
     # str stderr — what text=True actually produces.
-    with patch("subprocess.run", side_effect=_sp.CalledProcessError(
-        returncode=1, cmd=["git"], stderr="pre-commit hook rejected",
-    )):
+    with patch(
+        "subprocess.run",
+        side_effect=_sp.CalledProcessError(
+            returncode=1,
+            cmd=["git"],
+            stderr="pre-commit hook rejected",
+        ),
+    ):
         report = editor.apply_reflection(reflection)
     assert len(report.applied) == 1
     assert report.git_commit is None
@@ -560,6 +580,7 @@ def test_git_auto_commit_swallows_text_mode_stderr(tmp_path):
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
+
 
 def test_hash_text_is_stable_and_truncated():
     assert _hash_text("Hello world.") == _hash_text("Hello world.")
@@ -600,12 +621,14 @@ def _build_pipeline_for_editor(tmp_path, evolution_cfg):
 
     fake_prompts_dir = tmp_path / "prompts"
     fake_prompts_dir.mkdir()
-    _seed_prompt(fake_prompts_dir, "tech_analyst",
-                 "# Tech Analyst\nbody\n")
+    _seed_prompt(fake_prompts_dir, "tech_analyst", "# Tech Analyst\nbody\n")
 
     reflection = _mk_reflection("2026-Q1", [_basic_learning()])
     ag_result = AgentResult(
-        raw_text="{}", tokens_used=100, model="gpt-5.4", user_message="x",
+        raw_text="{}",
+        tokens_used=100,
+        model="gpt-5.4",
+        user_message="x",
     )
     p.meta_reflector.analyze.return_value = (reflection, ag_result)
     return p, fake_prompts_dir
@@ -623,14 +646,19 @@ def test_pipeline_runs_editor_when_evolution_enabled(tmp_path):
     p, fake_prompts_dir = _build_pipeline_for_editor(
         tmp_path,
         EvolutionConfig(
-            enabled=True, auto_commit=False, dry_run=False,
-            max_agents_per_cycle=3, max_learnings_per_agent=10,
-            max_learning_chars=200, min_justification_chars=40,
+            enabled=True,
+            auto_commit=False,
+            dry_run=False,
+            max_agents_per_cycle=3,
+            max_learnings_per_agent=10,
+            max_learning_chars=200,
+            min_justification_chars=40,
         ),
     )
 
     result = p.run_quarterly_meta_reflection(
-        force=True, period_end=date(2026, 3, 31),
+        force=True,
+        period_end=date(2026, 3, 31),
         evolution_root=str(tmp_path / "evolution"),
         prompts_dir=fake_prompts_dir,
     )
@@ -648,11 +676,13 @@ def test_pipeline_editor_silent_when_evolution_disabled(tmp_path):
     as observe-only. Prompt files stay untouched — the safe default for
     fresh deployments."""
     p, fake_prompts_dir = _build_pipeline_for_editor(
-        tmp_path, EvolutionConfig(enabled=False),
+        tmp_path,
+        EvolutionConfig(enabled=False),
     )
 
     result = p.run_quarterly_meta_reflection(
-        force=True, period_end=date(2026, 3, 31),
+        force=True,
+        period_end=date(2026, 3, 31),
         evolution_root=str(tmp_path / "evolution"),
         prompts_dir=fake_prompts_dir,
     )
@@ -674,19 +704,32 @@ def test_multi_line_preamble_survives_multiple_appends(tmp_path):
     This test does TWO successive appends and asserts the preamble
     stays intact at the top of the section, entries below it."""
     editor = _mk_editor(tmp_path)
-    _seed_prompt(editor.prompts_dir, "tech_analyst",
-                 "# Tech Analyst\nbody\n")
+    _seed_prompt(editor.prompts_dir, "tech_analyst", "# Tech Analyst\nbody\n")
 
     # First append — creates the section with the default 4-line preamble.
-    r1 = editor.apply_reflection(_mk_reflection("2026-Q1", [_basic_learning(
-        text="First learning about stretched tech valuations today.",
-    )]))
+    r1 = editor.apply_reflection(
+        _mk_reflection(
+            "2026-Q1",
+            [
+                _basic_learning(
+                    text="First learning about stretched tech valuations today.",
+                )
+            ],
+        )
+    )
     assert len(r1.applied) == 1
 
     # Second append — MUST preserve the preamble intact.
-    r2 = editor.apply_reflection(_mk_reflection("2026-Q2", [_basic_learning(
-        text="Second learning about news coverage for nuclear power today.",
-    )]))
+    r2 = editor.apply_reflection(
+        _mk_reflection(
+            "2026-Q2",
+            [
+                _basic_learning(
+                    text="Second learning about news coverage for nuclear power today.",
+                )
+            ],
+        )
+    )
     assert len(r2.applied) == 1
 
     text = (editor.prompts_dir / "tech_analyst.md").read_text()
@@ -702,16 +745,14 @@ def test_multi_line_preamble_survives_multiple_appends(tmp_path):
     for fragment in preamble_lines:
         # Each preamble fragment should appear exactly once
         assert text.count(fragment) == 1, (
-            f"preamble fragment {fragment!r} appears "
-            f"{text.count(fragment)} times (should be 1 after 2 appends)"
+            f"preamble fragment {fragment!r} appears {text.count(fragment)} times (should be 1 after 2 appends)"
         )
 
     # All four preamble fragments must appear BEFORE both entries
     preamble_last_idx = max(text.index(f) for f in preamble_lines)
     entry_first_idx = text.index("[2026-Q1]")
     assert preamble_last_idx < entry_first_idx, (
-        "preamble fragments leaked past the entry list — "
-        "fragmentation regression"
+        "preamble fragments leaked past the entry list — fragmentation regression"
     )
 
 
@@ -724,8 +765,7 @@ def test_atomic_write_failure_records_rejection_not_applied(tmp_path):
 
     reflection = _mk_reflection("2026-Q1", [_basic_learning()])
 
-    with patch("src.evolution.prompt_editor.os.replace",
-               side_effect=OSError("No space left on device")):
+    with patch("src.evolution.prompt_editor.os.replace", side_effect=OSError("No space left on device")):
         report = editor.apply_reflection(reflection)
 
     assert report.applied == []
@@ -740,24 +780,23 @@ def test_atomic_write_failure_on_retract_records_rejection(tmp_path):
     """Retract path gets the same protection as append — io failure
     must not be silently claimed as success."""
     from src.models import PromptLearning
+
     editor = _mk_editor(tmp_path)
     _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
-        "# Tech Analyst\n\n## Learnings (system-evolved)\n"
-        "- [2025-Q4] Some entry. <!--hash:aaaaaaaaaaaa-->\n",
+        editor.prompts_dir,
+        "tech_analyst",
+        "# Tech Analyst\n\n## Learnings (system-evolved)\n- [2025-Q4] Some entry. <!--hash:aaaaaaaaaaaa-->\n",
     )
     retract = PromptLearning(
-        agent_name="tech_analyst", operation="retract",
-        learning_text=(
-            "Withdraw the prior rule — next-quarter data did not support it."
-        ),
+        agent_name="tech_analyst",
+        operation="retract",
+        learning_text=("Withdraw the prior rule — next-quarter data did not support it."),
         justification="Q2 2026 evidence 4 of 5 wrongs -18% alpha persist.",
         retract_target_hash="aaaaaaaaaaaa",
     )
     reflection = _mk_reflection("2026-Q2", [retract])
 
-    with patch("src.evolution.prompt_editor.os.replace",
-               side_effect=OSError("Read-only file system")):
+    with patch("src.evolution.prompt_editor.os.replace", side_effect=OSError("Read-only file system")):
         report = editor.apply_reflection(reflection)
 
     assert report.applied == []
@@ -797,11 +836,13 @@ def test_parse_entries_extracts_period_text_hash_in_order():
 # from evening on quarter-end (Round 2), and the 4 gates don't catch
 # polite-but-reversed learnings.
 
+
 def test_apply_reflection_dry_run_does_not_touch_prompt_files(tmp_path):
     """The whole point: dry_run mode never modifies any agent prompt."""
     editor = _mk_editor(tmp_path, dry_run=True)
     seed_path = _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
+        editor.prompts_dir,
+        "tech_analyst",
         "# Tech\n\n## Learnings (system-evolved)\n\n",
     )
     original = seed_path.read_text()
@@ -827,7 +868,8 @@ def test_apply_reflection_dry_run_writes_proposed_edits_json(tmp_path):
     text, retract hash (if any), justification, and instructions."""
     editor = _mk_editor(tmp_path, dry_run=True)
     _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
+        editor.prompts_dir,
+        "tech_analyst",
         "# Tech\n\n## Learnings (system-evolved)\n\n",
     )
 
@@ -839,6 +881,7 @@ def test_apply_reflection_dry_run_writes_proposed_edits_json(tmp_path):
     assert proposed_path.exists(), "dry-run must write proposed_edits.json"
 
     import json as _json
+
     payload = _json.loads(proposed_path.read_text())
     assert payload["period"] == "2026-Q1"
     assert payload["mode"] == "dry_run"
@@ -860,7 +903,8 @@ def test_apply_reflection_dry_run_short_circuits_before_feature_flag(tmp_path):
     feature is on."""
     editor = _mk_editor(tmp_path, enabled=False, dry_run=True)
     _seed_prompt(
-        editor.prompts_dir, "tech_analyst",
+        editor.prompts_dir,
+        "tech_analyst",
         "# Tech\n\n## Learnings (system-evolved)\n\n",
     )
 
@@ -872,9 +916,7 @@ def test_apply_reflection_dry_run_short_circuits_before_feature_flag(tmp_path):
     # The 'enabled=false' branch wins; we don't write proposed_edits.json
     assert "evolution.enabled=false" in report.rejected[0].reason
     proposed_path = editor.evolution_dir / "2026-Q1" / "proposed_edits.json"
-    assert proposed_path.exists() is False, (
-        "enabled=false short-circuits BEFORE dry-run staging — no file written"
-    )
+    assert proposed_path.exists() is False, "enabled=false short-circuits BEFORE dry-run staging — no file written"
 
 
 def test_apply_reflection_dry_run_default_when_not_specified(tmp_path):
@@ -891,11 +933,13 @@ def test_apply_reflection_dry_run_default_when_not_specified(tmp_path):
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     editor = PromptEditor(
-        config=cfg, prompts_dir=prompts_dir,
+        config=cfg,
+        prompts_dir=prompts_dir,
         evolution_dir=tmp_path / "evolution",
     )
     seed = _seed_prompt(
-        prompts_dir, "tech_analyst",
+        prompts_dir,
+        "tech_analyst",
         "# Tech\n\n## Learnings (system-evolved)\n\n",
     )
     original = seed.read_text()
@@ -918,12 +962,14 @@ def test_apply_reflection_dry_run_overridable_via_init_kwarg(tmp_path):
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
     editor = PromptEditor(
-        config=cfg, prompts_dir=prompts_dir,
+        config=cfg,
+        prompts_dir=prompts_dir,
         evolution_dir=tmp_path / "evolution",
-        dry_run=False,   # explicit override
+        dry_run=False,  # explicit override
     )
     seed = _seed_prompt(
-        prompts_dir, "tech_analyst",
+        prompts_dir,
+        "tech_analyst",
         "# Tech\n\n## Learnings (system-evolved)\n\n",
     )
 
@@ -940,20 +986,24 @@ def test_apply_reflection_dry_run_overridable_via_init_kwarg(tmp_path):
 # stated loudly so docs/config drift can't hide whether prompts get rewritten)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("enabled,dry_run,marker", [
-    (False, True, "OFF"),
-    (True, True, "STAGE-ONLY"),
-    (True, False, "LIVE-APPLY"),
-])
+
+@pytest.mark.parametrize(
+    "enabled,dry_run,marker",
+    [
+        (False, True, "OFF"),
+        (True, True, "STAGE-ONLY"),
+        (True, False, "LIVE-APPLY"),
+    ],
+)
 def test_apply_reflection_logs_effective_mode(tmp_path, caplog, enabled, dry_run, marker):
     import logging
+
     editor = _mk_editor(tmp_path, enabled=enabled, dry_run=dry_run)
     if enabled and not dry_run:
         _seed_prompt(editor.prompts_dir, "tech_analyst", "# tech\n")
     reflection = _mk_reflection("2026-Q2", [_basic_learning()])
     with caplog.at_level(logging.WARNING, logger="src.evolution.prompt_editor"):
         editor.apply_reflection(reflection)
-    mode_lines = [r.getMessage() for r in caplog.records
-                  if "effective mode" in r.getMessage().lower()]
+    mode_lines = [r.getMessage() for r in caplog.records if "effective mode" in r.getMessage().lower()]
     assert mode_lines, "PromptEditor must log its effective mode at every run"
     assert marker in mode_lines[0], f"expected {marker} in {mode_lines[0]!r}"

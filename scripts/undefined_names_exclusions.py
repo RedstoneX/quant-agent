@@ -1,4 +1,5 @@
 """Which files the undefined-name guard reads: git-derived, minus one frozen fixture."""
+
 from __future__ import annotations
 
 import subprocess
@@ -20,10 +21,8 @@ def tracked_production_files() -> list[Path]:
     Derived from git, never a written-down directory list.
     """
     root = Path(__file__).resolve().parent.parent
-    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"],
-                         capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"], capture_output=True, text=True)
     if out.returncode:
         print(f"git ls-files failed ({out.stderr.strip()}); refusing to read nothing as clean")
         return []
-    return [root / p for p in sorted(out.stdout.splitlines())
-            if p.endswith(".py")]
+    return [root / p for p in sorted(out.stdout.splitlines()) if p.endswith(".py")]

@@ -8,6 +8,7 @@ order, and that Alpaca's own documentation recommends its `trade_updates`
 stream for exactly this. This suite proves the new dispatch logic without
 any real network I/O, using a fake `TradingStream` double.
 """
+
 import asyncio
 import fcntl
 import inspect
@@ -39,8 +40,7 @@ class _FakeTradingStream:
     mirroring the real class's blocking event-loop shape closely enough
     for this dispatch logic to be exercised honestly."""
 
-    def __init__(self, *_args, updates=None, raise_on_subscribe=None,
-                 raise_on_run=None, hang=False, **_kwargs):
+    def __init__(self, *_args, updates=None, raise_on_subscribe=None, raise_on_run=None, hang=False, **_kwargs):
         self._updates = updates or []
         self._handler = None
         self._raise_on_subscribe = raise_on_subscribe
@@ -83,7 +83,9 @@ class _FakeTradingStream:
 def _broker():
     with patch("src.execution.broker.TradingClient"):
         return AlpacaBroker(
-            api_key="k", secret_key="s", paper=True,
+            api_key="k",
+            secret_key="s",
+            paper=True,
             # These tests exercise the websocket machinery itself, which is
             # dormant in production since 2026-09-17. ON here so the whole
             # file doubles as the proof that flipping the flag back restores
@@ -94,10 +96,13 @@ def _broker():
 
 # ---------- the fast path: a real terminal event for OUR order ----------
 
+
 @patch("src.execution.broker.TradingStream")
 def test_stream_returns_immediately_on_matching_fill(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("order-1", "filled")], **k,
+        *a,
+        updates=[_FakeUpdate("order-1", "filled")],
+        **k,
     )
     broker = _broker()
 
@@ -116,7 +121,10 @@ def test_stream_ignores_updates_for_other_orders(mock_stream_cls):
     must still prove the connection is alive (so a genuine non-match falls
     to a single REST check, not the full polling fallback)."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("some-other-order", "filled")], hang=True, **k,
+        *a,
+        updates=[_FakeUpdate("some-other-order", "filled")],
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="new")
@@ -131,10 +139,13 @@ def test_stream_ignores_updates_for_other_orders(mock_stream_cls):
 
 # ---------- stream unusable: must fall back to the old polling path ----
 
+
 @patch("src.execution.broker.TradingStream")
 def test_falls_back_to_polling_when_stream_never_connects(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, raise_on_run=ConnectionError("no network"), **k,
+        *a,
+        raise_on_run=ConnectionError("no network"),
+        **k,
     )
     broker = _broker()
     open_order = MagicMock(status="new")
@@ -142,7 +153,9 @@ def test_falls_back_to_polling_when_stream_never_connects(mock_stream_cls):
     broker.client.get_order_by_id.side_effect = [open_order, filled_order]
 
     status = broker.wait_for_order_terminal(
-        "order-1", timeout_seconds=2.0, poll_interval=0.0,
+        "order-1",
+        timeout_seconds=2.0,
+        poll_interval=0.0,
     )
 
     assert status == "filled"
@@ -152,13 +165,17 @@ def test_falls_back_to_polling_when_stream_never_connects(mock_stream_cls):
 @patch("src.execution.broker.TradingStream")
 def test_falls_back_to_polling_when_subscribe_raises(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, raise_on_subscribe=RuntimeError("bad handler"), **k,
+        *a,
+        raise_on_subscribe=RuntimeError("bad handler"),
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="filled")
 
     status = broker.wait_for_order_terminal(
-        "order-1", timeout_seconds=2.0, poll_interval=0.0,
+        "order-1",
+        timeout_seconds=2.0,
+        poll_interval=0.0,
     )
 
     assert status == "filled"
@@ -170,7 +187,9 @@ def test_falls_back_to_polling_when_stream_library_missing():
         broker.client.get_order_by_id.return_value = MagicMock(status="filled")
 
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=2.0, poll_interval=0.0,
+            "order-1",
+            timeout_seconds=2.0,
+            poll_interval=0.0,
         )
 
     assert status == "filled"
@@ -178,13 +197,17 @@ def test_falls_back_to_polling_when_stream_library_missing():
 
 # ---------- explicit opt-out ----------
 
+
 def test_use_stream_false_skips_straight_to_polling():
     with patch("src.execution.broker.TradingStream") as mock_stream_cls:
         broker = _broker()
         broker.client.get_order_by_id.return_value = MagicMock(status="filled")
 
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=2.0, poll_interval=0.0, use_stream=False,
+            "order-1",
+            timeout_seconds=2.0,
+            poll_interval=0.0,
+            use_stream=False,
         )
 
         assert status == "filled"
@@ -193,12 +216,18 @@ def test_use_stream_false_skips_straight_to_polling():
 
 # ---------- terminal-state set stays in sync between the two paths ------
 
+
 def test_stream_and_polling_share_the_same_terminal_states():
     """A status the stream treats as terminal must be the same set the
     polling fallback treats as terminal — see `_ORDER_TERMINAL_STATES`."""
     assert AlpacaBroker._ORDER_TERMINAL_STATES == {
-        "filled", "canceled", "cancelled", "expired", "rejected",
-        "done_for_day", "replaced",
+        "filled",
+        "canceled",
+        "cancelled",
+        "expired",
+        "rejected",
+        "done_for_day",
+        "replaced",
     }
 
 
@@ -211,16 +240,24 @@ def test_stream_and_polling_share_the_same_terminal_states():
 # is the gate: it watches the OLD order reach the terminal status `replaced`
 # on this same stream before the caller is allowed to send another one.
 
+
 @patch("src.execution.broker.TradingStream")
 def test_replacement_confirmed_by_a_replaced_event_on_the_stream(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("old-1", "replaced")], **k,
+        *a,
+        updates=[_FakeUpdate("old-1", "replaced")],
+        **k,
     )
     broker = _broker()
 
-    assert broker.await_replacement_confirmed(
-        "old-1", "new-2", timeout_seconds=10.0,
-    ) is True
+    assert (
+        broker.await_replacement_confirmed(
+            "old-1",
+            "new-2",
+            timeout_seconds=10.0,
+        )
+        is True
+    )
 
 
 @patch("src.execution.broker.TradingStream")
@@ -229,14 +266,21 @@ def test_a_fill_on_the_old_order_is_not_a_replacement_confirmation(mock_stream_c
     terminal status would wave through exactly the case where the swap did
     NOT happen."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("old-1", "filled")], **k,
+        *a,
+        updates=[_FakeUpdate("old-1", "filled")],
+        **k,
     )
     broker = _broker()
     broker.resolve_replacement_chain = MagicMock(return_value="old-1")
 
-    assert broker.await_replacement_confirmed(
-        "old-1", "new-2", timeout_seconds=10.0,
-    ) is False
+    assert (
+        broker.await_replacement_confirmed(
+            "old-1",
+            "new-2",
+            timeout_seconds=10.0,
+        )
+        is False
+    )
 
 
 @patch("src.execution.broker.TradingStream")
@@ -244,37 +288,50 @@ def test_a_missed_event_falls_back_to_asking_the_broker(mock_stream_cls):
     """No `replaced` event inside the window is not proof of anything, so
     the chain is re-read rather than guessed at either way."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("someone-else", "filled")], **k,
+        *a,
+        updates=[_FakeUpdate("someone-else", "filled")],
+        **k,
     )
     broker = _broker()
     broker._get_order_status_once = MagicMock(return_value="pending_replace")
     broker.resolve_replacement_chain = MagicMock(return_value="new-2")
 
-    assert broker.await_replacement_confirmed(
-        "old-1", "new-2", timeout_seconds=1.0,
-    ) is True
+    assert (
+        broker.await_replacement_confirmed(
+            "old-1",
+            "new-2",
+            timeout_seconds=1.0,
+        )
+        is True
+    )
 
 
 @patch("src.execution.broker.TradingStream")
 def test_an_unreadable_broker_is_never_read_as_confirmed(mock_stream_cls):
-    """"I could not confirm" and "it is safe to send another replace" are
+    """ "I could not confirm" and "it is safe to send another replace" are
     different statements."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[], **k,
+        *a,
+        updates=[],
+        **k,
     )
     broker = _broker()
     broker._get_order_status_once = MagicMock(return_value=None)
     broker.resolve_replacement_chain = MagicMock(return_value=None)
 
-    assert broker.await_replacement_confirmed(
-        "old-1", "new-2", timeout_seconds=1.0,
-    ) is False
+    assert (
+        broker.await_replacement_confirmed(
+            "old-1",
+            "new-2",
+            timeout_seconds=1.0,
+        )
+        is False
+    )
 
 
 def test_confirmation_never_raises_when_the_wait_blows_up():
     broker = _broker()
-    broker.wait_for_order_terminal = MagicMock(
-        side_effect=RuntimeError("websocket gone"))
+    broker.wait_for_order_terminal = MagicMock(side_effect=RuntimeError("websocket gone"))
 
     assert broker.await_replacement_confirmed("old-1", "new-2") is False
 
@@ -296,6 +353,7 @@ def test_replaced_is_a_terminal_state_the_stream_actually_reports():
 # Alpaca's not-yet-at-exchange statuses (`accepted`, `pending_new` — its own
 # lifecycle reference). Same websocket, same fallback shape as the fill wait.
 
+
 def test_pre_exchange_states_are_the_documented_ones():
     assert AlpacaBroker._ORDER_PRE_EXCHANGE_STATES == frozenset({"accepted", "pending_new"})
     assert AlpacaBroker._ORDER_REPLACEABLE_STATES == frozenset({"new"})
@@ -306,9 +364,9 @@ def test_pre_exchange_states_are_the_documented_ones():
 def test_at_exchange_wait_returns_new_the_instant_the_stream_says_so(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
         updates=[
-            _FakeUpdate("other", "new"),           # someone else's order
-            _FakeUpdate("ord-1", "pending_new"),   # ours, still pre-venue
-            _FakeUpdate("ord-1", "new"),           # ours, acknowledged
+            _FakeUpdate("other", "new"),  # someone else's order
+            _FakeUpdate("ord-1", "pending_new"),  # ours, still pre-venue
+            _FakeUpdate("ord-1", "new"),  # ours, acknowledged
         ],
     )
     b = _broker()
@@ -332,15 +390,16 @@ def test_at_exchange_wait_reports_a_fill_that_arrives_instead(mock_stream_cls):
 @patch("src.execution.broker.TradingStream")
 def test_at_exchange_wait_does_a_single_rest_read_when_nothing_arrives(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        updates=[_FakeUpdate("ord-1", "accepted")], hang=True,
+        updates=[_FakeUpdate("ord-1", "accepted")],
+        hang=True,
     )
     b = _broker()
     b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="accepted"))
 
     status = b.wait_for_order_at_exchange("ord-1", timeout_seconds=0.3)
 
-    assert status == "accepted"                       # honest: still pre-venue
-    assert b.client.get_order_by_id.call_count == 1   # one read, not a poll loop
+    assert status == "accepted"  # honest: still pre-venue
+    assert b.client.get_order_by_id.call_count == 1  # one read, not a poll loop
 
 
 def test_at_exchange_wait_falls_back_to_rest_polling_without_the_stream():
@@ -352,7 +411,9 @@ def test_at_exchange_wait_falls_back_to_rest_polling_without_the_stream():
     ]
     with patch("src.execution.broker.TradingStream", None):
         status = b.wait_for_order_at_exchange(
-            "ord-1", timeout_seconds=3.0, poll_interval=0.01,
+            "ord-1",
+            timeout_seconds=3.0,
+            poll_interval=0.01,
         )
 
     assert status == "new"
@@ -364,7 +425,9 @@ def test_at_exchange_wait_reports_last_known_when_polling_times_out():
     b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="accepted"))
     with patch("src.execution.broker.TradingStream", None):
         status = b.wait_for_order_at_exchange(
-            "ord-1", timeout_seconds=0.05, poll_interval=0.01,
+            "ord-1",
+            timeout_seconds=0.05,
+            poll_interval=0.01,
         )
     assert status == "accepted"
 
@@ -374,7 +437,8 @@ def test_the_terminal_wait_still_ignores_a_mere_new_event():
     `new` is not terminal for it."""
     with patch("src.execution.broker.TradingStream") as mock_stream_cls:
         mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-            updates=[_FakeUpdate("ord-1", "new")], hang=True,
+            updates=[_FakeUpdate("ord-1", "new")],
+            hang=True,
         )
         b = _broker()
         b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="new"))
@@ -389,6 +453,7 @@ def test_the_terminal_wait_still_ignores_a_mere_new_event():
 # Alpaca allows one trade_updates connection per account, so a 429 then
 # logs thousands of times during a fill wait. The guard backs off; the
 # lock keeps a second wait from opening another socket.
+
 
 class _Fake429(Exception):
     def __init__(self, retry_after=None):
@@ -439,29 +504,31 @@ def test_rate_limit_backs_off_harder_than_a_transient_error():
 
     for attempt in (1, 2, 5, 9, 50):
         transient = _trading_stream_reconnect_delay(
-            attempt, ConnectionError("connection reset"),
+            attempt,
+            ConnectionError("connection reset"),
         )
         rate_limited = _trading_stream_reconnect_delay(attempt, _Fake429())
         assert rate_limited > transient, (
-            f"attempt {attempt}: 429 waited {rate_limited}s but a generic "
-            f"error waited {transient}s"
+            f"attempt {attempt}: 429 waited {rate_limited}s but a generic error waited {transient}s"
         )
         assert rate_limited >= _STREAM_RATE_LIMIT_STAND_DOWN_S
 
     # A server asking us back sooner than its own published window does not
     # shorten the stand-down.
-    assert (
-        _trading_stream_reconnect_delay(1, _Fake429(retry_after=5))
-        == _STREAM_RATE_LIMIT_STAND_DOWN_S
-    )
+    assert _trading_stream_reconnect_delay(1, _Fake429(retry_after=5)) == _STREAM_RATE_LIMIT_STAND_DOWN_S
     # A server asking for LONGER always wins.
-    assert _trading_stream_reconnect_delay(
-        1, _Fake429(retry_after=_STREAM_RATE_LIMIT_STAND_DOWN_S + 90),
-    ) == _STREAM_RATE_LIMIT_STAND_DOWN_S + 90
+    assert (
+        _trading_stream_reconnect_delay(
+            1,
+            _Fake429(retry_after=_STREAM_RATE_LIMIT_STAND_DOWN_S + 90),
+        )
+        == _STREAM_RATE_LIMIT_STAND_DOWN_S + 90
+    )
 
 
 def test_reconnect_delay_grows_then_caps_without_retry_after():
     from src.execution.broker import _equal_jitter_backoff
+
     d1 = _equal_jitter_backoff(1, 1.0, 30.0)
     d2 = _equal_jitter_backoff(2, 1.0, 30.0)
     d_hi = _equal_jitter_backoff(8, 1.0, 30.0)
@@ -472,6 +539,7 @@ def test_reconnect_delay_grows_then_caps_without_retry_after():
 
 def test_stream_http_status_reads_429_from_exc_and_message():
     from src.execution.broker import _stream_http_status
+
     typed = _Fake429()
     assert _stream_http_status(typed) == 429
     assert _stream_http_status(Exception("HTTP 429 Too Many Requests")) == 429
@@ -558,7 +626,9 @@ def test_fill_still_arrives_when_reconnect_guard_wraps_start_ws(mock_stream_cls)
             return
 
     mock_stream_cls.side_effect = lambda *a, **k: StreamWithStart(
-        *a, updates=[_FakeUpdate("order-1", "filled")], **k,
+        *a,
+        updates=[_FakeUpdate("order-1", "filled")],
+        **k,
     )
     status = _broker().wait_for_order_terminal("order-1", timeout_seconds=10.0)
     assert status == "filled"
@@ -576,21 +646,26 @@ def test_concurrent_wait_does_not_open_a_second_stream(mock_stream_cls):
             super().run()
 
     mock_stream_cls.side_effect = lambda *a, **k: HangStream(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="new")
 
     first = threading.Thread(
         target=lambda: broker.wait_for_order_terminal(
-            "order-a", timeout_seconds=1.0,
+            "order-a",
+            timeout_seconds=1.0,
         ),
         daemon=True,
     )
     first.start()
     assert started.wait(timeout=2.0), "first stream never started"
     status = broker.wait_for_order_terminal(
-        "order-b", timeout_seconds=2.0, poll_interval=0.0,
+        "order-b",
+        timeout_seconds=2.0,
+        poll_interval=0.0,
     )
     first.join(timeout=3.0)
 
@@ -612,7 +687,9 @@ def test_start_trade_updates_returns_without_waiting_for_auth(mock_stream_cls):
             super().run()
 
     mock_stream_cls.side_effect = lambda *a, **k: HangAuth(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     t0 = time.monotonic()
@@ -631,7 +708,10 @@ def test_start_trade_updates_returns_without_waiting_for_auth(mock_stream_cls):
 @patch("src.execution.broker.TradingStream")
 def test_fill_wait_reuses_prestarted_hub(mock_stream_cls):
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, updates=[_FakeUpdate("order-1", "filled")], hang=True, **k,
+        *a,
+        updates=[_FakeUpdate("order-1", "filled")],
+        hang=True,
+        **k,
     )
     broker = _broker()
     try:
@@ -652,7 +732,9 @@ def test_exhausted_auth_budget_falls_to_rest_without_waiting_again(mock_stream_c
             await asyncio.sleep(60)
 
     mock_stream_cls.side_effect = lambda *a, **k: NeverAuth(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="filled")
@@ -662,7 +744,9 @@ def test_exhausted_auth_budget_falls_to_rest_without_waiting_again(mock_stream_c
         broker._trade_hub.started_mono = time.monotonic() - 31.0
         t0 = time.monotonic()
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=10.0, poll_interval=0.0,
+            "order-1",
+            timeout_seconds=10.0,
+            poll_interval=0.0,
         )
         assert time.monotonic() - t0 < 2.0
         assert status == "filled"
@@ -679,7 +763,9 @@ def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
     not report the stream as still fine (one snapshot) and must not open a
     second handshake while the process lock is held."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="filled")
@@ -691,7 +777,9 @@ def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
         assert hub.is_alive() is False
         t0 = time.monotonic()
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=2.0, poll_interval=0.0,
+            "order-1",
+            timeout_seconds=2.0,
+            poll_interval=0.0,
         )
         assert time.monotonic() - t0 < 2.0
         assert status == "filled"
@@ -725,7 +813,9 @@ while not Path(done).exists() and time.monotonic() < deadline:
 def _broker_with_lease(lease_path):
     with patch("src.execution.broker.TradingClient"):
         return AlpacaBroker(
-            api_key="k", secret_key="s", paper=True,
+            api_key="k",
+            secret_key="s",
+            paper=True,
             trade_updates_lease_path=str(lease_path),
             fill_stream_enabled=True,
         )
@@ -733,7 +823,8 @@ def _broker_with_lease(lease_path):
 
 @patch("src.execution.broker.TradingStream")
 def test_second_process_cannot_open_competing_socket_while_lease_held(
-    mock_stream_cls, tmp_path,
+    mock_stream_cls,
+    tmp_path,
 ):
     """Pin: while another process holds the account lease, this process
     must not construct a TradingStream at all."""
@@ -741,8 +832,7 @@ def test_second_process_cannot_open_competing_socket_while_lease_held(
     ready = tmp_path / "ready"
     done = tmp_path / "done"
     holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLD_LEASE_SCRIPT,
-         str(lease_path), str(ready), str(done)],
+        [sys.executable, "-c", _HOLD_LEASE_SCRIPT, str(lease_path), str(ready), str(done)],
     )
     try:
         deadline = time.monotonic() + 5
@@ -750,7 +840,9 @@ def test_second_process_cannot_open_competing_socket_while_lease_held(
             time.sleep(0.05)
         assert ready.exists(), "second process never acquired the lease"
         mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-            *a, hang=True, **k,
+            *a,
+            hang=True,
+            **k,
         )
         broker = _broker_with_lease(lease_path)
         try:
@@ -767,7 +859,8 @@ def test_second_process_cannot_open_competing_socket_while_lease_held(
 
 @patch("src.execution.broker.TradingStream")
 def test_consumer_uses_rest_when_lease_held_by_another_process(
-    mock_stream_cls, tmp_path,
+    mock_stream_cls,
+    tmp_path,
 ):
     """Pin: a fill wait that does not own the lease REST-polls with the
     caller's timeout and never opens a socket."""
@@ -777,13 +870,17 @@ def test_consumer_uses_rest_when_lease_held_by_another_process(
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
         mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-            *a, hang=True, **k,
+            *a,
+            hang=True,
+            **k,
         )
         broker = _broker_with_lease(lease_path)
         broker.client.get_order_by_id.return_value = MagicMock(status="filled")
         t0 = time.monotonic()
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=0.4, poll_interval=0.0,
+            "order-1",
+            timeout_seconds=0.4,
+            poll_interval=0.0,
         )
         elapsed = time.monotonic() - t0
         assert status == "filled"
@@ -798,12 +895,15 @@ def test_consumer_uses_rest_when_lease_held_by_another_process(
 def test_fill_wait_on_unauthed_hub_does_not_exceed_rest_timeout(mock_stream_cls):
     """Pin: remaining auth budget is not added on top of the fill wait.
     Protective stops use this same wait_for_order_terminal path."""
+
     class NeverAuth(_FakeTradingStream):
         async def _start_ws(self):
             await asyncio.sleep(60)
 
     mock_stream_cls.side_effect = lambda *a, **k: NeverAuth(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="filled")
@@ -812,7 +912,9 @@ def test_fill_wait_on_unauthed_hub_does_not_exceed_rest_timeout(mock_stream_cls)
         timeout = 0.4
         t0 = time.monotonic()
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=timeout, poll_interval=0.0,
+            "order-1",
+            timeout_seconds=timeout,
+            poll_interval=0.0,
         )
         elapsed = time.monotonic() - t0
         assert status == "filled"
@@ -829,6 +931,7 @@ def test_fill_wait_on_unauthed_hub_does_not_exceed_rest_timeout(mock_stream_cls)
 def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
     """alpaca-py reconnects inside run() without killing the thread. A
     live-but-silent hub must not hide a fill longer than REST would."""
+
     class AuthedHang(_FakeTradingStream):
         async def _start_ws(self):
             return
@@ -837,7 +940,9 @@ def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
             super().run()
 
     mock_stream_cls.side_effect = lambda *a, **k: AuthedHang(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     filled = MagicMock(status="filled")
@@ -850,7 +955,9 @@ def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
             time.sleep(0.01)
         t0 = time.monotonic()
         status = broker.wait_for_order_terminal(
-            "order-1", timeout_seconds=0.8, poll_interval=0.2,
+            "order-1",
+            timeout_seconds=0.8,
+            poll_interval=0.2,
         )
         elapsed = time.monotonic() - t0
         assert status == "filled"
@@ -861,14 +968,18 @@ def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
     """A hang with no auth hook waits the caller's timeout then one REST
     snapshot — not a second full polling window stacked on the first."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
-        *a, hang=True, **k,
+        *a,
+        hang=True,
+        **k,
     )
     broker = _broker()
     broker.client.get_order_by_id.return_value = MagicMock(status="new")
     timeout = 0.4
     t0 = time.monotonic()
     status = broker.wait_for_order_terminal(
-        "order-1", timeout_seconds=timeout, poll_interval=0.2,
+        "order-1",
+        timeout_seconds=timeout,
+        poll_interval=0.2,
     )
     elapsed = time.monotonic() - t0
     assert status == "new"
@@ -883,6 +994,7 @@ def test_protective_fill_wait_is_the_bounded_terminal_wait():
     """place_entry_protection has no private stream wait. Its fill wait
     is wait_for_order_terminal, so the REST ceiling applies to stops."""
     from src.execution.broker_parts.entry_protection import place_entry_protection
+
     src = inspect.getsource(place_entry_protection)
     assert "wait_for_order_terminal" in src
     assert "TradingStream(" not in src
@@ -893,6 +1005,7 @@ def test_frame_drain_is_not_the_ownership_fix():
     """_last_status lets a same-process waiter see an already-seen fill.
     The account owner is the lease, not that dict."""
     from src.execution import broker as broker_mod
+
     start_src = inspect.getsource(broker_mod.TradeStreamWaits.start_trade_updates)
     wait_src = inspect.getsource(
         broker_mod.TradeStreamWaits._wait_for_order_status_via_stream,
@@ -902,7 +1015,6 @@ def test_frame_drain_is_not_the_ownership_fix():
     assert "_TradeUpdatesLease" in inspect.getsource(broker_mod)
     assert "fcntl.flock" in inspect.getsource(broker_mod._TradeUpdatesLease)
     assert "_wait_for_first_event" not in inspect.getsource(broker_mod)
-
 
 
 # === Auth-rejection diagnostics (2026-09-18) ===================================
@@ -920,8 +1032,7 @@ def test_frame_drain_is_not_the_ownership_fix():
 #
 # The rejection payload Alpaca really returns, verbatim:
 _ALPACA_AUTH_REJECTION = (
-    '{"stream":"authorization","data":'
-    '{"message":"code=401, message=Unauthorized","status":"unauthorized"}}'
+    '{"stream":"authorization","data":{"message":"code=401, message=Unauthorized","status":"unauthorized"}}'
 )
 
 # The credential the process really held until 2026-09-18: 29 characters,
@@ -956,6 +1067,7 @@ class _FakeAuthStream:
 
     def __init__(self, api_key, secret_key, reply):
         import json as _json
+
         self._json = _json
         self._api_key = api_key
         self._secret_key = secret_key
@@ -970,10 +1082,14 @@ class _FakeAuthStream:
         self._ws = _FakeAuthSocket(self._reply)
 
     async def _auth(self):
-        await self._ws.send(self._json.dumps({
-            "action": "authenticate",
-            "data": {"key_id": self._api_key, "secret_key": self._secret_key},
-        }))
+        await self._ws.send(
+            self._json.dumps(
+                {
+                    "action": "authenticate",
+                    "data": {"key_id": self._api_key, "secret_key": self._secret_key},
+                }
+            )
+        )
         msg = self._json.loads(await self._ws.recv())
         if msg.get("data").get("status") != "authorized":
             raise ValueError("failed to authenticate")
@@ -994,7 +1110,9 @@ def _rejected_stream(reply=_ALPACA_AUTH_REJECTION):
     # the pre-fix code by printing the MISLEADING line, not by failing to
     # import the fix. That misleading line is the defect.
     install_diagnostics = getattr(
-        broker_mod, "_install_trading_stream_auth_diagnostics", None,
+        broker_mod,
+        "_install_trading_stream_auth_diagnostics",
+        None,
     )
     if callable(install_diagnostics):
         install_diagnostics(stream)
@@ -1091,10 +1209,7 @@ def test_successful_handshake_leaves_an_affirmative_log_line(caplog):
 
     from src.execution.broker import _install_trading_stream_reconnect_guard
 
-    authorized = (
-        '{"stream":"authorization","data":'
-        '{"message":"authorized","status":"authorized"}}'
-    )
+    authorized = '{"stream":"authorization","data":{"message":"authorized","status":"authorized"}}'
     stream = _FakeAuthStream(_PLACEHOLDER_KEY, _PLACEHOLDER_SECRET, authorized)
     _install_trading_stream_reconnect_guard(stream)
     with caplog.at_level(logging.INFO, logger="src.execution.broker"):
@@ -1173,7 +1288,9 @@ def test_session_ceiling_stops_the_reconnect_loop(monkeypatch):
     monkeypatch.setattr(broker_mod, "send_owner_alert", None, raising=False)
     sent: list[str] = []
     monkeypatch.setattr(
-        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+        broker_mod,
+        "_alert_stream_gave_up",
+        lambda reason: sent.append(reason),
     )
 
     stream = _CeilingStream(_Fake429)
@@ -1182,8 +1299,7 @@ def test_session_ceiling_stops_the_reconnect_loop(monkeypatch):
 
     ceiling = broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION
     assert stream.attempts == ceiling, (
-        f"expected the loop to stop at the {ceiling}-attempt session "
-        f"ceiling, got {stream.attempts}"
+        f"expected the loop to stop at the {ceiling}-attempt session ceiling, got {stream.attempts}"
     )
     # The SDK's own loop is told to exit, which is what actually ends it.
     assert stream._should_run is False
@@ -1245,8 +1361,15 @@ def test_giveup_alert_is_plain_english_and_says_fills_still_work():
     assert "slower way" in lowered
     assert "nothing for you to do" in lowered
     for jargon in (
-        "websocket", "trade_updates", "429", "http", "handshake",
-        "backoff", "rest", "auth", "socket",
+        "websocket",
+        "trade_updates",
+        "429",
+        "http",
+        "handshake",
+        "backoff",
+        "rest",
+        "auth",
+        "socket",
     ):
         assert jargon not in lowered, f"owner text leaked the term {jargon!r}"
 
@@ -1264,7 +1387,9 @@ def test_auth_rejection_also_hits_the_ceiling(monkeypatch):
     monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
     sent: list[str] = []
     monkeypatch.setattr(
-        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+        broker_mod,
+        "_alert_stream_gave_up",
+        lambda reason: sent.append(reason),
     )
 
     def _rejected():
@@ -1378,13 +1503,12 @@ def test_the_deprecation_notice_is_logged_once_not_once_per_handshake(caplog):
     broker_mod._stream_auth_deprecation_logged = False
     with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
         for _ in range(4):
-            asyncio.run(_rejected_stream(
-                reply=_ALPACA_DEPRECATION_REPLY,
-            )._start_ws())
-    hits = [
-        r for r in caplog.records
-        if "auth format is DEPRECATED" in r.getMessage()
-    ]
+            asyncio.run(
+                _rejected_stream(
+                    reply=_ALPACA_DEPRECATION_REPLY,
+                )._start_ws()
+            )
+    hits = [r for r in caplog.records if "auth format is DEPRECATED" in r.getMessage()]
     assert len(hits) == 1
 
 
@@ -1399,10 +1523,7 @@ def test_no_deprecation_notice_is_invented_when_the_broker_sends_none(caplog):
     from src.execution import broker as broker_mod
 
     broker_mod._stream_auth_deprecation_logged = False
-    authorized = (
-        '{"stream":"authorization","data":'
-        '{"action":"authenticate","status":"authorized"}}'
-    )
+    authorized = '{"stream":"authorization","data":{"action":"authenticate","status":"authorized"}}'
     with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
         asyncio.run(_rejected_stream(reply=authorized)._start_ws())
     text = "\n".join(r.getMessage() for r in caplog.records)
@@ -1417,9 +1538,11 @@ def test_the_deprecation_notice_never_carries_a_credential(caplog):
 
     broker_mod._stream_auth_deprecation_logged = False
     with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
-        asyncio.run(_rejected_stream(
-            reply=_ALPACA_DEPRECATION_REPLY,
-        )._start_ws())
+        asyncio.run(
+            _rejected_stream(
+                reply=_ALPACA_DEPRECATION_REPLY,
+            )._start_ws()
+        )
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert _PLACEHOLDER_KEY not in text
     assert _PLACEHOLDER_SECRET not in text
@@ -1488,7 +1611,8 @@ def test_the_silent_broker_is_counted_by_the_reconnect_ceiling(monkeypatch):
     monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_AUTH_DEADLINE_S", 0.05)
     monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_SESSION", 2)
     monkeypatch.setattr(
-        broker_mod, "_trading_stream_reconnect_delay",
+        broker_mod,
+        "_trading_stream_reconnect_delay",
         lambda *a, **k: 0.0,
     )
     broker_mod._STREAM_ATTEMPT_BUDGET.reset()
@@ -1512,10 +1636,7 @@ def test_the_silent_broker_is_counted_by_the_reconnect_ceiling(monkeypatch):
 # form is proven on exactly one host.
 # ---------------------------------------------------------------------------
 
-_AUTHORIZED_NEW_FORM = (
-    '{"stream":"authorization","data":'
-    '{"action":"authenticate","status":"authorized"}}'
-)
+_AUTHORIZED_NEW_FORM = '{"stream":"authorization","data":{"action":"authenticate","status":"authorized"}}'
 
 
 def test_the_handshake_sends_the_format_the_broker_asks_for():
@@ -1579,13 +1700,12 @@ def test_a_successful_current_format_handshake_says_so_once(caplog):
     broker_mod._stream_current_auth_format_logged = False
     with caplog.at_level(logging.INFO, logger="src.execution.broker"):
         for _ in range(3):
-            asyncio.run(_rejected_stream(
-                reply=_AUTHORIZED_NEW_FORM,
-            )._start_ws())
-    hits = [
-        r for r in caplog.records
-        if "authenticated with the CURRENT auth format" in r.getMessage()
-    ]
+            asyncio.run(
+                _rejected_stream(
+                    reply=_AUTHORIZED_NEW_FORM,
+                )._start_ws()
+            )
+    hits = [r for r in caplog.records if "authenticated with the CURRENT auth format" in r.getMessage()]
     assert len(hits) == 1
 
 
@@ -1599,7 +1719,9 @@ def test_the_fallback_still_reaches_the_ceiling_and_gives_up(monkeypatch):
 
     monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_SESSION", 3)
     monkeypatch.setattr(
-        broker_mod, "_trading_stream_reconnect_delay", lambda *a, **k: 0.0,
+        broker_mod,
+        "_trading_stream_reconnect_delay",
+        lambda *a, **k: 0.0,
     )
     monkeypatch.setattr(broker_mod, "_alert_stream_gave_up", lambda reason: None)
     broker_mod._STREAM_ATTEMPT_BUDGET.reset()

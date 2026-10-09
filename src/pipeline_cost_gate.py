@@ -37,9 +37,7 @@ def _activate_cost_session(self, run_id: str, mode: str) -> None:
     if circuit is None:
         if BaseAgent._allow_unmetered_for_tests:
             return
-        circuit = UnavailableLLMCostCircuit(
-            RuntimeError("mandatory paid-analysis cost circuit is not initialized")
-        )
+        circuit = UnavailableLLMCostCircuit(RuntimeError("mandatory paid-analysis cost circuit is not initialized"))
         self.cost_circuit = circuit
         self._attach_cost_circuit_to_agents()
     try:
@@ -48,7 +46,10 @@ def _activate_cost_session(self, run_id: str, mode: str) -> None:
         logger.critical(
             "Cost-circuit activation failed for %s/%s; failing paid analysis "
             "closed without interrupting deterministic safety: %s",
-            run_id, mode, exc, exc_info=True,
+            run_id,
+            mode,
+            exc,
+            exc_info=True,
         )
         marker = getattr(circuit, "mark_unavailable", None)
         if callable(marker):
@@ -79,14 +80,13 @@ def _require_paid_analysis(self, agent_name: str) -> None:
         if callable(marker):
             state = marker(exc)
             raise PaidAnalysisSuspended(
-                "mandatory cost-circuit preflight failed", state,
+                "mandatory cost-circuit preflight failed",
+                state,
             ) from exc
         replacement = UnavailableLLMCostCircuit(exc)
         self.cost_circuit = replacement
         self._attach_cost_circuit_to_agents()
-        run_id, mode = getattr(
-            self, "_active_cost_run_context", ("unscoped", "unknown")
-        )
+        run_id, mode = getattr(self, "_active_cost_run_context", ("unscoped", "unknown"))
         replacement.activate_session(run_id, mode)
         replacement.require_paid_analysis(agent_name)
 
@@ -94,10 +94,16 @@ def _require_paid_analysis(self, agent_name: str) -> None:
 def _attach_cost_circuit_to_agents(self) -> None:
     circuit = getattr(self, "cost_circuit", None)
     for name in (
-        "tech_analyst", "news_analyst", "macro_analyst",
-        "earnings_analyst", "smart_money_analyst",
-        "portfolio_manager", "risk_manager",
-        "position_reviewer", "evening_analyst", "meta_reflector",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "smart_money_analyst",
+        "portfolio_manager",
+        "risk_manager",
+        "position_reviewer",
+        "evening_analyst",
+        "meta_reflector",
     ):
         agent = getattr(self, name, None)
         setter = getattr(agent, "set_cost_circuit", None)
@@ -110,8 +116,12 @@ def _cost_circuit_status(self) -> dict:
     if circuit is None:
         if BaseAgent._allow_unmetered_for_tests:
             return {"enabled": False, "suspended": False}
-        return {"available": False, "enabled": True, "suspended": True,
-                "trigger_detail": "mandatory cost circuit is not initialized"}
+        return {
+            "available": False,
+            "enabled": True,
+            "suspended": True,
+            "trigger_detail": "mandatory cost circuit is not initialized",
+        }
     try:
         return circuit.status()
     except Exception as exc:
@@ -122,9 +132,7 @@ def _cost_circuit_status(self) -> dict:
         replacement = UnavailableLLMCostCircuit(exc)
         self.cost_circuit = replacement
         self._attach_cost_circuit_to_agents()
-        run_id, mode = getattr(
-            self, "_active_cost_run_context", ("unscoped", "unknown")
-        )
+        run_id, mode = getattr(self, "_active_cost_run_context", ("unscoped", "unknown"))
         return replacement.activate_session(run_id, mode)
 
 
@@ -190,7 +198,9 @@ def _paid_suspension_after_late_safety(
 
     existing_orders = list(orders or [])
     payload = self._paid_suspended_payload(
-        run_id, orders=existing_orders, error=error,
+        run_id,
+        orders=existing_orders,
+        error=error,
     )
     if extra:
         payload.update(extra)

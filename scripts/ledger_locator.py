@@ -6,6 +6,7 @@ whose rows each name the code ``site`` that holds the number. Prompt-only rows
 Zero or several such files is a refusal: a guard that cannot find its subject
 must not pass.
 """
+
 from __future__ import annotations
 
 import re
@@ -48,6 +49,7 @@ def working_ledger(root: Path = ROOT) -> str:
 
     def read(cands):
         return {p: (root / p).read_text(encoding="utf-8", errors="replace") for p in cands}
+
     return locate(_yaml_paths(paths), read, "the working tree")
 
 

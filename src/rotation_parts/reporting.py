@@ -88,7 +88,10 @@ def _precheck_binding(precheck) -> tuple[str, ...]:
 
 
 def precheck_record(
-    precheck, *, execute_enabled: bool, ranked_margin_enabled: bool,
+    precheck,
+    *,
+    execute_enabled: bool,
+    ranked_margin_enabled: bool,
 ) -> dict:
     """The durable audit payload for one pre-check, and the only input
     `owner_precheck_lines` reads.
@@ -118,29 +121,25 @@ def precheck_record(
         # place" signal. Recorded every session, constrained or not, because
         # a name that decayed below the entry bar while the book still had
         # room is precisely the case natural selection is not yet acting on.
-        "held_below_entry_bar": ",".join(
-            getattr(precheck, "held_below_entry_bar", ()) or ()
-        ),
-        "held_below_entry_bar_count": len(
-            getattr(precheck, "held_below_entry_bar", ()) or ()
-        ),
+        "held_below_entry_bar": ",".join(getattr(precheck, "held_below_entry_bar", ()) or ()),
+        "held_below_entry_bar_count": len(getattr(precheck, "held_below_entry_bar", ()) or ()),
         # Board item 219. The pass ran, and this is what it ran over.
         "held_examined": ",".join(getattr(precheck, "held_examined", ()) or ()),
         "held_examined_count": len(getattr(precheck, "held_examined", ()) or ()),
     }
     if opportunity is not None:
-        record.update({
-            "tier": str(getattr(opportunity, "tier", "") or ""),
-            "held_symbol": str(getattr(opportunity, "held_symbol", "") or ""),
-            "new_symbol": str(getattr(opportunity, "new_symbol", "") or ""),
-            # Board item 219. The conviction reasons the held name failed
-            # the desk's own entry bar on — the ONLY grounds the
-            # categorical tier cuts on, and therefore the reason the
-            # owner's report must give. Never a P&L figure.
-            "held_reasons": ",".join(
-                str(r) for r in (getattr(opportunity, "reasons", ()) or ())
-            ),
-        })
+        record.update(
+            {
+                "tier": str(getattr(opportunity, "tier", "") or ""),
+                "held_symbol": str(getattr(opportunity, "held_symbol", "") or ""),
+                "new_symbol": str(getattr(opportunity, "new_symbol", "") or ""),
+                # Board item 219. The conviction reasons the held name failed
+                # the desk's own entry bar on — the ONLY grounds the
+                # categorical tier cuts on, and therefore the reason the
+                # owner's report must give. Never a P&L figure.
+                "held_reasons": ",".join(str(r) for r in (getattr(opportunity, "reasons", ()) or ())),
+            }
+        )
         return record
     # 2026-09-23 — the near-miss half. `evaluate_rotation` declined at one of
     # `ROTATION_REFUSAL_POINTS` and knows which holding was weighed against

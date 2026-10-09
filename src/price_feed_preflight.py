@@ -19,6 +19,7 @@ and re-asked for in ONE batched latest-trades request for every waiting name,
 on a rising backoff, until each prints or the session's own slot ends. A
 failed batch is never a feed fault by itself: the reference symbol decides.
 """
+
 from __future__ import annotations
 
 import logging
@@ -142,8 +143,7 @@ def _no_batched_reader(pending: dict) -> list:
     """A stub broker that declares no batched reader: nothing to wait on, so
     the plain measured-absence refusal stands for every waiting name."""
     return [
-        (d, NO_SIZING_PRINT, "no today trade print to size against and "
-         "no batched re-ask available on this broker")
+        (d, NO_SIZING_PRINT, "no today trade print to size against and no batched re-ask available on this broker")
         for d in pending.values()
     ]
 
@@ -192,11 +192,14 @@ class _TodayPrintWait:
             self._after_failed_ask(pipeline, exc, asked, single)
             return
         if not isinstance(prints, dict):
-            self.stopped = (PRICE_READ_FAILED, (
-                f"{PRICE_READ_FAILED}: the batched today-print re-ask answered "
-                f"{type(prints).__name__}, not a price map -- not sized rather "
-                "than sized on an unread price; the desk's next pass re-decides"
-            ))
+            self.stopped = (
+                PRICE_READ_FAILED,
+                (
+                    f"{PRICE_READ_FAILED}: the batched today-print re-ask answered "
+                    f"{type(prints).__name__}, not a price map -- not sized rather "
+                    "than sized on an unread price; the desk's next pass re-decides"
+                ),
+            )
             return
         for symbol in [s for s in self.pending if s in prints]:
             self.printed[symbol] = self.pending.pop(symbol)
@@ -208,29 +211,33 @@ class _TodayPrintWait:
         failed BATCH declares the feed down only when the reference fails
         too; otherwise every waiting name is queued to be re-asked alone."""
         if not self._room():
-            self.stopped = (NO_PRINT_BY_WINDOW_END, (
-                f"{NO_PRINT_BY_WINDOW_END}: a re-ask failed ({exc}) with too "
-                f"little of this pass's slot left for one more read "
-                f"({self.read_s:.0f}s worst case); not sized -- the desk's next "
-                "pass re-decides the name"
-            ))
+            self.stopped = (
+                NO_PRINT_BY_WINDOW_END,
+                (
+                    f"{NO_PRINT_BY_WINDOW_END}: a re-ask failed ({exc}) with too "
+                    f"little of this pass's slot left for one more read "
+                    f"({self.read_s:.0f}s worst case); not sized -- the desk's next "
+                    "pass re-decides the name"
+                ),
+            )
             return
         if single:
-            reason, detail = classify_price_read_failure(pipeline, exc, symbol=asked[0],
-                                                         what="buy")
+            reason, detail = classify_price_read_failure(pipeline, exc, symbol=asked[0], what="buy")
             if reason == PRICE_FEED_UNREADABLE:
                 self.fault = detail
             else:
                 self.failed.append((self.pending.pop(asked[0]), reason, detail))
             return
         if reference_read_ok(pipeline, exclude=tuple(asked)) is False:
-            self.fault = declare_price_feed_fault(pipeline, "batched_reask", exc,
-                                                  symbol=",".join(asked))
+            self.fault = declare_price_feed_fault(pipeline, "batched_reask", exc, symbol=",".join(asked))
             return
         # The feed answers: the batch failed on something in it. Re-ask each
         # waiting name alone, at the same pace, to find which.
-        logger.warning("batched today-print re-ask failed while the reference "
-                       "reads; re-asking %s one at a time: %s", sorted(self.pending), exc)
+        logger.warning(
+            "batched today-print re-ask failed while the reference reads; re-asking %s one at a time: %s",
+            sorted(self.pending),
+            exc,
+        )
         self.one_by_one = list(self.pending)
 
     def unprinted(self) -> list:
@@ -240,11 +247,14 @@ class _TodayPrintWait:
         elif self.stopped:
             reason, detail = self.stopped
         else:
-            reason, detail = NO_PRINT_BY_WINDOW_END, (
-                f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {self.asks} "
-                f"ask(s) across this pass's slot ({self.budget_s:.0f}s, each ask "
-                f"admitted only with {self.read_s:.0f}s left); not sized -- the "
-                "desk's next pass re-decides the name"
+            reason, detail = (
+                NO_PRINT_BY_WINDOW_END,
+                (
+                    f"{NO_PRINT_BY_WINDOW_END}: no today trade print after {self.asks} "
+                    f"ask(s) across this pass's slot ({self.budget_s:.0f}s, each ask "
+                    f"admitted only with {self.read_s:.0f}s left); not sized -- the "
+                    "desk's next pass re-decides the name"
+                ),
             )
         return [(d, reason, detail) for d in self.pending.values()]
 
@@ -290,8 +300,12 @@ def wait_for_today_prints(pipeline, ctx, waiting: list) -> tuple[list, list]:
     logger.info(
         "today-print wait: %d ask(s) (one immediate, then at most %d on backoff "
         "inside the %.0fs slot); printed %s, read failed %s, still waiting %s",
-        wait.asks, wait.ask_ceiling, wait.budget_s, sorted(wait.printed) or "-",
-        sorted(d.symbol for d, _r, _x in wait.failed) or "-", sorted(wait.pending) or "-",
+        wait.asks,
+        wait.ask_ceiling,
+        wait.budget_s,
+        sorted(wait.printed) or "-",
+        sorted(d.symbol for d, _r, _x in wait.failed) or "-",
+        sorted(wait.pending) or "-",
     )
     skipped = wait.failed + wait.unprinted()
     return [d for d in waiting if d.symbol in wait.printed], skipped

@@ -49,17 +49,27 @@ from tests.pipeline_factory import build_pipeline
 # Shared fixtures
 # ==========================================================================
 
+
 def _protected_close_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
     """A __new__'d pipeline wired just enough to exercise
     _submit_protected_sell directly, independent of any caller. Mirrors
     tests/test_pipeline.py's _protected_sell_pipe (same seam), kept local
     so this file stands alone."""
-    pipe = build_pipeline(broker=MagicMock(), db=MagicMock(), _cancel_stops_with_write_ahead=MagicMock( return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99), ), _order_accepted=MagicMock(return_value=accepted))
+    pipe = build_pipeline(
+        broker=MagicMock(),
+        db=MagicMock(),
+        _cancel_stops_with_write_ahead=MagicMock(
+            return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99),
+        ),
+        _order_accepted=MagicMock(return_value=accepted),
+    )
     if submit_raises:
         pipe.broker.submit_order.side_effect = RuntimeError("broker down")
     else:
         pipe.broker.submit_order.return_value = {
-            "id": "ord-1", "status": "accepted", "symbol": "NVDA",
+            "id": "ord-1",
+            "status": "accepted",
+            "symbol": "NVDA",
         }
     return pipe
 
@@ -71,6 +81,7 @@ def _emergency_liquidate_pipe():
     mocking — same pattern tests/test_pipeline.py's emergency-liquidate
     tests use."""
     from src.storage.db import Database
+
     pipe = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipe.db.has_pending_action_for_symbol.return_value = False
     pipe.db.insert_trade = MagicMock(return_value=1)
@@ -78,7 +89,9 @@ def _emergency_liquidate_pipe():
     pipe.broker.snapshot_protective_stops.return_value = (True, [])
     pipe.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipe.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": None, "filled_avg_price": None,
+        "status": "filled",
+        "filled_qty": None,
+        "filled_avg_price": None,
     }
     pipe.broker.wait_for_order_terminal.return_value = "filled"
     pipe._order_accepted = MagicMock(return_value=True)
@@ -90,6 +103,7 @@ def _emergency_liquidate_pipe():
 # ==========================================================================
 # 1. _forced_close_side_and_qty — the direction gate itself
 # ==========================================================================
+
 
 def test_forced_close_long_returns_sell_and_full_qty():
     assert TradingPipeline._forced_close_side_and_qty(40.0) == ("sell", 40.0)
@@ -135,18 +149,26 @@ def test_full_sell_qty_and_reduce_sell_qty_unchanged_still_refuse_a_short():
 # 2. _submit_protected_sell — the direction-aware discipline primitive
 # ==========================================================================
 
+
 def test_submit_protected_close_long_full_unchanged():
     """Full long close: SELL for the held quantity. Hard literal."""
     pipe = _protected_close_pipe()
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=73.0, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_SELL",
+        symbol="NVDA",
+        qty=73.0,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_SELL",
     )
     assert out is not None
     order, prot = out
     pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=73.0, side="sell",
-        limit_price=99.0, reference_price=100.0,
+        symbol="NVDA",
+        qty=73.0,
+        side="sell",
+        limit_price=99.0,
+        reference_price=100.0,
     )
     assert prot["side"] == "sell"
     assert prot["position_qty_before_sell"] == 73.0
@@ -161,13 +183,20 @@ def test_submit_protected_close_long_partial_unchanged():
     for less than the full held quantity. Hard literal."""
     pipe = _protected_close_pipe()
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=25.0, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_SELL",
+        symbol="NVDA",
+        qty=25.0,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_SELL",
     )
     assert out is not None
     pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=25.0, side="sell",
-        limit_price=99.0, reference_price=100.0,
+        symbol="NVDA",
+        qty=25.0,
+        side="sell",
+        limit_price=99.0,
+        reference_price=100.0,
     )
 
 
@@ -176,33 +205,51 @@ def test_submit_protected_close_short_full_sends_buy_for_absolute_qty():
     literal — this is the headline behaviour this PR adds."""
     pipe = _protected_close_pipe()
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=73.0, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=73.0,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     assert out is not None
     order, prot = out
     pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=73.0, side="buy",
-        limit_price=101.0, reference_price=100.0,
+        symbol="NVDA",
+        qty=73.0,
+        side="buy",
+        limit_price=101.0,
+        reference_price=100.0,
     )
     assert prot["side"] == "buy"
     # Short path DOES pass side="buy" through to the stop-cancel seam —
     # cancelling the BUY stop protecting the short, not a SELL stop.
     pipe._cancel_stops_with_write_ahead.assert_called_once_with(
-        "NVDA", 73.0, side="buy",
+        "NVDA",
+        73.0,
+        side="buy",
     )
 
 
 def test_submit_protected_close_short_partial_sends_buy_for_partial_qty():
     pipe = _protected_close_pipe()
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=25.0, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=25.0,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     assert out is not None
     pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=25.0, side="buy",
-        limit_price=101.0, reference_price=100.0,
+        symbol="NVDA",
+        qty=25.0,
+        side="buy",
+        limit_price=101.0,
+        reference_price=100.0,
     )
 
 
@@ -212,13 +259,22 @@ def test_submit_protected_close_short_is_the_exact_mirror_of_long(qty):
     flips. Proves the short branch isn't a structurally different path."""
     long_pipe = _protected_close_pipe()
     long_pipe._submit_protected_sell(
-        symbol="NVDA", qty=qty, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_SELL",
+        symbol="NVDA",
+        qty=qty,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_SELL",
     )
     short_pipe = _protected_close_pipe()
     short_pipe._submit_protected_sell(
-        symbol="NVDA", qty=qty, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=qty,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     long_call = long_pipe.broker.submit_order.call_args.kwargs
     short_call = short_pipe.broker.submit_order.call_args.kwargs
@@ -226,7 +282,9 @@ def test_submit_protected_close_short_is_the_exact_mirror_of_long(qty):
     assert long_call["qty"] == short_call["qty"] == qty
     long_pipe._cancel_stops_with_write_ahead.assert_called_once_with("NVDA", 73.0)
     short_pipe._cancel_stops_with_write_ahead.assert_called_once_with(
-        "NVDA", 73.0, side="buy",
+        "NVDA",
+        73.0,
+        side="buy",
     )
 
 
@@ -235,12 +293,20 @@ def test_submit_protected_close_short_restores_buy_stops_on_reject():
     stop it cancelled, exactly as a rejected SELL restores a SELL stop."""
     pipe = _protected_close_pipe(accepted=False)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=73.0, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=73.0,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     assert out is None
     pipe.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", [{"id": "s1", "qty": 10}], check_idempotency=False, side="buy",
+        "NVDA",
+        [{"id": "s1", "qty": 10}],
+        check_idempotency=False,
+        side="buy",
     )
 
 
@@ -250,12 +316,20 @@ def test_submit_protected_close_short_restores_buy_stops_on_submit_throw():
     the long path already has."""
     pipe = _protected_close_pipe(submit_raises=True)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=73.0, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=73.0,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     assert out is None
     pipe.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", [{"id": "s1", "qty": 10}], check_idempotency=False, side="buy",
+        "NVDA",
+        [{"id": "s1", "qty": 10}],
+        check_idempotency=False,
+        side="buy",
     )
 
 
@@ -265,8 +339,13 @@ def test_submit_protected_close_short_skips_and_never_submits_when_stop_clear_fa
     must never reach the broker (would reject on held_for_orders)."""
     pipe = _protected_close_pipe(clear_ok=False)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=73.0, limit_price=101.0, reference_price=100.0,
-        position_qty_before_sell=73.0, label="EMERGENCY_COVER", side="buy",
+        symbol="NVDA",
+        qty=73.0,
+        limit_price=101.0,
+        reference_price=100.0,
+        position_qty_before_sell=73.0,
+        label="EMERGENCY_COVER",
+        side="buy",
     )
     assert out is None
     pipe.broker.submit_order.assert_not_called()
@@ -275,6 +354,7 @@ def test_submit_protected_close_short_skips_and_never_submits_when_stop_clear_fa
 # ==========================================================================
 # 3. Indeterminate direction refuses to act (fail closed)
 # ==========================================================================
+
 
 def test_indeterminate_qty_never_reaches_broker_via_forced_close_gate():
     """The gate that production call sites use before ever building an
@@ -302,8 +382,14 @@ def test_indeterminate_qty_never_reaches_broker_via_forced_close_gate():
 # follows is the new invariant at the removed call sites.
 # ==========================================================================
 
+
 def _halted_pipe():
-    pipe = build_pipeline(broker=MagicMock(), db=MagicMock(), _reconcile_fills=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]))
+    pipe = build_pipeline(
+        broker=MagicMock(),
+        db=MagicMock(),
+        _reconcile_fills=MagicMock(),
+        _reconcile_stop_coverage=MagicMock(return_value=[]),
+    )
     pipe.broker.snapshot_protective_stops.return_value = (True, [{"qty": 1e9}])
     pipe._submit_protected_sell = MagicMock()
     return pipe
@@ -318,6 +404,7 @@ def _halted_pipe():
 # 6. The hard boundary, re-proved: shorts still cannot be OPENED or covered
 #    through the normal decision path
 # ==========================================================================
+
 
 def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
     """NEW boundary (Stage 3). This file's own copy of the boundary test —
@@ -338,11 +425,21 @@ def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
 
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
-        targets=[TargetPosition(symbol="TSLA", target_weight_pct=0.0,
-                                conviction="high", thesis="close it")],
-        positions=[Position(symbol="TSLA", qty=-40, avg_entry=250, current_price=250,
-                            market_value=-10_000, unrealized_pnl=0, sector="Consumer Cyclical")],
-        analyses=[], total_value=100_000, price_map={"TSLA": 250.0},
+        targets=[TargetPosition(symbol="TSLA", target_weight_pct=0.0, conviction="high", thesis="close it")],
+        positions=[
+            Position(
+                symbol="TSLA",
+                qty=-40,
+                avg_entry=250,
+                current_price=250,
+                market_value=-10_000,
+                unrealized_pnl=0,
+                sector="Consumer Cyclical",
+            )
+        ],
+        analyses=[],
+        total_value=100_000,
+        price_map={"TSLA": 250.0},
     )
     assert len(decisions) == 1
     assert decisions[0].action == "COVER"
@@ -360,9 +457,13 @@ def test_execution_stage_sell_decision_loop_still_refuses_a_short(tmp_path):
 
     def _rc():
         return ReasoningChain(
-            macro_filter="x", news_check="x", earnings_check="x",
-            signal_conflicts="x", sizing_logic="x",
-            portfolio_balance="x", cash_target="x",
+            macro_filter="x",
+            news_check="x",
+            earnings_check="x",
+            signal_conflicts="x",
+            sizing_logic="x",
+            portfolio_balance="x",
+            cash_target="x",
         )
 
     db = Database(str(tmp_path / "t.db"))
@@ -373,17 +474,30 @@ def test_execution_stage_sell_decision_loop_still_refuses_a_short(tmp_path):
     ctx = RunContext.start("test")
     ctx.decision_id = None
     ctx.positions = [
-        Position(symbol="TSLA", qty=-40, avg_entry=250, current_price=250,
-                 market_value=-10_000, unrealized_pnl=0, sector="Consumer Cyclical"),
+        Position(
+            symbol="TSLA",
+            qty=-40,
+            avg_entry=250,
+            current_price=250,
+            market_value=-10_000,
+            unrealized_pnl=0,
+            sector="Consumer Cyclical",
+        ),
     ]
     ctx.total_value = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_rc(),
         decisions=[
-            TradeDecision(symbol="TSLA", action="SELL", allocation_pct=100,
-                          entry_price=250.0, stop_loss=260.0, take_profit=200.0,
-                          reasoning="attempt to cover a short via the decision path"),
+            TradeDecision(
+                symbol="TSLA",
+                action="SELL",
+                allocation_pct=100,
+                entry_price=250.0,
+                stop_loss=260.0,
+                take_profit=200.0,
+                reasoning="attempt to cover a short via the decision path",
+            ),
         ],
         portfolio_view="test",
     )
@@ -404,12 +518,13 @@ def test_midday_review_loop_guard_source_still_reads_qty_le_0():
     cheaply end to end here."""
     import inspect
     from src.pipeline_exits import ExitEngineMixin
+
     # The executor moved to `ExitEngineMixin` in step 4 of
     # docs/PIPELINE_SPLIT_PLAN.md; `getsource(TradingPipeline)` returns only
     # the class body left in `src/pipeline.py`, so the scan reads the mixin
     # that now owns `_midday_execute_llm_actions`.
     source = inspect.getsource(ExitEngineMixin)
-    assert 'if not existing or existing[0].qty <= 0:' in source, (
+    assert "if not existing or existing[0].qty <= 0:" in source, (
         "the midday review loop's short-refusing guard must still be present verbatim"
     )
 
@@ -417,6 +532,7 @@ def test_midday_review_loop_guard_source_still_reads_qty_le_0():
 # ==========================================================================
 # 7. Reprotect "most protective stop" selection mirrors correctly
 # ==========================================================================
+
 
 def test_reprotect_residual_picks_highest_stop_for_a_long_unchanged():
     pipe = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q))
@@ -426,7 +542,10 @@ def test_reprotect_residual_picks_highest_stop_for_a_long_unchanged():
     ]
     pipe._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
     pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=248.5, limit_price=None,
+        symbol="AMZN",
+        qty=41.0,
+        stop_price=248.5,
+        limit_price=None,
         side="sell",
     )
 
@@ -442,10 +561,16 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
         {"id": "lo", "qty": 51, "stop_price": 252.5},
     ]
     pipe._reprotect_residual_after_partial_sell(
-        "AMZN", 41.0, cancelled, side="buy",
+        "AMZN",
+        41.0,
+        cancelled,
+        side="buy",
     )
     pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=252.5, limit_price=None,
+        symbol="AMZN",
+        qty=41.0,
+        stop_price=252.5,
+        limit_price=None,
         side="buy",
     )
 
@@ -453,6 +578,7 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
 # ==========================================================================
 # 8. Position reviewer surfaces EMERGENCY_COVER as a system action
 # ==========================================================================
+
 
 def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
     """The reviewer's "Non-LLM System Actions Earlier Today" block already
@@ -471,12 +597,18 @@ def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
     msg = agent.build_user_message(
         positions=[],
         macro_summary={"vix": {"current": 18}},
-        cash_balance=10_000.0, total_value=50_000.0,
+        cash_balance=10_000.0,
+        total_value=50_000.0,
         session_type="midday",
         morning_trades=[
-            {"symbol": "TSLA", "action": "EMERGENCY_COVER", "qty": 20,
-             "fill_status": "filled", "fill_qty": 20,
-             "reasoning": "daily loss -5.0% breached circuit breaker"},
+            {
+                "symbol": "TSLA",
+                "action": "EMERGENCY_COVER",
+                "qty": 20,
+                "fill_status": "filled",
+                "fill_qty": 20,
+                "reasoning": "daily loss -5.0% breached circuit breaker",
+            },
         ],
     )
     assert "Non-LLM System Actions Earlier Today" in msg
@@ -494,6 +626,7 @@ def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
 # tests pin the derivation itself, both call sites that consume it, and
 # the deliberate degrade-to-'sell' fallback for the one case broker truth
 # can't settle.
+
 
 def _bare_pipe():
     """A pipeline built through the real constructor — _derive_close_side_for_drain
@@ -548,8 +681,10 @@ def test_drain_sentinel_restores_buy_side_stops_for_a_short(tmp_path):
 
     specs = [{"id": "s1", "qty": 73, "stop_price": 262.0, "limit_price": 264.0}]
     db.insert_pending_protection_restore(
-        symbol="TSLA", sell_order_id=_WAL_SELL_SENTINEL,
-        position_qty_before_sell=73.0, specs_json=json.dumps(specs),
+        symbol="TSLA",
+        sell_order_id=_WAL_SELL_SENTINEL,
+        position_qty_before_sell=73.0,
+        specs_json=json.dumps(specs),
     )
     # Broker reports a live short — this is what must drive the side,
     # not anything persisted on the row.
@@ -575,13 +710,17 @@ def test_drain_finalize_restores_buy_side_stops_for_a_short(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 73, "stop_price": 262.0, "limit_price": 264.0}]
     db.insert_pending_protection_restore(
-        symbol="TSLA", sell_order_id="alpaca-resolved",
-        position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
+        symbol="TSLA",
+        sell_order_id="alpaca-resolved",
+        position_qty_before_sell=73.0,
+        specs_json=json.dumps(cancelled),
     )
 
     pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipe.broker._restore_stop_orders.return_value = (1, [])
     # Broker reports a live short.
@@ -607,13 +746,17 @@ def test_drain_finalize_long_row_has_no_side_kwarg_unchanged(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 73, "stop_price": 95.0, "limit_price": 92.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
-        position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
+        position_qty_before_sell=73.0,
+        specs_json=json.dumps(cancelled),
     )
 
     pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipe.broker._restore_stop_orders.return_value = (1, [])
     # Broker reports a live long.
@@ -653,13 +796,17 @@ def test_drain_finalize_degrades_to_sell_default_when_broker_unreadable(tmp_path
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
-        position_qty_before_sell=100.0, specs_json=json.dumps(cancelled),
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
+        position_qty_before_sell=100.0,
+        specs_json=json.dumps(cancelled),
     )
 
     pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipe.broker._restore_stop_orders.return_value = (1, [])
     # Broker position genuinely unreadable — not flat, not signed, unknown.
@@ -668,8 +815,7 @@ def test_drain_finalize_degrades_to_sell_default_when_broker_unreadable(tmp_path
     drained = pipe._drain_pending_protection_restores()
 
     assert drained == 1, (
-        "an unreadable broker must not stall the row — it degrades to "
-        "the pre-existing 'sell' default instead"
+        "an unreadable broker must not stall the row — it degrades to the pre-existing 'sell' default instead"
     )
     assert "side" not in pipe.broker._restore_stop_orders.call_args.kwargs, (
         "degraded case must fall back to the plain 'sell' default, never guess 'buy'"

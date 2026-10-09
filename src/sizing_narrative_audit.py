@@ -78,22 +78,37 @@ def audit_sizing_narrative(pipeline: Any, ctx: Any, decision: Any) -> None:
     except Exception as exc:  # pragma: no cover - exercised by test double
         logger.exception("sizing_narrative_check raised")
         _record_pipeline_event(
-            pipeline, ctx, None, SIZING_NARRATIVE_STAGE, "error",
+            pipeline,
+            ctx,
+            None,
+            SIZING_NARRATIVE_STAGE,
+            "error",
             type(exc).__name__,
-            checkable_targets=checkable, prose_chars=len(prose or ""),
+            checkable_targets=checkable,
+            prose_chars=len(prose or ""),
         )
         return
 
     for mismatch in mismatches:
         _record_pipeline_event(
-            pipeline, ctx, mismatch.symbol,
-            SIZING_NARRATIVE_STAGE, "mismatch", mismatch.detail,
-            prose_pct=mismatch.prose_pct, field_pct=mismatch.field_pct,
+            pipeline,
+            ctx,
+            mismatch.symbol,
+            SIZING_NARRATIVE_STAGE,
+            "mismatch",
+            mismatch.detail,
+            prose_pct=mismatch.prose_pct,
+            field_pct=mismatch.field_pct,
         )
 
     _record_pipeline_event(
-        pipeline, ctx, None, SIZING_NARRATIVE_STAGE, "checked",
+        pipeline,
+        ctx,
+        None,
+        SIZING_NARRATIVE_STAGE,
+        "checked",
         f"{len(mismatches)} mismatch(es) over {checkable} checkable target(s)",
-        checkable_targets=checkable, prose_chars=len(prose or ""),
+        checkable_targets=checkable,
+        prose_chars=len(prose or ""),
         mismatches=len(mismatches),
     )

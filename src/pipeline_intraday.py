@@ -45,7 +45,6 @@ from src.trading_calendar import session_date_key  # noqa: F401 -- re-exported
 logger = logging.getLogger("src.pipeline")
 
 
-
 class _HostState:
     """Live get/set view of the host attributes a part reads AND assigns (never a copy)."""
 
@@ -69,7 +68,8 @@ class IntradayScanBody:
     """The paid intraday scan body; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         config=None,
         db=None,
         market=None,
@@ -215,7 +215,8 @@ class IntradayScanBody:
                 ctx.positions = positions
                 ctx.cash = account["cash"]
                 ctx.deployable_cash = self._compute_deployable_cash(
-                    ctx.cash, positions,
+                    ctx.cash,
+                    positions,
                 )
                 ctx.total_value = account.get("portfolio_value", ctx.total_value)
                 self._sync_positions_from_broker(positions)
@@ -235,9 +236,11 @@ class IntradayScanBody:
         # everything, a check of the few things that moved most.
         symbols = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         logger.info(
-            "Intraday scan: %d symbol(s) moved >= %.1f%% since last close "
-            "and are outside the %.1fh cooldown: %s",
-            len(symbols), cfg.move_threshold_pct, cfg.cooldown_hours, symbols,
+            "Intraday scan: %d symbol(s) moved >= %.1f%% since last close and are outside the %.1fh cooldown: %s",
+            len(symbols),
+            cfg.move_threshold_pct,
+            cfg.cooldown_hours,
+            symbols,
         )
         move_by_symbol = dict(candidates)
         ledgered_symbols: list[str] = []
@@ -246,7 +249,9 @@ class IntradayScanBody:
             # failure or no target—now consumes the configured cooldown.
             try:
                 self.db.record_intraday_evaluation(
-                    symbol=symbol, run_id=ctx.run_id, status="selected",
+                    symbol=symbol,
+                    run_id=ctx.run_id,
+                    status="selected",
                     detail=f"move_pct={move_by_symbol[symbol]:.4f}",
                 )
             except Exception as exc:
@@ -254,7 +259,11 @@ class IntradayScanBody:
                 continue
             ledgered_symbols.append(symbol)
             _record_pipeline_event(
-                self, ctx, symbol, "opportunity", "discovered",
+                self,
+                ctx,
+                symbol,
+                "opportunity",
+                "discovered",
                 "intraday_move_threshold",
                 move_pct=move_by_symbol[symbol],
                 threshold_pct=cfg.move_threshold_pct,
@@ -267,15 +276,12 @@ class IntradayScanBody:
         # stays mover-capped; coverage for names the PM can increase does
         # not compete with that cap and does not consume mover cooldown.
         # Dropping an ungrounded hold is not the product for missing Tech.
-        held_for_tech = [
-            s for s in self._intraday_held_tech_symbols(ctx)
-            if s not in {x.upper() for x in symbols}
-        ]
+        held_for_tech = [s for s in self._intraday_held_tech_symbols(ctx) if s not in {x.upper() for x in symbols}]
         if held_for_tech:
             logger.info(
-                "Intraday scan: producing Technical for %d held name(s) "
-                "the mover list did not cover: %s",
-                len(held_for_tech), held_for_tech,
+                "Intraday scan: producing Technical for %d held name(s) the mover list did not cover: %s",
+                len(held_for_tech),
+                held_for_tech,
             )
         tech_symbols = list(symbols) + held_for_tech
         # Item 177: the mover set, so the ATR context below is stamped only
@@ -292,20 +298,35 @@ class IntradayScanBody:
             except Exception as e:  # noqa: BLE001
                 _site(self, "bar_fetch", e, context={"symbol": symbol}, log=logger)
                 _record_pipeline_event(
-                    self, ctx, symbol, "specialist", "failed",
-                    "market_data_exception", detail=str(e),
+                    self,
+                    ctx,
+                    symbol,
+                    "specialist",
+                    "failed",
+                    "market_data_exception",
+                    detail=str(e),
                     specialist="tech_analyst",
                 )
                 continue
             if not bars:
                 _record_pipeline_event(
-                    self, ctx, symbol, "specialist", "failed",
-                    "market_data_unavailable", specialist="tech_analyst",
+                    self,
+                    ctx,
+                    symbol,
+                    "specialist",
+                    "failed",
+                    "market_data_unavailable",
+                    specialist="tech_analyst",
                 )
                 continue
             indicators = compute_indicators(symbol, bars)
             self._record_intraday_trigger_atr_context(
-                ctx, symbol, symbols_set, move_by_symbol, snapshots, indicators,
+                ctx,
+                symbol,
+                symbols_set,
+                move_by_symbol,
+                snapshots,
+                indicators,
             )
             symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
             symbols_bars[symbol] = bars
@@ -340,14 +361,17 @@ class IntradayScanBody:
         # whose last trade was a prior session's could be rendered to the
         # intraday seat as "CURRENT SESSION (TODAY)".
         intraday_context, _missing, _stale, _rescued = self._resolve_live_context(
-            snapshots, [s for s in tech_symbols if s in snapshots],
+            snapshots,
+            [s for s in tech_symbols if s in snapshots],
         )
         if _missing or _stale:
             logger.warning(
                 "Intraday scan: no today print for %d symbol(s) handed to Tech "
                 "(no price: %s; no today print: %s) — labelled as a lost price "
                 "seat, never replaced by a prior session's number",
-                len(_missing) + len(_stale), _missing[:10], _stale[:10],
+                len(_missing) + len(_stale),
+                _missing[:10],
+                _stale[:10],
             )
         self._require_paid_analysis("intraday_tech_analyst")
         try:
@@ -377,15 +401,17 @@ class IntradayScanBody:
         failed_count = len(analyses_map) - len(analyses)
         if failed_count:
             logger.warning(
-                "Intraday scan: %d/%d candidate symbol(s) failed to resolve "
-                "even after retry: %s", failed_count, len(analyses_map),
+                "Intraday scan: %d/%d candidate symbol(s) failed to resolve even after retry: %s",
+                failed_count,
+                len(analyses_map),
                 sorted(sym for sym, a in analyses_map.items() if a is None),
             )
         if ta_result:
             try:
                 self.db.insert_agent_log(
                     **seat_acceptance_kwargs("failed" if not analyses else None),
-                    agent_name="tech_analyst", run_id=ctx.run_id,
+                    agent_name="tech_analyst",
+                    run_id=ctx.run_id,
                     input_summary=(
                         f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
                         f"symbols analyzed" + (f", {failed_count} failed" if failed_count else "")
@@ -404,19 +430,32 @@ class IntradayScanBody:
                 _site(self, "tech_agent_log", e)
             for analysis in analyses:
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="tech_analyst",
-                    kind="analysis", scope="symbol", symbol=analysis.symbol,
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="tech_analyst",
+                    kind="analysis",
+                    scope="symbol",
+                    symbol=analysis.symbol,
                     evidence_json=analysis.model_dump_json(),
                 )
                 _record_pipeline_event(
-                    self, ctx, analysis.symbol, "specialist", "evaluated",
+                    self,
+                    ctx,
+                    analysis.symbol,
+                    "specialist",
+                    "evaluated",
                     "technical_analysis_validated",
-                    specialist="tech_analyst", rating=analysis.rating,
+                    specialist="tech_analyst",
+                    rating=analysis.rating,
                 )
             for symbol, analysis in analyses_map.items():
                 if analysis is None:
                     _record_pipeline_event(
-                        self, ctx, symbol, "specialist", "failed",
+                        self,
+                        ctx,
+                        symbol,
+                        "specialist",
+                        "failed",
                         "technical_analysis_unresolved_after_retry",
                         specialist="tech_analyst",
                     )
@@ -471,9 +510,9 @@ class IntradayScanBody:
         else:
             tech_status = "failed"
             logger.error(
-                "Intraday scan: tech seat LOST — %d/%d submitted symbol(s) "
-                "resolved to a usable analysis this tick",
-                len(analyses), len(analyses_map),
+                "Intraday scan: tech seat LOST — %d/%d submitted symbol(s) resolved to a usable analysis this tick",
+                len(analyses),
+                len(analyses_map),
             )
         ctx.data_status = {
             "tech": tech_status,
@@ -497,7 +536,9 @@ class IntradayScanBody:
         # fabricated. Applied here now that empty/failed carry-forward is
         # distinguishable from the intentional earnings skip.
         gate_skip = self._evidence_gate_skip(
-            ctx, ctx.run_id, session=ctx.session,
+            ctx,
+            ctx.run_id,
+            session=ctx.session,
         )
         if gate_skip is not None:
             gate_skip["candidates"] = symbols
@@ -507,7 +548,8 @@ class IntradayScanBody:
         if not ctx.portfolio_decision:
             logger.error(
                 "Intraday scan: PM failed (%s): %s",
-                ctx.analysis_failure_status, ctx.analysis_failure_error,
+                ctx.analysis_failure_status,
+                ctx.analysis_failure_error,
             )
             return {
                 "status": "intraday_analysis_error",
@@ -519,7 +561,8 @@ class IntradayScanBody:
         if not ctx.portfolio_decision.decisions:
             logger.info("Intraday scan: PM produced no actionable decisions")
             return {
-                "status": "intraday_no_trades", "candidates": symbols,
+                "status": "intraday_no_trades",
+                "candidates": symbols,
                 "run_id": ctx.run_id,
             }
 
@@ -527,7 +570,9 @@ class IntradayScanBody:
         if early_exit is not None:
             early_exit["candidates"] = symbols
             stop_updates = getattr(
-                getattr(self, "broker", None), "stop_trade_updates", None,
+                getattr(self, "broker", None),
+                "stop_trade_updates",
+                None,
             )
             if callable(stop_updates):
                 try:
@@ -539,7 +584,9 @@ class IntradayScanBody:
         orders = self.execution_stage.run(ctx)
         return {
             "status": "intraday_executed" if orders else "intraday_no_trades",
-            "candidates": symbols, "orders": orders, "run_id": ctx.run_id,
+            "candidates": symbols,
+            "orders": orders,
+            "run_id": ctx.run_id,
         }
 
 
@@ -554,6 +601,7 @@ class IntradayMixin:
 
     def _intraday_live(self, name: str, build):
         """Collaborator read off the host at each call; own body when the host still holds our shim."""
+
         def collaborator(*args, **kwargs):
             swapped = self.__dict__.get(name)
             if swapped is not None:
@@ -563,6 +611,7 @@ class IntradayMixin:
                 part = build()
                 return getattr(type(part), name)(part, *args, **kwargs)
             return getattr(self, name)(*args, **kwargs)
+
         collaborator.__name__ = name
         return collaborator
 
@@ -714,8 +763,7 @@ class IntradayMixin:
         return self._intraday_gating()._await_paid_scan_slot(*args, **kwargs)
 
     @_shim
-    def _another_session_recently_active(self, run_id: str,
-                                         within_minutes: float = 15.0) -> bool:
+    def _another_session_recently_active(self, run_id: str, within_minutes: float = 15.0) -> bool:
         """Thin shim: body moved to src/intraday/gating.py; the default stays here for the ledger."""
         return self._intraday_gating()._another_session_recently_active(run_id, within_minutes=within_minutes)
 

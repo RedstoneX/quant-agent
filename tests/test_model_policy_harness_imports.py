@@ -50,9 +50,7 @@ def test_every_scenario_is_registered_and_gradeable():
     if registry is None:
         pytest.skip("scenarios module exposes no SCENARIOS registry")
     assert registry, "the benchmark has no scenarios to run"
-    for name, scenario in (
-        registry.items() if isinstance(registry, dict) else enumerate(registry)
-    ):
+    for name, scenario in registry.items() if isinstance(registry, dict) else enumerate(registry):
         invoke = getattr(scenario, "invoke", None)
         grade = getattr(scenario, "grade", None)
         assert callable(invoke), f"{name}: scenario has no callable invoke"
@@ -84,14 +82,20 @@ def test_pm_grading_sizes_risk_based_targets():
     gap = analysis.entry_price - analysis.stop_loss
 
     risk_sized = TargetPosition(
-        symbol=symbol, risk_allocation_pct=2.0, conviction="high", thesis="t",
+        symbol=symbol,
+        risk_allocation_pct=2.0,
+        conviction="high",
+        thesis="t",
     )
     weight = scenarios._effective_weight_pct(risk_sized, by_symbol)
     # risk_pct x entry / (entry - stop) — the constructor's own formula.
     assert weight == pytest.approx(2.0 * analysis.entry_price / gap)
 
     legacy = TargetPosition(
-        symbol=symbol, target_weight_pct=8.0, conviction="high", thesis="t",
+        symbol=symbol,
+        target_weight_pct=8.0,
+        conviction="high",
+        thesis="t",
     )
     assert scenarios._effective_weight_pct(legacy, by_symbol) == 8.0
 
@@ -105,7 +109,10 @@ def test_a_risk_based_close_is_recognised_as_a_close():
     by_symbol = {a.symbol: a for a in scenarios._PM_ANALYSES}
     symbol = next(iter(by_symbol))
     closing = TargetPosition(
-        symbol=symbol, risk_allocation_pct=0.0, conviction="low", thesis="exit",
+        symbol=symbol,
+        risk_allocation_pct=0.0,
+        conviction="low",
+        thesis="exit",
     )
     assert closing.is_close is True
     assert scenarios._effective_weight_pct(closing, by_symbol) == 0.0
@@ -119,7 +126,9 @@ def test_an_unsizable_risk_target_is_excluded_not_scored_as_zero():
 
     by_symbol = {a.symbol: a for a in scenarios._PM_ANALYSES}
     orphan = TargetPosition(
-        symbol="NOT_IN_FIXTURE", risk_allocation_pct=2.0,
-        conviction="high", thesis="t",
+        symbol="NOT_IN_FIXTURE",
+        risk_allocation_pct=2.0,
+        conviction="high",
+        thesis="t",
     )
     assert scenarios._effective_weight_pct(orphan, by_symbol) is None

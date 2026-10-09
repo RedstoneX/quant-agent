@@ -19,12 +19,14 @@ so the graph stays acyclic. Not in `src.number_sources.SCOPED_PATHS` on
 purpose: the block carries no ledgered number site, so `number_sources.py`
 is not grown for nothing. This module must not import `src.pipeline`.
 """
+
 from __future__ import annotations
 
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     Nomination,
     logger,
 )
+
 
 def _link_nominations_to_decision(pipeline, ctx) -> None:
     """Spec §9.5 — close the nomination→decision join. NEVER raises.
@@ -50,19 +52,25 @@ def _link_nominations_to_decision(pipeline, ctx) -> None:
         return
     try:
         linked = pipeline.db.link_nominations_to_decision(
-            run_id=ctx.run_id, decision_id=ctx.decision_id,
+            run_id=ctx.run_id,
+            decision_id=ctx.decision_id,
         )
         if linked:
             logger.info(
                 "Conviction ledger: joined %d nomination row(s) to decision %s",
-                linked, ctx.decision_id,
+                linked,
+                ctx.decision_id,
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("Conviction ledger: nomination join failed: %s", e)
 
 
 def _record_seat_stances(
-    pipeline, ctx, evidence_registry, symbols, *,
+    pipeline,
+    ctx,
+    evidence_registry,
+    symbols,
+    *,
     non_corroborating_sources=None,
 ) -> None:
     """Spec §9.5 — record who ARGUED AGAINST, not only who proposed. NEVER raises.
@@ -104,8 +112,7 @@ def _record_seat_stances(
         wanted = {str(s).strip().upper() for s in (symbols or []) if str(s).strip()}
         nominations = getattr(ctx, "nomination_convictions", None) or {}
         tech_conviction = {
-            str(getattr(a, "symbol", "")).strip().upper():
-                str(getattr(a, "conviction", "") or DEFAULT_CONVICTION)
+            str(getattr(a, "symbol", "")).strip().upper(): str(getattr(a, "conviction", "") or DEFAULT_CONVICTION)
             for a in (ctx.analyses or [])
         }
         non_corroborating = non_corroborating_sources or {}
@@ -126,27 +133,37 @@ def _record_seat_stances(
                         "trade (still counted against one it opposed)"
                     )
                     observation = f"{observation} [{note}]".strip()
-                stances.append(SeatStance(
-                    seat=seat, symbol=symbol, stance=stance,
-                    conviction=conviction or DEFAULT_CONVICTION,
-                    nominated=bool(declared),
-                    observation=observation,
-                ))
+                stances.append(
+                    SeatStance(
+                        seat=seat,
+                        symbol=symbol,
+                        stance=stance,
+                        conviction=conviction or DEFAULT_CONVICTION,
+                        nominated=bool(declared),
+                        observation=observation,
+                    )
+                )
         if not stances:
             return
         pipeline.db.record_seat_stances(
-            run_id=ctx.run_id, decision_id=ctx.decision_id, stances=stances,
+            run_id=ctx.run_id,
+            decision_id=ctx.decision_id,
+            stances=stances,
         )
         logger.info(
-            "Conviction ledger: recorded %d seat stance(s) across %d idea(s) "
-            "for decision %s", len(stances), len(wanted), ctx.decision_id,
+            "Conviction ledger: recorded %d seat stance(s) across %d idea(s) for decision %s",
+            len(stances),
+            len(wanted),
+            ctx.decision_id,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Conviction ledger: seat-stance recording failed: %s", e)
 
 
 def _collect_seat_nominations(
-    news_intel, macro_analysis, earnings_results,
+    news_intel,
+    macro_analysis,
+    earnings_results,
 ) -> dict[str, list[Nomination]]:
     """Gather each seat's raw (not yet capped/deduped) nominations this run.
 
@@ -166,7 +183,9 @@ def _collect_seat_nominations(
     seat.
     """
     seats: dict[str, list[Nomination]] = {
-        "news_analyst": [], "macro_analyst": [], "earnings_analyst": [],
+        "news_analyst": [],
+        "macro_analyst": [],
+        "earnings_analyst": [],
     }
     if news_intel is not None:
         seats["news_analyst"] = list(getattr(news_intel, "nominations", None) or [])
@@ -201,6 +220,7 @@ def _macro_analysis_as_dict(macro_analysis) -> dict | None:
         return None
     from src.models import MacroAnalysis
     from src.seat_heal import coerce_macro_shape, describe_macro_parse_failure
+
     if isinstance(macro_analysis, MacroAnalysis):
         return macro_analysis.model_dump()
     if isinstance(macro_analysis, dict):
@@ -216,7 +236,9 @@ def _macro_analysis_as_dict(macro_analysis) -> dict | None:
     except Exception as exc:
         reason = describe_macro_parse_failure(payload, exc)
         logger.error(
-            "macro_analysis failed to parse after coerce: %s", reason, exc_info=True,
+            "macro_analysis failed to parse after coerce: %s",
+            reason,
+            exc_info=True,
         )
         _stash_macro_parse_failure(reason)
         return None
@@ -225,6 +247,7 @@ def _macro_analysis_as_dict(macro_analysis) -> dict | None:
 def _stash_macro_parse_failure(reason: str) -> None:
     """One durable reason, de-duplicated, drained by DecisionStage."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     failures = getattr(PortfolioManagerAgent, "_macro_parse_failures", None)
     if not isinstance(failures, list):
         PortfolioManagerAgent._macro_parse_failures = []
@@ -244,14 +267,15 @@ def _risk_edit_snapshot(decisions) -> dict:
     for d in decisions or []:
         if d is None:
             continue
-        out[(d.symbol.strip().upper(), d.action)] = {
-            f: getattr(d, f, None) for f in _RISK_EDITABLE_FIELDS
-        }
+        out[(d.symbol.strip().upper(), d.action)] = {f: getattr(d, f, None) for f in _RISK_EDITABLE_FIELDS}
     return out
 
 
 def _risk_event_for(
-    decision, pre_rm_fields: dict, verdict, scale: float,
+    decision,
+    pre_rm_fields: dict,
+    verdict,
+    scale: float,
     field_aliases: dict | None = None,
 ):
     """The per-symbol `risk` event for a leg that SURVIVED the risk seat.
@@ -291,7 +315,7 @@ def _risk_event_for(
     aliases = field_aliases if isinstance(field_aliases, dict) else {}
     seat_reasons = []
     seat_edited_fields: set[str] = set()
-    for m in (getattr(verdict, "modifications", None) or []):
+    for m in getattr(verdict, "modifications", None) or []:
         field = aliases.get(m.field, m.field)
         if m.symbol.strip().upper() == key[0] and field in changes:
             seat_edited_fields.add(field)
@@ -376,10 +400,11 @@ def _record_scale_advisory(decisions, verdict) -> tuple[list, float, list]:
                 "recording %s's exposure concern; allocation_pct %.2f%% is "
                 "UNCHANGED and the trade is NOT dropped — the hard aggregate "
                 "limits remain the constraint",
-                scale, d.symbol, d.allocation_pct,
+                scale,
+                d.symbol,
+                d.allocation_pct,
             )
     return list(decisions), scale, advised
-
 
 
 def _probe_sale_census(provider: object) -> dict | None:

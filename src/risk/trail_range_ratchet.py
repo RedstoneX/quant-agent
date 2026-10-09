@@ -4,6 +4,7 @@ Moved verbatim out of `src/risk/trailing.py` (2026-10-04) so the arithmetic
 can be built and exercised alone. The doctrine, the numbers and the result
 types stay in `src/risk/trailing.py`; read its module docstring first.
 """
+
 from __future__ import annotations
 
 from src.risk.trailing import (
@@ -27,8 +28,14 @@ __all__ = ["_range_breakeven_ratchet", "_range_second_ratchet"]
 
 
 def _range_breakeven_ratchet(
-    *, symbol: str, ent: float, cur: float, stop: float,
-    initial_stop: float | None, is_short: bool, setup_type: str | None,
+    *,
+    symbol: str,
+    ent: float,
+    cur: float,
+    stop: float,
+    initial_stop: float | None,
+    is_short: bool,
+    setup_type: str | None,
 ) -> TrailEvaluation:
     """Type A's +1R breakeven ratchet — see the module docstring's 2026-09-04
     fix #3 note.
@@ -71,23 +78,34 @@ def _range_breakeven_ratchet(
         if not (stop < candidate < cur):
             return TrailEvaluation(None, TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE)
 
-    return TrailEvaluation(TrailProposal(
-        symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
-        source="breakeven_ratchet",
-        reason=(
-            f"deterministic trail (breakeven_ratchet): {setup_type or 'unknown'} "
-            f"setup reached +{RANGE_BREAKEVEN_R_MULTIPLE:.0f}R (price ${cur:.2f}, "
-            f"entry ${ent:.2f}, initial risk ${risk:.2f}); stop ${stop:.2f} -> "
-            f"${candidate:.2f} (breakeven) per standard R-multiple practice "
-            f"(Van Tharp / Elder) rather than staying fully unprotected until "
-            f"the whole target is hit"
+    return TrailEvaluation(
+        TrailProposal(
+            symbol=symbol.upper(),
+            new_stop=candidate,
+            previous_stop=stop,
+            source="breakeven_ratchet",
+            reason=(
+                f"deterministic trail (breakeven_ratchet): {setup_type or 'unknown'} "
+                f"setup reached +{RANGE_BREAKEVEN_R_MULTIPLE:.0f}R (price ${cur:.2f}, "
+                f"entry ${ent:.2f}, initial risk ${risk:.2f}); stop ${stop:.2f} -> "
+                f"${candidate:.2f} (breakeven) per standard R-multiple practice "
+                f"(Van Tharp / Elder) rather than staying fully unprotected until "
+                f"the whole target is hit"
+            ),
         ),
-    ), TRAIL_CODE_TRAILED)
+        TRAIL_CODE_TRAILED,
+    )
 
 
 def _range_second_ratchet(
-    *, symbol: str, ent: float, cur: float, stop: float,
-    initial_stop: float | None, is_short: bool, setup_type: str | None,
+    *,
+    symbol: str,
+    ent: float,
+    cur: float,
+    stop: float,
+    initial_stop: float | None,
+    is_short: bool,
+    setup_type: str | None,
 ) -> TrailEvaluation:
     """Type A's SECOND ratchet — item 142, owner-ratified 2026-09-25.
 
@@ -138,16 +156,21 @@ def _range_second_ratchet(
         if not (stop < candidate < cur):
             return TrailEvaluation(None, TRAIL_CODE_RANGE_SECOND_OFF_SIDE)
 
-    return TrailEvaluation(TrailProposal(
-        symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
-        source="second_ratchet",
-        reason=(
-            f"deterministic trail (second_ratchet): {setup_type or 'unknown'} "
-            f"setup reached +{RANGE_SECOND_RATCHET_TRIGGER_R:.0f}R (price "
-            f"${cur:.2f}, entry ${ent:.2f}, initial risk ${risk:.2f}); stop "
-            f"${stop:.2f} -> ${candidate:.2f}, locking in "
-            f"+{RANGE_SECOND_RATCHET_LOCK_R:.0f}R of gain (owner appetite "
-            f"ruling 2026-09-25, item 142) rather than giving it all back "
-            f"between breakeven and target on a reversal"
+    return TrailEvaluation(
+        TrailProposal(
+            symbol=symbol.upper(),
+            new_stop=candidate,
+            previous_stop=stop,
+            source="second_ratchet",
+            reason=(
+                f"deterministic trail (second_ratchet): {setup_type or 'unknown'} "
+                f"setup reached +{RANGE_SECOND_RATCHET_TRIGGER_R:.0f}R (price "
+                f"${cur:.2f}, entry ${ent:.2f}, initial risk ${risk:.2f}); stop "
+                f"${stop:.2f} -> ${candidate:.2f}, locking in "
+                f"+{RANGE_SECOND_RATCHET_LOCK_R:.0f}R of gain (owner appetite "
+                f"ruling 2026-09-25, item 142) rather than giving it all back "
+                f"between breakeven and target on a reversal"
+            ),
         ),
-    ), TRAIL_CODE_TRAILED)
+        TRAIL_CODE_TRAILED,
+    )

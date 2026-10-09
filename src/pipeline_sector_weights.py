@@ -6,6 +6,7 @@ Moved out of `src/pipeline_entry_orders.py` verbatim: it needs only
 pipeline. A recording fault is COUNTED as a specialist-evidence row, never
 only logged, and never aborts the decision stage.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 def _record_realised_sector_weights(
-    pipeline, ctx, portfolio_decision, total_value,
+    pipeline,
+    ctx,
+    portfolio_decision,
+    total_value,
 ) -> None:
     """One durable row per run with the REALISED `(sector, side)` weights of
     the orders the constructor actually built this session.
@@ -55,11 +59,17 @@ def _record_realised_sector_weights(
             db.insert_specialist_evidence(
                 run_id=str(getattr(ctx, "run_id", None) or ""),
                 agent_name="realised_sector_weights_failure",
-                kind="pipeline_event", scope="run", symbol=None,
+                kind="pipeline_event",
+                scope="run",
+                symbol=None,
                 evidence_json=json.dumps(
-                    {"event": "realised_sector_weights_recording_failed",
-                     "error_type": type(exc).__name__, "error": str(exc)},
-                    sort_keys=True, default=str,
+                    {
+                        "event": "realised_sector_weights_recording_failed",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                    sort_keys=True,
+                    default=str,
                 ),
             )
         except Exception as exc2:  # noqa: BLE001

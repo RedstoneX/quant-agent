@@ -4,6 +4,7 @@ The only collaborator is the sqlite3 connection, passed keyword-only
 (clause 5 of tests/boundary_harness.py). Also proves the per-call shim on
 Database still reaches a connection swapped in after construction.
 """
+
 from __future__ import annotations
 
 import inspect

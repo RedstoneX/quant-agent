@@ -62,13 +62,13 @@ from src.pipeline_exit_vocabulary import (  # noqa: F401  (re-exported)
 )
 
 
-
 class ExitEngineMixin:
     """Cluster K + L of `docs/PIPELINE_SPLIT_PLAN.md`: the sell-side engine."""
 
     def _symbols_already_trimmed_today(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
         from src.exits.exit_records import ExitRecords
+
         return ExitRecords(
             trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
             record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
@@ -80,6 +80,7 @@ class ExitEngineMixin:
     def _adjudicate_target_revision_flags(self, *args, **kwargs):
         """Thin shim: builds the standalone TargetRevision and calls it (body moved to src/exits/target_revision.py)."""
         from src.exits.target_revision import TargetRevision
+
         return TargetRevision(
             file_target_revision=_collab_of(self, "_file_target_revision"),
             broker=_collab_of(self, "broker"),
@@ -92,6 +93,7 @@ class ExitEngineMixin:
     def _file_target_revision(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
         from src.exits.exit_records import ExitRecords
+
         return ExitRecords(
             trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
             record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
@@ -103,6 +105,7 @@ class ExitEngineMixin:
     def _structural_protection_for_holding(self, *args, **kwargs):
         """Thin shim: builds the standalone StructuralProtection and calls it (body moved to src/exits/structural_protection.py)."""
         from src.exits.structural_protection import StructuralProtection
+
         return StructuralProtection(
             voice_structural_protection_break=_collab_of(self, "_voice_structural_protection_break"),
             config=_collab_of(self, "config"),
@@ -112,7 +115,11 @@ class ExitEngineMixin:
         )._structural_protection_for_holding(*args, **kwargs)
 
     def _voice_structural_protection_break(
-        self, *, symbol: str, run_id: str, check,
+        self,
+        *,
+        symbol: str,
+        run_id: str,
+        check,
     ) -> None:
         """Push a decisive structural-protection break's plain-language reason
         to BOTH owner surfaces (Telegram + board journal). Never raises.
@@ -149,17 +156,21 @@ class ExitEngineMixin:
         # sentence, on the specialist_evidence table the journal reads.
         try:
             self.db.insert_specialist_evidence(
-                run_id=run_id, agent_name="risk_manager",
-                kind="structural_break_trend_context", scope="symbol",
+                run_id=run_id,
+                agent_name="risk_manager",
+                kind="structural_break_trend_context",
+                scope="symbol",
                 symbol=symbol_u,
-                evidence_json=_json.dumps({
-                    "protected": bool(check.protected),
-                    "basis": check.basis,
-                    "trend_context": check.trend_context,
-                    "confirming_closes_needed": check.confirming_closes_needed,
-                    "confirming_closes_seen": check.confirming_closes_seen,
-                    "owner_reason": message,
-                }),
+                evidence_json=_json.dumps(
+                    {
+                        "protected": bool(check.protected),
+                        "basis": check.basis,
+                        "trend_context": check.trend_context,
+                        "confirming_closes_needed": check.confirming_closes_needed,
+                        "confirming_closes_seen": check.confirming_closes_seen,
+                        "owner_reason": message,
+                    }
+                ),
             )
             any_surface_ok = True
             record_exit_guard(self, "structural.board_reason_write")
@@ -203,6 +214,7 @@ class ExitEngineMixin:
     def _substantiate_exit_triggers(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitSubstantiation and calls it (body moved to src/exits/exit_substantiation.py)."""
         from src.exits.exit_substantiation import ExitSubstantiation
+
         return ExitSubstantiation(
             record_heal=_collab_of(self, "_record_heal"),
             require_paid_analysis=_collab_of(self, "_require_paid_analysis"),
@@ -214,6 +226,7 @@ class ExitEngineMixin:
     def _holding_discipline_check_for_exit(self, *args, **kwargs):
         """Thin shim: builds the standalone HoldingDiscipline and calls it (body moved to src/exits/holding_discipline.py)."""
         from src.exits.holding_discipline import HoldingDiscipline
+
         return HoldingDiscipline(
             build_active_state_changes=_collab_of(self, "_build_active_state_changes"),
             carry_forward_macro=_collab_of(self, "_carry_forward_macro"),
@@ -224,6 +237,7 @@ class ExitEngineMixin:
     def _trail_tightened_recently(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
         from src.exits.exit_records import ExitRecords
+
         return ExitRecords(
             trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
             record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
@@ -234,17 +248,19 @@ class ExitEngineMixin:
     def _apply_deterministic_trails(self, *args, **kwargs):
         """Thin shim: body moved verbatim to src/exits_parts/trails.py."""
         from src.exits_parts.trails import _apply_deterministic_trails
+
         return _apply_deterministic_trails(self, *args, **kwargs)
+
     def _exit_event_risk_block(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
         from src.exits.exit_records import ExitRecords
+
         return ExitRecords(
             trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
             record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
             db=_collab_of(self, "db"),
             market=_collab_of(self, "market"),
         )._exit_event_risk_block(*args, **kwargs)
-
 
     #: Per-run memo for the alignment verdict, keyed
     #: (run_id, symbol, is_short). The scan below and the confirmer inside
@@ -257,8 +273,14 @@ class ExitEngineMixin:
     _alignment_exit_memo: dict | None = None
 
     def _alignment_exit_cached(
-        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
-        entry_price: float | None, stop_loss: float | None, run_id: str,
+        self,
+        *,
+        symbol: str,
+        thesis_invalid_if: str | None,
+        is_short: bool,
+        entry_price: float | None,
+        stop_loss: float | None,
+        run_id: str,
     ):
         """`_alignment_exit_for_holding`, computed at most once per
         (run, symbol, side). Never raises: a memo failure just recomputes."""
@@ -270,8 +292,11 @@ class ExitEngineMixin:
         if key in memo:
             return memo[key]
         verdict = self._alignment_exit_for_holding(
-            symbol=symbol, thesis_invalid_if=thesis_invalid_if,
-            is_short=is_short, entry_price=entry_price, stop_loss=stop_loss,
+            symbol=symbol,
+            thesis_invalid_if=thesis_invalid_if,
+            is_short=is_short,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
             run_id=run_id,
         )
         memo[key] = verdict
@@ -281,6 +306,7 @@ class ExitEngineMixin:
     def _alignment_exit_scan(self, *args, **kwargs):
         """Thin shim: builds the standalone AlignmentExit and calls it (body moved to src/exits/alignment_exit.py)."""
         from src.exits.alignment_exit import AlignmentExit
+
         return AlignmentExit(
             alignment_exit_cached=_collab_of(self, "_alignment_exit_cached"),
             structural_protection_for_holding=_collab_of(self, "_structural_protection_for_holding"),
@@ -292,6 +318,7 @@ class ExitEngineMixin:
     def _record_alignment_reading(self, *args, **kwargs):
         """Thin shim: builds the standalone AlignmentExit and calls it (body moved to src/exits/alignment_exit.py)."""
         from src.exits.alignment_exit import AlignmentExit
+
         return AlignmentExit(
             alignment_exit_cached=_collab_of(self, "_alignment_exit_cached"),
             structural_protection_for_holding=_collab_of(self, "_structural_protection_for_holding"),
@@ -303,6 +330,7 @@ class ExitEngineMixin:
     def _position_opened_today(self, *args, **kwargs):
         """Thin shim: builds the standalone AlignmentExit and calls it (body moved to src/exits/alignment_exit.py)."""
         from src.exits.alignment_exit import AlignmentExit
+
         return AlignmentExit(
             alignment_exit_cached=_collab_of(self, "_alignment_exit_cached"),
             structural_protection_for_holding=_collab_of(self, "_structural_protection_for_holding"),
@@ -314,6 +342,7 @@ class ExitEngineMixin:
     def _alignment_exit_for_holding(self, *args, **kwargs):
         """Thin shim: builds the standalone AlignmentExit and calls it (body moved to src/exits/alignment_exit.py)."""
         from src.exits.alignment_exit import AlignmentExit
+
         return AlignmentExit(
             alignment_exit_cached=_collab_of(self, "_alignment_exit_cached"),
             structural_protection_for_holding=_collab_of(self, "_structural_protection_for_holding"),
@@ -323,23 +352,40 @@ class ExitEngineMixin:
         )._alignment_exit_for_holding(*args, **kwargs)
 
     def _record_exit_refusal(
-        self, *, symbol: str, run_id: str, action: str, code: str,
-        dropped: bool, detail: str, layer: str,
+        self,
+        *,
+        symbol: str,
+        run_id: str,
+        action: str,
+        code: str,
+        dropped: bool,
+        detail: str,
+        layer: str,
     ) -> None:
         """Append-only per-symbol refusal/uncertainty record. Never raises."""
         from src.risk.exit_refusal import record_exit_refusal
+
         record_exit_refusal(
-            self.db, symbol=symbol, run_id=run_id, action=action,
-            code=code, dropped=dropped, detail=detail, layer=layer,
+            self.db,
+            symbol=symbol,
+            run_id=run_id,
+            action=action,
+            code=code,
+            dropped=dropped,
+            detail=detail,
+            layer=layer,
         )
 
     def _risk_review_exits(self, *args, **kwargs):
         """Thin shim: body moved verbatim to src/exits_parts/risk_review.py."""
         from src.exits_parts.risk_review import _risk_review_exits
+
         return _risk_review_exits(self, *args, **kwargs)
+
     def _record_exit_review_approvals(self, *args, **kwargs):
         """Thin shim: builds the standalone ExitRecords and calls it (body moved to src/exits/exit_records.py)."""
         from src.exits.exit_records import ExitRecords
+
         return ExitRecords(
             trade_executed_or_pending=_collab_of(self, "_trade_executed_or_pending"),
             record_exit_refusal=_collab_of(self, "_record_exit_refusal"),
@@ -348,7 +394,10 @@ class ExitEngineMixin:
         )._record_exit_review_approvals(*args, **kwargs)
 
     def _midday_execute_llm_actions(
-        self, positions, review, run_id: str,
+        self,
+        positions,
+        review,
+        run_id: str,
         already_trimmed_today: set[str] | None = None,
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
@@ -392,8 +441,8 @@ class ExitEngineMixin:
         if len(best_by_symbol) < len(actions_list):
             dropped = len(actions_list) - len(best_by_symbol)
             logger.info(
-                "Midday: collapsed %d duplicate same-symbol actions "
-                "(priority SELL/COVER>REDUCE>TRAIL_STOP>HOLD)", dropped,
+                "Midday: collapsed %d duplicate same-symbol actions (priority SELL/COVER>REDUCE>TRAIL_STOP>HOLD)",
+                dropped,
             )
 
         # THE ALIGNMENT SCAN — every held position is read against the
@@ -402,8 +451,11 @@ class ExitEngineMixin:
         # session in which the chart must still be allowed to speak.
         _scan_displaced: dict[str, dict] = {}
         self._alignment_exit_scan(
-            positions, best_by_symbol, run_id=run_id,
-            position_facts=position_facts, priority=_priority,
+            positions,
+            best_by_symbol,
+            run_id=run_id,
+            position_facts=position_facts,
+            priority=_priority,
             displaced=_scan_displaced,
         )
 
@@ -411,9 +463,7 @@ class ExitEngineMixin:
             return orders
 
         already_trimmed = {
-            symbol.strip().upper()
-            for symbol in (already_trimmed_today or set())
-            if symbol and symbol.strip()
+            symbol.strip().upper() for symbol in (already_trimmed_today or set()) if symbol and symbol.strip()
         }
         # Board item 74 — what the desk has ALREADY acted on today, so a
         # trigger cannot authorise a second cut of the same name on the same
@@ -422,14 +472,16 @@ class ExitEngineMixin:
         # either. `None` means the read failed: that is uncertainty and the
         # layer fails OPEN (src/risk/spent_trigger.py).
         from src.risk.spent_trigger import (
-            SPENT_LAYER, acted_trigger_payload, keep_executed_acted_triggers,
-            parse_acted_triggers, spent_trigger_check,
+            SPENT_LAYER,
+            acted_trigger_payload,
+            keep_executed_acted_triggers,
+            parse_acted_triggers,
+            spent_trigger_check,
         )
+
         try:
             _raw_acted = self.db.get_acted_exit_triggers_today()
-            acted_today = (
-                None if _raw_acted is None else parse_acted_triggers(_raw_acted)
-            )
+            acted_today = None if _raw_acted is None else parse_acted_triggers(_raw_acted)
             # A trigger is spent by a cut that actually REDUCED the position,
             # never by one merely submitted. The executed set is built from
             # the same `_trade_executed_or_pending` contract the sibling
@@ -439,16 +491,20 @@ class ExitEngineMixin:
             _executed_order_ids: set[str] | None = {
                 str(r.get("broker_order_id"))
                 for r in (self.db.get_trades(today_only=True, limit=200) or [])
-                if r.get("broker_order_id")
-                and self._trade_executed_or_pending(r)
+                if r.get("broker_order_id") and self._trade_executed_or_pending(r)
             }
             acted_today = keep_executed_acted_triggers(
-                acted_today, executed_order_ids=_executed_order_ids,
+                acted_today,
+                executed_order_ids=_executed_order_ids,
             )
             record_exit_guard(self, "spent_trigger.acted_today_read")
         except Exception as _e:  # noqa: BLE001 — a failed read is uncertainty
             record_exit_guard(
-                self, "spent_trigger.acted_today_read", _e, logger, effect="layer fails OPEN for this pass",
+                self,
+                "spent_trigger.acted_today_read",
+                _e,
+                logger,
+                effect="layer fails OPEN for this pass",
             )
             acted_today = None
         # Entry context (thesis_invalid_if / entry price / entry stop) for the
@@ -459,14 +515,19 @@ class ExitEngineMixin:
         # The per-symbol phases lifted into src/exits_parts/ read the values
         # that are the same for every symbol of this pass from one object.
         _loop = MiddayLoop(
-            owner=self, positions=positions, run_id=run_id,
+            owner=self,
+            positions=positions,
+            run_id=run_id,
             metric_deltas=metric_deltas,
             risk_vetoed_symbols=risk_vetoed_symbols,
-            already_trimmed=already_trimmed, acted_today=acted_today,
+            already_trimmed=already_trimmed,
+            acted_today=acted_today,
         )
 
         for action_item in _actions_with_scan_fallback(
-            best_by_symbol.values(), _scan_displaced, orders,
+            best_by_symbol.values(),
+            _scan_displaced,
+            orders,
         ):
             act = action_item.get("action")
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
@@ -489,8 +550,10 @@ class ExitEngineMixin:
             # before acting on information sells the bottom instead of the top.
             if act in ("SELL", "REDUCE", "COVER"):
                 from src.risk.exit_guard import (
-                    adverse_move_is_noise, cites_external_information,
+                    adverse_move_is_noise,
+                    cites_external_information,
                 )
+
                 held_now = next((p for p in positions if p.symbol == symbol), None)
                 reason_for_band = action_item.get("reason", "")
                 # COVER's adverse direction is the mirror of SELL/REDUCE's —
@@ -529,7 +592,8 @@ class ExitEngineMixin:
                 # exit is GATED by the verdict.
                 alignment_verdict = None
                 alignment_claimed = _reason_claims_alignment_exit(
-                    reason_for_band, action_item.get("exit_trigger"),
+                    reason_for_band,
+                    action_item.get("exit_trigger"),
                 )
                 if held_now is not None:
                     facts = (position_facts or {}).get(symbol, {}) or {}
@@ -545,8 +609,7 @@ class ExitEngineMixin:
                         # callers key the SAME memo — resolving it
                         # differently would let one of them read a verdict
                         # built from a stop the other never passed.
-                        stop_loss=getattr(held_now, "stop_loss", None)
-                        or facts.get("stop_loss"),
+                        stop_loss=getattr(held_now, "stop_loss", None) or facts.get("stop_loss"),
                         run_id=run_id,
                     )
                     # EVERY verdict leaves a durable, machine-readable, per-symbol
@@ -570,18 +633,18 @@ class ExitEngineMixin:
                         f"| {verdict.reason}"
                     )[:1200]
                     self._record_exit_refusal(
-                        symbol=symbol, run_id=run_id, action=act,
+                        symbol=symbol,
+                        run_id=run_id,
+                        action=act,
                         code=verdict.code,
                         dropped=alignment_claimed and not verdict.exit_cleared,
                         detail=det,
-                        layer=(
-                            "alignment_exit" if alignment_claimed
-                            else "alignment_exit_observed"
-                        ),
+                        layer=("alignment_exit" if alignment_claimed else "alignment_exit_observed"),
                     )
                     try:
                         self.db.record_intraday_evaluation(
-                            symbol=symbol, run_id=run_id,
+                            symbol=symbol,
+                            run_id=run_id,
                             status=f"alignment_exit_{verdict.status.lower()}",
                             detail=det[:400],
                         )
@@ -596,8 +659,12 @@ class ExitEngineMixin:
                             effect="audit row not written",
                         )
                     logger.info(
-                        "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
-                        verdict.status, alignment_claimed, verdict.reason,
+                        "Alignment exit %s %s: %s (claimed=%s) — %s",
+                        act,
+                        symbol,
+                        verdict.status,
+                        alignment_claimed,
+                        verdict.reason,
                     )
                     if alignment_claimed:
                         alignment_verdict = verdict
@@ -607,10 +674,7 @@ class ExitEngineMixin:
                         # so the owner and the other seats read WHY, not
                         # just THAT.
                         if verdict.owner_reason:
-                            action_item["reason"] = (
-                                f"{action_item.get('reason', '')} | "
-                                f"{verdict.owner_reason}"
-                            )[:2000]
+                            action_item["reason"] = (f"{action_item.get('reason', '')} | {verdict.owner_reason}")[:2000]
 
                 # The ALIGNMENT EXIT above is the one non-news sale allowed
                 # past this band. The band STAYS for everything else: it is a
@@ -620,7 +684,11 @@ class ExitEngineMixin:
                 # alignment exit is simply not judged by its distance from
                 # what the desk PAID, because what the desk paid says nothing
                 # about whether a trend has ended.
-                if held_now is not None and alignment_verdict is None and not cites_external_information(reason_for_band):
+                if (
+                    held_now is not None
+                    and alignment_verdict is None
+                    and not cites_external_information(reason_for_band)
+                ):
                     from src.risk.exit_guard import noise_band_atr
                     from src.risk.noise_band_record import midday_payload as midday_band_payload
 
@@ -643,8 +711,11 @@ class ExitEngineMixin:
                     # threshold under examination can never locate it. Both
                     # outcomes now go to `src/risk/noise_band_record.py`.
                     _band_blocks = adverse_move_is_noise(
-                        held_now.avg_entry, held_now.current_price, atr,
-                        side=close_side, days_held=sessions_held_for_band,
+                        held_now.avg_entry,
+                        held_now.current_price,
+                        atr,
+                        side=close_side,
+                        days_held=sessions_held_for_band,
                     )
                     adverse_move = (
                         held_now.current_price - held_now.avg_entry
@@ -661,19 +732,21 @@ class ExitEngineMixin:
                         _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
                     except (TypeError, ValueError):
                         _sess = None
-                    sessions_measured = (
-                        _sess is not None and math.isfinite(_sess) and _sess >= 1.0
-                    )
+                    sessions_measured = _sess is not None and math.isfinite(_sess) and _sess >= 1.0
                     sessions_text = (
-                        f"{_sess:g} (measured)" if sessions_measured
+                        f"{_sess:g} (measured)"
+                        if sessions_measured
                         else f"{sessions_held_for_band!r} unusable — floored to 1 session"
                     )
                     _atr_f = float(atr or 0.0)
                     band_width = band_multiple * _atr_f
                     band_detail = midday_band_payload(
-                        close_side=close_side, blocked=_band_blocks,
-                        adverse=adverse_move, entry=held_now.avg_entry,
-                        price=held_now.current_price, atr=_atr_f,
+                        close_side=close_side,
+                        blocked=_band_blocks,
+                        adverse=adverse_move,
+                        entry=held_now.avg_entry,
+                        price=held_now.current_price,
+                        atr=_atr_f,
                         band_multiple=band_multiple,
                         sessions_held=_sess if sessions_measured else 1.0,
                         sessions_measured=sessions_measured,
@@ -681,7 +754,8 @@ class ExitEngineMixin:
                     )
                     try:
                         self.db.record_intraday_evaluation(
-                            symbol=symbol, run_id=run_id,
+                            symbol=symbol,
+                            run_id=run_id,
                             status=(
                                 "exit_blocked_inside_atr_noise_band"
                                 if _band_blocks
@@ -692,7 +766,12 @@ class ExitEngineMixin:
                         record_exit_guard(self, "noise_band.audit_write")
                     except Exception as e:  # noqa: BLE001
                         record_exit_guard(
-                            self, "noise_band.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                            self,
+                            "noise_band.audit_write",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="audit row not written",
                         )
                     if _band_blocks:
                         logger.warning(
@@ -703,15 +782,24 @@ class ExitEngineMixin:
                             "else, is what refused this exit. "
                             "External-information triggers bypass this. "
                             "Reason: %r",
-                            act, symbol, adverse_move,
-                            held_now.avg_entry, band_width, band_multiple,
-                            _atr_f, sessions_text,
+                            act,
+                            symbol,
+                            adverse_move,
+                            held_now.avg_entry,
+                            band_width,
+                            band_multiple,
+                            _atr_f,
+                            sessions_text,
                             reason_for_band[:160],
                         )
                         from src.risk.exit_refusal import CODE_NOISE_BAND
+
                         self._record_exit_refusal(
-                            symbol=symbol, run_id=run_id, action=act,
-                            code=CODE_NOISE_BAND, dropped=True,
+                            symbol=symbol,
+                            run_id=run_id,
+                            action=act,
+                            code=CODE_NOISE_BAND,
+                            dropped=True,
                             detail=band_detail,
                             layer="noise_band",
                         )
@@ -724,8 +812,10 @@ class ExitEngineMixin:
                     CODE_UNRECOGNIZED_TRIGGER,
                     classify_trigger_reason,
                 )
+
                 trigger_judgment = classify_trigger_reason(
-                    reason_text, cites=_reason_cites_hard_trigger,
+                    reason_text,
+                    cites=_reason_cites_hard_trigger,
                     trigger=action_item.get("exit_trigger"),
                     trigger_evidence=action_item.get("trigger_evidence"),
                 )
@@ -737,22 +827,33 @@ class ExitEngineMixin:
                         "shift, sector shock, stop hit); "
                         "price action and soft flags are not triggers. Reason "
                         "was: %r",
-                        act, symbol, str(reason_text)[:200],
+                        act,
+                        symbol,
+                        str(reason_text)[:200],
                     )
                     try:
                         self.db.record_intraday_evaluation(
-                            symbol=symbol, run_id=run_id,
+                            symbol=symbol,
+                            run_id=run_id,
                             status="exit_blocked_no_named_trigger",
                             detail=f"{act}: {str(reason_text)[:400]}",
                         )
                         record_exit_guard(self, "exit_gate.audit_write")
                     except Exception as e:  # noqa: BLE001
                         record_exit_guard(
-                            self, "exit_gate.audit_write", e, logger, symbol=symbol, effect="audit row not written",
+                            self,
+                            "exit_gate.audit_write",
+                            e,
+                            logger,
+                            symbol=symbol,
+                            effect="audit row not written",
                         )
                     self._record_exit_refusal(
-                        symbol=symbol, run_id=run_id, action=act,
-                        code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
+                        symbol=symbol,
+                        run_id=run_id,
+                        action=act,
+                        code=CODE_UNRECOGNIZED_TRIGGER,
+                        dropped=True,
                         detail=f"{act}: {str(reason_text)[:400]}",
                         layer="hard_trigger",
                     )
@@ -763,20 +864,27 @@ class ExitEngineMixin:
                         "on %s %s — failing OPEN on that gate (agent "
                         "application of the 2026-08-27 dead-model posture, "
                         "not a new owner ratification). Reason was: %r",
-                        act, symbol, str(reason_text)[:200],
+                        act,
+                        symbol,
+                        str(reason_text)[:200],
                     )
                     self._record_exit_refusal(
-                        symbol=symbol, run_id=run_id, action=act,
-                        code=CODE_HARD_TRIGGER_UNCERTAIN, dropped=False,
+                        symbol=symbol,
+                        run_id=run_id,
+                        action=act,
+                        code=CODE_HARD_TRIGGER_UNCERTAIN,
+                        dropped=False,
                         detail=f"{act}: {str(reason_text)[:400]}",
                         layer="hard_trigger",
                     )
-                reason_text = (
-                    reason_text if isinstance(reason_text, str) else str(reason_text or "")
-                )
+                reason_text = reason_text if isinstance(reason_text, str) else str(reason_text or "")
 
             _hd_verdict, hd_position_history = midday_holding_discipline(
-                _loop, action_item, act, symbol, reason_text,
+                _loop,
+                action_item,
+                act,
+                symbol,
+                reason_text,
                 hd_position_history,
             )
             if _hd_verdict is SKIP:
@@ -795,23 +903,22 @@ class ExitEngineMixin:
             if act == "COVER":
                 if not existing or existing[0].qty >= 0:
                     logger.warning(
-                        "Midday: skipping COVER %s — no matching short "
-                        "position", symbol,
+                        "Midday: skipping COVER %s — no matching short position",
+                        symbol,
                     )
                     continue
             elif not existing or existing[0].qty <= 0:
-                logger.warning("Midday: skipping %s %s — no matching position",
-                               act, symbol)
+                logger.warning("Midday: skipping %s %s — no matching position", act, symbol)
                 continue
             prot = None
             try:
                 if act == "TRAIL_STOP":
                     try:
                         from src.execution.scale_in import pending_protection_symbols
+
                         if symbol in pending_protection_symbols(self.db):
                             logger.info(
-                                "Midday: TRAIL_STOP %s skipped — a "
-                                "protection-restore WAL row is in flight",
+                                "Midday: TRAIL_STOP %s skipped — a protection-restore WAL row is in flight",
                                 symbol,
                             )
                             continue
@@ -838,7 +945,9 @@ class ExitEngineMixin:
                     if new_stop >= existing[0].current_price:
                         logger.warning(
                             "Midday: TRAIL_STOP %s skipped — new_stop $%.2f >= current $%.2f",
-                            symbol, new_stop, existing[0].current_price,
+                            symbol,
+                            new_stop,
+                            existing[0].current_price,
                         )
                         continue
                     # Minimum-ratchet floor: a raise must land on a
@@ -856,13 +965,15 @@ class ExitEngineMixin:
                     # floor cannot be computed, so this establishes protection
                     # rather than blocking it (the RC1 clamps still apply).
                     from src.execution.stop_read import read_stop
-                    _old_read = read_stop(self.broker, symbol, db=self.db,
-                                          context="midday min-ratchet floor")
+
+                    _old_read = read_stop(self.broker, symbol, db=self.db, context="midday min-ratchet floor")
                     old_stop = _old_read.price if _old_read.found else None
                     if old_stop is not None and old_stop > 0:
                         from src.risk.trailing import (
-                            min_ratchet_floor, venue_tick,
+                            min_ratchet_floor,
+                            venue_tick,
                         )
+
                         min_new_stop = min_ratchet_floor(old_stop)
                         if new_stop < min_new_stop - venue_tick(old_stop) / 2.0:
                             logger.warning(
@@ -870,7 +981,10 @@ class ExitEngineMixin:
                                 "$%.4f does not clear the live stop $%.4f by "
                                 "one venue tick (floor $%.4f); it is the same "
                                 "stop after quantization. Old stop kept.",
-                                symbol, new_stop, old_stop, min_new_stop,
+                                symbol,
+                                new_stop,
+                                old_stop,
+                                min_new_stop,
                             )
                             continue
                     # WIDTH IS ANSWERED BY ADJUSTING THE STOP, NEVER BY
@@ -939,6 +1053,7 @@ class ExitEngineMixin:
                         from src.portfolio_constructor import (
                             widest_reachable_stop_atr_multiple,
                         )
+
                         _cfg = self.portfolio_constructor.cfg
                         widest = widest_reachable_stop_atr_multiple(
                             _cfg.min_stop_atr_multiple,
@@ -950,6 +1065,7 @@ class ExitEngineMixin:
                             from src.risk.exit_refusal import (
                                 CODE_TRAIL_CLAMPED_TO_WIDEST,
                             )
+
                             detail = (
                                 f"TRAIL_STOP {symbol}: no live stop was "
                                 f"readable, and the proposed ${new_stop:,.2f} "
@@ -964,10 +1080,12 @@ class ExitEngineMixin:
                             )
                             logger.warning("Midday: %s", detail)
                             self._record_exit_refusal(
-                                symbol=symbol, run_id=run_id,
+                                symbol=symbol,
+                                run_id=run_id,
                                 action=act,
                                 code=CODE_TRAIL_CLAMPED_TO_WIDEST,
-                                dropped=False, detail=detail[:400],
+                                dropped=False,
+                                detail=detail[:400],
                                 layer="midday_trail_width",
                             )
                             new_stop = widest_stop
@@ -985,7 +1103,8 @@ class ExitEngineMixin:
                                 "already tightened within the last 4 calendar "
                                 "days (~2-4 trading sessions depending on "
                                 "weekday; ratchet cooldown; cite a hard "
-                                "trigger to bypass)", symbol,
+                                "trigger to bypass)",
+                                symbol,
                             )
                             continue
                         # (b) Noise-band clamp: a stop inside 1.25×ATR14 of
@@ -1003,24 +1122,34 @@ class ExitEngineMixin:
                                     "(floor $%.2f, ATR14 $%.2f); routine "
                                     "volatility would fill it. Old stop kept; "
                                     "cite a hard trigger to bypass.",
-                                    symbol, new_stop, noise_floor, atr,
+                                    symbol,
+                                    new_stop,
+                                    noise_floor,
+                                    atr,
                                 )
                                 continue
                     from src.execution.stop_records import (
-                        accepted_stop_order, replace_stop_and_record,
+                        accepted_stop_order,
+                        replace_stop_and_record,
                     )
+
                     order = replace_stop_and_record(
-                        self.broker, self.db, symbol, new_stop, run_id=run_id, caller="midday_trail_stop",
+                        self.broker,
+                        self.db,
+                        symbol,
+                        new_stop,
+                        run_id=run_id,
+                        caller="midday_trail_stop",
                     )
-                    if order and not (
-                        isinstance(order, dict) and not accepted_stop_order(order)
-                    ):
+                    if order and not (isinstance(order, dict) and not accepted_stop_order(order)):
                         if isinstance(order, dict):
                             order.setdefault("action", "TRAIL_STOP")  # audit F5
                         orders.append(order)
                         self.db.insert_trade(
-                            symbol=symbol, action="TRAIL_STOP",
-                            qty=existing[0].qty, price=new_stop,
+                            symbol=symbol,
+                            action="TRAIL_STOP",
+                            qty=existing[0].qty,
+                            price=new_stop,
                             reasoning=action_item.get("reason", "midday trailing stop"),
                             run_id=run_id,
                             stop_loss=new_stop,
@@ -1029,7 +1158,9 @@ class ExitEngineMixin:
                         )
                         logger.info(
                             "Midday action: TRAIL_STOP %s → $%.2f — %s",
-                            symbol, new_stop, action_item.get("reason"),
+                            symbol,
+                            new_stop,
+                            action_item.get("reason"),
                         )
                     continue
 
@@ -1062,9 +1193,12 @@ class ExitEngineMixin:
                     close_side = "sell"
                 # audit F1 review #1: snapshot -> persist WAL -> cancel.
                 sale = self._submit_protected_sell(
-                    symbol=symbol, qty=qty, limit_price=order_limit,
+                    symbol=symbol,
+                    qty=qty,
+                    limit_price=order_limit,
                     reference_price=existing[0].current_price,
-                    position_qty_before_sell=position_qty, label=act,
+                    position_qty_before_sell=position_qty,
+                    label=act,
                     side=close_side,
                 )
                 if sale is None:
@@ -1072,7 +1206,9 @@ class ExitEngineMixin:
                 order, prot = sale
                 orders.append(order)
                 self.db.insert_trade(
-                    symbol=symbol, action=act, qty=qty,
+                    symbol=symbol,
+                    action=act,
+                    qty=qty,
                     price=existing[0].current_price,
                     reasoning=action_item.get("reason", "midday review"),
                     run_id=run_id,
@@ -1089,15 +1225,18 @@ class ExitEngineMixin:
                 # sees it without a second DB read, and inside one pass the
                 # order is as live as it will get.
                 _acted = acted_trigger_payload(
-                    symbol=symbol, trigger=action_item.get("exit_trigger"),
+                    symbol=symbol,
+                    trigger=action_item.get("exit_trigger"),
                     evidence=action_item.get("trigger_evidence"),
-                    action=act, run_id=run_id,
+                    action=act,
+                    run_id=run_id,
                     broker_order_id=str(order.get("id") or ""),
                 )
                 if _acted is not None:
                     try:
                         self.db.record_acted_exit_trigger(
-                            run_id=run_id, payload_json=_acted.to_json(),
+                            run_id=run_id,
+                            payload_json=_acted.to_json(),
                             symbol=_acted.symbol,
                         )
                         record_exit_guard(self, "spent_trigger.record_acted")
@@ -1114,13 +1253,20 @@ class ExitEngineMixin:
                         acted_today.append(_acted)
                 logger.info(
                     "Midday action: %s %s %s — %s",
-                    act, self._format_qty(qty),
-                    symbol, action_item.get("reason"),
+                    act,
+                    self._format_qty(qty),
+                    symbol,
+                    action_item.get("reason"),
                 )
                 record_exit_guard(self, "midday.order")
             except Exception as e:
                 record_exit_guard(
-                    self, "midday.order", e, logger, symbol=symbol, effect="order failed; exit not placed",
+                    self,
+                    "midday.order",
+                    e,
+                    logger,
+                    symbol=symbol,
+                    effect="order failed; exit not placed",
                 )
             # Rebuild THIS symbol's stop coverage on its actual fill before
             # the loop cancels the next symbol's stops — the same per-name
@@ -1132,6 +1278,7 @@ class ExitEngineMixin:
             # Which names exit, how much and at what limit are unchanged.
             if prot is not None:
                 self._finalize_pending_protections(
-                    [prot], context="Midday reviewer",
+                    [prot],
+                    context="Midday reviewer",
                 )
         return orders

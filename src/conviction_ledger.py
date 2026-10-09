@@ -221,7 +221,7 @@ class SeatCredit:
 
     seat: str
     symbol: str
-    side: str            # "supported" | "opposed"
+    side: str  # "supported" | "opposed"
     stance: str
     conviction: str
     r_multiple: float
@@ -355,30 +355,38 @@ def score_position(
         if stance.symbol and stance.symbol != str(symbol).strip().upper():
             continue
         supported = stance_is_aligned(
-            stance.seat, symbol, stance.stance, wants_bullish=wants_bullish,
+            stance.seat,
+            symbol,
+            stance.stance,
+            wants_bullish=wants_bullish,
         )
         opposed = stance_is_aligned(
-            stance.seat, symbol, stance.stance, wants_bullish=not wants_bullish,
+            stance.seat,
+            symbol,
+            stance.stance,
+            wants_bullish=not wants_bullish,
         )
         if supported == opposed:
             # Neither (neutral / unknown stance) or — impossible with the
             # current disjoint vocabularies — both. No side taken, no credit.
             continue
         signed_r = r_multiple if supported else -r_multiple
-        out.append(SeatCredit(
-            seat=stance.seat,
-            symbol=str(symbol).strip().upper(),
-            side="supported" if supported else "opposed",
-            stance=stance.stance,
-            conviction=normalize_conviction(stance.conviction),
-            r_multiple=round(float(r_multiple), 4),
-            credit=round(signed_r, 4),
-            resolved_at=resolved_at,
-            position_id=position_id,
-            decision_id=decision_id,
-            direction="short" if not wants_bullish else "long",
-            nominated=bool(stance.nominated),
-        ))
+        out.append(
+            SeatCredit(
+                seat=stance.seat,
+                symbol=str(symbol).strip().upper(),
+                side="supported" if supported else "opposed",
+                stance=stance.stance,
+                conviction=normalize_conviction(stance.conviction),
+                r_multiple=round(float(r_multiple), 4),
+                credit=round(signed_r, 4),
+                resolved_at=resolved_at,
+                position_id=position_id,
+                decision_id=decision_id,
+                direction="short" if not wants_bullish else "long",
+                nominated=bool(stance.nominated),
+            )
+        )
     return sorted(out, key=lambda c: (c.seat, c.symbol))
 
 
@@ -415,7 +423,8 @@ def aggregate_seat_records(credits: Iterable[SeatCredit]) -> dict[str, SeatRecor
         by_conviction: dict[str, list[SeatCredit]] = {}
         for credit in ordered:
             by_conviction.setdefault(
-                normalize_conviction(credit.conviction), [],
+                normalize_conviction(credit.conviction),
+                [],
             ).append(credit)
         running = 0.0
         peak = 0.0
@@ -522,6 +531,7 @@ def summarize_closed_position(rows: list[dict]) -> ClosedPosition | None:
     own reporting.
     """
     from src.execution.stop_records import recorded_initial_stop
+
     opens: list[dict] = []
     exits: list[dict] = []
     direction: str | None = None
@@ -569,10 +579,12 @@ def summarize_closed_position(rows: list[dict]) -> ClosedPosition | None:
             break
 
     decision_id = next(
-        (row.get("decision_id") for row in opens if row.get("decision_id")), None,
+        (row.get("decision_id") for row in opens if row.get("decision_id")),
+        None,
     )
     position_id = next(
-        (row.get("position_id") for row in rows if row.get("position_id")), "",
+        (row.get("position_id") for row in rows if row.get("position_id")),
+        "",
     )
     return ClosedPosition(
         position_id=str(position_id or ""),

@@ -30,7 +30,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.models import (
-    PortfolioDecision, RiskVerdict, TargetPosition,
+    PortfolioDecision,
+    RiskVerdict,
+    TargetPosition,
     TechAnalysisResult,
 )
 from src.pipeline import TradingPipeline
@@ -38,7 +40,13 @@ from src.pipeline import TradingPipeline
 # Reuse test_pipeline.py's model stubs rather than re-deriving them — they
 # already track the real pydantic shapes, and a second copy would drift.
 from tests.test_pipeline import (  # noqa: E402
-    _macro_stub, _mock_agent_result, _news_stub, _pm_rc, _risk_rc, _today_snapshot, _trc,
+    _macro_stub,
+    _mock_agent_result,
+    _news_stub,
+    _pm_rc,
+    _risk_rc,
+    _today_snapshot,
+    _trc,
 )
 
 
@@ -60,9 +68,16 @@ def mock_config():
     cfg.api_keys.alpaca_key = "alp-key"
     cfg.api_keys.alpaca_secret = "alp-secret"
     cfg.alpaca.paper = True
-    for agent in ("tech_analyst", "news_analyst", "macro_analyst",
-                  "earnings_analyst", "portfolio_manager", "risk_manager",
-                  "position_reviewer", "evening_analyst"):
+    for agent in (
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "portfolio_manager",
+        "risk_manager",
+        "position_reviewer",
+        "evening_analyst",
+    ):
         setattr(cfg.llm, f"{agent}_model", "openai/gpt-5.5")
     cfg.llm.max_tokens = 4096
     cfg.risk.max_position_pct = 20
@@ -77,13 +92,19 @@ def mock_config():
 
 def _tech_analysis() -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set in production; the constructor derives the take-profit
         # from these and refuses without them (2026-09-01).
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -93,26 +114,43 @@ def _tech_analysis() -> TechAnalysisResult:
 def _pm_decision() -> PortfolioDecision:
     return PortfolioDecision(
         reasoning_chain=_pm_rc(),
-        targets=[TargetPosition(
-            symbol="SPY", target_weight_pct=10.0, conviction="high",
-            thesis="Buy", thesis_invalid_if="closes below support",
-        )],
+        targets=[
+            TargetPosition(
+                symbol="SPY",
+                target_weight_pct=10.0,
+                conviction="high",
+                thesis="Buy",
+                thesis_invalid_if="closes below support",
+            )
+        ],
         portfolio_view="Bullish",
     )
 
 
 def _risk_verdict() -> RiskVerdict:
     return RiskVerdict(
-        approved=True, modifications=[], reasoning="Approved",
+        approved=True,
+        modifications=[],
+        reasoning="Approved",
         reasoning_chain=_risk_rc(),
     )
 
 
 def _wire_happy_path(mocks, tmp_path, cfg):
     """Everything green except whatever the caller then breaks."""
-    (mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-     mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-     mock_broker_cls) = mocks
+    (
+        mock_ta_cls,
+        mock_pm_cls,
+        mock_rm_cls,
+        mock_market_cls,
+        mock_macro_cls,
+        mock_maa_cls,
+        mock_na_cls,
+        mock_ndp_cls,
+        mock_ea_cls,
+        mock_edp_cls,
+        mock_broker_cls,
+    ) = mocks
 
     cfg.storage.db_path = str(tmp_path / "test.db")
 
@@ -130,16 +168,14 @@ def _wire_happy_path(mocks, tmp_path, cfg):
 
     mock_market = MagicMock()
     mock_market.get_ohlcv.return_value = [
-        MagicMock(date="2026-08-11", open=503, high=510, low=500, close=507,
-                  volume=1_000_000)
+        MagicMock(date="2026-08-11", open=503, high=510, low=500, close=507, volume=1_000_000)
     ]
     mock_market_cls.return_value = mock_market
 
     mock_macro = MagicMock()
     mock_macro.get_macro_summary.return_value = {
         "vix": {"current": 18.0, "mean_5d": 17.5, "trend": "falling"},
-        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2,
-                     "inverted": True},
+        "treasury": {"us2y": 4.5, "us10y": 4.3, "spread_2_10": -0.2, "inverted": True},
         "fed_funds_rate": 5.25,
     }
     mock_macro_cls.return_value = mock_macro
@@ -148,11 +184,9 @@ def _wire_happy_path(mocks, tmp_path, cfg):
     mock_broker.is_trading_day.return_value = True
     mock_broker.get_latest_price.return_value = 507.0
     mock_broker.get_intraday_snapshots.return_value = {"SPY": _today_snapshot(507.0)}
-    mock_broker.get_account.return_value = {"cash": 10000.0,
-                                            "portfolio_value": 10000.0}
+    mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
-    mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted",
-                                             "symbol": "SPY"}
+    mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()
@@ -219,14 +253,37 @@ def wired(mock_config, tmp_path):
     wants to break, then tear the patches down."""
     started = [p.start() for p in _PATCHES]
     try:
-        (mock_broker_cls, mock_edp_cls, mock_ea_cls, mock_ndp_cls, mock_na_cls,
-         mock_maa_cls, mock_macro_cls, mock_market_cls, mock_rm_cls,
-         mock_pm_cls, mock_ta_cls, _ci_stages, _ci) = started
+        (
+            mock_broker_cls,
+            mock_edp_cls,
+            mock_ea_cls,
+            mock_ndp_cls,
+            mock_na_cls,
+            mock_maa_cls,
+            mock_macro_cls,
+            mock_market_cls,
+            mock_rm_cls,
+            mock_pm_cls,
+            mock_ta_cls,
+            _ci_stages,
+            _ci,
+        ) = started
         broker, pm, rm = _wire_happy_path(
-            (mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls,
-             mock_macro_cls, mock_maa_cls, mock_na_cls, mock_ndp_cls,
-             mock_ea_cls, mock_edp_cls, mock_broker_cls),
-            tmp_path, mock_config,
+            (
+                mock_ta_cls,
+                mock_pm_cls,
+                mock_rm_cls,
+                mock_market_cls,
+                mock_macro_cls,
+                mock_maa_cls,
+                mock_na_cls,
+                mock_ndp_cls,
+                mock_ea_cls,
+                mock_edp_cls,
+                mock_broker_cls,
+            ),
+            tmp_path,
+            mock_config,
         )
         yield mock_config, broker, pm, rm, mock_ta_cls.return_value
     finally:
@@ -235,6 +292,7 @@ def wired(mock_config, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+
 
 def test_happy_path_control_actually_trades(wired):
     """Control case. Without this, every assertion below could pass simply

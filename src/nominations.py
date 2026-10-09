@@ -173,8 +173,5 @@ def measure_cap_demand(
         "per_seat_bound": sorted(s for s, d in per_seat.items() if d["bound"]),
         "distinct_after_merge": len(ranked),
         "total_bound": len(ranked) > max_total,
-        "total_dropped": [
-            {"symbol": c.symbol, "conviction": c.conviction, "seats": sorted(c.seats)}
-            for c in cut
-        ],
+        "total_dropped": [{"symbol": c.symbol, "conviction": c.conviction, "seats": sorted(c.seats)} for c in cut],
     }

@@ -11,6 +11,7 @@ here imports src.pipeline. Storage and the evidence journal (anything with
 `EventJournal.persist_evidence`, src/ports/event_journal.py) are handed in,
 never reached for through a host.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,8 @@ class HealRecords:
     """Records of a seat heal: the log row, the paid call, and what the heal bought."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db,
         journal,
         macro_store,
@@ -67,10 +69,13 @@ class HealRecords:
     def _record_heal(self, ctx, result, *, alert: bool) -> None:
         """Durable heal log. Pages only on attempted-and-failed / cap-block."""
         import json as _json
+
         try:
             self.journal.persist_evidence(
-                run_id=ctx.run_id, agent_name="seat_heal",
-                kind="seat_heal", scope="run",
+                run_id=ctx.run_id,
+                agent_name="seat_heal",
+                kind="seat_heal",
+                scope="run",
                 evidence_json=_json.dumps(result.to_evidence(), sort_keys=True),
             )
         except Exception as e:  # noqa: BLE001
@@ -80,16 +85,17 @@ class HealRecords:
         try:
             from src.notifier import send_owner_alert
             from src.seat_heal import HEAL_CAP_BLOCKED, heal_failure_alert_text
+
             send_owner_alert(
                 heal_failure_alert_text(
-                    result, cap_blocked=result.outcome == HEAL_CAP_BLOCKED,
+                    result,
+                    cap_blocked=result.outcome == HEAL_CAP_BLOCKED,
                 ),
             )
         except Exception as e:  # noqa: BLE001
             logger.error("seat heal: owner alert failed: %s", e)
 
-    def _persist_heal_call(self, ctx, seat: str, agent_name: str,
-                            analysis, call_result) -> None:
+    def _persist_heal_call(self, ctx, seat: str, agent_name: str, analysis, call_result) -> None:
         """Record a PAID heal exactly the way an ordinary paid call is recorded.
 
         Two rows, both of them the EXISTING path, neither of them new:
@@ -120,13 +126,14 @@ class HealRecords:
             # to bill and nothing to quote — say so rather than writing a row
             # of zeroes that would read as a free call.
             logger.warning(
-                "seat heal: %s returned no call result; cost and raw answer "
-                "for this paid retry cannot be recorded", seat,
+                "seat heal: %s returned no call result; cost and raw answer for this paid retry cannot be recorded",
+                seat,
             )
         else:
             try:
                 self.db.insert_agent_log(
-                    agent_name=log_name, run_id=ctx.run_id,
+                    agent_name=log_name,
+                    run_id=ctx.run_id,
                     input_summary=f"seat heal re-ask | {seat} | session={session}",
                     input_message=getattr(call_result, "user_message", "") or "",
                     output_summary=f"seat heal refreshed {seat}",
@@ -146,13 +153,17 @@ class HealRecords:
                 evidence_json = dump()
             else:
                 import json as _json
+
                 evidence_json = _json.dumps(analysis, sort_keys=True, default=str)
         except Exception as e:  # noqa: BLE001
             logger.warning("seat heal: could not serialise %s answer: %s", seat, e)
             return
         self.journal.persist_evidence(
-                run_id=ctx.run_id, agent_name=agent_name,
-            kind="analysis", scope="run", evidence_json=evidence_json,
+            run_id=ctx.run_id,
+            agent_name=agent_name,
+            kind="analysis",
+            scope="run",
+            evidence_json=evidence_json,
         )
 
     def _persist_healed_macro_store(self, ctx, payload: dict) -> None:
@@ -186,14 +197,15 @@ class HealRecords:
             return
         try:
             from src.data.macro_store import series_prints_from_summary
+
             prints = series_prints_from_summary(
                 getattr(ctx, "macro_summary", None) or {},
                 freshness=getattr(getattr(self, "macro", None), "_run_freshness", None),
             )
             save(payload, series_prints=prints)
             logger.info(
-                "seat heal: persisted the paid macro read to the macro store "
-                "(regime=%s)", payload.get("regime"),
+                "seat heal: persisted the paid macro read to the macro store (regime=%s)",
+                payload.get("regime"),
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("seat heal: macro store-write failed: %s", e)
@@ -222,6 +234,7 @@ class HealRecords:
         Never raises — a coverage write must not undo a paid heal.
         """
         from src.seat_heal import wire_titles_shown_to_model
+
         try:
             items = list(self.last_news_peek_items or [])
             titles: list[str] = []
@@ -233,20 +246,23 @@ class HealRecords:
                 if text:
                     titles.append(text)
             shown = wire_titles_shown_to_model(
-                titles, getattr(ctx, "heal_news_text", "") or "",
+                titles,
+                getattr(ctx, "heal_news_text", "") or "",
             )
             if not shown:
                 return
             append = getattr(
-                getattr(self, "news_store", None), "append_raw_headlines", None,
+                getattr(self, "news_store", None),
+                "append_raw_headlines",
+                None,
             )
             if not callable(append):
                 return
-            added = append([{"title": t, "source": "seat_heal", "summary": ""}
-                            for t in shown])
+            added = append([{"title": t, "source": "seat_heal", "summary": ""} for t in shown])
             logger.info(
-                "seat heal: recorded %d of %d peeked wire titles as read by "
-                "the paid news re-ask", added, len(titles),
+                "seat heal: recorded %d of %d peeked wire titles as read by the paid news re-ask",
+                added,
+                len(titles),
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("seat heal: wire-coverage write failed: %s", e)

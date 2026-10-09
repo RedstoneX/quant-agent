@@ -10,6 +10,7 @@ from src.trading_calendar import et_today
 
 # --- rendering -------------------------------------------------------------
 
+
 def format_fomc_section(
     meetings: list[FOMCMeeting] | None,
     coverage: FOMCCoverage | None,
@@ -72,10 +73,7 @@ def format_fomc_section(
 
     upcoming = [m for m in forward if m not in inside]
     if upcoming:
-        lines.append(
-            f"- Next scheduled meeting beyond this horizon: "
-            f"{upcoming[0].describe(today)}"
-        )
+        lines.append(f"- Next scheduled meeting beyond this horizon: {upcoming[0].describe(today)}")
     lines.append(f"- {coverage.describe()}")
     return "\n".join(lines) + "\n"
 
@@ -128,8 +126,7 @@ def format_macro_events_section(
                 f"this session):"
             )
             lines.extend(
-                f"  - {e.event_date.isoformat()} (in {e.days_away} calendar "
-                f"days): {e.label}"
+                f"  - {e.event_date.isoformat()} (in {e.days_away} calendar days): {e.label}"
                 for e in coverage.next_beyond_horizon
             )
         lines.append(f"- {coverage.describe()}")
@@ -142,15 +139,21 @@ def format_macro_events_section(
     # macro heading above drops it: "the next 0 calendar days" would be a
     # number describing a window that was never queried.
     fomc_heading = (
-        "### FOMC meetings — NOT FETCHED" if fomc_coverage is None
+        "### FOMC meetings — NOT FETCHED"
+        if fomc_coverage is None
         else (
             f"### FOMC meetings, next {horizon_days} calendar days — FETCHED "
             f"from the Federal Reserve (do NOT answer from memory)"
         )
     )
-    lines.append(format_fomc_section(
-        fomc_meetings, fomc_coverage, horizon_days, heading=fomc_heading,
-    ).rstrip("\n"))
+    lines.append(
+        format_fomc_section(
+            fomc_meetings,
+            fomc_coverage,
+            horizon_days,
+            heading=fomc_heading,
+        ).rstrip("\n")
+    )
 
     if UNCOVERED_EVENTS:
         lines.append("")
@@ -203,10 +206,19 @@ def format_event_risk_block(
     # No horizon is quoted when nothing was fetched — "the next 0 calendar
     # days" would be a number describing a window that was never queried.
     heading = (
-        "### Scheduled US macro releases" if coverage is None
+        "### Scheduled US macro releases"
+        if coverage is None
         else f"### Scheduled US macro releases, next {horizon_days} calendar days"
     )
-    return "\n".join(lines) + "\n" + format_macro_events_section(
-        events, coverage, horizon_days, heading=heading,
-        fomc_meetings=fomc_meetings, fomc_coverage=fomc_coverage,
+    return (
+        "\n".join(lines)
+        + "\n"
+        + format_macro_events_section(
+            events,
+            coverage,
+            horizon_days,
+            heading=heading,
+            fomc_meetings=fomc_meetings,
+            fomc_coverage=fomc_coverage,
+        )
     )

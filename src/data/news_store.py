@@ -137,7 +137,8 @@ class NewsStore:
         existing = self.load_raw_headlines()
         seen = {
             str((i or {}).get("title") or (i or {}).get("headline") or "").strip()
-            for i in existing if isinstance(i, dict)
+            for i in existing
+            if isinstance(i, dict)
         }
         added = []
         for item in headlines:
@@ -190,6 +191,7 @@ class NewsStore:
         newest-first so PM's prompt shows the most actionable items first.
         """
         from datetime import timedelta
+
         today = et_today()
         seen: dict[str, dict] = {}
         for days_ago in range(lookback_days):
@@ -210,9 +212,7 @@ class NewsStore:
                 # Oldest first-seen wins (so we know "how long has this been active")
                 if event not in seen or seen[event]["first_seen_date"] > str(d):
                     seen[event] = {**ch, "first_seen_date": str(d)}
-        return sorted(seen.values(),
-                      key=lambda x: x.get("first_seen_date", ""),
-                      reverse=True)[:limit]
+        return sorted(seen.values(), key=lambda x: x.get("first_seen_date", ""), reverse=True)[:limit]
 
     def prune(self, keep_days: int = 1000) -> int:
         """Delete dated daily-report dirs + dated macro_narrative backups older
@@ -249,7 +249,7 @@ class NewsStore:
             # Dated narrative backup: 'macro_narrative_YYYY-MM-DD.json' (never
             # the live 'macro_narrative.json').
             if name.startswith("macro_narrative_") and name.endswith(".json"):
-                d = _parse_iso_date(name[len("macro_narrative_"):-len(".json")])
+                d = _parse_iso_date(name[len("macro_narrative_") : -len(".json")])
                 if d is not None and d < cutoff:
                     try:
                         entry.unlink()
@@ -259,6 +259,7 @@ class NewsStore:
         if removed:
             logger.info(
                 "news prune: removed %d dated artifact(s) older than %s",
-                removed, cutoff,
+                removed,
+                cutoff,
             )
         return removed

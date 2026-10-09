@@ -5,6 +5,7 @@
 Moved verbatim from src/agents/tech_analyst.py; the agent calls it once per
 parsed chunk.
 """
+
 from __future__ import annotations
 
 import re

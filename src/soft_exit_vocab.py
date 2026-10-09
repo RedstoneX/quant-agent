@@ -26,6 +26,8 @@ SOFT_EXIT_MISSING_AFTER_RETRY = "soft-exit missing after retry"
 # Board item 78: without it, the refusal above asserts a retry that may
 # never have run, and a heal that quietly did nothing leaves no trace.
 SOFT_EXIT_HEAL_EVENT_REASON = "soft_exit_heal"
+
+
 def stated_soft_exit(value: str | None) -> str:
     """A checkable falsifier/catalyst, or empty.
 

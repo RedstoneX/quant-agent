@@ -244,9 +244,7 @@ def test_the_static_scan_catches_the_indirect_form_that_caused_the_outage():
     keyword = ast.parse("snap = _snap(last_trade_at=datetime.now(ET))\n")
     subscript = ast.parse("snap['minute_bar_at'] = et_now()\n")
     arithmetic = ast.parse(
-        "def helper():\n"
-        "    stamp = et_now() - timedelta(minutes=5)\n"
-        "    return {'last_trade_at': stamp}\n"
+        "def helper():\n    stamp = et_now() - timedelta(minutes=5)\n    return {'last_trade_at': stamp}\n"
     )
     for name, tree in (
         ("indirect", indirect),
@@ -259,13 +257,9 @@ def test_the_static_scan_catches_the_indirect_form_that_caused_the_outage():
     # ...and does NOT fire on a deliberately pinned time of day, which is the
     # fix. A false positive here would push authors back to `et_now()`.
     pinned = ast.parse(
-        "def helper():\n"
-        "    stamp = et_now().replace(hour=10, minute=0)\n"
-        "    return {'last_trade_at': stamp}\n"
+        "def helper():\n    stamp = et_now().replace(hour=10, minute=0)\n    return {'last_trade_at': stamp}\n"
     )
-    explicit = ast.parse(
-        "snap = {'last_trade_at': datetime(2026, 9, 16, 15, 59, tzinfo=ET)}\n"
-    )
+    explicit = ast.parse("snap = {'last_trade_at': datetime(2026, 9, 16, 15, 59, tzinfo=ET)}\n")
     assert not _offences_in(pinned)
     assert not _offences_in(explicit)
 

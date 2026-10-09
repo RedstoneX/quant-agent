@@ -7,6 +7,7 @@ the fallback leg writes its row, the primary (stop-MARKET) leg writes a
 DIFFERENT one, a site never reached writes NOTHING (never-exercised is not
 zero), and a recording failure cannot take the placement down.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,8 +18,13 @@ from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
 
 from src.execution.broker import AlpacaBroker
 from src.execution.stop_limit_buffer_records import (
-    KIND_PREFIX, LEG_FALLBACK, LEG_PRIMARY, LIMIT_FROM_BUFFER,
-    LIMIT_FROM_CALLER, record_stop_leg, stop_leg_measurement,
+    KIND_PREFIX,
+    LEG_FALLBACK,
+    LEG_PRIMARY,
+    LIMIT_FROM_BUFFER,
+    LIMIT_FROM_CALLER,
+    record_stop_leg,
+    stop_leg_measurement,
 )
 from src.sentinel.reconciliation import ReconciliationLog
 
@@ -61,9 +67,17 @@ def _rows(conn):
 
 def test_fallback_leg_writes_a_row_carrying_the_buffer_measurement():
     conn = _ledger_conn()
-    record_stop_leg(_Owner(conn), leg=LEG_FALLBACK, symbol="AAA", qty=10,
-                    side="sell", stop_price=200.0, limit_price=194.0,
-                    buffer_pct=0.03, limit_source=LIMIT_FROM_BUFFER)
+    record_stop_leg(
+        _Owner(conn),
+        leg=LEG_FALLBACK,
+        symbol="AAA",
+        qty=10,
+        side="sell",
+        stop_price=200.0,
+        limit_price=194.0,
+        buffer_pct=0.03,
+        limit_source=LIMIT_FROM_BUFFER,
+    )
     rows = _rows(conn)
     assert len(rows) == 1
     kind, detail = rows[0]
@@ -78,9 +92,17 @@ def test_fallback_leg_writes_a_row_carrying_the_buffer_measurement():
 
 def test_primary_leg_row_is_a_distinct_kind_from_the_fallback():
     conn = _ledger_conn()
-    record_stop_leg(_Owner(conn), leg=LEG_PRIMARY, symbol="AAA", qty=10,
-                    side="sell", stop_price=200.0, limit_price=194.0,
-                    buffer_pct=0.03, limit_source=LIMIT_FROM_BUFFER)
+    record_stop_leg(
+        _Owner(conn),
+        leg=LEG_PRIMARY,
+        symbol="AAA",
+        qty=10,
+        side="sell",
+        stop_price=200.0,
+        limit_price=194.0,
+        buffer_pct=0.03,
+        limit_source=LIMIT_FROM_BUFFER,
+    )
     kind, detail = _rows(conn)[0]
     assert kind == f"{KIND_PREFIX}:{LEG_PRIMARY}"
     assert detail["fallback_taken"] is False
@@ -100,22 +122,45 @@ def test_a_recording_failure_logs_a_traceback_and_never_raises(caplog):
     # A real ledger handle whose table does not exist: the write raises
     # exactly as a locked or migrated-away database would.
     broken = _Owner(sqlite3.connect(":memory:"))
-    record_stop_leg(broken, leg=LEG_FALLBACK, symbol="AAA", qty=10, side="sell",
-                    stop_price=200.0, limit_price=194.0, buffer_pct=0.03,
-                    limit_source=LIMIT_FROM_BUFFER)
+    record_stop_leg(
+        broken,
+        leg=LEG_FALLBACK,
+        symbol="AAA",
+        qty=10,
+        side="sell",
+        stop_price=200.0,
+        limit_price=194.0,
+        buffer_pct=0.03,
+        limit_source=LIMIT_FROM_BUFFER,
+    )
     assert any(r.levelname == "ERROR" and r.exc_info for r in caplog.records)
 
 
 def test_no_ledger_in_reach_is_a_skip_not_a_failure():
-    record_stop_leg(object(), leg=LEG_PRIMARY, symbol="AAA", qty=10, side="sell",
-                    stop_price=200.0, limit_price=194.0, buffer_pct=0.03,
-                    limit_source=LIMIT_FROM_BUFFER)
+    record_stop_leg(
+        object(),
+        leg=LEG_PRIMARY,
+        symbol="AAA",
+        qty=10,
+        side="sell",
+        stop_price=200.0,
+        limit_price=194.0,
+        buffer_pct=0.03,
+        limit_source=LIMIT_FROM_BUFFER,
+    )
 
 
 def test_measurement_records_a_caller_supplied_limit_as_not_governed_by_the_buffer():
     out = stop_leg_measurement(
-        leg=LEG_FALLBACK, symbol="AAA", qty=1, side="sell", stop_price=100.0,
-        limit_price=99.0, buffer_pct=0.03, limit_source=LIMIT_FROM_CALLER)
+        leg=LEG_FALLBACK,
+        symbol="AAA",
+        qty=1,
+        side="sell",
+        stop_price=100.0,
+        limit_price=99.0,
+        buffer_pct=0.03,
+        limit_source=LIMIT_FROM_CALLER,
+    )
     assert out["limit_source"] == LIMIT_FROM_CALLER
     assert out["limit_distance"] == 1.0
 
@@ -125,7 +170,8 @@ def test_measurement_records_a_caller_supplied_limit_as_not_governed_by_the_buff
 def test_the_fallback_placement_records_the_fallback_leg(mock_tc_cls, rec):
     broker, client = _broker(mock_tc_cls)
     client.submit_order.side_effect = [
-        _FakeComboReject(), MagicMock(id="o1", status="new"),
+        _FakeComboReject(),
+        MagicMock(id="o1", status="new"),
     ]
     broker._submit_stop_limit_order(symbol="AAA", qty=10, stop_price=200.0)
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
@@ -151,10 +197,10 @@ def test_a_recorder_that_explodes_does_not_break_the_placement(mock_tc_cls):
     """The stop must still be placed and returned unchanged."""
     broker, client = _broker(mock_tc_cls)
     client.submit_order.side_effect = [
-        _FakeComboReject(), MagicMock(id="o1", status="new"),
+        _FakeComboReject(),
+        MagicMock(id="o1", status="new"),
     ]
-    with patch("src.execution.stop_limit_buffer_records.ledger_in_reach",
-               side_effect=RuntimeError("boom")):
+    with patch("src.execution.stop_limit_buffer_records.ledger_in_reach", side_effect=RuntimeError("boom")):
         out = broker._submit_stop_limit_order(symbol="AAA", qty=10, stop_price=200.0)
     assert out["id"] == "o1"
     assert out["status"] == "new"

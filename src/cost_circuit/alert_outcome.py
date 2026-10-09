@@ -18,7 +18,9 @@ ALERT_STATE_SUPPRESSED = 3
 
 
 def _send_alert_outcome(
-    notifier: Any, message: str, log_label: str,
+    notifier: Any,
+    message: str,
+    log_label: str,
 ) -> tuple[bool, bool]:
     """Send one OPERATIONAL cost-circuit alert. Returns (delivered, suppressed).
 
@@ -35,8 +37,12 @@ def _send_alert_outcome(
         from src.notifier.owner_alert import send_owner_alert_with_outcome
 
         return send_owner_alert_with_outcome(
-            message, notifier=notifier, category=CATEGORY_OPERATIONAL,
-            kind="cost_circuit", max_attempts=1, pnl_header=False,
+            message,
+            notifier=notifier,
+            category=CATEGORY_OPERATIONAL,
+            kind="cost_circuit",
+            max_attempts=1,
+            pnl_header=False,
         )
     except Exception:
         logger.exception(log_label)

@@ -26,6 +26,7 @@ Two jobs, both fail-closed on missing data, neither invents a price:
 the first write-back (and set at insert). R-multiple and the Type A
 breakeven ratchet still read THAT number, never the live one.
 """
+
 from __future__ import annotations
 
 
@@ -36,11 +37,15 @@ from typing import Any, Callable
 
 from src.execution.broker_parts.stop_window import record_unprotected_windows
 from src.execution.pending_stop_amends import record_deferred_amend
+
 logger = logging.getLogger(__name__)
 
 # re-export mirror: defined there, still importable from here
 from src.stop_price_classification import (
-    STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
+    STOP_ABSENT,
+    STOP_UNUSABLE,
+    STOP_USABLE,
+    classify_stop_price,
 )
 from src.execution.stop_level_report import StopLevelMismatch, report_stop_level_mismatches
 
@@ -79,6 +84,7 @@ def usable_stop_prices(values: Any) -> list[float]:
             out.append(price)
     return out
 
+
 # Alpaca's published stock ticks, the same split `_quantize_price` in
 # `src/execution/broker.py` already uses: $0.01 at or above $1, $0.0001
 # below. A mismatch smaller than one tick is the SDK round-trip, not a
@@ -106,11 +112,7 @@ def _prices_match(recorded: float, live: float) -> bool:
     half-penny), not a trading threshold. A full-tick difference is a
     different stop.
     """
-    tick = (
-        _ALPACA_TICK_AT_OR_ABOVE_DOLLAR
-        if min(recorded, live) >= 1.0
-        else _ALPACA_TICK_BELOW_DOLLAR
-    )
+    tick = _ALPACA_TICK_AT_OR_ABOVE_DOLLAR if min(recorded, live) >= 1.0 else _ALPACA_TICK_BELOW_DOLLAR
     return abs(recorded - live) <= (tick / 2.0)
 
 
@@ -169,7 +171,11 @@ def recorded_initial_stop(row: dict | None) -> float:
 
 
 def write_back_stop_loss(
-    db: Any, symbol: str, stop_price: float, *, is_short: bool | None = None,
+    db: Any,
+    symbol: str,
+    stop_price: float,
+    *,
+    is_short: bool | None = None,
 ) -> bool:
     """Persist `stop_price` onto the symbol's latest BUY/SHORT row.
 
@@ -185,8 +191,9 @@ def write_back_stop_loss(
     updater = getattr(db, "update_open_stop_loss", None)
     if not callable(updater):
         logger.error(
-            "stop write-back: %s has no update_open_stop_loss — live stop "
-            "$%.4f was NOT recorded", symbol, price,
+            "stop write-back: %s has no update_open_stop_loss — live stop $%.4f was NOT recorded",
+            symbol,
+            price,
         )
         return False
     kwargs: dict[str, Any] = {}
@@ -206,7 +213,9 @@ def write_back_stop_loss(
                 "stop write-back FAILED for %s @ $%.4f: %s — broker holds "
                 "the live level; the archive is stale until the next "
                 "successful write-back or reconcile report",
-                symbol, price, exc,
+                symbol,
+                price,
+                exc,
             )
             return False
     except Exception as exc:  # noqa: BLE001
@@ -215,7 +224,9 @@ def write_back_stop_loss(
             "stop write-back FAILED for %s @ $%.4f: %s — broker holds the "
             "live level; the archive is stale until the next successful "
             "write-back or reconcile report",
-            symbol, price, exc,
+            symbol,
+            price,
+            exc,
         )
         return False
 
@@ -240,19 +251,25 @@ def replace_stop_and_record(
     record_unprotected_windows(broker, db, symbol, run_id=run_id, caller=caller)
     if isinstance(order, dict) and order.get("amend_status") == "market_closed":
         return record_deferred_amend(
-            db, symbol, new_stop_price, order,
+            db,
+            symbol,
+            new_stop_price,
+            order,
             is_short=bool(_holding_is_short(broker, symbol)),
         )
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
-            db, symbol, new_stop_price,
+            db,
+            symbol,
+            new_stop_price,
             is_short=_holding_is_short(broker, symbol),
         )
         if not recorded:
             logger.error(
                 "stop replace accepted for %s @ $%.4f but archive write-back "
                 "did not persist — reconcile will surface the mismatch",
-                symbol, new_stop_price,
+                symbol,
+                new_stop_price,
             )
     return order
 
@@ -263,7 +280,8 @@ def reconcile_recorded_stop_levels(
     last_buy: Callable[..., dict | None],
     positions: list,
     sweep_symbol: str | None = None,
-    skip_symbols: set[str] | None = None, db: Any,
+    skip_symbols: set[str] | None = None,
+    db: Any,
 ) -> list[StopLevelMismatch]:
     """Compare each holding's recorded stop to the broker's live stop.
 
@@ -293,6 +311,7 @@ def reconcile_recorded_stop_levels(
             continue
         is_short = qty < 0
         from src.execution.stop_read import read_stop
+
         _sr = read_stop(broker, symbol, db=db, context="stop-level reconcile")
         if not _sr.found:
             continue  # unreadable is recorded and alerted by read_stop
@@ -311,40 +330,45 @@ def reconcile_recorded_stop_levels(
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "stop-level reconcile: last-open lookup failed for %s: %s",
-                    symbol, exc,
+                    symbol,
+                    exc,
                 )
                 continue
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "stop-level reconcile: last-open lookup failed for %s: %s",
-                symbol, exc,
+                symbol,
+                exc,
             )
             continue
         recorded_px = _finite_price((row or {}).get("stop_loss"))
         if recorded_px <= 0:
-            mismatches.append(StopLevelMismatch(
-                symbol=str(symbol), recorded=None, live=live_px,
-                is_short=is_short,
-                reason=(
-                    f"broker stop ${live_px:.4f} has no recorded "
-                    f"{opening} stop_loss"
-                ),
-            ))
+            mismatches.append(
+                StopLevelMismatch(
+                    symbol=str(symbol),
+                    recorded=None,
+                    live=live_px,
+                    is_short=is_short,
+                    reason=(f"broker stop ${live_px:.4f} has no recorded {opening} stop_loss"),
+                )
+            )
             continue
         if not _prices_match(recorded_px, live_px):
-            mismatches.append(StopLevelMismatch(
-                symbol=str(symbol), recorded=recorded_px, live=live_px,
-                is_short=is_short,
-                reason=(
-                    f"recorded {opening} stop_loss ${recorded_px:.4f} "
-                    f"!= broker stop ${live_px:.4f}"
-                ),
-            ))
+            mismatches.append(
+                StopLevelMismatch(
+                    symbol=str(symbol),
+                    recorded=recorded_px,
+                    live=live_px,
+                    is_short=is_short,
+                    reason=(f"recorded {opening} stop_loss ${recorded_px:.4f} != broker stop ${live_px:.4f}"),
+                )
+            )
     return mismatches
 
 
 def write_back_live_protective_stops(
-    db: Any, mismatches: list[StopLevelMismatch],
+    db: Any,
+    mismatches: list[StopLevelMismatch],
 ) -> list[StopLevelMismatch]:
     """Copy the desk's live protective order onto the opening row.
 
@@ -360,14 +384,18 @@ def write_back_live_protective_stops(
             remaining.append(item)
             continue
         recorded = write_back_stop_loss(
-            db, item.symbol, live, is_short=item.is_short,
+            db,
+            item.symbol,
+            live,
+            is_short=item.is_short,
         )
         if not recorded:
             remaining.append(item)
             continue
         logger.info(
-            "stop-level reconcile: wrote live protective stop $%.4f back "
-            "onto %s archive (was %s)",
-            live, item.symbol, item.recorded,
+            "stop-level reconcile: wrote live protective stop $%.4f back onto %s archive (was %s)",
+            live,
+            item.symbol,
+            item.recorded,
         )
     return remaining

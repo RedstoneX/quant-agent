@@ -1,5 +1,6 @@
 """Item 201, remaining cancel+resubmit paths: convert what CAN amend, and make
 the window visible for what cannot. Offline: every broker call is a mock."""
+
 import json
 from unittest.mock import MagicMock, patch
 
@@ -13,8 +14,7 @@ def _broker(mock_tc_cls):
     return AlpacaBroker(api_key="t", secret_key="t", paper=True), client
 
 
-def _stop(oid, stop, qty=10, otype="stop", limit=None, klass="simple",
-          parent=None, legs=None):
+def _stop(oid, stop, qty=10, otype="stop", limit=None, klass="simple", parent=None, legs=None):
     o = MagicMock()
     o.id, o.order_type, o.order_class = oid, otype, klass
     o.legs, o.parent_id, o.side = legs, parent, "sell"
@@ -39,8 +39,7 @@ def _pos(qty):
 @patch("src.execution.broker.TradingClient")
 def test_stop_limit_leg_is_amended_in_place_keeping_its_limit_buffer(tc):
     b, client = _broker(tc)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _stop("s1", 100.0, otype="stop_limit", limit=97.0)])
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_stop("s1", 100.0, otype="stop_limit", limit=97.0)])
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     out = b.shift_stops_down("ZZZ", 1.0)
     assert out["mode"] == "amend" and out["shifted"] == 1
@@ -53,8 +52,7 @@ def test_stop_limit_leg_is_amended_in_place_keeping_its_limit_buffer(tc):
 @patch("src.execution.broker.TradingClient")
 def test_bracket_child_stop_is_amended_in_place(tc):
     b, client = _broker(tc)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _stop("c1", 100.0, klass="bracket", parent="p1")])
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_stop("c1", 100.0, klass="bracket", parent="p1")])
     b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     out = b.shift_stops_down("ZZZ", 1.0)
     assert out["mode"] == "amend" and out["shifted"] == 1
@@ -65,8 +63,7 @@ def test_bracket_child_stop_is_amended_in_place(tc):
 @patch("src.execution.broker.TradingClient")
 def test_a_bracket_parent_with_legs_is_still_not_amended(tc):
     b, _ = _broker(tc)
-    assert not b._stop_order_amendable_in_place(
-        _stop("p1", 100.0, klass="bracket", legs=[object()]))
+    assert not b._stop_order_amendable_in_place(_stop("p1", 100.0, klass="bracket", legs=[object()]))
 
 
 @patch("src.execution.broker.TradingClient")
@@ -101,22 +98,20 @@ def test_fractional_coverage_change_still_cancels_but_the_window_is_recorded(tc)
     assert pay["window_seconds"] >= 0
 
 
-@patch("src.execution.broker_parts.stop_shift.defer_shift_if_closed",
-       return_value=None)
+@patch("src.execution.broker_parts.stop_shift.defer_shift_if_closed", return_value=None)
 @patch("src.execution.broker.TradingClient")
 def test_shift_fallback_window_is_recorded_not_silent(tc, _closed):
     """The ex-dividend shift's un-amendable fallback still cancels; its naked
     window must become a durable row, the same as replace_stop_loss's."""
     from src.stop_cancel_outcome import StopCancelOutcome
     from src.execution.broker_parts.stop_window import record_unprotected_windows
+
     b, client = _broker(tc)
     specs = [{"id": "s1", "qty": 10, "stop_price": 100.0}]
     # A bracket PARENT carrying legs is the shape that genuinely cannot amend.
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _stop("s1", 100.0, klass="bracket", legs=[object()])])
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_stop("s1", 100.0, klass="bracket", legs=[object()])])
     b._snapshot_stop_order = MagicMock(side_effect=lambda o: dict(specs[0]))
-    b.cancel_snapshotted_stops = MagicMock(
-        return_value=StopCancelOutcome.all_cleared("ZZZ", tuple(specs)))
+    b.cancel_snapshotted_stops = MagicMock(return_value=StopCancelOutcome.all_cleared("ZZZ", tuple(specs)))
     b._restore_stop_orders = MagicMock(return_value=(1, []))
     out = b.shift_stops_down("ZZZ", 1.0)
     assert out["mode"] == "cancel_resubmit"
@@ -139,6 +134,7 @@ def test_an_amended_shift_opens_no_window_at_all(tc):
     assert out["mode"] == "amend"
     db = MagicMock()
     from src.execution.broker_parts.stop_window import record_unprotected_windows
+
     record_unprotected_windows(b, db, "ZZZ")
     db.insert_specialist_evidence.assert_not_called()
 
@@ -153,8 +149,7 @@ def test_a_recorded_window_carries_the_session_that_produced_it(tc):
     b.get_positions = MagicMock(return_value=[_pos(10.5)])
     b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])
     db = MagicMock()
-    replace_stop_and_record(b, db, "ZZZ", 101.0, run_id="run-synthetic-0001",
-                            caller="unit_test")
+    replace_stop_and_record(b, db, "ZZZ", 101.0, run_id="run-synthetic-0001", caller="unit_test")
     kw = db.insert_specialist_evidence.call_args.kwargs
     assert kw["run_id"] == "run-synthetic-0001", "window cannot be joined to its session"
     pay = json.loads(kw["evidence_json"])
@@ -180,10 +175,18 @@ def test_the_recorder_still_cannot_raise_when_the_insert_fails(tc):
     """A failed replace is when the window matters most, so a throwing insert
     must never escape the recorder."""
     from src.execution.broker_parts.stop_window import record_unprotected_windows
+
     b, _client = _broker(tc)
-    b._unprotected_windows = [{"symbol": "ZZZ", "reason": "unamendable_shape",
-                               "cancelled_ids": ["s1"], "outcome": "not_restored",
-                               "window_seconds": 0.5, "path": "replace_stop_loss"}]
+    b._unprotected_windows = [
+        {
+            "symbol": "ZZZ",
+            "reason": "unamendable_shape",
+            "cancelled_ids": ["s1"],
+            "outcome": "not_restored",
+            "window_seconds": 0.5,
+            "path": "replace_stop_loss",
+        }
+    ]
     db = MagicMock()
     db.insert_specialist_evidence.side_effect = RuntimeError("db is gone")
     record_unprotected_windows(b, db, "ZZZ", run_id="run-synthetic-0002")

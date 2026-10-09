@@ -64,10 +64,7 @@ _SMART_MONEY_ORIGIN = (
     "admitted the symbol for analysis."
 )
 
-_TECHNICAL_ORIGIN = (
-    "The technical seat picked this name out of the universe it "
-    "screens every run."
-)
+_TECHNICAL_ORIGIN = "The technical seat picked this name out of the universe it screens every run."
 
 
 def nominating_seats(rows: list[dict], payload: Callable[[dict], dict]) -> list[str]:

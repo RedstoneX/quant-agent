@@ -38,10 +38,15 @@ ET = ZoneInfo("America/New_York")
 
 def _pm_rc():
     from src.models import ReasoningChain
+
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -49,21 +54,28 @@ def _exec_pipeline_with_print(price: float):
     now = datetime.now(ET)
     pipeline = MagicMock()
     pipeline.broker.get_latest_price_stamped.return_value = LivePrice(
-        price=price, source="last_trade", trade_at=now,
-        is_today=True, is_today_print=True,
+        price=price,
+        source="last_trade",
+        trade_at=now,
+        is_today=True,
+        is_today_print=True,
     )
     pipeline.broker.get_latest_price.return_value = price
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": price - 1.0, "ask_price": price + 1.0,
+        "bid_price": price - 1.0,
+        "ask_price": price + 1.0,
     }
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True,
+        "shortable": True,
+        "easy_to_borrow": True,
     }
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     return pipeline
 
@@ -85,7 +97,9 @@ def _run_exec(pipeline, decision, monkeypatch):
     ctx.positions = []
     ctx.symbols_bars = {}
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=[decision], portfolio_view="t",
+        reasoning_chain=_pm_rc(),
+        decisions=[decision],
+        portfolio_view="t",
     )
     ExecutionStage(pipeline=pipeline).run(ctx)
     submitted = pipeline.broker.submit_order.call_args
@@ -99,14 +113,20 @@ def _run_exec(pipeline, decision, monkeypatch):
     [("BUY", 100.0, 95.0), ("SHORT", 100.0, 105.0)],
 )
 def test_realised_limit_to_stop_risk_matches_the_sized_risk(
-    action, entry, stop, monkeypatch,
+    action,
+    entry,
+    stop,
+    monkeypatch,
 ):
     """Identical assertion both directions: the worst price the submitted
     order can fill at IS the price the risk budget divided by."""
     pipeline = _exec_pipeline_with_print(100.0)
     decision = TradeDecision(
-        action=action, symbol="TSLA", allocation_pct=10,
-        entry_price=entry, stop_loss=stop,
+        action=action,
+        symbol="TSLA",
+        allocation_pct=10,
+        entry_price=entry,
+        stop_loss=stop,
         take_profit=(115.0 if action == "BUY" else 88.0),
         reasoning="marketable limit prices away from the analysis price",
     )

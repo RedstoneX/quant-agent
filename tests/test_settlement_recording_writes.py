@@ -17,6 +17,7 @@ does some INSERT or UPDATE in the tree write THIS column of THIS table --
 from `src.storage_write_index`, which also documents the one dynamic shape it
 accepts as a deliberate strict proxy.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -51,8 +52,7 @@ def test_every_built_route_names_columns_the_storage_layer_writes() -> None:
     built = {
         site: entry
         for site, entry in _ledger().items()
-        if isinstance(entry.get("settles_by"), dict)
-        and entry["settles_by"].get("state") == "built"
+        if isinstance(entry.get("settles_by"), dict) and entry["settles_by"].get("state") == "built"
     }
     assert built, (
         "no settlement route is in state `built`; if one was just moved to "

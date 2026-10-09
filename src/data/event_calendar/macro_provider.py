@@ -81,14 +81,16 @@ class MacroEventCalendarProvider:
         self.max_retries = max(0, int(max_retries))
         self.retry_backoff_base_s = max(0.0, float(retry_backoff_base_s))
         self.retry_backoff_max_s = max(
-            self.retry_backoff_base_s, float(retry_backoff_max_s),
+            self.retry_backoff_base_s,
+            float(retry_backoff_max_s),
         )
         self.retry_backoff_jitter_s = max(0.0, float(retry_backoff_jitter_s))
         self.breaker_after_failed_releases = max(1, int(breaker_after_failed_releases))
         # Never below one request's own timeout — a shorter deadline would
         # abort every fetch immediately without ever really trying.
         self.total_fetch_deadline_s = max(
-            self.request_timeout_s, float(total_fetch_deadline_s),
+            self.request_timeout_s,
+            float(total_fetch_deadline_s),
         )
         self.releases = tuple(releases)
         self._consecutive_failed = 0
@@ -112,7 +114,10 @@ class MacroEventCalendarProvider:
     # --- cache -------------------------------------------------------------
 
     def _serve_from_cache(
-        self, release: MacroRelease, today: date, horizon_end: date,
+        self,
+        release: MacroRelease,
+        today: date,
+        horizon_end: date,
     ) -> tuple[list[date], int] | None:
         """`(dates, age_days)` from the pre-open cache, or None to go to the
         wire. Both conditions in `ReleaseScheduleCache` must hold."""
@@ -140,11 +145,17 @@ class MacroEventCalendarProvider:
         return dates, age_days
 
     def _collect(
-        self, release: MacroRelease, dates: list[date], today: date,
-        end: date, events: list[MacroEvent], beyond: list[MacroEvent],
+        self,
+        release: MacroRelease,
+        dates: list[date],
+        today: date,
+        end: date,
+        events: list[MacroEvent],
+        beyond: list[MacroEvent],
     ) -> None:
         """Sort one release's published dates into inside-horizon events and,
         failing that, the next date beyond it."""
+
         def _event(event_date: date) -> MacroEvent:
             return MacroEvent(
                 release_id=release.release_id,
@@ -173,7 +184,7 @@ class MacroEventCalendarProvider:
         `MacroDataProvider._next_backoff`; `attempt` is 0-indexed (the attempt
         that just failed)."""
         base = min(
-            self.retry_backoff_base_s * (2 ** attempt),
+            self.retry_backoff_base_s * (2**attempt),
             self.retry_backoff_max_s,
         )
         backoff = base + random.uniform(0, self.retry_backoff_jitter_s)
@@ -188,7 +199,10 @@ class MacroEventCalendarProvider:
         return http_get_json(url, timeout, "quant-agent event-calendar")
 
     def _fetch_release_dates(
-        self, release: MacroRelease, start: date, end: date,
+        self,
+        release: MacroRelease,
+        start: date,
+        end: date,
     ) -> tuple[list[date], str]:
         """Forward dates for one release. Returns (dates, failure_reason); the
         reason is "" on success."""
@@ -282,14 +296,17 @@ class MacroEventCalendarProvider:
                 remaining_global = global_deadline - time.monotonic()
                 if remaining_global <= 0:
                     logger.warning(
-                        "Event-calendar deadline (%.0fs) already exceeded — "
-                        "skipping %s without an attempt",
-                        self.total_fetch_deadline_s, release.label,
+                        "Event-calendar deadline (%.0fs) already exceeded — skipping %s without an attempt",
+                        self.total_fetch_deadline_s,
+                        release.label,
                     )
-                    failures.append(ReleaseFailure(
-                        release.release_id, release.label,
-                        "fetch_deadline_exceeded",
-                    ))
+                    failures.append(
+                        ReleaseFailure(
+                            release.release_id,
+                            release.label,
+                            "fetch_deadline_exceeded",
+                        )
+                    )
                     self._consecutive_failed += 1
                     continue
 
@@ -303,17 +320,22 @@ class MacroEventCalendarProvider:
                 self._deadline = time.monotonic() + (remaining_global / releases_left)
 
                 dates, reason = self._fetch_release_dates(
-                    release, today, fetch_end,
+                    release,
+                    today,
+                    fetch_end,
                 )
                 # Restore the real ceiling so the NEXT release's fair share
                 # is computed off true remaining time, not this release's
                 # tightened sub-budget.
                 self._deadline = global_deadline
                 if reason:
-                    failures.append(ReleaseFailure(
-                        release.release_id, release.label,
-                        reason[:_FAILURE_REASON_MAX_LEN],
-                    ))
+                    failures.append(
+                        ReleaseFailure(
+                            release.release_id,
+                            release.label,
+                            reason[:_FAILURE_REASON_MAX_LEN],
+                        )
+                    )
                     self._consecutive_failed += 1
                     continue
 
@@ -323,7 +345,10 @@ class MacroEventCalendarProvider:
                 succeeded += 1
                 if self._prefetch_mode and dates:
                     self.schedule_cache.save(
-                        release.release_id, release.label, dates, today,
+                        release.release_id,
+                        release.label,
+                        dates,
+                        today,
                     )
                 self._collect(release, dates, today, end, events, beyond)
         finally:

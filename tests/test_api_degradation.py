@@ -38,12 +38,18 @@ def client():
 @pytest.fixture
 def stub_broker(monkeypatch):
     """Healthy broker reads — individual tests break one seam at a time."""
-    monkeypatch.setattr(routes_live, "read_account", lambda: {
-        "cash": 1.0, "portfolio_value": 2.0, "last_equity": 2.0, "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_account",
+        lambda: {
+            "cash": 1.0,
+            "portfolio_value": 2.0,
+            "last_equity": 2.0,
+            "error": None,
+        },
+    )
     monkeypatch.setattr(routes_live, "read_positions", lambda: {"positions": [], "error": None})
-    monkeypatch.setattr(routes_live, "read_orders",
-                        lambda status="open", limit=50: {"orders": [], "error": None})
+    monkeypatch.setattr(routes_live, "read_orders", lambda status="open", limit=50: {"orders": [], "error": None})
     monkeypatch.setattr(routes_live, "check_broker_reachable", lambda: True)
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
 
@@ -52,8 +58,12 @@ def stub_broker(monkeypatch):
 # /health — last-run markers and the session lock
 # ---------------------------------------------------------------------------
 
+
 def test_health_reports_all_modes_unknown_when_the_cache_dir_is_missing(
-    client, stub_broker, monkeypatch, tmp_path,
+    client,
+    stub_broker,
+    monkeypatch,
+    tmp_path,
 ):
     """The cache dir only exists once a session has run. Before that,
     `/health` must report "nothing known" per mode rather than failing."""
@@ -75,7 +85,10 @@ def test_health_reports_a_present_last_run_marker(client, stub_broker, monkeypat
 
 
 def test_health_degrades_one_unreadable_marker_without_losing_the_others(
-    client, stub_broker, monkeypatch, tmp_path,
+    client,
+    stub_broker,
+    monkeypatch,
+    tmp_path,
 ):
     """A per-mode OSError degrades that mode to None; the rest survive."""
     monkeypatch.setattr(routes_live, "_cache_dir", lambda: tmp_path)
@@ -96,7 +109,9 @@ def test_health_degrades_one_unreadable_marker_without_losing_the_others(
 
 
 def test_health_reports_the_cache_dir_itself_failing_as_all_unknown(
-    client, stub_broker, monkeypatch,
+    client,
+    stub_broker,
+    monkeypatch,
 ):
     def _boom():
         raise _Boom("cache dir resolution blew up")
@@ -112,8 +127,7 @@ def test_health_reports_the_cache_dir_itself_failing_as_all_unknown(
 def test_health_reports_session_lock_unknown_on_oserror(client, stub_broker, monkeypatch):
     """`None` means "couldn't tell", which is distinct from `False`
     ("checked, no lock") — the operator must not read one as the other."""
-    monkeypatch.setattr(routes_live.os.path, "isdir",
-                        lambda p: (_ for _ in ()).throw(OSError("simulated")))
+    monkeypatch.setattr(routes_live.os.path, "isdir", lambda p: (_ for _ in ()).throw(OSError("simulated")))
     assert client.get("/health").json()["session_lock_active"] is None
 
 
@@ -128,36 +142,53 @@ def test_health_reports_an_active_session_lock(client, stub_broker, monkeypatch,
     [
         (
             {
-                "available": True, "suspended": True,
-                "suspension_class": "quota", "hold_scope": "day",
-                "requires_operator_reset": False, "auto_rearm": True,
+                "available": True,
+                "suspended": True,
+                "suspension_class": "quota",
+                "hold_scope": "day",
+                "requires_operator_reset": False,
+                "auto_rearm": True,
                 "active_quota_holds": [{"scope": "day"}],
             },
-            "paid_analysis_suspended", "degraded",
+            "paid_analysis_suspended",
+            "degraded",
         ),
         (
             {
-                "available": True, "suspended": False,
-                "suspension_class": "quota", "hold_scope": "session",
-                "requires_operator_reset": False, "auto_rearm": False,
+                "available": True,
+                "suspended": False,
+                "suspension_class": "quota",
+                "hold_scope": "session",
+                "requires_operator_reset": False,
+                "auto_rearm": False,
                 "active_quota_holds": [{"scope": "session"}],
             },
-            "paid_analysis_scoped_quota_hold", "degraded",
+            "paid_analysis_scoped_quota_hold",
+            "degraded",
         ),
         (
             {
-                "available": True, "suspended": False,
-                "suspension_class": None, "hold_scope": None,
-                "requires_operator_reset": False, "auto_rearm": False,
+                "available": True,
+                "suspended": False,
+                "suspension_class": None,
+                "hold_scope": None,
+                "requires_operator_reset": False,
+                "auto_rearm": False,
                 "active_quota_holds": [],
                 "recent_recovery": {"release_reason": "ET budget window advanced"},
             },
-            "ok", "ok",
+            "ok",
+            "ok",
         ),
     ],
 )
 def test_health_classifies_quota_scope_and_recovery(
-    client, stub_broker, monkeypatch, circuit, decision_status, overall,
+    client,
+    stub_broker,
+    monkeypatch,
+    circuit,
+    decision_status,
+    overall,
 ):
     import src.api.db_reads as db_reads
 
@@ -173,9 +204,11 @@ def test_health_classifies_quota_scope_and_recovery(
 # /account
 # ---------------------------------------------------------------------------
 
+
 def test_account_returns_200_with_error_when_the_read_raises(client, monkeypatch):
     """`read_account` is documented never to raise, but the route's own
     guard is the belt behind that brace."""
+
     def _boom():
         raise _Boom("gateway unreachable")
 
@@ -196,15 +229,22 @@ def test_account_omits_history_when_the_db_read_fails(client, stub_broker, monke
     monkeypatch.setattr(db_reads, "get_recent_daily_pnl", _boom)
     body = client.get("/account").json()
     assert body["history"] == []
-    assert body["portfolio_value"] == 2.0     # the live half survived
+    assert body["portfolio_value"] == 2.0  # the live half survived
     assert body["error"] is None
 
 
 def test_account_leaves_pnl_none_when_last_equity_is_zero(client, monkeypatch):
     """Guard against a divide-by-zero on a brand-new/unfunded account."""
-    monkeypatch.setattr(routes_live, "read_account", lambda: {
-        "cash": 0.0, "portfolio_value": 0.0, "last_equity": 0.0, "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_account",
+        lambda: {
+            "cash": 0.0,
+            "portfolio_value": 0.0,
+            "last_equity": 0.0,
+            "error": None,
+        },
+    )
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
     body = client.get("/account").json()
     assert body["daily_pnl"] is None
@@ -214,6 +254,7 @@ def test_account_leaves_pnl_none_when_last_equity_is_zero(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # /positions and /orders
 # ---------------------------------------------------------------------------
+
 
 def test_positions_returns_200_with_error_when_the_read_raises(client, monkeypatch):
     def _boom():
@@ -246,25 +287,34 @@ def test_orders_drops_a_row_with_no_id_or_symbol(client, monkeypatch):
     omitted" — worth pinning across the seam, since neither layer states it
     alone.
     """
-    monkeypatch.setattr(routes_live, "read_orders", lambda status="open", limit=50: {
-        "orders": [
-            {"id": "ord-1", "symbol": "AAPL", "side": "buy", "qty": 1.0},
-            {"id": None, "symbol": None, "side": None, "qty": None},
-            {"id": "ord-3", "symbol": "MSFT", "side": "sell", "qty": 2.0},
-        ],
-        "error": None,
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_orders",
+        lambda status="open", limit=50: {
+            "orders": [
+                {"id": "ord-1", "symbol": "AAPL", "side": "buy", "qty": 1.0},
+                {"id": None, "symbol": None, "side": None, "qty": None},
+                {"id": "ord-3", "symbol": "MSFT", "side": "sell", "qty": 2.0},
+            ],
+            "error": None,
+        },
+    )
     body = client.get("/orders").json()
     assert [o["id"] for o in body["orders"]] == ["ord-1", "ord-3"]
 
 
 def test_orders_surfaces_a_read_error_without_dropping_the_rows_it_did_get(
-    client, monkeypatch,
+    client,
+    monkeypatch,
 ):
-    monkeypatch.setattr(routes_live, "read_orders", lambda status="open", limit=50: {
-        "orders": [{"id": "ord-1", "symbol": "AAPL", "side": "buy", "qty": 1.0}],
-        "error": "partial broker failure",
-    })
+    monkeypatch.setattr(
+        routes_live,
+        "read_orders",
+        lambda status="open", limit=50: {
+            "orders": [{"id": "ord-1", "symbol": "AAPL", "side": "buy", "qty": 1.0}],
+            "error": "partial broker failure",
+        },
+    )
     body = client.get("/orders").json()
     assert len(body["orders"]) == 1
     assert body["error"] == "partial broker failure"
@@ -286,14 +336,15 @@ def test_orders_rejects_an_out_of_range_limit(client):
 # The invariant behind all of the above
 # ---------------------------------------------------------------------------
 
+
 def test_no_live_route_can_return_a_500_when_every_source_is_broken(client, monkeypatch):
     """The whole point: with every broker read raising at once — what a
     dead credential gateway looks like — Mission Control still answers."""
+
     def _boom(*args, **kwargs):
         raise _Boom("total outage")
 
-    for name in ("read_account", "read_positions", "read_orders",
-                 "check_broker_reachable"):
+    for name in ("read_account", "read_positions", "read_orders", "check_broker_reachable"):
         monkeypatch.setattr(routes_live, name, _boom)
 
     for path in ("/health", "/account", "/positions", "/orders"):
@@ -302,7 +353,9 @@ def test_no_live_route_can_return_a_500_when_every_source_is_broken(client, monk
 
 
 def test_health_reports_db_unreachable_when_the_sqlite_read_raises(
-    client, stub_broker, monkeypatch,
+    client,
+    stub_broker,
+    monkeypatch,
 ):
     """`db_reachable` is a real diagnostic, not decoration: it is how the
     operator tells "the API is up but its history store is gone" from "the
@@ -318,7 +371,7 @@ def test_health_reports_db_unreachable_when_the_sqlite_read_raises(
     assert body["status"] == "degraded"
     assert body["db_reachable"] is False
     assert body["sessions_logged_today"] == []
-    assert body["broker_reachable"] is True   # the broker half is unaffected
+    assert body["broker_reachable"] is True  # the broker half is unaffected
 
 
 def test_orders_guard_rejects_a_status_that_bypassed_request_validation(monkeypatch):
@@ -333,8 +386,7 @@ def test_orders_guard_rejects_a_status_that_bypassed_request_validation(monkeypa
     from fastapi import HTTPException
 
     called: list = []
-    monkeypatch.setattr(routes_live, "read_orders",
-                        lambda **kw: called.append(kw) or {"orders": [], "error": None})
+    monkeypatch.setattr(routes_live, "read_orders", lambda **kw: called.append(kw) or {"orders": [], "error": None})
 
     with pytest.raises(HTTPException) as excinfo:
         routes_live.get_orders(status="'; DROP TABLE trades; --", limit=50)

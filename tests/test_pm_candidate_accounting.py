@@ -16,6 +16,7 @@ Nothing in this file asserts anything about what the desk may buy. The
 accounting is bookkeeping: it runs after `decide()` has already settled
 every candidate's fate.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,32 +50,50 @@ from tests.pipeline_factory import build_pipeline
 # fixtures
 # ---------------------------------------------------------------------------
 
+
 def _chain() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="c", sizing_logic="s", portfolio_balance="b",
-        cash_target="ct", continuity_check="cc", premortem_check="pm",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="c",
+        sizing_logic="s",
+        portfolio_balance="b",
+        cash_target="ct",
+        continuity_check="cc",
+        premortem_check="pm",
         macro_audit="ma",
     )
 
 
 def _analysis(symbol: str) -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", conviction="medium",
-        entry_price=100.0, stop_loss=95.0, reference_target=115.0,
-        support_levels=[95.0], resistance_levels=[115.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol=symbol,
+        rating="buy",
+        conviction="medium",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=115.0,
+        support_levels=[95.0],
+        resistance_levels=[115.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
-        reasoning="test", thesis_invalid_if="closes below support",
+        reasoning="test",
+        thesis_invalid_if="closes below support",
     )
 
 
 def _decision(rejections=None) -> PortfolioDecision:
     return PortfolioDecision(
-        reasoning_chain=_chain(), targets=[],
+        reasoning_chain=_chain(),
+        targets=[],
         rejections=rejections or [],
         portfolio_view="nothing earned a slot today",
     )
@@ -82,9 +101,15 @@ def _decision(rejections=None) -> PortfolioDecision:
 
 def _pm_result(**over):
     base = dict(
-        user_message="m", raw_text="{}", tokens_used=1, input_tokens=1,
-        output_tokens=1, cost_usd=0.0, model="test-model",
-        semantic_status=None, semantic_error=None,
+        user_message="m",
+        raw_text="{}",
+        tokens_used=1,
+        input_tokens=1,
+        output_tokens=1,
+        cost_usd=0.0,
+        model="test-model",
+        semantic_status=None,
+        semantic_error=None,
     )
     base.update(over)
     return MagicMock(**base)
@@ -104,11 +129,16 @@ def _pipeline(decide_returns):
     for name in ("_compute_recent_performance", "_build_position_history"):
         setattr(p, name, MagicMock(return_value={}))
     for name in (
-        "_build_weekly_narrative", "_build_macro_trajectory",
-        "_build_active_state_changes", "_build_rm_recent_verdicts",
-        "_build_pm_recent_decisions", "_build_projected_portfolio",
-        "_build_calibration_note", "_build_macro_tech_alignment",
-        "_build_recent_missed_lessons", "_build_recent_loss_pits",
+        "_build_weekly_narrative",
+        "_build_macro_trajectory",
+        "_build_active_state_changes",
+        "_build_rm_recent_verdicts",
+        "_build_pm_recent_decisions",
+        "_build_projected_portfolio",
+        "_build_calibration_note",
+        "_build_macro_tech_alignment",
+        "_build_recent_missed_lessons",
+        "_build_recent_loss_pits",
     ):
         setattr(p, name, MagicMock(return_value=""))
     p._build_pm_facts = MagicMock(return_value=MagicMock())
@@ -160,6 +190,7 @@ def _run_stage(pipeline, symbols, positions=None):
 # the defect, and the fix
 # ---------------------------------------------------------------------------
 
+
 def test_defect_every_omitted_candidate_carried_one_identical_reason():
     """REGRESSION LOCK on the shape of the original defect.
 
@@ -170,10 +201,12 @@ def test_defect_every_omitted_candidate_carried_one_identical_reason():
     """
     rows = []
     for symbols in (["CMCSA"], ["CRM", "GME"]):
-        pipeline = _pipeline([
-            (_decision(), _pm_result()),   # first ask: no rejections
-            (_decision(), _pm_result()),   # re-ask: still none
-        ])
+        pipeline = _pipeline(
+            [
+                (_decision(), _pm_result()),  # first ask: no rejections
+                (_decision(), _pm_result()),  # re-ask: still none
+            ]
+        )
         _, captured = _run_stage(pipeline, symbols)
         rows.extend(captured)
 
@@ -188,16 +221,16 @@ def test_defect_every_omitted_candidate_carried_one_identical_reason():
 
 def test_stated_grounds_become_distinct_per_candidate_reasons():
     """The fix's whole point: two candidates, two grounds, two keys."""
-    decision = _decision([
-        CandidateRejection.model_validate(
-            {"symbol": "CRM", "code": "risk_budget_full",
-             "detail": "no risk budget left for another name"},
-        ),
-        CandidateRejection.model_validate(
-            {"symbol": "GME", "code": "no_readable_structure",
-             "detail": "nearest support is 14% away"},
-        ),
-    ])
+    decision = _decision(
+        [
+            CandidateRejection.model_validate(
+                {"symbol": "CRM", "code": "risk_budget_full", "detail": "no risk budget left for another name"},
+            ),
+            CandidateRejection.model_validate(
+                {"symbol": "GME", "code": "no_readable_structure", "detail": "nearest support is 14% away"},
+            ),
+        ]
+    )
     pipeline = _pipeline([(decision, _pm_result())])
     _, captured = _run_stage(pipeline, ["CRM", "GME"])
 
@@ -213,26 +246,25 @@ def test_stated_grounds_become_distinct_per_candidate_reasons():
 
 def test_the_one_reask_is_made_and_its_grounds_are_recorded():
     """Step 2 of the heal order: ask once, then record what came back."""
-    answered = _decision([
-        CandidateRejection.model_validate(
-            {"symbol": "CMCSA", "code": "evidence_insufficient",
-             "detail": "only a neutral technical read exists"},
-        ),
-    ])
-    pipeline = _pipeline([
-        (_decision(), _pm_result()),
-        (answered, _pm_result()),
-    ])
+    answered = _decision(
+        [
+            CandidateRejection.model_validate(
+                {"symbol": "CMCSA", "code": "evidence_insufficient", "detail": "only a neutral technical read exists"},
+            ),
+        ]
+    )
+    pipeline = _pipeline(
+        [
+            (_decision(), _pm_result()),
+            (answered, _pm_result()),
+        ]
+    )
     _, captured = _run_stage(pipeline, ["CMCSA"])
 
     assert pipeline.portfolio_manager.decide.call_count == 2
-    challenge = pipeline.portfolio_manager.decide.call_args.kwargs[
-        "accounting_challenge"
-    ]
+    challenge = pipeline.portfolio_manager.decide.call_args.kwargs["accounting_challenge"]
     assert "CMCSA" in challenge
-    assert "not an invitation" in challenge, (
-        "the re-ask must ask for bookkeeping, never for a new decision"
-    )
+    assert "not an invitation" in challenge, "the re-ask must ask for bookkeeping, never for a new decision"
     payload = dict(captured)["CMCSA"]
     assert payload["outcome"] == OUTCOME_NOT_SELECTED
     assert payload["refusal"] == "evidence_insufficient"
@@ -244,13 +276,20 @@ def test_the_reask_cannot_change_the_decision():
 
     reasked = PortfolioDecision(
         reasoning_chain=_chain(),
-        targets=[TargetPosition(
-            symbol="CMCSA", risk_allocation_pct=3.0, conviction="high",
-            thesis="second thoughts", thesis_invalid_if="breaks support",
-        )],
-        rejections=[CandidateRejection.model_validate(
-            {"symbol": "CMCSA", "code": "event_risk", "detail": "earnings"},
-        )],
+        targets=[
+            TargetPosition(
+                symbol="CMCSA",
+                risk_allocation_pct=3.0,
+                conviction="high",
+                thesis="second thoughts",
+                thesis_invalid_if="breaks support",
+            )
+        ],
+        rejections=[
+            CandidateRejection.model_validate(
+                {"symbol": "CMCSA", "code": "event_risk", "detail": "earnings"},
+            )
+        ],
         portfolio_view="changed my mind",
     )
     first = _decision()
@@ -305,9 +344,7 @@ def test_the_reask_is_bounded_by_the_existing_per_seat_cap():
         except Exception:
             pass
 
-    assert pipeline.portfolio_manager.decide.call_count == 1, (
-        "the cap must stop a second paid call"
-    )
+    assert pipeline.portfolio_manager.decide.call_count == 1, "the cap must stop a second paid call"
     payload = dict(captured)["CMCSA"]
     assert payload["refusal"] == CODE_UNACCOUNTED
     assert "already spent or blocked" in payload["note"]
@@ -317,6 +354,7 @@ def test_the_reask_is_bounded_by_the_existing_per_seat_cap():
 # the jam detector must get QUIETER, never noisier
 # ---------------------------------------------------------------------------
 
+
 def test_more_distinct_grounds_can_only_shorten_a_streak():
     """The detector fires on ONE unvarying key across sessions. Before, one
     key was all that existed. Distinct grounds can only split that set, so
@@ -324,7 +362,9 @@ def test_more_distinct_grounds_can_only_shorten_a_streak():
     from src.refusal_signature import SessionShape
 
     old = SessionShape(
-        run_id="r", trading_day="2026-09-17", last_seen=None,
+        run_id="r",
+        trading_day="2026-09-17",
+        last_seen=None,
         placed_entry=False,
         keys_by_symbol={
             "CRM": "portfolio_manager|omitted|candidate_not_selected_for_target||",
@@ -334,25 +374,27 @@ def test_more_distinct_grounds_can_only_shorten_a_streak():
     )
     assert old.is_monomorphic
 
-    decision = _decision([
-        CandidateRejection.model_validate(
-            {"symbol": "CRM", "code": "risk_budget_full", "detail": "d"},
-        ),
-        CandidateRejection.model_validate(
-            {"symbol": "GME", "code": "event_risk", "detail": "d"},
-        ),
-    ])
+    decision = _decision(
+        [
+            CandidateRejection.model_validate(
+                {"symbol": "CRM", "code": "risk_budget_full", "detail": "d"},
+            ),
+            CandidateRejection.model_validate(
+                {"symbol": "GME", "code": "event_risk", "detail": "d"},
+            ),
+        ]
+    )
     result = account_for_candidates(
         analyses=[_analysis("CRM"), _analysis("GME")],
-        decision=decision, positions=[],
+        decision=decision,
+        positions=[],
     )
     new = SessionShape(
-        run_id="r", trading_day="2026-09-17", last_seen=None,
+        run_id="r",
+        trading_day="2026-09-17",
+        last_seen=None,
         placed_entry=False,
-        keys_by_symbol={
-            a.symbol: signature_key(a.event_kwargs(), a.symbol)
-            for a in result.accounted
-        },
+        keys_by_symbol={a.symbol: signature_key(a.event_kwargs(), a.symbol) for a in result.accounted},
         outcomes_by_symbol={a.symbol: a.outcome for a in result.accounted},
     )
     assert not new.is_monomorphic
@@ -361,23 +403,22 @@ def test_more_distinct_grounds_can_only_shorten_a_streak():
 def test_the_candidate_prose_stays_out_of_the_comparable_key():
     """Two names refused on the SAME ground in different words are one
     reason, and must compare as one — otherwise a real jam goes unseen."""
-    decision = _decision([
-        CandidateRejection.model_validate(
-            {"symbol": "CRM", "code": "risk_budget_full",
-             "detail": "the book is already at its risk ceiling"},
-        ),
-        CandidateRejection.model_validate(
-            {"symbol": "GME", "code": "risk_budget_full",
-             "detail": "no budget left, every slot is taken"},
-        ),
-    ])
+    decision = _decision(
+        [
+            CandidateRejection.model_validate(
+                {"symbol": "CRM", "code": "risk_budget_full", "detail": "the book is already at its risk ceiling"},
+            ),
+            CandidateRejection.model_validate(
+                {"symbol": "GME", "code": "risk_budget_full", "detail": "no budget left, every slot is taken"},
+            ),
+        ]
+    )
     result = account_for_candidates(
         analyses=[_analysis("CRM"), _analysis("GME")],
-        decision=decision, positions=[],
+        decision=decision,
+        positions=[],
     )
-    keys = {
-        signature_key(a.event_kwargs(), a.symbol) for a in result.accounted
-    }
+    keys = {signature_key(a.event_kwargs(), a.symbol) for a in result.accounted}
     assert len(keys) == 1
 
 
@@ -385,18 +426,16 @@ def test_the_candidate_prose_stays_out_of_the_comparable_key():
 # owner-facing wording (board item 89's standard)
 # ---------------------------------------------------------------------------
 
+
 def test_every_rejection_code_has_plain_english():
     for code in CANDIDATE_REJECTION_CODES:
         sentence = plain_reason(code)
-        assert sentence and code not in sentence, (
-            f"{code} renders as its own internal token"
-        )
+        assert sentence and code not in sentence, f"{code} renders as its own internal token"
 
 
 def test_an_unknown_code_is_described_never_pasted_through():
     assert plain_reason("some_new_gate_token") == (
-        "the desk recorded a ground for dropping it that it has no plain "
-        "wording for"
+        "the desk recorded a ground for dropping it that it has no plain wording for"
     )
 
 
@@ -407,7 +446,9 @@ def test_the_jam_alert_no_longer_shows_a_bare_internal_key():
     from src.refusal_signature import _human_reason, SessionShape
 
     session = SessionShape(
-        run_id="r", trading_day="2026-09-17", last_seen=None,
+        run_id="r",
+        trading_day="2026-09-17",
+        last_seen=None,
         placed_entry=False,
         keys_by_symbol={
             "CRM": "portfolio_manager|not_selected|pm_rejected_candidate|risk_budget_full|",
@@ -425,12 +466,15 @@ def test_the_jam_alert_no_longer_shows_a_bare_internal_key():
 # the model fails OPEN on shape
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("raw,code", [
-    ("cmcsa ", "other"),
-    ({"symbol": "crm", "reason_code": "Risk Budget Full", "reason": "x"},
-     "risk_budget_full"),
-    ({"symbol": "gme", "code": "invented_token"}, "other"),
-])
+
+@pytest.mark.parametrize(
+    "raw,code",
+    [
+        ("cmcsa ", "other"),
+        ({"symbol": "crm", "reason_code": "Risk Budget Full", "reason": "x"}, "risk_budget_full"),
+        ({"symbol": "gme", "code": "invented_token"}, "other"),
+    ],
+)
 def test_a_rejection_is_never_lost_to_a_formatting_slip(raw, code):
     parsed = CandidateRejection.model_validate(raw)
     assert parsed.code == code

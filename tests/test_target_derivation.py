@@ -50,12 +50,17 @@ from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _bars(prices: list[float], *, spread: float = 0.4) -> list[OHLCV]:
     start = date(2024, 1, 1)
     return [
         OHLCV(
-            date=start + timedelta(days=i), open=close, high=close + spread,
-            low=close - spread, close=close, volume=1_000_000,
+            date=start + timedelta(days=i),
+            open=close,
+            high=close + spread,
+            low=close - spread,
+            close=close,
+            volume=1_000_000,
         )
         for i, close in enumerate(prices)
     ]
@@ -74,13 +79,25 @@ def _oscillation(low: float, high: float, cycles: int, period: int = 12) -> list
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
 def _analysis(
-    *, symbol: str, rating: str, entry: float, stop: float, model_target: float,
-    levels: list[float], atr: float, horizon: int = 20, setup: str = "range",
+    *,
+    symbol: str,
+    rating: str,
+    entry: float,
+    stop: float,
+    model_target: float,
+    levels: list[float],
+    atr: float,
+    horizon: int = 20,
+    setup: str = "range",
     computed: list[float] | None = None,
 ) -> TechAnalysisResult:
     """`levels` are the analyst's own (the validator requires at least one for
@@ -89,12 +106,18 @@ def _analysis(
     when they DISAGREE — the model naming levels the chart does not support.
     """
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, entry_price=entry, stop_loss=stop,
-        reference_target=model_target, reasoning="test",
+        symbol=symbol,
+        rating=rating,
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=model_target,
+        reasoning="test",
         support_levels=[lv for lv in levels if lv < entry],
         resistance_levels=[lv for lv in levels if lv > entry],
-        computed_levels=levels if computed is None else computed, atr_14=atr,
-        setup_type=setup, expected_horizon_sessions=horizon,
+        computed_levels=levels if computed is None else computed,
+        atr_14=atr,
+        setup_type=setup,
+        expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -103,6 +126,7 @@ def _analysis(
 # ---------------------------------------------------------------------------
 # A computed target is produced for a realistic long AND a realistic short
 # ---------------------------------------------------------------------------
+
 
 class TestBothDirections:
     def test_a_long_targets_the_nearest_resistance_above_entry(self):
@@ -113,8 +137,12 @@ class TestBothDirections:
         assert levels, "fixture must produce real structure"
 
         result = derive_structural_target(
-            entry_price=98.0, direction="long", levels=levels,
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=98.0,
+            direction="long",
+            levels=levels,
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
             model_target=104.0,
         )
         assert result.price is not None
@@ -133,8 +161,12 @@ class TestBothDirections:
         assert levels
 
         result = derive_structural_target(
-            entry_price=102.0, direction="short", levels=levels,
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=102.0,
+            direction="short",
+            levels=levels,
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
             model_target=96.0,
         )
         assert result.price is not None
@@ -147,12 +179,20 @@ class TestBothDirections:
         is which way the trade points."""
         levels = [80.0, 90.0, 110.0, 120.0]
         long_side = derive_structural_target(
-            entry_price=100.0, direction="long", levels=levels,
-            atr=3.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=levels,
+            atr=3.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         short_side = derive_structural_target(
-            entry_price=100.0, direction="short", levels=levels,
-            atr=3.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="short",
+            levels=levels,
+            atr=3.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         assert long_side.price == 110.0
         assert short_side.price == 90.0
@@ -162,16 +202,28 @@ class TestBothDirections:
         """End to end through the order path, not just the pure function."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="TSLA", rating="sell", entry=250.0, stop=262.5,
-            model_target=150.0, levels=[220.0, 262.5, 300.0],
-            atr=12.5 / 4.0, horizon=45,
+            symbol="TSLA",
+            rating="sell",
+            entry=250.0,
+            stop=262.5,
+            model_target=150.0,
+            levels=[220.0, 262.5, 300.0],
+            atr=12.5 / 4.0,
+            horizon=45,
         )
         decisions = constructor.construct_orders(
-            targets=[TargetPosition(
-                symbol="TSLA", direction="short", target_weight_pct=5.0,
-                conviction="high", thesis="overvalued",
-            )],
-            positions=[], analyses=[analysis], total_value=100_000,
+            targets=[
+                TargetPosition(
+                    symbol="TSLA",
+                    direction="short",
+                    target_weight_pct=5.0,
+                    conviction="high",
+                    thesis="overvalued",
+                )
+            ],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
             price_map={"TSLA": 250.0},
         )
         assert len(decisions) == 1
@@ -186,6 +238,7 @@ class TestBothDirections:
 # ---------------------------------------------------------------------------
 # Fail closed, by name — never a fabricated fallback
 # ---------------------------------------------------------------------------
+
 
 class TestRefusals:
     def test_too_few_bars_declines_rather_than_fabricating(self):
@@ -206,10 +259,14 @@ class TestRefusals:
         assert structure_coverage(bars) == COVERAGE_UNUSABLE_BARS
 
         result = derive_structural_target(
-            entry_price=100.0, direction="long",
+            entry_price=100.0,
+            direction="long",
             levels=[lv.price for lv in (*supports, *resistances)],
-            atr=2.0, horizon_sessions=20, setup_type="range",
-            model_target=120.0, levels_coverage=structure_coverage(bars),
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="range",
+            model_target=120.0,
+            levels_coverage=structure_coverage(bars),
         )
         assert result.price is None
         assert result.refused
@@ -226,8 +283,12 @@ class TestRefusals:
         """ATR is computed by the desk from its own bars; a real market
         always has volatility. Its absence is the desk's failure."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[90.0, 115.0],
-            atr=None, horizon_sessions=20, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[90.0, 115.0],
+            atr=None,
+            horizon_sessions=20,
+            setup_type="range",
         )
         assert result.price is None
         assert result.fault == FAULT_NO_VOLATILITY
@@ -235,8 +296,12 @@ class TestRefusals:
 
     def test_no_entry_price_is_a_data_fault_not_a_refusal(self):
         result = derive_structural_target(
-            entry_price=None, direction="long", levels=[90.0, 115.0],
-            atr=2.0, horizon_sessions=20, setup_type="range",
+            entry_price=None,
+            direction="long",
+            levels=[90.0, 115.0],
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="range",
         )
         assert result.price is None
         assert result.fault == FAULT_NO_ENTRY
@@ -248,8 +313,12 @@ class TestRefusals:
         with the minimum touches within reach. That is a fact about the
         chart, not about the feed — a trade judgement, filed as one."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[],
-            atr=2.0, horizon_sessions=20, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[],
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="range",
             levels_coverage=COVERAGE_MEASURED,
         )
         assert result.price is None
@@ -263,11 +332,17 @@ class TestRefusals:
         the desk cannot claim the chart was measured. All three are
         faults; none is a refusal."""
         for coverage in (
-            COVERAGE_NO_BARS, COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
+            COVERAGE_NO_BARS,
+            COVERAGE_UNUSABLE_BARS,
+            COVERAGE_UNKNOWN,
         ):
             result = derive_structural_target(
-                entry_price=100.0, direction="long", levels=[],
-                atr=2.0, horizon_sessions=20, setup_type="range",
+                entry_price=100.0,
+                direction="long",
+                levels=[],
+                atr=2.0,
+                horizon_sessions=20,
+                setup_type="range",
                 levels_coverage=coverage,
             )
             assert result.fault == FAULT_NO_STRUCTURE, coverage
@@ -284,10 +359,8 @@ class TestRefusals:
             dict(entry_price=100.0, atr=None, horizon_sessions=20, levels=[90.0]),
             dict(entry_price=100.0, atr=2.0, horizon_sessions=None, levels=[90.0]),
             dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[]),
-            dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[],
-                 levels_coverage=COVERAGE_MEASURED),
-            dict(entry_price=100.0, atr=2.0, horizon_sessions=1, levels=[80.0],
-                 setup_type="breakout"),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[], levels_coverage=COVERAGE_MEASURED),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=1, levels=[80.0], setup_type="breakout"),
         ]
         for case in cases:
             case.setdefault("setup_type", "range")
@@ -309,17 +382,21 @@ class TestRefusals:
         # Enough bars arrived, but they cannot be true (high below low), so
         # cleaning leaves nothing the scan can run over: a dirty feed.
         from datetime import date, timedelta
+
         dirty = [
-            OHLCV(date=date(2024, 1, 1) + timedelta(days=i), open=100.0,
-                  high=90.0, low=110.0, close=100.0, volume=1)
+            OHLCV(date=date(2024, 1, 1) + timedelta(days=i), open=100.0, high=90.0, low=110.0, close=100.0, volume=1)
             for i in range(40)
         ]
         assert structure_coverage(dirty) == COVERAGE_UNUSABLE_BARS
 
     def test_no_horizon_refuses(self):
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[90.0, 115.0],
-            atr=2.0, horizon_sessions=None, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[90.0, 115.0],
+            atr=2.0,
+            horizon_sessions=None,
+            setup_type="range",
         )
         assert result.refusal == "no_expected_horizon"
 
@@ -343,12 +420,16 @@ class TestRefusals:
         with no ceiling gets a projected target AND is not judged against a
         reward:risk floor, by one definition rather than two."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0, 90.0],
-            atr=2.0, horizon_sessions=20, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[80.0, 90.0],
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="range",
         )
         assert not result.refusal
         assert result.basis == "measured_move"
-        assert result.price == round(100.0 + 2.0 * (20 ** 0.5), 2)
+        assert result.price == round(100.0 + 2.0 * (20**0.5), 2)
         assert result.level_used is None
         assert "nothing overhead is expected to stop this trade" in result.detail
 
@@ -359,15 +440,23 @@ class TestRefusals:
         (2026-09-12), as a refusal when the chart was measured and holds
         nothing. Neither earns the measured move."""
         unusable = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[],
-            atr=2.0, horizon_sessions=20, setup_type="breakout",
+            entry_price=100.0,
+            direction="long",
+            levels=[],
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="breakout",
         )
         assert unusable.price is None
         assert unusable.basis != "measured_move"
         assert unusable.fault == FAULT_NO_STRUCTURE
         measured = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[],
-            atr=2.0, horizon_sessions=20, setup_type="breakout",
+            entry_price=100.0,
+            direction="long",
+            levels=[],
+            atr=2.0,
+            horizon_sessions=20,
+            setup_type="breakout",
             levels_coverage=COVERAGE_MEASURED,
         )
         assert measured.price is None
@@ -398,29 +487,60 @@ class TestRefusals:
         chart, a measured-but-empty chart and a projection that cannot
         clear its own noise are five different problems and must not share
         one code — across BOTH fields, since 2026-09-12 split them."""
+
         def _code(result):
             return result.fault or result.refusal
 
         codes = {
-            _code(derive_structural_target(
-                entry_price=100.0, direction="long", levels=[90.0, 115.0],
-                atr=None, horizon_sessions=20, setup_type="range")),
-            _code(derive_structural_target(
-                entry_price=100.0, direction="long", levels=[90.0, 115.0],
-                atr=2.0, horizon_sessions=0, setup_type="range")),
-            _code(derive_structural_target(
-                entry_price=100.0, direction="long", levels=[],
-                atr=2.0, horizon_sessions=20, setup_type="range")),
-            _code(derive_structural_target(
-                entry_price=100.0, direction="long", levels=[],
-                atr=2.0, horizon_sessions=20, setup_type="range",
-                levels_coverage=COVERAGE_MEASURED)),
+            _code(
+                derive_structural_target(
+                    entry_price=100.0,
+                    direction="long",
+                    levels=[90.0, 115.0],
+                    atr=None,
+                    horizon_sessions=20,
+                    setup_type="range",
+                )
+            ),
+            _code(
+                derive_structural_target(
+                    entry_price=100.0,
+                    direction="long",
+                    levels=[90.0, 115.0],
+                    atr=2.0,
+                    horizon_sessions=0,
+                    setup_type="range",
+                )
+            ),
+            _code(
+                derive_structural_target(
+                    entry_price=100.0, direction="long", levels=[], atr=2.0, horizon_sessions=20, setup_type="range"
+                )
+            ),
+            _code(
+                derive_structural_target(
+                    entry_price=100.0,
+                    direction="long",
+                    levels=[],
+                    atr=2.0,
+                    horizon_sessions=20,
+                    setup_type="range",
+                    levels_coverage=COVERAGE_MEASURED,
+                )
+            ),
             # A projection too small to clear its own noise floor. (It used
             # to be "no level in the direction on a range setup"; funnel
             # item 6 made that a measured move rather than a refusal.)
-            _code(derive_structural_target(
-                entry_price=100.0, direction="long", levels=[80.0],
-                atr=2.0, horizon_sessions=1, setup_type="breakout")),
+            _code(
+                derive_structural_target(
+                    entry_price=100.0,
+                    direction="long",
+                    levels=[80.0],
+                    atr=2.0,
+                    horizon_sessions=1,
+                    setup_type="breakout",
+                )
+            ),
         }
         assert len(codes) == 5
 
@@ -429,16 +549,28 @@ class TestRefusals:
         model's word is not sufficient to open a position."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], computed=[],
-            atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            computed=[],
+            atr=1.4,
+            horizon=30,
         )
         decisions = constructor.construct_orders(
-            targets=[TargetPosition(
-                symbol="NVDA", target_weight_pct=8.0, conviction="high",
-                thesis="AI",
-            )],
-            positions=[], analyses=[analysis], total_value=100_000,
+            targets=[
+                TargetPosition(
+                    symbol="NVDA",
+                    target_weight_pct=8.0,
+                    conviction="high",
+                    thesis="AI",
+                )
+            ],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
             price_map={"NVDA": 100.0},
         )
         assert decisions == []
@@ -455,26 +587,39 @@ class TestRefusals:
 # `data_fault` by `DecisionStage`, never `constructor_dropped`), a refusal
 # does not; and NEITHER trades.
 
+
 class TestDataFaultsAtTheConstructor:
     def _target(self, symbol="NVDA", direction="long"):
         return TargetPosition(
-            symbol=symbol, direction=direction, target_weight_pct=8.0,
-            conviction="high", thesis="t",
+            symbol=symbol,
+            direction=direction,
+            target_weight_pct=8.0,
+            conviction="high",
+            thesis="t",
         )
 
     def test_unusable_history_is_recorded_as_a_fault_and_not_traded(self):
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], computed=[],
-            atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            computed=[],
+            atr=1.4,
+            horizon=30,
         )
         analysis.levels_coverage = COVERAGE_UNUSABLE_BARS
         decisions = constructor.construct_orders(
-            targets=[self._target()], positions=[], analyses=[analysis],
-            total_value=100_000, price_map={"NVDA": 100.0},
+            targets=[self._target()],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
+            price_map={"NVDA": 100.0},
         )
-        assert decisions == []                      # fail-closed, unchanged
+        assert decisions == []  # fail-closed, unchanged
         assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_STRUCTURE
         # Still captured as a drop (never silently absent), but the line
         # says what it is.
@@ -484,13 +629,22 @@ class TestDataFaultsAtTheConstructor:
     def test_missing_atr_is_recorded_as_a_fault(self):
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            atr=1.4,
+            horizon=30,
         )
         analysis.atr_14 = None
         decisions = constructor.construct_orders(
-            targets=[self._target()], positions=[], analyses=[analysis],
-            total_value=100_000, price_map={"NVDA": 100.0},
+            targets=[self._target()],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
+            price_map={"NVDA": 100.0},
         )
         assert decisions == []
         assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_VOLATILITY
@@ -498,8 +652,11 @@ class TestDataFaultsAtTheConstructor:
     def test_no_analysis_at_all_is_recorded_as_a_fault(self):
         constructor = PortfolioConstructor()
         decisions = constructor.construct_orders(
-            targets=[self._target()], positions=[], analyses=[],
-            total_value=100_000, price_map={"NVDA": 100.0},
+            targets=[self._target()],
+            positions=[],
+            analyses=[],
+            total_value=100_000,
+            price_map={"NVDA": 100.0},
         )
         assert decisions == []
         assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_ANALYSIS
@@ -507,13 +664,22 @@ class TestDataFaultsAtTheConstructor:
     def test_no_price_anywhere_is_recorded_as_a_fault(self):
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            atr=1.4,
+            horizon=30,
         )
         analysis.entry_price = None
         decisions = constructor.construct_orders(
-            targets=[self._target()], positions=[], analyses=[analysis],
-            total_value=100_000, price_map={},      # no live quote either
+            targets=[self._target()],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
+            price_map={},  # no live quote either
         )
         assert decisions == []
         assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_ENTRY
@@ -525,14 +691,23 @@ class TestDataFaultsAtTheConstructor:
         data faults or the owner would be paged for a quiet chart."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], computed=[],
-            atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            computed=[],
+            atr=1.4,
+            horizon=30,
         )
         analysis.levels_coverage = COVERAGE_MEASURED
         decisions = constructor.construct_orders(
-            targets=[self._target()], positions=[], analyses=[analysis],
-            total_value=100_000, price_map={"NVDA": 100.0},
+            targets=[self._target()],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
+            price_map={"NVDA": 100.0},
         )
         assert decisions == []
         assert constructor.last_data_faults == {}
@@ -553,8 +728,14 @@ class TestDataFaultsAtTheConstructor:
         invisible."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=130.0,
+            levels=[95.0, 130.0],
+            atr=1.4,
+            horizon=30,
         )
         analysis.atr_14 = None
         assert constructor.real_reward_risk_preview(analysis, "long") is None
@@ -567,14 +748,23 @@ class TestDataFaultsAtTheConstructor:
     def test_a_short_faults_the_same_way(self):
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="TSLA", rating="sell", entry=250.0, stop=262.5,
-            model_target=150.0, levels=[220.0, 262.5, 300.0], computed=[],
-            atr=3.0, horizon=45,
+            symbol="TSLA",
+            rating="sell",
+            entry=250.0,
+            stop=262.5,
+            model_target=150.0,
+            levels=[220.0, 262.5, 300.0],
+            computed=[],
+            atr=3.0,
+            horizon=45,
         )
         analysis.levels_coverage = COVERAGE_NO_BARS
         decisions = constructor.construct_orders(
-            targets=[self._target("TSLA", "short")], positions=[],
-            analyses=[analysis], total_value=100_000, price_map={"TSLA": 250.0},
+            targets=[self._target("TSLA", "short")],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
+            price_map={"TSLA": 250.0},
         )
         assert decisions == []
         assert constructor.last_data_faults["TSLA"]["fault"] == FAULT_NO_STRUCTURE
@@ -584,6 +774,7 @@ class TestDataFaultsAtTheConstructor:
 # ---------------------------------------------------------------------------
 # The rule's two branches, and where they hand over
 # ---------------------------------------------------------------------------
+
 
 class TestTheRule:
     def test_a_level_inside_the_noise_floor_is_recorded_not_stepped_over(self):
@@ -597,8 +788,12 @@ class TestTheRule:
         instead of being fixed by moving the target to the far side of the
         wall — which is not a better reward, only an unreachable one."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[100.5, 112.0],
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[100.5, 112.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         assert result.price == 100.5
         assert result.basis == "structural_level"
@@ -609,8 +804,12 @@ class TestTheRule:
         """The flag is a measurement, not a mood — it is False whenever the
         reward clears the floor, which is the ordinary case."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[112.0],
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[112.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         assert result.price == 112.0
         assert result.target_inside_noise is False
@@ -618,8 +817,12 @@ class TestTheRule:
     def test_a_short_does_not_step_over_a_floor_either(self):
         """Direction symmetry: the same promotion bug existed downward."""
         result = derive_structural_target(
-            entry_price=100.0, direction="short", levels=[99.5, 88.0],
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="short",
+            levels=[99.5, 88.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         assert result.price == 99.5
         assert result.target_inside_noise is True
@@ -642,8 +845,12 @@ class TestTheRule:
         must be recorded rather than engineered away."""
         levels = [730.41, 739.84, 784.58]
         result = derive_structural_target(
-            entry_price=728.41, direction="long", levels=levels,
-            atr=21.22, horizon_sessions=12, setup_type="breakout",
+            entry_price=728.41,
+            direction="long",
+            levels=levels,
+            atr=21.22,
+            horizon_sessions=12,
+            setup_type="breakout",
         )
         assert result.price == 730.41
         assert result.basis == "structural_level"
@@ -658,9 +865,13 @@ class TestTheRule:
         or above the reach multiple would otherwise put an ATR target on the
         far side of a real level. Pinned because it is a parameter away."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0, 130.0],
-            atr=2.0, horizon_sessions=25, setup_type="breakout",
-            max_reach_atr_multiple=1.0,          # reach 10 -> wall at 130 is far
+            entry_price=100.0,
+            direction="long",
+            levels=[80.0, 130.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="breakout",
+            max_reach_atr_multiple=1.0,  # reach 10 -> wall at 130 is far
             breakout_projection_atr_multiple=5.0,  # projection 50 -> would be 150
         )
         assert result.price == 130.0
@@ -670,8 +881,12 @@ class TestTheRule:
         instrument travels is how far it usually travels in the stated
         holding period."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[85.0, 92.0],
-            atr=2.0, horizon_sessions=25, setup_type="breakout",
+            entry_price=100.0,
+            direction="long",
+            levels=[85.0, 92.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="breakout",
         )
         assert result.basis == "measured_move"
         # ATR 2.0 x sqrt(25) x 1.0 = 10.0
@@ -682,11 +897,11 @@ class TestTheRule:
         overstate an N-session excursion by roughly sqrt(N), which is how a
         target becomes a fantasy while still looking arithmetic."""
         four = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0],
-            atr=1.0, horizon_sessions=4, setup_type="breakout").price
+            entry_price=100.0, direction="long", levels=[80.0], atr=1.0, horizon_sessions=4, setup_type="breakout"
+        ).price
         sixteen = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0],
-            atr=1.0, horizon_sessions=16, setup_type="breakout").price
+            entry_price=100.0, direction="long", levels=[80.0], atr=1.0, horizon_sessions=16, setup_type="breakout"
+        ).price
         assert four == 102.0 and sixteen == 104.0  # 2x horizon-root, not 4x
 
     def test_a_level_beyond_reach_hands_over_to_the_measured_move(self):
@@ -694,8 +909,12 @@ class TestTheRule:
         stands in the way over the hold, so travel governs — and the answer
         is the SMALLER number, which is why this is not target inflation."""
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[140.0],
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[140.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
         )
         assert result.basis == "measured_move"
         assert result.price == 110.0
@@ -703,12 +922,20 @@ class TestTheRule:
 
     def test_an_implausible_horizon_cannot_licence_an_arbitrary_target(self):
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0],
-            atr=1.0, horizon_sessions=100_000, setup_type="breakout",
+            entry_price=100.0,
+            direction="long",
+            levels=[80.0],
+            atr=1.0,
+            horizon_sessions=100_000,
+            setup_type="breakout",
         )
         capped = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[80.0],
-            atr=1.0, horizon_sessions=MAX_HORIZON_SESSIONS, setup_type="breakout",
+            entry_price=100.0,
+            direction="long",
+            levels=[80.0],
+            atr=1.0,
+            horizon_sessions=MAX_HORIZON_SESSIONS,
+            setup_type="breakout",
         )
         assert result.price == capped.price
 
@@ -724,8 +951,12 @@ class TestTheRule:
         chart that actually produces it: nothing in the trade's direction
         at all, so only the projection can speak."""
         result = derive_structural_target(
-            entry_price=2.0, direction="short", levels=[2.6],
-            atr=1.5, horizon_sessions=25, setup_type="breakout",
+            entry_price=2.0,
+            direction="short",
+            levels=[2.6],
+            atr=1.5,
+            horizon_sessions=25,
+            setup_type="breakout",
         )
         assert result.refusal == "projection_implausible"
 
@@ -734,8 +965,12 @@ class TestTheRule:
         entry is where the short travels to, not a reason to invent $7.50 of
         downside that runs the target through zero."""
         result = derive_structural_target(
-            entry_price=2.0, direction="short", levels=[1.9],
-            atr=1.5, horizon_sessions=25, setup_type="breakout",
+            entry_price=2.0,
+            direction="short",
+            levels=[1.9],
+            atr=1.5,
+            horizon_sessions=25,
+            setup_type="breakout",
         )
         assert result.price == 1.9
         assert result.basis == "structural_level"
@@ -746,11 +981,16 @@ class TestTheRule:
 # The model's target is evidence, not arithmetic
 # ---------------------------------------------------------------------------
 
+
 class TestModelTargetIsEvidence:
     def test_the_guess_is_carried_through_and_the_gap_measured(self):
         result = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[112.0],
-            atr=2.0, horizon_sessions=25, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[112.0],
+            atr=2.0,
+            horizon_sessions=25,
+            setup_type="range",
             model_target=140.0,
         )
         assert result.price == 112.0
@@ -761,8 +1001,13 @@ class TestModelTargetIsEvidence:
         """Same chart, three different model opinions, one computed target."""
         prices = {
             derive_structural_target(
-                entry_price=100.0, direction="long", levels=[112.0], atr=2.0,
-                horizon_sessions=25, setup_type="range", model_target=guess,
+                entry_price=100.0,
+                direction="long",
+                levels=[112.0],
+                atr=2.0,
+                horizon_sessions=25,
+                setup_type="range",
+                model_target=guess,
             ).price
             for guess in (105.0, 140.0, None)
         }
@@ -775,16 +1020,27 @@ class TestModelTargetIsEvidence:
         two contradictory R/R figures in one response on 2026-08-31."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
-            model_target=140.0, levels=[95.0, 112.0],
-            atr=5.0 / 4.0, horizon=45,
+            symbol="NVDA",
+            rating="buy",
+            entry=100.0,
+            stop=95.0,
+            model_target=140.0,
+            levels=[95.0, 112.0],
+            atr=5.0 / 4.0,
+            horizon=45,
         )
         decisions = constructor.construct_orders(
-            targets=[TargetPosition(
-                symbol="NVDA", target_weight_pct=8.0, conviction="high",
-                thesis="AI",
-            )],
-            positions=[], analyses=[analysis], total_value=100_000,
+            targets=[
+                TargetPosition(
+                    symbol="NVDA",
+                    target_weight_pct=8.0,
+                    conviction="high",
+                    thesis="AI",
+                )
+            ],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
             price_map={"NVDA": 100.0},
         )
         assert len(decisions) == 1
@@ -797,6 +1053,7 @@ class TestModelTargetIsEvidence:
 # ---------------------------------------------------------------------------
 # The SLB case — the trade this change exists because of
 # ---------------------------------------------------------------------------
+
 
 class TestSLB:
     """SLB, 2026-09-01 morning run: `strong_buy` / `high` conviction, entry
@@ -811,8 +1068,8 @@ class TestSLB:
 
     ENTRY = 60.10
     STOP = 55.50
-    RISK = ENTRY - STOP                       # $4.60 / share
-    MODEL_TARGET = ENTRY + 1.28 * RISK        # ~$65.99, the 1.28 R/R figure
+    RISK = ENTRY - STOP  # $4.60 / share
+    MODEL_TARGET = ENTRY + 1.28 * RISK  # ~$65.99, the 1.28 R/R figure
     # The stop SLB actually shipped with on 2026-09-01 was
     # `min_stop_atr_multiple` (3.0 at the time) x 1.15 (the range scaler at
     # the time) = 3.45 ATRs out, which back-solves the ATR the run must have
@@ -825,7 +1082,7 @@ class TestSLB:
     # run did, and re-deriving it from live settings would silently rewrite
     # the historical record every time the config moves. Tests that assert
     # CURRENT behaviour read the config; this one asserts the past.
-    ATR = RISK / 3.45                         # ~$1.33, 2.2% of price
+    ATR = RISK / 3.45  # ~$1.33, 2.2% of price
     FLOOR = 1.5
 
     def _rr(self, target: float) -> float:
@@ -840,16 +1097,17 @@ class TestSLB:
         """The case the change is for. Price topped out repeatedly at ~$67.5
         before the decline into $60; that shelf is where it travels back to,
         and it is further than the model was willing to say."""
-        bars = _bars(
-            _oscillation(58.0, 67.5, cycles=20)
-            + [64.0, 62.0, 61.0, 60.5, 60.1]
-        )
+        bars = _bars(_oscillation(58.0, 67.5, cycles=20) + [64.0, 62.0, 61.0, 60.5, 60.1])
         supports, resistances = find_structural_levels(bars)
         levels = [lv.price for lv in (*supports, *resistances)]
 
         result = derive_structural_target(
-            entry_price=self.ENTRY, direction="long", levels=levels,
-            atr=self.ATR, horizon_sessions=30, setup_type="range",
+            entry_price=self.ENTRY,
+            direction="long",
+            levels=levels,
+            atr=self.ATR,
+            horizon_sessions=30,
+            setup_type="range",
             model_target=self.MODEL_TARGET,
         )
         assert result.basis == "structural_level"
@@ -865,9 +1123,12 @@ class TestSLB:
         $63.50, the computed target is WORSE than the model's guess and SLB
         is correctly refused. The floor does not move to accommodate it."""
         result = derive_structural_target(
-            entry_price=self.ENTRY, direction="long",
+            entry_price=self.ENTRY,
+            direction="long",
             levels=[55.0, 63.50, 72.0],
-            atr=self.ATR, horizon_sessions=30, setup_type="range",
+            atr=self.ATR,
+            horizon_sessions=30,
+            setup_type="range",
             model_target=self.MODEL_TARGET,
         )
         assert result.price == 63.50
@@ -906,16 +1167,27 @@ class TestSLB:
         # $62.50 so the fixture keeps failing for the same reason it has
         # since that rework, with margin rather than on a knife edge.
         analysis = _analysis(
-            symbol="SLB", rating="buy", entry=self.ENTRY, stop=59.0,
-            model_target=self.MODEL_TARGET, levels=[55.0, 62.50],
-            atr=self.ATR, horizon=30,
+            symbol="SLB",
+            rating="buy",
+            entry=self.ENTRY,
+            stop=59.0,
+            model_target=self.MODEL_TARGET,
+            levels=[55.0, 62.50],
+            atr=self.ATR,
+            horizon=30,
         )
         decisions = constructor.construct_orders(
-            targets=[TargetPosition(
-                symbol="SLB", target_weight_pct=5.0, conviction="high",
-                thesis="oilfield services recovery",
-            )],
-            positions=[], analyses=[analysis], total_value=100_000,
+            targets=[
+                TargetPosition(
+                    symbol="SLB",
+                    target_weight_pct=5.0,
+                    conviction="high",
+                    thesis="oilfield services recovery",
+                )
+            ],
+            positions=[],
+            analyses=[analysis],
+            total_value=100_000,
             price_map={"SLB": self.ENTRY},
         )
         # AMENDED 2026-10-01 (owner ruling, board item 218). $2.40 of

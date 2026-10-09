@@ -45,11 +45,13 @@ def db(tmp_path):
 # Pure logic — scoring
 # ============================================================================
 
+
 def test_supporter_scores_positive_r_on_a_winner():
     credits = score_position(
-        symbol="NVDA", direction="long", r_multiple=2.0,
-        stances=[SeatStance(seat="technical", symbol="NVDA", stance="buy",
-                            conviction="high")],
+        symbol="NVDA",
+        direction="long",
+        r_multiple=2.0,
+        stances=[SeatStance(seat="technical", symbol="NVDA", stance="buy", conviction="high")],
     )
     assert len(credits) == 1
     assert credits[0].side == "supported"
@@ -67,9 +69,15 @@ def test_dissenting_seat_is_credited_positively_when_the_trade_it_opposed_loses(
         SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
         SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
     ]
-    credits = {c.seat: c for c in score_position(
-        symbol="AAPL", direction="long", r_multiple=-1.0, stances=stances,
-    )}
+    credits = {
+        c.seat: c
+        for c in score_position(
+            symbol="AAPL",
+            direction="long",
+            r_multiple=-1.0,
+            stances=stances,
+        )
+    }
 
     assert credits["macro"].side == "opposed"
     assert credits["macro"].credit == pytest.approx(+1.0), (
@@ -78,9 +86,15 @@ def test_dissenting_seat_is_credited_positively_when_the_trade_it_opposed_loses(
     assert credits["technical"].side == "supported"
     assert credits["technical"].credit == pytest.approx(-1.0)
     # And the mirror image: on a WINNER the same dissent is charged.
-    on_winner = {c.seat: c for c in score_position(
-        symbol="AAPL", direction="long", r_multiple=+1.0, stances=stances,
-    )}
+    on_winner = {
+        c.seat: c
+        for c in score_position(
+            symbol="AAPL",
+            direction="long",
+            r_multiple=+1.0,
+            stances=stances,
+        )
+    }
     assert on_winner["macro"].credit == pytest.approx(-1.0)
 
 
@@ -98,9 +112,15 @@ def test_declared_confidence_does_not_scale_the_credit():
         SeatStance(seat="earnings", symbol="MSFT", stance="buy", conviction="medium"),
         SeatStance(seat="smart_money", symbol="MSFT", stance="buy", conviction="low"),
     ]
-    credits = {c.seat: c for c in score_position(
-        symbol="MSFT", direction="long", r_multiple=2.0, stances=stances,
-    )}
+    credits = {
+        c.seat: c
+        for c in score_position(
+            symbol="MSFT",
+            direction="long",
+            r_multiple=2.0,
+            stances=stances,
+        )
+    }
 
     assert credits["news"].credit == pytest.approx(2.0)
     assert credits["earnings"].credit == pytest.approx(2.0)
@@ -118,21 +138,25 @@ def test_declared_confidence_does_not_scale_the_credit():
 def test_declared_confidence_does_not_scale_dissent_either():
     """A loud dissenter and a hedged one are paid the same for being right."""
     loud = score_position(
-        symbol="X", direction="long", r_multiple=-2.0,
-        stances=[SeatStance(seat="macro", symbol="X", stance="underweight",
-                            conviction="high")],
+        symbol="X",
+        direction="long",
+        r_multiple=-2.0,
+        stances=[SeatStance(seat="macro", symbol="X", stance="underweight", conviction="high")],
     )[0]
     quiet = score_position(
-        symbol="X", direction="long", r_multiple=-2.0,
-        stances=[SeatStance(seat="macro", symbol="X", stance="underweight",
-                            conviction="low")],
+        symbol="X",
+        direction="long",
+        r_multiple=-2.0,
+        stances=[SeatStance(seat="macro", symbol="X", stance="underweight", conviction="low")],
     )[0]
     assert loud.credit == pytest.approx(quiet.credit) == pytest.approx(2.0)
 
 
 def test_neutral_seat_takes_no_side_and_earns_no_credit():
     credits = score_position(
-        symbol="T", direction="long", r_multiple=3.0,
+        symbol="T",
+        direction="long",
+        r_multiple=3.0,
         stances=[
             SeatStance(seat="news", symbol="T", stance="neutral"),
             SeatStance(seat="macro", symbol="T", stance=""),
@@ -144,13 +168,18 @@ def test_neutral_seat_takes_no_side_and_earns_no_credit():
 
 def test_short_direction_flips_who_supported():
     """A bearish seat SUPPORTS a short; a bullish one opposes it."""
-    credits = {c.seat: c for c in score_position(
-        symbol="TSLA", direction="short", r_multiple=1.0,
-        stances=[
-            SeatStance(seat="technical", symbol="TSLA", stance="sell"),
-            SeatStance(seat="news", symbol="TSLA", stance="positive"),
-        ],
-    )}
+    credits = {
+        c.seat: c
+        for c in score_position(
+            symbol="TSLA",
+            direction="short",
+            r_multiple=1.0,
+            stances=[
+                SeatStance(seat="technical", symbol="TSLA", stance="sell"),
+                SeatStance(seat="news", symbol="TSLA", stance="positive"),
+            ],
+        )
+    }
     assert credits["technical"].side == "supported"
     assert credits["news"].side == "opposed"
 
@@ -161,18 +190,21 @@ def test_short_direction_flips_who_supported():
 # Nothing is inverted, negated or special-cased for direction.
 # ---------------------------------------------------------------------------
 
+
 def test_a_profitable_short_pays_its_backer_exactly_like_a_profitable_long():
     """Same R, same magnitude, same sign. The only difference in the two
     calls below is the word "short"."""
     short = score_position(
-        symbol="TSLA", direction="short", r_multiple=2.0,
-        stances=[SeatStance(seat="technical", symbol="TSLA", stance="sell",
-                            conviction="high")],
+        symbol="TSLA",
+        direction="short",
+        r_multiple=2.0,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high")],
     )[0]
     long_ = score_position(
-        symbol="TSLA", direction="long", r_multiple=2.0,
-        stances=[SeatStance(seat="technical", symbol="TSLA", stance="buy",
-                            conviction="high")],
+        symbol="TSLA",
+        direction="long",
+        r_multiple=2.0,
+        stances=[SeatStance(seat="technical", symbol="TSLA", stance="buy", conviction="high")],
     )[0]
 
     assert short.side == "supported" and long_.side == "supported"
@@ -184,11 +216,15 @@ def test_a_profitable_short_pays_its_backer_exactly_like_a_profitable_long():
 
 def test_a_losing_short_charges_its_backer_exactly_like_a_losing_long():
     short = score_position(
-        symbol="TSLA", direction="short", r_multiple=-1.5,
+        symbol="TSLA",
+        direction="short",
+        r_multiple=-1.5,
         stances=[SeatStance(seat="technical", symbol="TSLA", stance="sell")],
     )[0]
     long_ = score_position(
-        symbol="TSLA", direction="long", r_multiple=-1.5,
+        symbol="TSLA",
+        direction="long",
+        r_multiple=-1.5,
         stances=[SeatStance(seat="technical", symbol="TSLA", stance="buy")],
     )[0]
     assert short.credit == pytest.approx(-1.5) == pytest.approx(long_.credit)
@@ -199,16 +235,21 @@ def test_opposing_a_profitable_short_is_charged_and_opposing_a_losing_one_is_pai
     bull = SeatStance(seat="news", symbol="TSLA", stance="positive")
 
     on_winner = score_position(
-        symbol="TSLA", direction="short", r_multiple=2.0, stances=[bull],
+        symbol="TSLA",
+        direction="short",
+        r_multiple=2.0,
+        stances=[bull],
     )[0]
     assert on_winner.side == "opposed"
     assert on_winner.credit == pytest.approx(-2.0), (
-        "arguing against a short that made money must cost, exactly as "
-        "arguing against a long that made money does"
+        "arguing against a short that made money must cost, exactly as arguing against a long that made money does"
     )
 
     on_loser = score_position(
-        symbol="TSLA", direction="short", r_multiple=-2.0, stances=[bull],
+        symbol="TSLA",
+        direction="short",
+        r_multiple=-2.0,
+        stances=[bull],
     )[0]
     assert on_loser.side == "opposed"
     assert on_loser.credit == pytest.approx(+2.0)
@@ -218,12 +259,30 @@ def test_short_and_long_credits_aggregate_into_one_undifferentiated_record():
     """An analyst's record does not separate the two directions, and a short
     win sits on the same side of zero as a long win."""
     credits = [
-        SeatCredit(seat="macro", symbol="AAA", side="supported", stance="buy",
-                   conviction="high", r_multiple=1.0, credit=1.0,
-                   resolved_at="2026-01-01", position_id="pos-1", direction="long"),
-        SeatCredit(seat="macro", symbol="BBB", side="supported", stance="sell",
-                   conviction="high", r_multiple=1.0, credit=1.0,
-                   resolved_at="2026-01-02", position_id="pos-2", direction="short"),
+        SeatCredit(
+            seat="macro",
+            symbol="AAA",
+            side="supported",
+            stance="buy",
+            conviction="high",
+            r_multiple=1.0,
+            credit=1.0,
+            resolved_at="2026-01-01",
+            position_id="pos-1",
+            direction="long",
+        ),
+        SeatCredit(
+            seat="macro",
+            symbol="BBB",
+            side="supported",
+            stance="sell",
+            conviction="high",
+            r_multiple=1.0,
+            credit=1.0,
+            resolved_at="2026-01-02",
+            position_id="pos-2",
+            direction="short",
+        ),
     ]
     record = aggregate_seat_records(credits)["macro"]
     assert record.resolved_calls == 2
@@ -249,18 +308,18 @@ def test_r_multiple_itself_makes_a_winning_short_positive():
 def test_summarize_reduces_a_short_round_trip_with_a_negative_qty():
     """The one place direction is expressed: `qty` comes back NEGATIVE for a
     short, which is what tells `r_multiple` which side it was."""
-    closed = summarize_closed_position([
-        _row("SHORT", 10, 100.0, stop_loss=110.0, decision_id="dec-s"),
-        _row("COVER", 10, 90.0, timestamp="2026-01-09 10:00:00"),
-    ])
+    closed = summarize_closed_position(
+        [
+            _row("SHORT", 10, 100.0, stop_loss=110.0, decision_id="dec-s"),
+            _row("COVER", 10, 90.0, timestamp="2026-01-09 10:00:00"),
+        ]
+    )
     assert closed is not None
     assert closed.direction == "short"
     assert closed.qty == pytest.approx(-10.0)
     assert closed.entry_price == pytest.approx(100.0)
     assert closed.exit_price == pytest.approx(90.0)
     assert closed.initial_stop == pytest.approx(110.0)
-
-
 
 
 def test_undeclared_confidence_is_labelled_medium_and_an_odd_one_is_kept():
@@ -286,11 +345,18 @@ def test_seat_aliases_collapse_to_one_identity():
 # Pure logic — aggregation
 # ============================================================================
 
+
 def _credit(seat, credit, at, symbol="AAA", conviction="medium"):
     return SeatCredit(
-        seat=seat, symbol=symbol, side="supported" if credit >= 0 else "opposed",
-        stance="buy", conviction=conviction, r_multiple=credit,
-        credit=credit, resolved_at=at, position_id=f"pos-{at}",
+        seat=seat,
+        symbol=symbol,
+        side="supported" if credit >= 0 else "opposed",
+        stance="buy",
+        conviction=conviction,
+        r_multiple=credit,
+        credit=credit,
+        resolved_at=at,
+        position_id=f"pos-{at}",
     )
 
 
@@ -333,8 +399,10 @@ def test_aggregate_returns_correct_counts_averages_series_and_drawdown():
 
 def test_aggregate_series_order_is_independent_of_input_order():
     forward = [_credit("macro", 2.0, "2026-01-01"), _credit("macro", -1.0, "2026-01-02")]
-    assert (aggregate_seat_records(forward)["macro"].cumulative
-            == aggregate_seat_records(list(reversed(forward)))["macro"].cumulative)
+    assert (
+        aggregate_seat_records(forward)["macro"].cumulative
+        == aggregate_seat_records(list(reversed(forward)))["macro"].cumulative
+    )
 
 
 def test_aggregate_applies_no_sample_size_gate():
@@ -383,23 +451,26 @@ def test_aggregate_breaks_the_record_down_by_declared_confidence():
     # The split is a partition of the same rows, not a second measurement.
     assert sum(b.resolved_calls for b in record.by_confidence) == record.resolved_calls
     assert sum(b.calls_right for b in record.by_confidence) == record.calls_right
-    assert (sum(b.cumulative_credit for b in record.by_confidence)
-            == pytest.approx(record.cumulative_credit))
+    assert sum(b.cumulative_credit for b in record.by_confidence) == pytest.approx(record.cumulative_credit)
 
 
 def test_breakdown_only_lists_levels_the_analyst_actually_used():
     """An empty row for an unused level would read as a record of zero."""
-    record = aggregate_seat_records([
-        _credit("news", 1.0, "2026-01-01", conviction="medium"),
-    ])["news"]
+    record = aggregate_seat_records(
+        [
+            _credit("news", 1.0, "2026-01-01", conviction="medium"),
+        ]
+    )["news"]
     assert [b.conviction for b in record.by_confidence] == ["medium"]
 
 
 def test_breakdown_keeps_an_unrecognized_confidence_under_its_own_name():
-    record = aggregate_seat_records([
-        _credit("news", 1.0, "2026-01-01", conviction="high"),
-        _credit("news", 1.0, "2026-01-02", conviction="enormous"),
-    ])["news"]
+    record = aggregate_seat_records(
+        [
+            _credit("news", 1.0, "2026-01-01", conviction="high"),
+            _credit("news", 1.0, "2026-01-02", conviction="enormous"),
+        ]
+    )["news"]
     assert [b.conviction for b in record.by_confidence] == ["high", "enormous"]
 
 
@@ -407,11 +478,19 @@ def test_breakdown_keeps_an_unrecognized_confidence_under_its_own_name():
 # Pure logic — round-trip reduction
 # ============================================================================
 
+
 def _row(action, qty, price, **kw):
     row = {
-        "action": action, "qty": qty, "price": price, "symbol": "AAPL",
-        "fill_qty": None, "fill_price": None, "fill_status": "filled",
-        "stop_loss": 0, "decision_id": None, "position_id": "pos-1",
+        "action": action,
+        "qty": qty,
+        "price": price,
+        "symbol": "AAPL",
+        "fill_qty": None,
+        "fill_price": None,
+        "fill_status": "filled",
+        "stop_loss": 0,
+        "decision_id": None,
+        "position_id": "pos-1",
         "timestamp": "2026-01-01 10:00:00",
     }
     row.update(kw)
@@ -419,19 +498,26 @@ def _row(action, qty, price, **kw):
 
 
 def test_summarize_returns_none_for_a_still_open_chain():
-    assert summarize_closed_position([
-        _row("BUY", 10, 100.0, stop_loss=95.0),
-        _row("PARTIAL_SELL(50%)", 5, 110.0),
-    ]) is None
+    assert (
+        summarize_closed_position(
+            [
+                _row("BUY", 10, 100.0, stop_loss=95.0),
+                _row("PARTIAL_SELL(50%)", 5, 110.0),
+            ]
+        )
+        is None
+    )
 
 
 def test_summarize_reduces_a_scaled_in_and_scaled_out_chain():
-    closed = summarize_closed_position([
-        _row("BUY", 10, 100.0, stop_loss=90.0, decision_id="dec-1"),
-        _row("BUY", 10, 110.0, stop_loss=95.0),
-        _row("PARTIAL_SELL(50%)", 10, 130.0),
-        _row("SELL", 10, 130.0, timestamp="2026-01-09 10:00:00"),
-    ])
+    closed = summarize_closed_position(
+        [
+            _row("BUY", 10, 100.0, stop_loss=90.0, decision_id="dec-1"),
+            _row("BUY", 10, 110.0, stop_loss=95.0),
+            _row("PARTIAL_SELL(50%)", 10, 130.0),
+            _row("SELL", 10, 130.0, timestamp="2026-01-09 10:00:00"),
+        ]
+    )
     assert closed is not None
     assert closed.entry_price == pytest.approx(105.0)
     assert closed.exit_price == pytest.approx(130.0)
@@ -444,26 +530,34 @@ def test_summarize_reduces_a_scaled_in_and_scaled_out_chain():
 def test_summarize_ignores_an_unfilled_trail_stop_placement():
     """A placed-but-never-filled TRAIL_STOP is protection, not an exit — the
     same distinction `_is_filled_trail_stop` already draws."""
-    assert summarize_closed_position([
-        _row("BUY", 10, 100.0, stop_loss=95.0),
-        _row("TRAIL_STOP", 10, 96.0, fill_status="submitted"),
-    ]) is None
+    assert (
+        summarize_closed_position(
+            [
+                _row("BUY", 10, 100.0, stop_loss=95.0),
+                _row("TRAIL_STOP", 10, 96.0, fill_status="submitted"),
+            ]
+        )
+        is None
+    )
 
 
 def test_summarize_counts_a_filled_trail_stop_as_the_exit():
-    closed = summarize_closed_position([
-        _row("BUY", 10, 100.0, stop_loss=95.0),
-        _row("TRAIL_STOP", 10, 96.0, fill_status="filled", fill_qty=10,
-             fill_price=95.5),
-    ])
+    closed = summarize_closed_position(
+        [
+            _row("BUY", 10, 100.0, stop_loss=95.0),
+            _row("TRAIL_STOP", 10, 96.0, fill_status="filled", fill_qty=10, fill_price=95.5),
+        ]
+    )
     assert closed is not None and closed.exit_price == pytest.approx(95.5)
 
 
 def test_summarize_keeps_a_stopless_chain_but_marks_it_unscorable():
-    closed = summarize_closed_position([
-        _row("BUY", 10, 100.0, stop_loss=0),
-        _row("SELL", 10, 120.0),
-    ])
+    closed = summarize_closed_position(
+        [
+            _row("BUY", 10, 100.0, stop_loss=0),
+            _row("SELL", 10, 120.0),
+        ]
+    )
     assert closed is not None and closed.initial_stop is None
 
 
@@ -471,26 +565,35 @@ def test_summarize_keeps_a_stopless_chain_but_marks_it_unscorable():
 # The join — a nomination can be traced to the trade it produced
 # ============================================================================
 
+
 def _write_nomination(db, *, run_id, symbol, seat, conviction="high"):
     """Exactly the row `_record_pipeline_event` writes during the nomination
     responder pass: decision_id NULL, because DecisionStage has not run yet."""
     db.insert_specialist_evidence(
-        run_id=run_id, agent_name="pipeline", kind="pipeline_event",
-        scope="symbol", symbol=symbol, decision_id=None,
-        evidence_json=json.dumps({
-            "conviction": conviction, "observation": "clustered insider buying",
-            "outcome": "nominated", "reason": "research_seat_nomination",
-            "seat": seat, "stage": "opportunity",
-        }, sort_keys=True),
+        run_id=run_id,
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol=symbol,
+        decision_id=None,
+        evidence_json=json.dumps(
+            {
+                "conviction": conviction,
+                "observation": "clustered insider buying",
+                "outcome": "nominated",
+                "reason": "research_seat_nomination",
+                "seat": seat,
+                "stage": "opportunity",
+            },
+            sort_keys=True,
+        ),
     )
 
 
 def test_nomination_is_written_with_no_decision_id_before_the_backfill(db):
     """The defect this change closes, asserted directly."""
     _write_nomination(db, run_id="run-1", symbol="NVDA", seat="news_analyst")
-    row = db.execute(
-        "SELECT decision_id FROM specialist_evidence WHERE kind='pipeline_event'"
-    ).fetchone()
+    row = db.execute("SELECT decision_id FROM specialist_evidence WHERE kind='pipeline_event'").fetchone()
     assert row["decision_id"] is None
 
 
@@ -505,14 +608,22 @@ def test_a_nomination_can_be_traced_to_the_trade_it_produced(db):
     _write_nomination(db, run_id="run-1", symbol="AMD", seat="macro_analyst")
 
     linked = db.link_nominations_to_decision(
-        run_id="run-1", decision_id="run-1-dec-abc123",
+        run_id="run-1",
+        decision_id="run-1-dec-abc123",
     )
     assert linked == 2
 
     db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.0, reasoning="acting on it",
-        run_id="run-1", stop_loss=95.0, fill_status="filled",
-        decision_id="run-1-dec-abc123", conviction="high",
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="acting on it",
+        run_id="run-1",
+        stop_loss=95.0,
+        fill_status="filled",
+        decision_id="run-1-dec-abc123",
+        conviction="high",
     )
 
     # The join a reader can now actually make.
@@ -536,20 +647,28 @@ def test_backfill_touches_only_unjoined_nomination_rows(db):
     never touch a non-nomination evidence row."""
     _write_nomination(db, run_id="run-1", symbol="NVDA", seat="news_analyst")
     db.insert_specialist_evidence(
-        run_id="run-1", agent_name="pipeline", kind="pipeline_event",
-        scope="symbol", symbol="IBM", decision_id="dec-OLD",
-        evidence_json=json.dumps({"outcome": "nominated", "seat": "macro_analyst"},
-                                 sort_keys=True),
+        run_id="run-1",
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol="IBM",
+        decision_id="dec-OLD",
+        evidence_json=json.dumps({"outcome": "nominated", "seat": "macro_analyst"}, sort_keys=True),
     )
     db.insert_specialist_evidence(
-        run_id="run-1", agent_name="macro_analyst", kind="analysis", scope="run",
+        run_id="run-1",
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
         evidence_json="{}",
     )
     db.insert_specialist_evidence(
-        run_id="run-OTHER", agent_name="pipeline", kind="pipeline_event",
-        scope="symbol", symbol="TSLA",
-        evidence_json=json.dumps({"outcome": "nominated", "seat": "news_analyst"},
-                                 sort_keys=True),
+        run_id="run-OTHER",
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol="TSLA",
+        evidence_json=json.dumps({"outcome": "nominated", "seat": "news_analyst"}, sort_keys=True),
     )
 
     assert db.link_nominations_to_decision(run_id="run-1", decision_id="dec-NEW") == 1
@@ -558,9 +677,9 @@ def test_backfill_touches_only_unjoined_nomination_rows(db):
         for r in db.execute("SELECT symbol, kind, decision_id FROM specialist_evidence")
     }
     assert rows[("NVDA", "pipeline_event")] == "dec-NEW"
-    assert rows[("IBM", "pipeline_event")] == "dec-OLD"     # not rewritten
-    assert rows[(None, "analysis")] is None                  # not a nomination
-    assert rows[("TSLA", "pipeline_event")] is None          # other run
+    assert rows[("IBM", "pipeline_event")] == "dec-OLD"  # not rewritten
+    assert rows[(None, "analysis")] is None  # not a nomination
+    assert rows[("TSLA", "pipeline_event")] is None  # other run
 
 
 def test_backfill_is_idempotent(db):
@@ -573,17 +692,23 @@ def test_backfill_is_idempotent(db):
 # Persistence — stances in, credits out
 # ============================================================================
 
+
 def test_seat_stances_round_trip_through_the_evidence_table(db):
     stances = [
         SeatStance(seat="technical", symbol="NVDA", stance="buy", conviction="high"),
-        SeatStance(seat="macro", symbol="NVDA", stance="underweight",
-                   conviction="medium", nominated=False),
-        SeatStance(seat="news", symbol="NVDA", stance="positive", conviction="high",
-                   nominated=True, observation="catalyst"),
+        SeatStance(seat="macro", symbol="NVDA", stance="underweight", conviction="medium", nominated=False),
+        SeatStance(
+            seat="news", symbol="NVDA", stance="positive", conviction="high", nominated=True, observation="catalyst"
+        ),
     ]
-    assert db.record_seat_stances(
-        run_id="run-1", decision_id="dec-1", stances=stances,
-    ) == 3
+    assert (
+        db.record_seat_stances(
+            run_id="run-1",
+            decision_id="dec-1",
+            stances=stances,
+        )
+        == 3
+    )
 
     read_back = {s.seat: s for s in db.get_seat_stances(decision_id="dec-1")}
     assert read_back["macro"].stance == "underweight", "dissent must survive the round trip"
@@ -595,13 +720,25 @@ def test_seat_stances_round_trip_through_the_evidence_table(db):
 def _closed_losing_long(db, *, symbol="AAPL", decision_id="dec-1"):
     """A BUY at 100 with a 90 stop, sold at 95 → -0.5R."""
     db.insert_trade(
-        symbol=symbol, action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=90.0, fill_status="filled",
-        decision_id=decision_id, conviction="high",
+        symbol=symbol,
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=90.0,
+        fill_status="filled",
+        decision_id=decision_id,
+        conviction="high",
     )
     db.insert_trade(
-        symbol=symbol, action="SELL", qty=10, price=95.0,
-        reasoning="thesis_invalid", run_id="run-2", fill_status="filled",
+        symbol=symbol,
+        action="SELL",
+        qty=10,
+        price=95.0,
+        reasoning="thesis_invalid",
+        run_id="run-2",
+        fill_status="filled",
     )
 
 
@@ -609,11 +746,15 @@ def test_resolve_scores_a_closed_position_and_persists_it(db):
     """Score on close, end to end through the DB, including the dissent case:
     macro opposed a trade that lost, and is credited positively for it."""
     _closed_losing_long(db)
-    db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
-        SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
-        SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
-        SeatStance(seat="news", symbol="AAPL", stance="neutral"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-1",
+        stances=[
+            SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
+            SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
+            SeatStance(seat="news", symbol="AAPL", stance="neutral"),
+        ],
+    )
 
     result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 1
@@ -630,9 +771,13 @@ def test_resolve_scores_a_closed_position_and_persists_it(db):
 
 def test_resolve_is_idempotent_and_does_not_double_credit(db):
     _closed_losing_long(db)
-    db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
-        SeatStance(seat="technical", symbol="AAPL", stance="buy"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-1",
+        stances=[
+            SeatStance(seat="technical", symbol="AAPL", stance="buy"),
+        ],
+    )
     first = db.conviction.resolve_conviction_ledger()
     second = db.conviction.resolve_conviction_ledger()
     assert first["scored_positions"] == 1
@@ -643,12 +788,23 @@ def test_resolve_is_idempotent_and_does_not_double_credit(db):
 
 def test_resolve_leaves_an_open_position_unscored(db):
     db.insert_trade(
-        symbol="MSFT", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=90.0, fill_status="filled", decision_id="dec-1",
+        symbol="MSFT",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=90.0,
+        fill_status="filled",
+        decision_id="dec-1",
     )
-    db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
-        SeatStance(seat="technical", symbol="MSFT", stance="buy"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-1",
+        stances=[
+            SeatStance(seat="technical", symbol="MSFT", stance="buy"),
+        ],
+    )
     result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 0
     assert db.conviction.get_conviction_credits() == []
@@ -658,10 +814,14 @@ def test_persisted_credits_aggregate_without_recomputation(db):
     """The read path §9.5 needs: credits come back off disk and go straight
     into the pure aggregate — no outcome is recomputed."""
     _closed_losing_long(db, symbol="AAPL", decision_id="dec-1")
-    db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
-        SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
-        SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-1",
+        stances=[
+            SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
+            SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
+        ],
+    )
     db.conviction.resolve_conviction_ledger()
 
     records = aggregate_seat_records(db.conviction.get_conviction_credits())
@@ -677,15 +837,28 @@ def test_persisted_credits_aggregate_without_recomputation(db):
 # never received a position_id and no short round trip could ever be scored.
 # ============================================================================
 
+
 def test_a_short_entry_mints_a_position_chain_and_its_cover_closes_it(db):
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=110.0, fill_status="filled",
-        decision_id="dec-s", conviction="high",
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=110.0,
+        fill_status="filled",
+        decision_id="dec-s",
+        conviction="high",
     )
     db.insert_trade(
-        symbol="TSLA", action="COVER", qty=10, price=90.0, reasoning="target",
-        run_id="run-2", fill_status="filled",
+        symbol="TSLA",
+        action="COVER",
+        qty=10,
+        price=90.0,
+        reasoning="target",
+        run_id="run-2",
+        fill_status="filled",
     )
     rows = db.execute(
         "SELECT action, position_id FROM trades WHERE symbol='TSLA' ORDER BY id",
@@ -697,8 +870,14 @@ def test_a_short_entry_mints_a_position_chain_and_its_cover_closes_it(db):
 
     # ...and the next SHORT starts a NEW chain, the flat-then-reopen rule.
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=5, price=95.0, reasoning="again",
-        run_id="run-3", stop_loss=105.0, fill_status="filled",
+        symbol="TSLA",
+        action="SHORT",
+        qty=5,
+        price=95.0,
+        reasoning="again",
+        run_id="run-3",
+        stop_loss=105.0,
+        fill_status="filled",
     )
     reopened = db.execute(
         "SELECT position_id FROM trades WHERE symbol='TSLA' ORDER BY id DESC LIMIT 1",
@@ -708,16 +887,33 @@ def test_a_short_entry_mints_a_position_chain_and_its_cover_closes_it(db):
 
 def test_a_partial_cover_and_a_stop_both_belong_to_the_short_chain(db):
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=110.0, fill_status="filled", decision_id="dec-s",
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=110.0,
+        fill_status="filled",
+        decision_id="dec-s",
     )
     db.insert_trade(
-        symbol="TSLA", action="PARTIAL_COVER(50%)", qty=5, price=95.0,
-        reasoning="trim", run_id="run-2", fill_status="filled",
+        symbol="TSLA",
+        action="PARTIAL_COVER(50%)",
+        qty=5,
+        price=95.0,
+        reasoning="trim",
+        run_id="run-2",
+        fill_status="filled",
     )
     db.insert_trade(
-        symbol="TSLA", action="STOP_OUT", qty=5, price=98.0, reasoning="stopped out",
-        run_id="run-3", fill_status="filled",
+        symbol="TSLA",
+        action="STOP_OUT",
+        qty=5,
+        price=98.0,
+        reasoning="stopped out",
+        run_id="run-3",
+        fill_status="filled",
     )
     ids = {
         r["action"]: r["position_id"]
@@ -732,12 +928,23 @@ def test_a_sell_never_retires_an_open_short_chain(db):
     """A long-side exit against a short is not that chain's exit. Left
     unattached rather than allowed to close the wrong position."""
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=110.0, fill_status="filled",
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=110.0,
+        fill_status="filled",
     )
     db.insert_trade(
-        symbol="TSLA", action="SELL", qty=10, price=90.0, reasoning="stray",
-        run_id="run-2", fill_status="filled",
+        symbol="TSLA",
+        action="SELL",
+        qty=10,
+        price=90.0,
+        reasoning="stray",
+        run_id="run-2",
+        fill_status="filled",
     )
     rows = {
         r["action"]: r["position_id"]
@@ -751,12 +958,23 @@ def test_a_sell_never_retires_an_open_short_chain(db):
 
 def test_a_cover_never_retires_an_open_long_chain(db):
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=90.0, fill_status="filled",
+        symbol="AAPL",
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=90.0,
+        fill_status="filled",
     )
     db.insert_trade(
-        symbol="AAPL", action="COVER", qty=10, price=110.0, reasoning="stray",
-        run_id="run-2", fill_status="filled",
+        symbol="AAPL",
+        action="COVER",
+        qty=10,
+        price=110.0,
+        reasoning="stray",
+        run_id="run-2",
+        fill_status="filled",
     )
     rows = {
         r["action"]: r["position_id"]
@@ -771,13 +989,25 @@ def test_a_cover_never_retires_an_open_long_chain(db):
 def _closed_winning_short(db, *, symbol="TSLA", decision_id="dec-s"):
     """SHORT at 100 with a 110 stop, covered at 90 → +1.0R. It made money."""
     db.insert_trade(
-        symbol=symbol, action="SHORT", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=110.0, fill_status="filled",
-        decision_id=decision_id, conviction="high",
+        symbol=symbol,
+        action="SHORT",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=110.0,
+        fill_status="filled",
+        decision_id=decision_id,
+        conviction="high",
     )
     db.insert_trade(
-        symbol=symbol, action="COVER", qty=10, price=90.0, reasoning="target",
-        run_id="run-2", fill_status="filled",
+        symbol=symbol,
+        action="COVER",
+        qty=10,
+        price=90.0,
+        reasoning="target",
+        run_id="run-2",
+        fill_status="filled",
     )
 
 
@@ -787,10 +1017,14 @@ def test_a_winning_short_scores_exactly_like_a_winning_long(db):
     against it is charged — the same words, signs and magnitudes a long of
     equal R would produce."""
     _closed_winning_short(db)
-    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
-        SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
-        SeatStance(seat="news", symbol="TSLA", stance="positive", conviction="low"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-s",
+        stances=[
+            SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
+            SeatStance(seat="news", symbol="TSLA", stance="positive", conviction="low"),
+        ],
+    )
 
     result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 1
@@ -815,24 +1049,39 @@ def test_a_winning_short_scores_exactly_like_a_winning_long(db):
 def test_a_losing_short_scores_exactly_like_a_losing_long(db):
     """SHORT at 100 with a 110 stop, covered at 105 → -0.5R. It lost money."""
     db.insert_trade(
-        symbol="TSLA", action="SHORT", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=110.0, fill_status="filled", decision_id="dec-s",
+        symbol="TSLA",
+        action="SHORT",
+        qty=10,
+        price=100.0,
+        reasoning="entry",
+        run_id="run-1",
+        stop_loss=110.0,
+        fill_status="filled",
+        decision_id="dec-s",
     )
     db.insert_trade(
-        symbol="TSLA", action="COVER", qty=10, price=105.0, reasoning="thesis_invalid",
-        run_id="run-2", fill_status="filled",
+        symbol="TSLA",
+        action="COVER",
+        qty=10,
+        price=105.0,
+        reasoning="thesis_invalid",
+        run_id="run-2",
+        fill_status="filled",
     )
-    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
-        SeatStance(seat="technical", symbol="TSLA", stance="sell"),
-        SeatStance(seat="news", symbol="TSLA", stance="positive"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-s",
+        stances=[
+            SeatStance(seat="technical", symbol="TSLA", stance="sell"),
+            SeatStance(seat="news", symbol="TSLA", stance="positive"),
+        ],
+    )
     db.conviction.resolve_conviction_ledger()
 
     credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
     assert credits["technical"].credit == pytest.approx(-0.5)
     assert credits["news"].credit == pytest.approx(+0.5), (
-        "arguing against a short that lost money must pay, exactly as "
-        "arguing against a long that lost money does"
+        "arguing against a short that lost money must pay, exactly as arguing against a long that lost money does"
     )
 
 
@@ -840,10 +1089,14 @@ def test_declared_confidence_changes_no_persisted_credit(db):
     """Two identical outcomes, two different declared confidences, one
     number. The weight is gone from the persistence path too."""
     _closed_winning_short(db, symbol="TSLA", decision_id="dec-s")
-    db.record_seat_stances(run_id="run-1", decision_id="dec-s", stances=[
-        SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
-        SeatStance(seat="macro", symbol="TSLA", stance="bearish", conviction="low"),
-    ])
+    db.record_seat_stances(
+        run_id="run-1",
+        decision_id="dec-s",
+        stances=[
+            SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
+            SeatStance(seat="macro", symbol="TSLA", stance="bearish", conviction="low"),
+        ],
+    )
     db.conviction.resolve_conviction_ledger()
 
     credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
@@ -851,10 +1104,11 @@ def test_declared_confidence_changes_no_persisted_credit(db):
     assert credits["technical"].conviction == "high"
     assert credits["macro"].conviction == "low"
     # No `weight` key survives into a newly written row.
-    stored = json.loads(db.execute(
-        "SELECT evidence_json FROM specialist_evidence "
-        "WHERE kind='conviction_credit' LIMIT 1",
-    ).fetchone()["evidence_json"])
+    stored = json.loads(
+        db.execute(
+            "SELECT evidence_json FROM specialist_evidence WHERE kind='conviction_credit' LIMIT 1",
+        ).fetchone()["evidence_json"]
+    )
     assert "weight" not in stored
     assert stored["credit"] == pytest.approx(stored["r_multiple"])
 
@@ -864,15 +1118,30 @@ def test_a_legacy_weighted_row_is_read_back_unweighted(db):
     Nothing is migrated; the read path recomputes from the stored unweighted
     `r_multiple` and `side`, so one series never mixes two scales."""
     db.insert_specialist_evidence(
-        run_id="run-old", decision_id="dec-old", agent_name="macro",
-        kind=db.conviction.CONVICTION_CREDIT_KIND, scope="symbol", symbol="AAPL",
-        evidence_json=json.dumps({
-            "seat": "macro", "symbol": "AAPL", "side": "supported",
-            "stance": "buy", "conviction": "low", "weight": 0.3,
-            "r_multiple": 2.0, "credit": 0.6,          # 2.0 x 0.3, the old scale
-            "resolved_at": "2026-01-01 15:00:00", "position_id": "pos-old",
-            "decision_id": "dec-old", "direction": "long", "nominated": False,
-        }, sort_keys=True),
+        run_id="run-old",
+        decision_id="dec-old",
+        agent_name="macro",
+        kind=db.conviction.CONVICTION_CREDIT_KIND,
+        scope="symbol",
+        symbol="AAPL",
+        evidence_json=json.dumps(
+            {
+                "seat": "macro",
+                "symbol": "AAPL",
+                "side": "supported",
+                "stance": "buy",
+                "conviction": "low",
+                "weight": 0.3,
+                "r_multiple": 2.0,
+                "credit": 0.6,  # 2.0 x 0.3, the old scale
+                "resolved_at": "2026-01-01 15:00:00",
+                "position_id": "pos-old",
+                "decision_id": "dec-old",
+                "direction": "long",
+                "nominated": False,
+            },
+            sort_keys=True,
+        ),
     )
     credit = db.conviction.get_conviction_credits()[0]
     assert credit.credit == pytest.approx(2.0), "the stored 0.6 is the old weighted scale"
@@ -884,6 +1153,7 @@ def test_a_legacy_weighted_row_is_read_back_unweighted(db):
 # The invariant — ledger recording cannot move a trading decision
 # ============================================================================
 
+
 def _decision_stage_pipeline(db):
     """A DecisionStage wired to a REAL PortfolioConstructor, so what it
     returns is the real construction output rather than a mock's."""
@@ -892,11 +1162,16 @@ def _decision_stage_pipeline(db):
 
     p = build_pipeline(db=db, db_mock_guard=None)
     for name in (
-        "_build_weekly_narrative", "_build_macro_trajectory",
-        "_build_active_state_changes", "_build_rm_recent_verdicts",
-        "_build_pm_recent_decisions", "_build_projected_portfolio",
-        "_build_calibration_note", "_build_macro_tech_alignment",
-        "_build_recent_missed_lessons", "_build_recent_loss_pits",
+        "_build_weekly_narrative",
+        "_build_macro_trajectory",
+        "_build_active_state_changes",
+        "_build_rm_recent_verdicts",
+        "_build_pm_recent_decisions",
+        "_build_projected_portfolio",
+        "_build_calibration_note",
+        "_build_macro_tech_alignment",
+        "_build_recent_missed_lessons",
+        "_build_recent_loss_pits",
     ):
         setattr(p, name, MagicMock(return_value=""))
     p._sweeper = MagicMock(return_value=None)
@@ -926,20 +1201,32 @@ def _decision_stage_pipeline(db):
 
 def _pm_decision():
     from src.models import (
-        PortfolioDecision, ReasoningChain, TargetPosition,
+        PortfolioDecision,
+        ReasoningChain,
+        TargetPosition,
     )
+
     return PortfolioDecision(
         portfolio_view="one idea",
         reasoning_chain=ReasoningChain(
-            macro_filter="x", news_check="x", earnings_check="x",
-            signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+            macro_filter="x",
+            news_check="x",
+            earnings_check="x",
+            signal_conflicts="x",
+            sizing_logic="x",
+            portfolio_balance="x",
             cash_target="x",
         ),
-        targets=[TargetPosition(
-            symbol="NVDA", risk_allocation_pct=3.0, conviction="high",
-            thesis="breakout with volume", direction="long",
-            thesis_invalid_if="closes below support",
-        )],
+        targets=[
+            TargetPosition(
+                symbol="NVDA",
+                risk_allocation_pct=3.0,
+                conviction="high",
+                thesis="breakout with volume",
+                direction="long",
+                thesis_invalid_if="closes below support",
+            )
+        ],
     )
 
 
@@ -949,20 +1236,33 @@ def _decision_ctx():
 
     ctx = RunContext.start("morning")
     ctx.positions = []
-    ctx.analyses = [TechAnalysisResult(
-        symbol="NVDA", rating="buy", conviction="high", entry_price=100.0,
-        stop_loss=95.0, reference_target=120.0, support_levels=[95.0],
-        resistance_levels=[120.0], setup_type="breakout",
-        # Python-set in production; the constructor derives the take-profit
-        # from these and refuses without them (2026-09-01).
-        computed_levels=[95.0, 120.0], atr_14=5.0 / 3.5,
-        expected_horizon_sessions=60, reasoning="x",
-        reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
-            support_resistance="x",
-        ),
-        thesis_invalid_if="closes below support",
-    )]
+    ctx.analyses = [
+        TechAnalysisResult(
+            symbol="NVDA",
+            rating="buy",
+            conviction="high",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=120.0,
+            support_levels=[95.0],
+            resistance_levels=[120.0],
+            setup_type="breakout",
+            # Python-set in production; the constructor derives the take-profit
+            # from these and refuses without them (2026-09-01).
+            computed_levels=[95.0, 120.0],
+            atr_14=5.0 / 3.5,
+            expected_horizon_sessions=60,
+            reasoning="x",
+            reasoning_chain=TechReasoningChain(
+                trend="x",
+                momentum="x",
+                volatility="x",
+                volume="x",
+                support_resistance="x",
+            ),
+            thesis_invalid_if="closes below support",
+        )
+    ]
     ctx.macro_analysis = None
     ctx.total_value = 100_000.0
     ctx.last_equity = 100_000.0
@@ -981,9 +1281,17 @@ def _run_decision_stage(db):
     p = _decision_stage_pipeline(db)
     p.portfolio_manager.decide.return_value = (
         _pm_decision(),
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1, input_tokens=1,
-                  output_tokens=1, cost_usd=0.0, model="test-model",
-                  semantic_status=None, semantic_error=None),
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            model="test-model",
+            semantic_status=None,
+            semantic_error=None,
+        ),
     )
     ctx = _decision_ctx()
     DecisionStage(pipeline=p).run(ctx)
@@ -1008,7 +1316,9 @@ def test_ledger_recording_does_not_change_a_single_trading_decision(tmp_path, mo
         ctx_on = _run_decision_stage(db_on)
 
         monkeypatch.setattr(
-            stages, "_link_nominations_to_decision", lambda *a, **k: None,
+            stages,
+            "_link_nominations_to_decision",
+            lambda *a, **k: None,
         )
         monkeypatch.setattr(stages, "_record_seat_stances", lambda *a, **k: None)
         ctx_off = _run_decision_stage(db_off)
@@ -1022,10 +1332,9 @@ def test_ledger_recording_does_not_change_a_single_trading_decision(tmp_path, mo
             "bookkeeping and must be inert with respect to what the desk trades"
         )
         # Same for the targets the constructor was given.
-        assert (
-            [t.model_dump_json() for t in ctx_on.portfolio_decision.targets]
-            == [t.model_dump_json() for t in ctx_off.portfolio_decision.targets]
-        )
+        assert [t.model_dump_json() for t in ctx_on.portfolio_decision.targets] == [
+            t.model_dump_json() for t in ctx_off.portfolio_decision.targets
+        ]
         # ...and the recording genuinely happened on the "on" side, so the
         # comparison above is not two no-ops agreeing with each other.
         assert db_on.get_seat_stances(decision_id=ctx_on.decision_id)
@@ -1045,18 +1354,32 @@ def test_short_chaining_touches_no_trading_decision(tmp_path, monkeypatch):
     the database it writes into already holds a scored SHORT round trip whose
     chain the change created.
     """
+
     def _seed_short_history(database):
         database.insert_trade(
-            symbol="NVDA", action="SHORT", qty=10, price=100.0, reasoning="entry",
-            run_id="seed", stop_loss=110.0, fill_status="filled",
-            decision_id="seed-dec", conviction="high",
+            symbol="NVDA",
+            action="SHORT",
+            qty=10,
+            price=100.0,
+            reasoning="entry",
+            run_id="seed",
+            stop_loss=110.0,
+            fill_status="filled",
+            decision_id="seed-dec",
+            conviction="high",
         )
         database.insert_trade(
-            symbol="NVDA", action="COVER", qty=10, price=90.0, reasoning="target",
-            run_id="seed", fill_status="filled",
+            symbol="NVDA",
+            action="COVER",
+            qty=10,
+            price=90.0,
+            reasoning="target",
+            run_id="seed",
+            fill_status="filled",
         )
         database.record_seat_stances(
-            run_id="seed", decision_id="seed-dec",
+            run_id="seed",
+            decision_id="seed-dec",
             stances=[SeatStance(seat="technical", symbol="NVDA", stance="sell")],
         )
         database.conviction.resolve_conviction_ledger()
@@ -1098,7 +1421,7 @@ def test_ledger_recording_failure_never_propagates(tmp_path):
     ctx = _decision_ctx()
     ctx.decision_id = "dec-1"
 
-    _link_nominations_to_decision(p, ctx)          # must not raise
+    _link_nominations_to_decision(p, ctx)  # must not raise
     _record_seat_stances(p, ctx, {"NVDA": {"technical": "buy"}}, ["NVDA"])
     p.db.record_seat_stances.assert_called_once()
 
@@ -1117,16 +1440,17 @@ def test_seat_stances_recorded_carry_dissent_and_declared_conviction(tmp_path):
         ctx = _decision_ctx()
         ctx.decision_id = "dec-1"
         _record_seat_stances(
-            p, ctx,
+            p,
+            ctx,
             {"NVDA": {"technical": "buy", "macro": "underweight", "news": "positive"}},
             ["NVDA"],
         )
         recorded = {s.seat: s for s in db.get_seat_stances(decision_id="dec-1")}
         assert recorded["macro"].stance == "underweight"
         assert recorded["news"].nominated is True
-        assert recorded["news"].conviction == "high"   # what NEWS declared
+        assert recorded["news"].conviction == "high"  # what NEWS declared
         assert recorded["technical"].conviction == "high"  # TechAnalysisResult
         assert recorded["macro"].nominated is False
-        assert recorded["macro"].conviction == "medium"    # declared nothing
+        assert recorded["macro"].conviction == "medium"  # declared nothing
     finally:
         db.close()

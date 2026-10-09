@@ -25,8 +25,7 @@ def _make_db(path, rows):
         "detail TEXT, timestamp TEXT NOT NULL)"
     )
     conn.executemany(
-        "INSERT INTO notifier_sends (kind, status, run_id, text, detail, timestamp) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO notifier_sends (kind, status, run_id, text, detail, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()
@@ -74,16 +73,34 @@ def test_missing_table_is_not_reported_as_an_empty_backlog(tmp_path, monkeypatch
 
 
 def test_live_risk_is_listed_per_message_and_grouped_without_collapsing(muted_db):
-    muted_db([
-        ("owner_alert", "muted", None,
-         "\U0001f6d1\U0001f6d1 PROTECTIVE STOP UNREADABLE\nthe desk cannot read it",
-         "suppressed by TELEGRAM_DISABLED; symbols: aaa", "2026-10-01 14:00:00"),
-        ("owner_alert", "muted", None,
-         "\U0001f534 COULD NOT PUT THE PROTECTIVE STOP BACK\nnothing is guarding it",
-         "suppressed by TELEGRAM_DISABLED; symbols: bbb", "2026-10-01 15:00:00"),
-        ("intra_check", "muted", None, "half-hourly check: nothing to do",
-         "suppressed by TELEGRAM_DISABLED; not sent", "2026-10-01 16:00:00"),
-    ])
+    muted_db(
+        [
+            (
+                "owner_alert",
+                "muted",
+                None,
+                "\U0001f6d1\U0001f6d1 PROTECTIVE STOP UNREADABLE\nthe desk cannot read it",
+                "suppressed by TELEGRAM_DISABLED; symbols: aaa",
+                "2026-10-01 14:00:00",
+            ),
+            (
+                "owner_alert",
+                "muted",
+                None,
+                "\U0001f534 COULD NOT PUT THE PROTECTIVE STOP BACK\nnothing is guarding it",
+                "suppressed by TELEGRAM_DISABLED; symbols: bbb",
+                "2026-10-01 15:00:00",
+            ),
+            (
+                "intra_check",
+                "muted",
+                None,
+                "half-hourly check: nothing to do",
+                "suppressed by TELEGRAM_DISABLED; not sent",
+                "2026-10-01 16:00:00",
+            ),
+        ]
+    )
     out = db_reads.get_muted_backlog()
     assert out["total"] == 3
     assert out["live_risk_total"] == 2
@@ -99,22 +116,31 @@ def test_live_risk_is_listed_per_message_and_grouped_without_collapsing(muted_db
 
 def test_days_are_the_owners_days_not_utc(muted_db):
     """01:00 UTC is still the previous evening in ET."""
-    muted_db([
-        ("generic", "muted", None, "late one", None, "2026-10-02 01:00:00"),
-        ("generic", "muted", None, "earlier one", None, "2026-10-01 14:00:00"),
-    ])
+    muted_db(
+        [
+            ("generic", "muted", None, "late one", None, "2026-10-02 01:00:00"),
+            ("generic", "muted", None, "earlier one", None, "2026-10-01 14:00:00"),
+        ]
+    )
     out = db_reads.get_muted_backlog()
     assert [d["day"] for d in out["by_day"]] == ["2026-10-01"]
     assert out["by_day"][0]["count"] == 2
 
 
 def test_a_closed_gap_is_not_counted_as_live_risk(muted_db):
-    """"The stop is back on" is good news about a gap, not an open one."""
-    muted_db([
-        ("owner_alert", "muted", None,
-         "\U0001f6d1\U0001f6d1 A MISSING STOP WAS PUT BACK\ncovered again", None,
-         "2026-10-01 14:00:00"),
-    ])
+    """ "The stop is back on" is good news about a gap, not an open one."""
+    muted_db(
+        [
+            (
+                "owner_alert",
+                "muted",
+                None,
+                "\U0001f6d1\U0001f6d1 A MISSING STOP WAS PUT BACK\ncovered again",
+                None,
+                "2026-10-01 14:00:00",
+            ),
+        ]
+    )
     out = db_reads.get_muted_backlog()
     assert out["total"] == 1
     assert out["live_risk_total"] == 0
@@ -125,11 +151,18 @@ def test_endpoint_returns_the_record_without_unmuting_anything(muted_db, monkeyp
 
     from src.api.server import app
 
-    muted_db([
-        ("owner_alert", "muted", None,
-         "\U0001f534 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\nno stop",
-         "suppressed by TELEGRAM_DISABLED; symbols: ccc", "2026-10-01 14:00:00"),
-    ])
+    muted_db(
+        [
+            (
+                "owner_alert",
+                "muted",
+                None,
+                "\U0001f534 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\nno stop",
+                "suppressed by TELEGRAM_DISABLED; symbols: ccc",
+                "2026-10-01 14:00:00",
+            ),
+        ]
+    )
     monkeypatch.setenv("TELEGRAM_DISABLED", "1")
     with TestClient(app) as client:
         res = client.get("/alerts/muted-backlog")
@@ -139,6 +172,7 @@ def test_endpoint_returns_the_record_without_unmuting_anything(muted_db, monkeyp
     assert payload["coverage_complete"] is False
     # The read must not have touched the mute.
     import os
+
     assert os.environ["TELEGRAM_DISABLED"] == "1"
 
 
@@ -150,13 +184,17 @@ def test_live_risk_is_never_buried_by_volume(muted_db):
     so a live-risk message recorded before 500 ordinary ones still shows.
     """
     rows = [
-        ("owner_alert", "muted", None,
-         "\U0001f534 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\nno stop",
-         "suppressed by TELEGRAM_DISABLED; symbols: zzz", "2026-10-01 09:00:00"),
+        (
+            "owner_alert",
+            "muted",
+            None,
+            "\U0001f534 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\nno stop",
+            "suppressed by TELEGRAM_DISABLED; symbols: zzz",
+            "2026-10-01 09:00:00",
+        ),
     ]
     rows += [
-        ("intra_check", "muted", None, f"routine note {i}", None,
-         f"2026-10-01 1{i // 60:01d}:{i % 60:02d}:00")
+        ("intra_check", "muted", None, f"routine note {i}", None, f"2026-10-01 1{i // 60:01d}:{i % 60:02d}:00")
         for i in range(500)
     ]
     muted_db(rows)
@@ -186,13 +224,19 @@ def test_a_failed_owner_alert_reaches_the_backlog(muted_db):
     two deliberate drops, so a naked-position alert that failed to send
     appeared nowhere at all.
     """
-    muted_db([
-        ("owner_alert", "failed", None,
-         "PROTECTIVE STOP UNREADABLE\nthe broker would not say",
-         "send error: boom", "2026-10-01 13:00:00"),
-        ("owner_alert", "sent", None, "delivered fine", None,
-         "2026-10-01 12:00:00"),
-    ])
+    muted_db(
+        [
+            (
+                "owner_alert",
+                "failed",
+                None,
+                "PROTECTIVE STOP UNREADABLE\nthe broker would not say",
+                "send error: boom",
+                "2026-10-01 13:00:00",
+            ),
+            ("owner_alert", "sent", None, "delivered fine", None, "2026-10-01 12:00:00"),
+        ]
+    )
     out = db_reads.get_muted_backlog()
     assert out["total"] == 1
     assert out["failed_total"] == 1

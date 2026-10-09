@@ -314,6 +314,7 @@ def level_zone_halfwidth(
         # delete the level from every "is price AT this level" test.
     return level_price * tolerance_pct / 100.0
 
+
 # A level touched once is a coincidence, not structure.
 #
 # **This one IS sourced, and 2 is the answer the source gives.** docs/WORK.md
@@ -565,9 +566,8 @@ class Level:
     @property
     def zone_halfwidth(self) -> float:
         """This level's own match tolerance, measured where possible."""
-        return level_zone_halfwidth(
-            self.price, zone_low=self.zone_low, zone_high=self.zone_high
-        )
+        return level_zone_halfwidth(self.price, zone_low=self.zone_low, zone_high=self.zone_high)
+
     # (low, high) of every BAR that drew this level — one entry per pivot in
     # the cluster, read straight off the instrument. This is what makes
     # "the stop is AT this level" answerable without inventing a tolerance:
@@ -593,10 +593,7 @@ def _clean_bars(bars: list[OHLCV]) -> list[OHLCV]:
     neighbours is. Only egregious deviations are removed, so genuine gaps and
     limit moves survive.
     """
-    usable = [
-        b for b in bars
-        if b.high > 0 and b.low > 0 and b.close > 0 and b.high >= b.low
-    ]
+    usable = [b for b in bars if b.high > 0 and b.low > 0 and b.close > 0 and b.high >= b.low]
     n = len(usable)
     if n < _CLEAN_WINDOW * 2 + 1:
         return usable
@@ -610,8 +607,8 @@ def _clean_bars(bars: list[OHLCV]) -> list[OHLCV]:
         hi = min(n, i + _CLEAN_WINDOW + 1)
         # Neighbourhood excluding the bar under test — a bad print must not be
         # allowed to widen the band that is supposed to catch it.
-        neighbour_highs = np.concatenate([highs[lo:i], highs[i + 1:hi]])
-        neighbour_lows = np.concatenate([lows[lo:i], lows[i + 1:hi]])
+        neighbour_highs = np.concatenate([highs[lo:i], highs[i + 1 : hi]])
+        neighbour_lows = np.concatenate([lows[lo:i], lows[i + 1 : hi]])
         if neighbour_highs.size == 0 or neighbour_lows.size == 0:
             keep.append(bar)
             continue
@@ -628,9 +625,7 @@ def _clean_bars(bars: list[OHLCV]) -> list[OHLCV]:
     return keep
 
 
-def _find_pivots(
-    bars: list[OHLCV], window: int
-) -> list[tuple[int, float, str, float, float]]:
+def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str, float, float]]:
     """Locate swing highs and lows.
 
     Returns ``(index, price, "R"|"S", bar_low, bar_high)``. The last two are
@@ -750,11 +745,7 @@ def _cluster(
                 if anchor <= 0:
                     continue
                 tol = CLUSTER_TOLERANCE_PCT_FALLBACK
-                if any(
-                    m[1] <= 0
-                    or abs(pivot[1] - m[1]) / m[1] * 100.0 > tol
-                    for m in members
-                ):
+                if any(m[1] <= 0 or abs(pivot[1] - m[1]) / m[1] * 100.0 > tol for m in members):
                     continue
             members.append(pivot)
             placed = True
@@ -765,9 +756,7 @@ def _cluster(
     return clusters
 
 
-def cluster_span(
-    cluster: list[tuple[int, float, str, float, float]]
-) -> tuple[float | None, float | None]:
+def cluster_span(cluster: list[tuple[int, float, str, float, float]]) -> tuple[float | None, float | None]:
     """``(low, high)`` of the bars forming a cluster — the level's own zone."""
     lows = [c[3] for c in cluster if len(c) > 4 and math.isfinite(c[3]) and c[3] > 0]
     highs = [c[4] for c in cluster if len(c) > 4 and math.isfinite(c[4]) and c[4] > 0]
@@ -845,7 +834,8 @@ def find_structural_levels(
         series = atr_series(clean)
         volatility = _finite_positive(series[-1]) if series.size else None
     window = horizon_reach(
-        volatility, max_horizon_sessions,
+        volatility,
+        max_horizon_sessions,
         max_reach_atr_multiple=max_reach_atr_multiple,
         max_horizon_sessions=max_horizon_sessions,
     )
@@ -871,11 +861,7 @@ def find_structural_levels(
             continue
 
         newest_index = max(p[0] for p in cluster)
-        pivot_bars = tuple(
-            (float(clean[p[0]].low), float(clean[p[0]].high))
-            for p in cluster
-            if 0 <= p[0] < len(clean)
-        )
+        pivot_bars = tuple((float(clean[p[0]].low), float(clean[p[0]].high)) for p in cluster if 0 <= p[0] < len(clean))
         sessions_ago = last_index - newest_index
 
         # Strength is touch count, discounted by distance — no age term.
@@ -914,9 +900,7 @@ def find_structural_levels(
         # it is not a free upgrade sitting next to the simpler option — it is
         # a different and less defensible ranking. Distance is untouched:
         # nothing here measured it, so nothing here changes it.
-        strength = float(len(cluster)) / (
-            1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
-        )
+        strength = float(len(cluster)) / (1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT)
 
         zlow, zhigh = cluster_span(cluster)
         level = Level(
@@ -937,7 +921,9 @@ def find_structural_levels(
 
 
 def format_levels_block(
-    supports: list[Level], resistances: list[Level], last_close: float,
+    supports: list[Level],
+    resistances: list[Level],
+    last_close: float,
     live_price: float | None = None,
 ) -> str:
     """Render levels for the Tech Analyst prompt.
@@ -961,10 +947,7 @@ def format_levels_block(
 
     def line(lv: Level) -> str:
         gap = (lv.price - anchor) / anchor * 100.0
-        return (
-            f"    ${lv.price:,.2f} ({gap:+.1f}%) · {lv.touches} touches · "
-            f"last {lv.last_touch_sessions_ago}d ago"
-        )
+        return f"    ${lv.price:,.2f} ({gap:+.1f}%) · {lv.touches} touches · last {lv.last_touch_sessions_ago}d ago"
 
     out = ["Structural levels (computed from the full price history):", "  Resistance (nearest last):"]
     if resistances:
@@ -973,8 +956,7 @@ def format_levels_block(
         out.append("    none within range")
     if live:
         out.append(
-            f"  >>> LIVE ${live:,.2f} (session IN PROGRESS, not a close; "
-            f"last completed close ${last_close:,.2f}) <<<"
+            f"  >>> LIVE ${live:,.2f} (session IN PROGRESS, not a close; last completed close ${last_close:,.2f}) <<<"
         )
     else:
         out.append(f"  >>> last close ${last_close:,.2f} <<<")
@@ -1214,10 +1196,10 @@ REFUSAL_NO_VOLATILITY = "no_volatility_reading"
 #: bars with no repeated turning point within reach", and the derivation
 #: cannot tell which without this. Recorded by the tech analyst, which has
 #: the bars, onto `TechAnalysisResult.levels_coverage`.
-COVERAGE_MEASURED = "measured"                    # scan ran; an empty result is about the chart
-COVERAGE_NO_BARS = "no_bars"                      # the feed returned nothing
-COVERAGE_UNUSABLE_BARS = "unusable_bars"          # bars arrived; fewer clean ones than MIN_SCAN_BARS
-COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, hand-built object)
+COVERAGE_MEASURED = "measured"  # scan ran; an empty result is about the chart
+COVERAGE_NO_BARS = "no_bars"  # the feed returned nothing
+COVERAGE_UNUSABLE_BARS = "unusable_bars"  # bars arrived; fewer clean ones than MIN_SCAN_BARS
+COVERAGE_UNKNOWN = "unknown"  # not recorded (older row, hand-built object)
 
 #: There is deliberately NO "insufficient_history" coverage state. A short
 #: listing history is no longer a trade refusal on a bar count (the
@@ -1234,13 +1216,19 @@ COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, han
 #: honest reading of `unknown` is "cannot claim the chart was measured", so
 #: it is classified with the faults: fail-closed for the trade either way,
 #: and the alert names the coverage so an `unknown` that recurs is visible.
-_FAULT_COVERAGE = frozenset({
-    COVERAGE_NO_BARS, COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
-})
+_FAULT_COVERAGE = frozenset(
+    {
+        COVERAGE_NO_BARS,
+        COVERAGE_UNUSABLE_BARS,
+        COVERAGE_UNKNOWN,
+    }
+)
 
 
 def structure_coverage(
-    bars: Sequence[OHLCV] | None, *, pivot_window: int = PIVOT_WINDOW,
+    bars: Sequence[OHLCV] | None,
+    *,
+    pivot_window: int = PIVOT_WINDOW,
 ) -> str:
     """Which COVERAGE_* state this bar history is in, read from the bars.
 
@@ -1278,14 +1266,14 @@ class TargetDerivation:
     """
 
     price: float | None
-    basis: str = ""          # "structural_level" | "measured_move" | "" (no trade)
-    refusal: str = ""        # one of the REFUSAL_* codes; "" otherwise
+    basis: str = ""  # "structural_level" | "measured_move" | "" (no trade)
+    refusal: str = ""  # one of the REFUSAL_* codes; "" otherwise
     detail: str = ""
     level_used: float | None = None
-    horizon_reach: float | None = None      # ATR * sqrt(H) * max_reach_atr_multiple
-    model_target: float | None = None       # the LLM's guess, kept as evidence
-    divergence_pct: float | None = None     # computed vs. the model's guess
-    fault: str = ""          # one of the FAULT_* codes; "" otherwise
+    horizon_reach: float | None = None  # ATR * sqrt(H) * max_reach_atr_multiple
+    model_target: float | None = None  # the LLM's guess, kept as evidence
+    divergence_pct: float | None = None  # computed vs. the model's guess
+    fault: str = ""  # one of the FAULT_* codes; "" otherwise
     #: The target sits on a real structural level, but CLOSER to entry than
     #: ``atr * min_target_atr_multiple`` — the whole reward is inside one
     #: ordinary session's movement. A recorded FACT about the geometry, never
@@ -1312,13 +1300,19 @@ class TargetDerivation:
 
 def _refused(code: str, detail: str, model_target: float | None) -> TargetDerivation:
     return TargetDerivation(
-        price=None, refusal=code, detail=detail, model_target=model_target,
+        price=None,
+        refusal=code,
+        detail=detail,
+        model_target=model_target,
     )
 
 
 def _faulted(code: str, detail: str, model_target: float | None) -> TargetDerivation:
     return TargetDerivation(
-        price=None, fault=code, detail=detail, model_target=model_target,
+        price=None,
+        fault=code,
+        detail=detail,
+        model_target=model_target,
     )
 
 
@@ -1431,8 +1425,7 @@ def derive_structural_target(
     if horizon <= 0:
         return _refused(
             REFUSAL_NO_HORIZON,
-            "no expected_horizon_sessions, so there is no period over which "
-            "to ask how far this symbol travels",
+            "no expected_horizon_sessions, so there is no period over which to ask how far this symbol travels",
             guess,
         )
     horizon = min(horizon, max(1, int(max_horizon_sessions)))
@@ -1444,7 +1437,8 @@ def derive_structural_target(
     # this wide, so no level this derivation could accept was ever dropped
     # before it got here.
     reach = horizon_reach(
-        volatility, horizon,
+        volatility,
+        horizon,
         max_reach_atr_multiple=max_reach_atr_multiple,
         max_horizon_sessions=max_horizon_sessions,
     )
@@ -1541,7 +1535,8 @@ def derive_structural_target(
             f"; the reward is ${abs(wall - entry):,.2f}, INSIDE the "
             f"${noise:,.2f} one-session noise floor — a wall with little "
             f"room under it, recorded as such rather than stepped over"
-            if crowded else ""
+            if crowded
+            else ""
         )
         return TargetDerivation(
             price=price,
@@ -1594,8 +1589,7 @@ def derive_structural_target(
     if projection <= noise:
         return _refused(
             REFUSAL_PROJECTION_IMPLAUSIBLE,
-            f"a {horizon}-session measured move of ${projection:,.2f} does "
-            f"not clear its own ${noise:,.2f} noise floor",
+            f"a {horizon}-session measured move of ${projection:,.2f} does not clear its own ${noise:,.2f} noise floor",
             guess,
         )
     raw = entry - projection if is_short else entry + projection
@@ -1735,6 +1729,7 @@ def describe_stop_level_basis(
                               level rather than assuming today's.
       `schema_version`      — `STOP_LEVEL_BASIS_VERSION`.
     """
+
     def _f(value) -> float | None:
         try:
             out = float(value)
@@ -1762,9 +1757,7 @@ def describe_stop_level_basis(
         "stop_to_level": None,
         "entry_to_level": None,
         "stop_inside_zone": None,
-        "computed_level_count": (
-            None if computed_levels is None else len(list(computed_levels))
-        ),
+        "computed_level_count": (None if computed_levels is None else len(list(computed_levels))),
     }
     if price is None:
         return record
@@ -1792,9 +1785,7 @@ def describe_stop_level_basis(
     if stop is not None:
         # "Beyond" is below the level for a long and above it for a short.
         record["stop_to_level"] = (price - stop) if not is_short else (stop - price)
-        record["stop_inside_zone"] = bool(
-            record["zone_low"] <= stop <= record["zone_high"]
-        )
+        record["stop_inside_zone"] = bool(record["zone_low"] <= stop <= record["zone_high"])
     if entry is not None:
         record["entry_to_level"] = (entry - price) if not is_short else (price - entry)
     return record

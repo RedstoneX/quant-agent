@@ -4,6 +4,7 @@ A `StopAmender` is built from its collaborators alone (keyword-only), so the
 amend path can be exercised without an `AlpacaBroker` or a TradingPipeline.
 `AlpacaBroker` keeps same-named thin shims that build one per call.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,6 +14,7 @@ from alpaca.trading.requests import ReplaceOrderRequest
 from src.execution.broker_parts.stop_clock import deferred_payload, market_is_closed
 from src.execution.broker_parts.stop_dead_replacement import classify_after_dead_replacement
 from src.sentinel.guarded import record_guarded_pass
+
 # re-export mirror: defined there, still importable from here
 from src.execution.broker_parts.stop_amend_pure import _is_terminal_broker_rejection, _quantize_price
 
@@ -61,16 +63,21 @@ class StopAmender:
             status = "flat"
         else:
             status = "refused"
-        return {"id": None, "status": status, "amend_status": status,
-                "symbol": symbol, "legs": legs,
-                "shifted": len(amended), "total": len(legs)}
+        return {
+            "id": None,
+            "status": status,
+            "amend_status": status,
+            "symbol": symbol,
+            "legs": legs,
+            "shifted": len(amended),
+            "total": len(legs),
+        }
 
     def _classify_after_dead_replacement(self, **kw) -> str:
         """Body moved to stop_dead_replacement.py (see its docstring)."""
         return classify_after_dead_replacement(self, **kw)
 
-    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float,
-                              new_qty: int | None = None) -> dict:
+    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float, new_qty: int | None = None) -> dict:
         """Amend ONE resting stop's price and report what is KNOWN afterwards.
 
         The single place both the trailing path and the ex-dividend shift
@@ -86,9 +93,13 @@ class StopAmender:
                       outcome and nothing may be STATED about where the stop is.
         """
         leg = {
-            "id": str(spec.get("id") or ""), "qty": spec.get("qty"),
-            "old_stop": spec.get("stop_price"), "new_stop": new_price,
-            "new_id": None, "outcome": "unknown", "detail": "",
+            "id": str(spec.get("id") or ""),
+            "qty": spec.get("qty"),
+            "old_stop": spec.get("stop_price"),
+            "new_stop": new_price,
+            "new_id": None,
+            "outcome": "unknown",
+            "detail": "",
         }
         request_fields: dict = {"stop_price": new_price}
         # A stop-LIMIT leg keeps its own limit distance from the trigger.
@@ -101,19 +112,20 @@ class StopAmender:
             request_fields["qty"] = leg["new_qty"] = int(new_qty)
         try:
             replaced = self.client.replace_order_by_id(
-                leg["id"], ReplaceOrderRequest(**request_fields),
+                leg["id"],
+                ReplaceOrderRequest(**request_fields),
             )
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self, "stop_amend.amend_one_stop_price", exc, log=logger,
-                                context={"leg": str(leg.get("id"))})
+            record_guarded_pass(
+                self, "stop_amend.amend_one_stop_price", exc, log=logger, context={"leg": str(leg.get("id"))}
+            )
             if _is_terminal_broker_rejection(exc):
                 leg["outcome"] = "refused"
                 leg["detail"] = f"broker refused the amend: {exc}"
             else:
                 leg["outcome"] = "unknown"
                 leg["detail"] = (
-                    f"no broker status on the amend ({exc}) — it may have been "
-                    f"applied before the answer was lost"
+                    f"no broker status on the amend ({exc}) — it may have been applied before the answer was lost"
                 )
             return leg
         new_id = str(getattr(replaced, "id", "") or "")
@@ -127,7 +139,10 @@ class StopAmender:
         if status in self._AMEND_DEAD_STATES:
             leg["detail"] = f"the replacement order came back {status}"
             leg["outcome"] = self._classify_after_dead_replacement(
-                symbol=symbol, spec=spec, new_price=new_price, leg=leg,
+                symbol=symbol,
+                spec=spec,
+                new_price=new_price,
+                leg=leg,
             )
             return leg
         leg["outcome"] = "amended"
@@ -198,9 +213,9 @@ class StopAmender:
             # the broker's refusal of an amend out of hours costs nothing. Cancel
             # nothing; the level is owed and recorded for the next open.
             logger.warning(
-                "replace_stop_loss: market CLOSED, %s's stop NOT amended to "
-                "$%.4f; owed to the open",
-                symbol, new_stop_price,
+                "replace_stop_loss: market CLOSED, %s's stop NOT amended to $%.4f; owed to the open",
+                symbol,
+                new_stop_price,
             )
             return deferred_payload(symbol, stop_specs, new_stop_price)
         if not stop_specs or len(stop_specs) != len(live_orders):
@@ -229,17 +244,22 @@ class StopAmender:
         # Every other coverage gap is closed AFTER the price amend, on the
         # confirmed book, by stop_invariant.py (item 201) -- never by cancelling.
         new_qty = None
-        if (abs(covered - position_qty) > 1e-9 and len(stop_specs) == 1
-                and covered == int(covered) and position_qty == int(position_qty)
-                and position_qty >= 1):
+        if (
+            abs(covered - position_qty) > 1e-9
+            and len(stop_specs) == 1
+            and covered == int(covered)
+            and position_qty == int(position_qty)
+            and position_qty >= 1
+        ):
             new_qty = int(position_qty)
         price = _quantize_price(new_stop_price)
         if price is None or price <= 0:
             return _AMEND_NOT_ATTEMPTED
 
-        legs = [self._amend_one_stop_price(symbol=symbol, spec=spec, new_price=price,
-                                           new_qty=new_qty)
-                for spec in stop_specs]
+        legs = [
+            self._amend_one_stop_price(symbol=symbol, spec=spec, new_price=price, new_qty=new_qty)
+            for spec in stop_specs
+        ]
         amended = [l for l in legs if l["outcome"] == "amended"]
         unknown = [l for l in legs if l["outcome"] == "unknown"]
         if any(l["outcome"] == "naked" for l in legs):
@@ -262,11 +282,17 @@ class StopAmender:
             logger.info(
                 "Trailing stop AMENDED IN PLACE for %s: %d leg(s) moved to "
                 "$%.4f, quantities unchanged (no cancel, no unprotected window)",
-                symbol, len(legs), price,
+                symbol,
+                len(legs),
+                price,
             )
-            return {"id": amended[0]["new_id"],
-                    "status": amended[0].get("status", "accepted"),
-                    "amend_status": "accepted", "symbol": symbol, "legs": legs}
+            return {
+                "id": amended[0]["new_id"],
+                "status": amended[0].get("status", "accepted"),
+                "amend_status": "accepted",
+                "symbol": symbol,
+                "legs": legs,
+            }
         if unknown:
             # The amend MAY have landed. Cancelling now could cancel a stop the
             # broker already moved, so the fallback must NOT run: take the
@@ -276,7 +302,10 @@ class StopAmender:
                 "with NO broker answer — the desk does not know which level "
                 "each leg is at; nothing cancelled, nothing written back, "
                 "re-read the book before trailing %s again",
-                len(unknown), len(legs), symbol, symbol,
+                len(unknown),
+                len(legs),
+                symbol,
+                symbol,
             )
             return self._failed_amend_payload(symbol, legs)
         if amended:
@@ -300,8 +329,7 @@ class StopAmender:
                 for lag in laggards:
                     again = self._amend_one_stop_price(
                         symbol=symbol,
-                        spec={"id": lag["id"], "qty": lag["qty"],
-                              "stop_price": lag["old_stop"]},
+                        spec={"id": lag["id"], "qty": lag["qty"], "stop_price": lag["old_stop"]},
                         new_price=price,
                         new_qty=new_qty,
                     )
@@ -314,12 +342,18 @@ class StopAmender:
                     logger.info(
                         "replace_stop_loss: %s's lagging stop leg(s) came up to "
                         "$%.4f on one retry — all %d leg(s) now at the intended "
-                        "level, nothing cancelled", symbol, price, len(legs),
+                        "level, nothing cancelled",
+                        symbol,
+                        price,
+                        len(legs),
                     )
-                    return {"id": amended[0]["new_id"],
-                            "status": amended[0].get("status", "accepted"),
-                            "amend_status": "accepted", "symbol": symbol,
-                            "legs": legs}
+                    return {
+                        "id": amended[0]["new_id"],
+                        "status": amended[0].get("status", "accepted"),
+                        "amend_status": "accepted",
+                        "symbol": symbol,
+                        "legs": legs,
+                    }
             if not amended:
                 return self._failed_amend_payload(symbol, legs)
             logger.error(
@@ -330,13 +364,18 @@ class StopAmender:
                 "pulling the laggards to another resting level would collapse "
                 "per-lot geometry the desk maintains on purpose. The next "
                 "accepted proposal moves them all together.",
-                len(amended), len(legs), symbol, price,
+                len(amended),
+                len(legs),
+                symbol,
+                price,
             )
             return self._failed_amend_payload(symbol, legs)
         logger.warning(
             "replace_stop_loss: the broker REFUSED the in-place amend of all "
             "%d stop leg(s) for %s to $%.4f — the ORIGINAL stops are still "
             "resting, so protection is intact and nothing is cancelled",
-            len(legs), symbol, price,
+            len(legs),
+            symbol,
+            price,
         )
         return self._failed_amend_payload(symbol, legs)

@@ -38,7 +38,9 @@ from tests.pipeline_factory import build_pipeline
 def _broker(*, enabled: bool, lease_path=None) -> AlpacaBroker:
     with patch("src.execution.broker.TradingClient"):
         return AlpacaBroker(
-            api_key="k", secret_key="s", paper=True,
+            api_key="k",
+            secret_key="s",
+            paper=True,
             fill_stream_enabled=enabled,
             trade_updates_lease_path=str(lease_path) if lease_path else None,
         )
@@ -51,6 +53,7 @@ def _order(status: str):
 # ---------------------------------------------------------------------------
 # 1. OFF never opens a socket and never takes the lease
 # ---------------------------------------------------------------------------
+
 
 @patch("src.execution.broker.TradingStream")
 def test_off_never_constructs_a_stream_or_takes_the_lease(mock_stream_cls, tmp_path):
@@ -94,7 +97,8 @@ def test_off_fill_wait_never_constructs_a_stream(mock_stream_cls, tmp_path):
 
 @patch("src.execution.broker.TradingStream")
 def test_off_direct_stream_wait_refuses_before_touching_the_slot(
-    mock_stream_cls, tmp_path,
+    mock_stream_cls,
+    tmp_path,
 ):
     """The guarantee must not depend on every caller routing through the
     public wrapper — `_wait_for_order_status_via_stream` is the only place
@@ -133,6 +137,7 @@ def test_off_logs_no_auth_failure_lines(mock_stream_cls, tmp_path, caplog):
 # 2. OFF moves no bounded wait
 # ---------------------------------------------------------------------------
 
+
 def test_off_uses_the_identical_rest_path_as_use_stream_false(tmp_path):
     """Not "an equivalent path" — the same call, with the same numbers.
 
@@ -146,14 +151,19 @@ def test_off_uses_the_identical_rest_path_as_use_stream_false(tmp_path):
         return "filled"
 
     with patch.object(
-        AlpacaBroker, "_wait_for_order_status_via_polling", _spy,
+        AlpacaBroker,
+        "_wait_for_order_status_via_polling",
+        _spy,
     ):
         off = _broker(enabled=False, lease_path=tmp_path / "a.lock")
         off.wait_for_order_terminal("o-1", timeout_seconds=90.0, poll_interval=1.0)
 
         on = _broker(enabled=True, lease_path=tmp_path / "b.lock")
         on.wait_for_order_terminal(
-            "o-1", timeout_seconds=90.0, poll_interval=1.0, use_stream=False,
+            "o-1",
+            timeout_seconds=90.0,
+            poll_interval=1.0,
+            use_stream=False,
         )
 
     assert len(seen) == 2
@@ -170,12 +180,18 @@ def test_off_does_not_charge_the_submit_window_for_a_handshake(tmp_path):
     from src.pipeline_stages import _known_entry_submit_budget_s
     from src.execution.broker import _ALPACA_STREAM_AUTH_DEADLINE_S
 
-    off = types.SimpleNamespace(broker=_broker(
-        enabled=False, lease_path=tmp_path / "a.lock",
-    ))
-    on = types.SimpleNamespace(broker=_broker(
-        enabled=True, lease_path=tmp_path / "b.lock",
-    ))
+    off = types.SimpleNamespace(
+        broker=_broker(
+            enabled=False,
+            lease_path=tmp_path / "a.lock",
+        )
+    )
+    on = types.SimpleNamespace(
+        broker=_broker(
+            enabled=True,
+            lease_path=tmp_path / "b.lock",
+        )
+    )
 
     assert _known_entry_submit_budget_s(off, will_fund=False) == 0.0
     assert _known_entry_submit_budget_s(on, will_fund=False) == float(
@@ -194,6 +210,7 @@ def test_off_rest_path_still_confirms_a_fill(tmp_path):
 # ---------------------------------------------------------------------------
 # 3. ON restores the old path
 # ---------------------------------------------------------------------------
+
 
 @patch("src.execution.broker.TradingStream")
 def test_on_opens_the_socket_again(mock_stream_cls, tmp_path):
@@ -223,6 +240,7 @@ def test_production_default_is_off():
 # 4. The alerts — and what must NOT alert
 # ---------------------------------------------------------------------------
 
+
 @patch("src.notifier.send_owner_alert")
 @patch("src.execution.broker.TradingStream")
 def test_socket_being_off_never_alerts(mock_stream_cls, mock_alert, tmp_path):
@@ -242,7 +260,8 @@ def test_socket_being_off_never_alerts(mock_stream_cls, mock_alert, tmp_path):
 
 @patch("src.notifier.send_owner_alert")
 def test_alert_fires_when_an_order_outcome_cannot_be_confirmed(
-    mock_alert, tmp_path,
+    mock_alert,
+    tmp_path,
 ):
     """The bounded REST window closed, the cancel-and-recheck closed, and
     the broker still has not said what happened. The desk proceeds on
@@ -255,7 +274,10 @@ def test_alert_fires_when_an_order_outcome_cannot_be_confirmed(
     broker.get_order_fill_info = MagicMock(return_value={"filled_qty": 0})
 
     broker.place_entry_protection(
-        symbol="AAPL", order_id="o-1", side="buy", stop_price=1.0,
+        symbol="AAPL",
+        order_id="o-1",
+        side="buy",
+        stop_price=1.0,
     )
 
     assert mock_alert.called
@@ -333,7 +355,10 @@ def test_a_confirmed_fill_never_alerts(mock_alert, tmp_path):
     )
 
     broker.place_entry_protection(
-        symbol="AAPL", order_id="o-1", side="buy", stop_price=95.0,
+        symbol="AAPL",
+        order_id="o-1",
+        side="buy",
+        stop_price=95.0,
     )
 
     mock_alert.assert_not_called()

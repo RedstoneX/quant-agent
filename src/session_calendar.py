@@ -104,6 +104,7 @@ PHASE_OFFSETS: dict[str, PhaseOffset] = {
     "evening": PhaseOffset("evening", "close", 240, "close", 360),
 }
 
+
 @dataclass(frozen=True)
 class Session:
     """One date's real session: both edges, or a flag saying there is none."""
@@ -116,9 +117,7 @@ class Session:
     def require_edges(self) -> tuple[datetime, datetime]:
         """Both edges, or a loud refusal. Never a guessed 09:30-16:00."""
         if not self.is_trading_day or self.open_at is None or self.close_at is None:
-            raise SessionCalendarUnavailable(
-                f"{self.on_date} is not a trading day, so it has no session edges"
-            )
+            raise SessionCalendarUnavailable(f"{self.on_date} is not a trading day, so it has no session edges")
         return self.open_at, self.close_at
 
 
@@ -216,6 +215,4 @@ def covered_phases() -> frozenset[str]:
 def et_datetime(on_date: date, minute_of_day: int) -> datetime:
     """An ET-aware instant `minute_of_day` minutes into `on_date`. Test and
     caller convenience so neither hand-rolls the timezone attachment."""
-    return datetime(on_date.year, on_date.month, on_date.day, tzinfo=ET) + timedelta(
-        minutes=minute_of_day
-    )
+    return datetime(on_date.year, on_date.month, on_date.day, tzinfo=ET) + timedelta(minutes=minute_of_day)

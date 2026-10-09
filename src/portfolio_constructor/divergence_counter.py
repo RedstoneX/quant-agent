@@ -13,6 +13,7 @@ bias are queries over those rows at READ time. With no recorder wired the
 comparison is logged only and nothing is counted. This changes no value,
 gates nothing and places no order. A recording is not a settlement.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 def log_divergence(
-    *, symbol: str, derivation, threshold_pct: float, recorder=None,
+    *,
+    symbol: str,
+    derivation,
+    threshold_pct: float,
+    recorder=None,
 ) -> None:
     """Record where the model's guess and the computed level disagree.
 
@@ -38,13 +43,13 @@ def log_divergence(
         return
     if recorder is not None:
         recorder.record_target_divergence(symbol, gap, threshold_pct)
-    message = (
-        "Constructor: %s target -- computed $%.2f (%s) vs analyst's "
-        "reference_target $%.2f: %+.1f%%"
-    )
+    message = "Constructor: %s target -- computed $%.2f (%s) vs analyst's reference_target $%.2f: %+.1f%%"
     args = (
-        symbol, derivation.price, derivation.basis,
-        derivation.model_target, gap,
+        symbol,
+        derivation.price,
+        derivation.basis,
+        derivation.model_target,
+        gap,
     )
     if abs(gap) >= threshold_pct:
         logger.warning(message + " -- the model and the chart disagree sharply", *args)

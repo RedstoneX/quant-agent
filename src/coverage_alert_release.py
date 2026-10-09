@@ -1,4 +1,5 @@
 """Rollback for a claimed-but-undelivered owner alert."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,7 +15,9 @@ from src.coverage_watchdog import (
 
 
 def release_elected_unfilled_alert(
-    symbols: Iterable[str], *, now: datetime | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
     path: Path | None = None,
 ) -> bool:
     """Undo a `claim_elected_unfilled_alert` whose send FAILED so the next
@@ -25,6 +28,7 @@ def release_elected_unfilled_alert(
     drop = {str(s).strip().upper() for s in symbols if str(s).strip()}
     remaining = _elected_unfilled_alerted_symbols(state, day) - drop
     state["elected_unfilled_alerted_symbols"] = {
-        "day": day, "symbols": sorted(remaining),
+        "day": day,
+        "symbols": sorted(remaining),
     }
     return bool(save_state(state, path))

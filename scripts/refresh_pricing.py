@@ -50,6 +50,7 @@ EXIT CODES
     1  it is missing or already stale afterwards — the desk is now burning
        grace, and an operator alert has been sent
 """
+
 from __future__ import annotations
 
 import argparse
@@ -205,13 +206,15 @@ def send_alert(message: str) -> bool:
     notifier = TelegramNotifier()
     if not notifier.enabled:
         print(
-            "refresh_pricing: Telegram not configured; the alert above was "
-            "printed only",
+            "refresh_pricing: Telegram not configured; the alert above was printed only",
             file=sys.stderr,
         )
         return False
     return send_owner_alert_with_outcome(
-        message, notifier=notifier, kind="refresh_pricing", pnl_header=False,
+        message,
+        notifier=notifier,
+        kind="refresh_pricing",
+        pnl_header=False,
     )[0]
 
 
@@ -220,15 +223,18 @@ def main(argv: list[str] | None = None) -> int:
         description="Refresh the OpenRouter and LiteLLM price caches.",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Bypass the 24h cache freshness checks and always fetch",
     )
     parser.add_argument(
-        "--no-telegram", action="store_true",
+        "--no-telegram",
+        action="store_true",
         help="Print findings but don't push an operator alert",
     )
     parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="Print the one-line summary only, not the full price table",
     )
     args = parser.parse_args(argv)

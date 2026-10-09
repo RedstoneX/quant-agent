@@ -8,6 +8,7 @@ funnel every ``send_owner_alert`` uses. No P&L header: that belongs on money
 alerts, not ops reports. The category is left unclassified, exactly as the
 bare sends were, so nothing is newly filtered.
 """
+
 from __future__ import annotations
 
 import sys
@@ -26,7 +27,11 @@ def build_notifier():
 
 
 def push_ops_alert(
-    message: str, *, kind: str, note: str = "alert printed above only", notifier=None,
+    message: str,
+    *,
+    kind: str,
+    note: str = "alert printed above only",
+    notifier=None,
 ) -> bool:
     """Deliver ``message`` with retry under ``kind``; False when not delivered.
 

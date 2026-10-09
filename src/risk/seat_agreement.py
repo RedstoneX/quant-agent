@@ -11,6 +11,7 @@ part builds and runs alone). `src/risk/rules.py` keeps the engine, every
 ledger-pinned number and the re-export mirror, so every existing
 `from src.risk.rules import X` keeps resolving.
 """
+
 from src.quantities import effective_multiplier as _effective_multiplier
 
 
@@ -33,14 +34,28 @@ from src.quantities import effective_multiplier as _effective_multiplier
 # actually proposing. One definition, two consumers, by design — a second,
 # divergent notion of "aligned" here would let the ceiling and the
 # grounding gate disagree about identical evidence.
-_BULLISH_STANCES = frozenset({
-    "strong_buy", "buy", "bullish", "positive", "risk_on",
-    "overweight", "favorable",
-})
-_BEARISH_STANCES = frozenset({
-    "strong_sell", "sell", "bearish", "negative", "risk_off",
-    "underweight", "unfavorable",
-})
+_BULLISH_STANCES = frozenset(
+    {
+        "strong_buy",
+        "buy",
+        "bullish",
+        "positive",
+        "risk_on",
+        "overweight",
+        "favorable",
+    }
+)
+_BEARISH_STANCES = frozenset(
+    {
+        "strong_sell",
+        "sell",
+        "bearish",
+        "negative",
+        "risk_off",
+        "underweight",
+        "unfavorable",
+    }
+)
 
 
 def stance_is_aligned(source: str, symbol: str, stance: str, *, wants_bullish: bool) -> bool:
@@ -69,9 +84,9 @@ def _count_sources(
 ) -> int:
     ignored = ignored_sources or frozenset()
     return sum(
-        1 for source, stance in sources.items()
-        if source not in ignored
-        and stance_is_aligned(source, symbol, stance, wants_bullish=wants_bullish)
+        1
+        for source, stance in sources.items()
+        if source not in ignored and stance_is_aligned(source, symbol, stance, wants_bullish=wants_bullish)
     )
 
 
@@ -104,7 +119,8 @@ def count_aligned_sources(
     still cite it) — it simply stops being paid for.
     """
     return _count_sources(
-        symbol, sources,
+        symbol,
+        sources,
         wants_bullish=(direction != "short"),
         ignored_sources=ignored_sources,
     )
@@ -130,7 +146,8 @@ def count_opposing_sources(
     both. The SIZING consumer is the score, never this count alone.
     """
     return _count_sources(
-        symbol, sources,
+        symbol,
+        sources,
         wants_bullish=(direction == "short"),
         ignored_sources=ignored_sources,
     )

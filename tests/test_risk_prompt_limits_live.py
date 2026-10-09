@@ -67,6 +67,7 @@ So: these checks make the 2026-09-11 shape fail the build. They do not make
 this class of defect impossible, and this file must not be cited as if they
 did.
 """
+
 from __future__ import annotations
 
 import re
@@ -77,8 +78,12 @@ import pytest
 import yaml
 
 from src.agents.prompt_limits import (
-    PLACEHOLDER_RE, PromptPlaceholderError, load_risk_config_from_settings,
-    placeholders_in, render_prompt_limits, resolve_placeholder,
+    PLACEHOLDER_RE,
+    PromptPlaceholderError,
+    load_risk_config_from_settings,
+    placeholders_in,
+    render_prompt_limits,
+    resolve_placeholder,
 )
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.agents.portfolio_manager import PROMPT_PATH as PM_PROMPT_PATH
@@ -125,7 +130,8 @@ _LIMIT_NOUN = r"(?:ceiling|caps?|budget|limit|maximum|floor|allowance)\b"
 
 #: A numeral read as the value of a limit noun close after it.
 _LIMIT_PHRASE = re.compile(
-    r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN, re.I,
+    r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN,
+    re.I,
 )
 
 #: STRUCTURAL HISTORY. A value quoted as history (a removed gate, a past
@@ -204,7 +210,7 @@ def _hand_typed_limits(text: str, sheet: str = "risk_manager.md") -> list[str]:
             if any(s <= match.start() < e for s, e in claimed):
                 continue
             claimed.append((match.start(), match.end()))
-            window = _NOT_A_LIMIT.sub("", marked[match.end():match.end() + ADJACENCY_CHARS])
+            window = _NOT_A_LIMIT.sub("", marked[match.end() : match.end() + ADJACENCY_CHARS])
             digit = re.search(r"\d", window)
             if digit is None:
                 continue
@@ -241,8 +247,7 @@ def test_no_unrendered_limit_phrase():
         "config/prompts/risk_manager.md without being rendered from the "
         "config. Either render it from its setting, or — better where the "
         "sentence is about how two limits RELATE — state the relation and "
-        "name the settings, which carries no copy of any number at all:\n  "
-        + "\n  ".join(findings)
+        "name the settings, which carries no copy of any number at all:\n  " + "\n  ".join(findings)
     )
 
 
@@ -252,8 +257,7 @@ def test_the_check_catches_the_shape_that_actually_happened():
     commit e1c639a2 did, and it is not the same as deleting a placeholder."""
     regressed = _sheet().replace(
         "single-name cap and gross/net exposure ceilings as a BUY",
-        "single-name cap and gross/net exposure ceilings as a BUY, "
-        "tighter than the 33% long single-name ceiling",
+        "single-name cap and gross/net exposure ceilings as a BUY, tighter than the 33% long single-name ceiling",
     )
     assert regressed != _sheet(), "fixture text no longer present in the sheet"
     assert any("33" in f for f in _unrendered_limit_phrases(regressed))
@@ -265,12 +269,10 @@ def test_adjacency_alone_would_have_missed_the_originating_bug():
     that is good news — delete the test and say so in the docstring."""
     regressed = _sheet().replace(
         "single-name cap and gross/net exposure ceilings as a BUY",
-        "single-name cap and gross/net exposure ceilings as a BUY, "
-        "tighter than the 33% long single-name ceiling",
+        "single-name cap and gross/net exposure ceilings as a BUY, tighter than the 33% long single-name ceiling",
     )
     assert _hand_typed_limits(regressed) == [], (
-        "check (a) now catches this shape — update the module docstring, "
-        "which currently states that it does not"
+        "check (a) now catches this shape — update the module docstring, which currently states that it does not"
     )
 
 
@@ -315,9 +317,12 @@ def test_build_check_does_not_fire_on_example_arithmetic():
     assert _hand_typed_limits(illustrations) == []
     # And the same text still passes when a setting name is present but its
     # value is properly rendered.
-    assert _hand_typed_limits(
-        "`max_position_pct={{risk.max_position_pct}}` — " + illustrations,
-    ) == []
+    assert (
+        _hand_typed_limits(
+            "`max_position_pct={{risk.max_position_pct}}` — " + illustrations,
+        )
+        == []
+    )
 
 
 def test_every_wired_setting_still_has_a_placeholder():
@@ -350,16 +355,14 @@ def test_every_placeholder_in_the_sheet_resolves():
 # 2. Behaviour — the reviewer reads the live value
 # --------------------------------------------------------------------------
 
+
 def test_each_wired_limit_renders_its_live_value():
     cfg = _live_risk_config()
     rendered = render_prompt_limits(_sheet(), cfg)
     raw = yaml.safe_load(SETTINGS_PATH.read_text())["risk"]
     for setting in WIRED_SETTINGS:
         value = getattr(cfg, setting)
-        assert f"{value:g}" in rendered, (
-            f"{setting} (live value {value}) does not appear in the rendered "
-            f"sheet"
-        )
+        assert f"{value:g}" in rendered, f"{setting} (live value {value}) does not appear in the rendered sheet"
     # The specific defect this PR closes. The stale "33% long single-name
     # ceiling" is gone; the hard-rule inventory renders the live ceiling, and
     # the SHORT-discipline sentence that carried the bad literal is now a
@@ -370,10 +373,7 @@ def test_each_wired_limit_renders_its_live_value():
     assert "33% long single-name ceiling" not in rendered
     assert f"`max_position_pct={raw['max_position_pct']:g}`" in rendered
     # Owner decision 2026-09-17: the short cap IS the long cap.
-    assert (
-        f"same `max_position_pct` ({raw['max_position_pct']:g}%) "
-        "single-name cap"
-    ) in rendered
+    assert (f"same `max_position_pct` ({raw['max_position_pct']:g}%) single-name cap") in rendered
 
 
 def test_changing_the_setting_changes_what_the_reviewer_is_shown():
@@ -401,9 +401,12 @@ def test_per_trade_risk_budget_is_the_ratified_unit_not_the_old_half_percent():
     at 0.5% of equity. The ratified per-trade unit is
     `risk.max_position_risk_pct`; 0.5 is `min_position_risk_pct`, a different
     setting. Both now render from their own key."""
-    cfg = _live_risk_config().model_copy(update={
-        "max_position_risk_pct": 4.0, "min_position_risk_pct": 0.25,
-    })
+    cfg = _live_risk_config().model_copy(
+        update={
+            "max_position_risk_pct": 4.0,
+            "min_position_risk_pct": 0.25,
+        }
+    )
     rendered = render_prompt_limits(_sheet(), cfg)
     assert "`max_position_risk_pct`,\n   4% of equity" in rendered
     assert "`min_position_risk_pct`, 0.25% risk" in rendered
@@ -451,6 +454,7 @@ def test_integer_limits_render_without_a_trailing_point_zero():
 # --------------------------------------------------------------------------
 # 4. The agent wiring
 # --------------------------------------------------------------------------
+
 
 def _agent(**kwargs) -> RiskManagerAgent:
     return RiskManagerAgent(api_key="test-key", model="test-model", **kwargs)
@@ -526,8 +530,7 @@ def _perturb(live: RiskConfig, field: str):
     if isinstance(current, bool):
         candidates = [not current]
     elif isinstance(current, (int, float)):
-        candidates = [current * 0.9, current * 1.1, current + 1,
-                      current - 1, current / 2, current * 2]
+        candidates = [current * 0.9, current * 1.1, current + 1, current - 1, current / 2, current * 2]
     elif current is None:
         # An UNSET optional numeric setting (`max_sector_hard_pct` is null in
         # settings.yaml today — RiskConfig derives it).
@@ -535,11 +538,13 @@ def _perturb(live: RiskConfig, field: str):
         # rather than inventing one, so this file still holds no number of
         # its own. A field that is optional but not numeric simply finds no
         # candidate that validates and yields None.
-        candidates = sorted({
-            float(value) for value in live.model_dump().values()
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-            and value > 0
-        })
+        candidates = sorted(
+            {
+                float(value)
+                for value in live.model_dump().values()
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+            }
+        )
     else:
         return None
     base = live.model_dump()
@@ -569,8 +574,7 @@ def _numbers_carried(obj) -> set[float]:
     threads — `max_position_risk_pct` arrives as `risk_budget_pct` and
     `min_position_risk_pct` as `min_risk_pct`.
     """
-    fields = (getattr(type(obj), "model_fields", None)
-              or getattr(obj, "__dataclass_fields__", {}))
+    fields = getattr(type(obj), "model_fields", None) or getattr(obj, "__dataclass_fields__", {})
     carried = set()
     for name in fields:
         value = getattr(obj, name, None)
@@ -608,16 +612,13 @@ def test_every_rendered_setting_is_also_threaded_into_the_engine():
     threaded = _engine_threaded_fields()
     # `effective_max_daily_loss_pct` is derived, not a field; it is covered by
     # its three inputs, all of which are threaded.
-    rendered_fields = [
-        s for s in WIRED_SETTINGS if s in RiskConfig.model_fields
-    ]
+    rendered_fields = [s for s in WIRED_SETTINGS if s in RiskConfig.model_fields]
     missing = [s for s in rendered_fields if s not in threaded]
     assert not missing, (
         "config/prompts/risk_manager.md renders these settings from "
         "settings.yaml, but moving them does not move what the risk engine's "
         "RiskConfig carries — so the engine enforces something else, and the "
-        "reviewer is shown a number the engine is not using: "
-        + ", ".join(missing)
+        "reviewer is shown a number the engine is not using: " + ", ".join(missing)
     )
 
 
@@ -628,10 +629,7 @@ def test_the_parity_check_would_actually_catch_a_hard_coded_limit():
     below rather than named here, so it cannot go stale."""
     threaded = _engine_threaded_fields()
     live = _live_risk_config()
-    unthreaded = sorted(
-        f for f in RiskConfig.model_fields
-        if f not in threaded and _perturb(live, f) is not None
-    )
+    unthreaded = sorted(f for f in RiskConfig.model_fields if f not in threaded and _perturb(live, f) is not None)
     assert unthreaded, (
         "every declared risk setting now reaches the engine — good, but this "
         "test can no longer prove the check has teeth. Delete it and say so."
@@ -651,16 +649,15 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     so nobody reads this file as a claim that the whole list is wired."""
     threaded = _engine_threaded_fields()
     raw = yaml.safe_load(SETTINGS_PATH.read_text())["risk"]
-    omitted = sorted(
-        f for f in RiskConfig.model_fields
-        if f not in threaded and f in raw
-    )
+    omitted = sorted(f for f in RiskConfig.model_fields if f not in threaded and f in raw)
     live_divergence = [
-        f for f in omitted
+        f
+        for f in omitted
         # `get_default(call_default_factory=True)` — a field declared with a
         # default_factory reports `.default` as PydanticUndefined, which
         # would read as a false divergence.
-        if raw[f] != RiskConfig.model_fields[f].get_default(
+        if raw[f]
+        != RiskConfig.model_fields[f].get_default(
             call_default_factory=True,
         )
     ]
@@ -703,6 +700,7 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
 # --------------------------------------------------------------------------
 # 6. The render happens at construction, not mid-session
 # --------------------------------------------------------------------------
+
 
 def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path, monkeypatch):
     """`system_prompt` is a lazy property read inside `BaseAgent.run`, i.e. at
@@ -749,8 +747,7 @@ def test_pm_sheet_has_no_unrendered_limit_phrase():
     findings = _unrendered_limit_phrases(_pm_sheet(), "portfolio_manager.md")
     assert not findings, (
         "A numeral is stated as the value of a limit in "
-        "config/prompts/portfolio_manager.md without being rendered:\n  "
-        + "\n  ".join(findings)
+        "config/prompts/portfolio_manager.md without being rendered:\n  " + "\n  ".join(findings)
     )
 
 
@@ -780,10 +777,7 @@ def test_pm_sheet_resolves_and_tracks_the_live_config():
 def test_pm_agent_renders_at_construction():
     agent = PortfolioManagerAgent(api_key="k", model="m")
     assert "{{" not in agent.system_prompt
-    assert (
-        f"{_live_risk_config().max_position_pct:g}% single-name"
-        in agent.system_prompt
-    )
+    assert f"{_live_risk_config().max_position_pct:g}% single-name" in agent.system_prompt
 
 
 def test_pm_bad_placeholder_fails_at_construction(tmp_path, monkeypatch):
@@ -820,8 +814,7 @@ def test_every_setting_pm_renders_reaches_the_object_that_enforces_it():
         )
         moved = RiskConfig(**{**live.model_dump(), setting: probe})
         engine_config, constructor_config = _built_pair(moved)
-        carried = (_numbers_carried(engine_config)
-                   | _numbers_carried(constructor_config))
+        carried = _numbers_carried(engine_config) | _numbers_carried(constructor_config)
         assert float(probe) in carried, (
             f"config/prompts/portfolio_manager.md renders `{setting}` from "
             f"settings.yaml, but moving it to {probe} moved nothing in either "
@@ -836,10 +829,8 @@ def test_the_value_pm_is_shown_is_the_value_the_two_engines_carry():
     number PM's sheet renders is a number one of the enforcing objects holds."""
     live = _live_risk_config()
     engine_config, constructor_config = _built_pair(live)
-    carried = (_numbers_carried(engine_config)
-               | _numbers_carried(constructor_config))
-    missing = [s for s in PM_WIRED_SETTINGS
-               if float(getattr(live, s)) not in carried]
+    carried = _numbers_carried(engine_config) | _numbers_carried(constructor_config)
+    missing = [s for s in PM_WIRED_SETTINGS if float(getattr(live, s)) not in carried]
     assert not missing, (
         "PM's sheet renders these from settings.yaml but neither the risk "
         "engine nor the constructor carries the value: " + ", ".join(missing)
@@ -857,7 +848,8 @@ def test_a_legal_zero_risk_floor_reaches_both_engines_unchanged():
     assert engine_config.min_position_risk_pct == 0.0
     assert constructor_config.min_risk_pct == 0.0
     assert "0" in render_prompt_limits(
-        "{{risk.min_position_risk_pct}}", zeroed,
+        "{{risk.min_position_risk_pct}}",
+        zeroed,
     )
 
 
@@ -912,8 +904,7 @@ def test_no_prompt_only_order_size_ceilings():
         if pattern.search(sheet)
     ]
     assert not found, (
-        "A prompt-only order-size ceiling is back in "
-        "config/prompts/portfolio_manager.md:\n  " + "\n  ".join(found)
+        "A prompt-only order-size ceiling is back in config/prompts/portfolio_manager.md:\n  " + "\n  ".join(found)
     )
 
 
@@ -927,8 +918,7 @@ def test_history_block_is_structural_not_phrased():
     assert _unrendered_limit_phrases(live), "live limit must be caught"
     hist = base + "\n<history>It once had a 40% ceiling in one name.</history>\n"
     assert not _unrendered_limit_phrases(hist), "history region must be ignored"
-    assert not _hand_typed_limits(
-        base + "\n<history>max_position_pct=65 was once typed here.</history>\n")
+    assert not _hand_typed_limits(base + "\n<history>max_position_pct=65 was once typed here.</history>\n")
     assert _hand_typed_limits(base + "\nmax_position_pct=65\n")
     with pytest.raises(AssertionError):
         _live_region("<history>never closed")
@@ -955,16 +945,20 @@ def test_a_just_filed_name_loses_its_earnings_seat():
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
     analysed = {
-        "symbol": "AAA", "is_new": False, "filing_date": "2026-09-14",
+        "symbol": "AAA",
+        "is_new": False,
+        "filing_date": "2026-09-14",
         "analysis": {"investment_implications": {"sentiment": "bullish"}},
     }
     queued = {
-        "symbol": "AAA", "analysis": None, "is_new": True, "queued": True,
-        "form_type": "10-Q", "filing_date": "2026-09-14",
+        "symbol": "AAA",
+        "analysis": None,
+        "is_new": True,
+        "queued": True,
+        "form_type": "10-Q",
+        "filing_date": "2026-09-14",
     }
-    assert PortfolioManagerAgent._earnings_stance_rows([analysed]), (
-        "an analysed filing must produce an earnings stance"
-    )
+    assert PortfolioManagerAgent._earnings_stance_rows([analysed]), "an analysed filing must produce an earnings stance"
     assert PortfolioManagerAgent._earnings_stance_rows([queued]) == [], (
         "a JUST FILED placeholder must produce NO earnings stance — that "
         "absence IS the size reduction the sheet now relies on"

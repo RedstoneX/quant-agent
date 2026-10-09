@@ -1,4 +1,5 @@
 """A malformed FRED payload is loud and counted before cache persistence stops."""
+
 from __future__ import annotations
 
 import logging
@@ -17,7 +18,9 @@ class _UnreadableSeries:
 
 
 def test_series_cache_serialisation_failure_is_loud_counted_and_not_saved(
-    tmp_path, monkeypatch, caplog,
+    tmp_path,
+    monkeypatch,
+    caplog,
 ):
     path = tmp_path / "quant_agent.db"
     conn = sqlite3.connect(path)
@@ -29,7 +32,11 @@ def test_series_cache_serialisation_failure_is_loud_counted_and_not_saved(
     provider = SimpleNamespace(series_cache=SimpleNamespace(save=save))
     with caplog.at_level(logging.ERROR, logger="src.data.macro"):
         result = MacroDataProvider._write_cache(
-            provider, "DGS10", {}, _UnreadableSeries(), None,
+            provider,
+            "DGS10",
+            {},
+            _UnreadableSeries(),
+            None,
         )
 
     assert result is None
@@ -39,9 +46,7 @@ def test_series_cache_serialisation_failure_is_loud_counted_and_not_saved(
 
     conn = sqlite3.connect(path)
     try:
-        row = conn.execute(
-            "SELECT kind, agreed, detail FROM reconciliation_runs"
-        ).fetchone()
+        row = conn.execute("SELECT kind, agreed, detail FROM reconciliation_runs").fetchone()
     finally:
         conn.close()
     assert row is not None

@@ -1,4 +1,5 @@
 """Clause-5 witness for src.pipeline_soft_exit_records: exercised with stand-ins, no trading pipeline built."""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -10,10 +11,15 @@ from src.pipeline_soft_exit_records import (
     _targets_admitted_to_book,
 )
 
-MOVED = ("_target_increase_missing_falsifier", "_targets_admitted_to_book",
-         "_record_mechanical_soft_exit_restores", "_record_soft_exit_heals",
-         "_record_soft_exit_missing_after_retry", "_record_soft_exit_refusal_count",
-         "_isolate_empty_soft_exit_entries")
+MOVED = (
+    "_target_increase_missing_falsifier",
+    "_targets_admitted_to_book",
+    "_record_mechanical_soft_exit_restores",
+    "_record_soft_exit_heals",
+    "_record_soft_exit_missing_after_retry",
+    "_record_soft_exit_refusal_count",
+    "_isolate_empty_soft_exit_entries",
+)
 
 
 def _ctx(**kw):

@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,7 +68,6 @@ from src.trader_feed.decision import (
 )
 
 
-
 def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
@@ -87,13 +87,13 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     profiles = _profiles(done_rows, blocked_rows, held_symbols, watch_rows)
 
     outcome = _outcome_word(
-        status, len(done_rows), len(blocked_rows), done_rows,
+        status,
+        len(done_rows),
+        len(blocked_rows),
+        done_rows,
         fault_count=_fault_count(blocked_rows),
     )
-    lines = [
-        f"{_status_emoji(status)} {mode.upper()} REVIEW · "
-        f"{fmt_time_12h(et_now())} · {outcome}"
-    ]
+    lines = [f"{_status_emoji(status)} {mode.upper()} REVIEW · {fmt_time_12h(et_now())} · {outcome}"]
 
     # P&L FIRST, directly under the heading (owner 2026-09-17, restated
     # 2026-09-18 as the standing rule for EVERY message). Always shown,
@@ -141,6 +141,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         # ONE renderer, not a second telling (item 194): the owner feed and
         # the plain session message say the same words about a revision.
         from src.notifier import describe_target_revisions
+
         lines.extend(describe_target_revisions(result))
 
     _new_block(lines, _render_target_revisions)
@@ -333,8 +334,7 @@ def _evening_fractional_line(result: dict) -> str | None:
     names = ", ".join(str(gap.get("symbol", "?")) for gap in abnormal[:6])
     return (
         f"🛑 NO STOP OVERNIGHT: {len(abnormal)} holding(s) under one whole "
-        f"share have nothing protecting them tonight — {names}"
-        + (f" (${total:,.2f})" if total > 0 else "")
+        f"share have nothing protecting them tonight — {names}" + (f" (${total:,.2f})" if total > 0 else "")
     )
 
 
@@ -399,10 +399,7 @@ def _evening_overnight_remainder_detail(result: dict) -> str | None:
     # Every name, not the first few: this sits inside the expandable block,
     # which `_wrap_details` sizes against the message budget, and a count
     # of nine followed by six names is a sentence that does not add up.
-    named = ", ".join(
-        f"{gap.get('symbol', '?')} ${(_number(gap.get('unprotected_value')) or 0):,.2f}"
-        for gap in rows
-    )
+    named = ", ".join(f"{gap.get('symbol', '?')} ${(_number(gap.get('unprotected_value')) or 0):,.2f}" for gap in rows)
     return (
         f"Unprotected overnight, as designed: ${total:,.2f} across "
         f"{len(rows)} holding(s) — the sub-share remainder only, whose DAY "
@@ -420,12 +417,9 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
 
     missing = result.get("missing_sessions")
     if isinstance(missing, list) and missing:
-        hard = [m for m in missing
-                if m == "morning" or str(m).startswith("morning (")]
+        hard = [m for m in missing if m == "morning" or str(m).startswith("morning (")]
         for entry in hard:
-            detail = entry if entry != "morning" else (
-                "no activity was logged this morning — check the scheduler"
-            )
+            detail = entry if entry != "morning" else ("no activity was logged this morning — check the scheduler")
             lines.append(f"🛑 MORNING SESSION DID NOT RUN — {detail}")
         soft = [m for m in missing if m not in hard]
         if soft:
@@ -438,10 +432,7 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
     # reason: an unreadable row asserts nothing about coverage and must not
     # be counted into a banner that does.
     unreadable = [g for g in gaps if _gap_is_unreadable(g)]
-    faults = [
-        g for g in gaps
-        if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
-    ]
+    faults = [g for g in gaps if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
     if unreadable:
@@ -452,16 +443,10 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
         )
     if uncovered:
         names = ", ".join(str(g.get("symbol", "?")) for g in uncovered[:6])
-        lines.append(
-            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing "
-            f"protecting them — {names}"
-        )
+        lines.append(f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing protecting them — {names}")
     if partial:
         names = ", ".join(str(g.get("symbol", "?")) for g in partial[:6])
-        lines.append(
-            f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) only partly "
-            f"protected — {names}"
-        )
+        lines.append(f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) only partly protected — {names}")
     abnormal_fractional = _evening_fractional_line(result)
     if abnormal_fractional:
         lines.append(abnormal_fractional)
@@ -492,8 +477,7 @@ def _append_evening_positions(lines: list[str], result: dict, profiles: dict) ->
     if not rows:
         return
     parked = sum(
-        (_number(r.get("market_value")) or 0.0) for r in rows
-        if str(r.get("symbol", "")).upper() in _SWEEP_SYMBOLS
+        (_number(r.get("market_value")) or 0.0) for r in rows if str(r.get("symbol", "")).upper() in _SWEEP_SYMBOLS
     )
     rows = [r for r in rows if str(r.get("symbol", "")).upper() not in _SWEEP_SYMBOLS]
     if not rows:
@@ -546,18 +530,18 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
     could not be fetched is reported as not checked rather than as nothing
     due.
     """
-    near = [r for r in (result.get("stop_proximity") or [])
-            if isinstance(r, dict) and r.get("status") == "near"]
-    through = [r for r in (result.get("stop_proximity") or [])
-               if isinstance(r, dict) and r.get("status") == "through"]
-    unknown_stop = [r for r in (result.get("stop_proximity") or [])
-                    if isinstance(r, dict) and r.get("status") == "unknown"]
+    near = [r for r in (result.get("stop_proximity") or []) if isinstance(r, dict) and r.get("status") == "near"]
+    through = [r for r in (result.get("stop_proximity") or []) if isinstance(r, dict) and r.get("status") == "through"]
+    unknown_stop = [
+        r for r in (result.get("stop_proximity") or []) if isinstance(r, dict) and r.get("status") == "unknown"
+    ]
     earnings = [r for r in (result.get("earnings_proximity") or []) if isinstance(r, dict)]
     from src.data.event_calendar import EARNINGS_EVENT_WINDOW_SESSIONS
+
     soon = [
-        r for r in earnings
-        if isinstance(r.get("sessions_away"), int)
-        and r["sessions_away"] <= EARNINGS_EVENT_WINDOW_SESSIONS
+        r
+        for r in earnings
+        if isinstance(r.get("sessions_away"), int) and r["sessions_away"] <= EARNINGS_EVENT_WINDOW_SESSIONS
     ]
     if not near and not soon and not unknown_stop and not through:
         return
@@ -567,7 +551,8 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
     # with nothing standing watch over them. The two used to render as the
     # same line.
     for row in sorted(
-        through, key=lambda r: -(_number(r.get("through")) or 0.0),
+        through,
+        key=lambda r: -(_number(r.get("through")) or 0.0),
     ):
         name = _ticker_co(str(row.get("symbol", "?")), profiles)
         stop = _number(row.get("stop"))
@@ -583,14 +568,9 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
         name = _ticker_co(str(row.get("symbol", "?")), profiles)
         stop = _number(row.get("stop"))
         stop_text = f" (stop ${stop:,.2f})" if stop else ""
-        lines.append(
-            f"   🎯 {name} is inside one ordinary day's move of its "
-            f"stop{stop_text}"
-        )
+        lines.append(f"   🎯 {name} is inside one ordinary day's move of its stop{stop_text}")
     if unknown_stop:
-        names = ", ".join(
-            _ticker_co(str(r.get("symbol", "?")), profiles) for r in unknown_stop[:6]
-        )
+        names = ", ".join(_ticker_co(str(r.get("symbol", "?")), profiles) for r in unknown_stop[:6])
         lines.append(f"   ❔ Could not check the stop distance on: {names}")
     for row in sorted(soon, key=lambda r: r.get("sessions_away", 99)):
         name = _ticker_co(str(row.get("symbol", "?")), profiles)
@@ -635,18 +615,12 @@ def _append_evening_tomorrow(lines: list[str], result: dict) -> None:
     lines.append(_b("TOMORROW"))
     if isinstance(risk, str) and risk.lower() in _RISK_SCALE:
         step = _RISK_SCALE.index(risk.lower()) + 1
-        lines.append(
-            f"   Risk: {risk} — step {step} of {len(_RISK_SCALE)} "
-            f"({' · '.join(_RISK_SCALE)})"
-        )
+        lines.append(f"   Risk: {risk} — step {step} of {len(_RISK_SCALE)} ({' · '.join(_RISK_SCALE)})")
     elif risk:
         lines.append(f"   Risk: {risk}")
     if bias:
         confidence = f", {conviction} confidence" if conviction else ""
-        lines.append(
-            f"   Leaning {bias}{confidence} — tomorrow morning's decisions "
-            f"start from this"
-        )
+        lines.append(f"   Leaning {bias}{confidence} — tomorrow morning's decisions start from this")
     if outlook:
         lines.append(f"   {_clip(outlook, 400)}")
 
@@ -690,26 +664,16 @@ def _evening_meta_line(auto_meta: Any) -> str | None:
         return f"Quarterly self-review ({period}) failed — check the logs."
     if status == "digest_only":
         return (
-            f"Quarterly self-review ({period}): the write-up was saved but the "
-            f"review itself failed — check the logs."
+            f"Quarterly self-review ({period}): the write-up was saved but the review itself failed — check the logs."
         )
     report = auto_meta.get("editor_report") or {}
     applied = len(report.get("applied") or [])
     rejected = report.get("rejected") or []
-    staged = sum(
-        1 for row in rejected
-        if isinstance(row, dict) and "dry_run" in str(row.get("reason", ""))
-    )
+    staged = sum(1 for row in rejected if isinstance(row, dict) and "dry_run" in str(row.get("reason", "")))
     if applied:
-        return (
-            f"Quarterly self-review ({period}): {applied} change(s) applied, "
-            f"{len(rejected)} rejected."
-        )
+        return f"Quarterly self-review ({period}): {applied} change(s) applied, {len(rejected)} rejected."
     if staged:
-        return (
-            f"Quarterly self-review ({period}): {staged} proposed change(s) are "
-            f"staged for you to approve."
-        )
+        return f"Quarterly self-review ({period}): {staged} proposed change(s) are staged for you to approve."
     if rejected:
         return f"Quarterly self-review ({period}): nothing applied, {len(rejected)} rejected."
     proposed = int(auto_meta.get("proposed_learnings_count") or 0)
@@ -894,13 +858,11 @@ def _format_earnings(result: dict, elapsed: float) -> str:
     if read:
         block = [_b("READ AND FILED")]
         for row in read:
-            verdict_bits = [
-                str(v) for v in (row.get("sentiment"), row.get("conviction")) if v
-            ]
+            verdict_bits = [str(v) for v in (row.get("sentiment"), row.get("conviction")) if v]
             verdict = (
                 f"{verdict_bits[0]}, {verdict_bits[1]} conviction"
-                if len(verdict_bits) == 2 else
-                (verdict_bits[0] if verdict_bits else "the reader recorded no verdict")
+                if len(verdict_bits) == 2
+                else (verdict_bits[0] if verdict_bits else "the reader recorded no verdict")
             )
             block.append(f"   • {_earnings_filing_line(row, profiles)}: {verdict}")
             thesis = _clip(row.get("key_thesis"), 420)
@@ -916,10 +878,7 @@ def _format_earnings(result: dict, elapsed: float) -> str:
     if failed:
         block = [_b("COULD NOT BE READ")]
         for row in failed:
-            block.append(
-                f"   • {_earnings_filing_line(row, profiles)}: the reader did "
-                "not produce a usable analysis"
-            )
+            block.append(f"   • {_earnings_filing_line(row, profiles)}: the reader did not produce a usable analysis")
         block.append(
             "   What it means: nothing was traded on these. The desk tries "
             "again at its next pre-market pass, and gives up on a filing after "

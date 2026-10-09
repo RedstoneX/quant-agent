@@ -13,6 +13,7 @@ Three properties, which is the whole feature:
   3. a missing or partial stored row says so in words — it is never
      filled with a zero, a default or a placeholder.
 """
+
 import sys
 from pathlib import Path
 
@@ -42,8 +43,7 @@ _PAYLOAD = {
     "missing_sessions": [],
     "stop_coverage_gaps": [],
     "stop_proximity": [
-        {"symbol": "CRM", "status": "near", "price": 250.0,
-         "stop": 245.0, "gap": 5.0, "atr": 7.5},
+        {"symbol": "CRM", "status": "near", "price": 250.0, "stop": 245.0, "gap": 5.0, "atr": 7.5},
     ],
     "earnings_proximity": [
         {"symbol": "CRM", "sessions_away": 1, "status": "ok"},
@@ -61,8 +61,11 @@ _PAYLOAD = {
 }
 
 _POSITION_ROW = {
-    "symbol": "CRM", "qty": 10.0, "avg_entry": 240.0,
-    "current_price": 250.0, "market_value": 2_500.0,
+    "symbol": "CRM",
+    "qty": 10.0,
+    "avg_entry": 240.0,
+    "current_price": 250.0,
+    "market_value": 2_500.0,
     "unrealized_pnl": 100.0,
 }
 
@@ -79,12 +82,20 @@ def _store(tmp_path, payload=_PAYLOAD, positions=(_POSITION_ROW,)) -> Database:
         db.conn.execute(
             "INSERT INTO positions (symbol, qty, avg_entry, current_price, "
             "market_value, unrealized_pnl) VALUES (?, ?, ?, ?, ?, ?)",
-            (row["symbol"], row["qty"], row["avg_entry"], row["current_price"],
-             row["market_value"], row["unrealized_pnl"]),
+            (
+                row["symbol"],
+                row["qty"],
+                row["avg_entry"],
+                row["current_price"],
+                row["market_value"],
+                row["unrealized_pnl"],
+            ),
         )
     db.conn.commit()
     db.save_evening_report(
-        date="2026-09-17", run_id=payload.get("run_id"), payload=payload,
+        date="2026-09-17",
+        run_id=payload.get("run_id"),
+        payload=payload,
     )
     return db
 
@@ -114,7 +125,9 @@ def test_stored_evening_round_trips_and_rerenders(tmp_path, monkeypatch):
 
     message = trader_feed.render_stored_evening(record)
     expected_body = trader_feed.format_session_result(
-        "evening", {**_PAYLOAD, "_positions": [_POSITION_ROW]}, 0.0,
+        "evening",
+        {**_PAYLOAD, "_positions": [_POSITION_ROW]},
+        0.0,
     )
     assert expected_body in message
     assert "STORED EVENING REPORT · 2026-09-17" in message
@@ -132,10 +145,8 @@ def test_partial_stored_row_says_unavailable_and_invents_nothing(tmp_path):
     # stores as [] and which renders as the flat book it actually was.
     db = _db(tmp_path)
     db.conn.execute(
-        "INSERT INTO evening_reports (date, run_id, payload_json, "
-        "positions_json) VALUES (?, ?, ?, NULL)",
-        ("2026-09-16", "evening_partial",
-         '{"status": "analyzed", "run_id": "evening_partial"}'),
+        "INSERT INTO evening_reports (date, run_id, payload_json, positions_json) VALUES (?, ?, ?, NULL)",
+        ("2026-09-16", "evening_partial", '{"status": "analyzed", "run_id": "evening_partial"}'),
     )
     db.conn.commit()
 
@@ -163,8 +174,8 @@ def test_absent_report_is_absent(tmp_path):
     assert trader_feed.read_stored_evening("2026-09-15", db_path=db.db_path) is None
     # An unreadable row is an absent report, never a partial render.
     db.conn.execute(
-        "INSERT INTO evening_reports (date, run_id, payload_json) "
-        "VALUES (?, ?, ?)", ("2026-09-15", "r", "{not json"),
+        "INSERT INTO evening_reports (date, run_id, payload_json) VALUES (?, ?, ?)",
+        ("2026-09-15", "r", "{not json"),
     )
     db.conn.commit()
     assert db.get_evening_report("2026-09-15") is None
@@ -176,12 +187,9 @@ def test_absent_report_is_absent(tmp_path):
 def test_same_day_rerun_replaces_the_row(tmp_path):
     db = _store(tmp_path)
     second = {**_PAYLOAD, "run_id": "evening_rerun", "daily_pnl": -42.0}
-    db.save_evening_report(date="2026-09-17", run_id="evening_rerun",
-                           payload=second)
+    db.save_evening_report(date="2026-09-17", run_id="evening_rerun", payload=second)
     record = db.get_evening_report("2026-09-17")
     assert record["run_id"] == "evening_rerun"
     assert record["payload"]["daily_pnl"] == -42.0
-    rows = db.conn.execute(
-        "SELECT COUNT(*) FROM evening_reports WHERE date = '2026-09-17'"
-    ).fetchone()[0]
+    rows = db.conn.execute("SELECT COUNT(*) FROM evening_reports WHERE date = '2026-09-17'").fetchone()[0]
     assert rows == 1

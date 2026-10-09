@@ -1,11 +1,15 @@
 """Recorded macro for a rehearsal: served from the pinned fixture, never invented."""
+
 import pytest
 
 from ops.rehearsal import macro_recording
 from src.data.macro import CONFIGURED_SERIES
 
-_KEY_REJECTED = {"ok": False, "error_type": "ValueError",
-                 "error": "Bad Request. The value for variable api_key is not a 32 character string"}
+_KEY_REJECTED = {
+    "ok": False,
+    "error_type": "ValueError",
+    "error": "Bad Request. The value for variable api_key is not a 32 character string",
+}
 _TIMEOUT = {"ok": False, "error_type": "TimeoutError", "error": "The read operation timed out"}
 
 
@@ -16,10 +20,12 @@ def test_pinned_fixture_covers_every_configured_series():
 
 
 def test_key_rejection_from_a_capture_is_not_a_recording_but_a_real_failure_is():
-    merged = macro_recording.merge_into({
-        "fred_series": {"VIXCLS": _KEY_REJECTED, "DGS10": _TIMEOUT},
-        "fred_series_info": {"VIXCLS": _KEY_REJECTED},
-    })
+    merged = macro_recording.merge_into(
+        {
+            "fred_series": {"VIXCLS": _KEY_REJECTED, "DGS10": _TIMEOUT},
+            "fred_series_info": {"VIXCLS": _KEY_REJECTED},
+        }
+    )
     assert merged["fred_series"]["VIXCLS"]["ok"] is True
     assert merged["fred_series"]["DGS10"] == _TIMEOUT
     assert merged["fred_series_info"]["VIXCLS"]["ok"] is True

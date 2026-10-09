@@ -23,6 +23,7 @@ from src.notifier.snapshots import (
     _append_position_snapshot,
 )
 
+
 def _evening_pnl_block(result: dict) -> list[str]:
     """The evening message's own P&L lines — Daily P&L (4pm-correct where
     available), equity, and the same day's return against capital actually
@@ -127,12 +128,9 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
             # Prefix match: the sharpened probes emit decorated entries like
             # "morning (PM plan never risk-reviewed — checkpoint unconsumed)" —
             # they carry the diagnosis and must hit the hard banner too.
-            hard = [m for m in missing
-                    if m == "morning" or str(m).startswith("morning (")]
+            hard = [m for m in missing if m == "morning" or str(m).startswith("morning (")]
             for m in hard:
-                detail = m if m != "morning" else (
-                    "morning — no agent activity logged; check the timer/scheduler"
-                )
+                detail = m if m != "morning" else ("morning — no agent activity logged; check the timer/scheduler")
                 lines.append(f"🛑 INCOMPLETE: MORNING SESSION TODAY — {detail}")
             soft = [m for m in missing if m not in hard]
             if soft:
@@ -234,10 +232,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         applied = len(report.get("applied") or [])
         rej_list = report.get("rejected") or []
         rejected = len(rej_list)
-        staged = sum(
-            1 for r in rej_list
-            if isinstance(r, dict) and "dry_run" in str(r.get("reason", ""))
-        )
+        staged = sum(1 for r in rej_list if isinstance(r, dict) and "dry_run" in str(r.get("reason", "")))
         proposed = int(auto_meta.get("proposed_learnings_count") or 0)
         period = auto_meta.get("period", "?")
         status = auto_meta.get("status", "?")
@@ -247,15 +242,9 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         elif status == "digest_only":
             # LLM reflection step failed after the digest was written —
             # the learning loop is broken until next quarter.
-            lines.append(
-                f"🧪 meta {period}: digest written but LLM reflection "
-                f"FAILED — check logs"
-            )
+            lines.append(f"🧪 meta {period}: digest written but LLM reflection FAILED — check logs")
         elif applied > 0:
-            lines.append(
-                f"🧪 meta {period}: applied {applied} learning(s); "
-                f"rejected {rejected}"
-            )
+            lines.append(f"🧪 meta {period}: applied {applied} learning(s); rejected {rejected}")
         elif staged > 0:
             # Dry-run staged proposals (none actually applied).
             lines.append(
@@ -265,17 +254,13 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         elif rejected > 0:
             # Live/off mode with everything rejected by guardrails or the
             # enabled=false short-circuit — still worth one line.
-            lines.append(
-                f"🧪 meta {period}: 0 applied / {rejected} rejected "
-                f"(see data/evolution/edits.jsonl)"
-            )
+            lines.append(f"🧪 meta {period}: 0 applied / {rejected} rejected (see data/evolution/edits.jsonl)")
         elif proposed > 0:
             # editor_report missing (editor crashed) but the reflection
             # carried proposals — surface the review hint rather than
             # nothing (idx 19 fallback).
             lines.append(
-                f"🧪 meta {period}: {proposed} proposal(s) generated but "
-                f"prompt-editor report missing — check logs"
+                f"🧪 meta {period}: {proposed} proposal(s) generated but prompt-editor report missing — check logs"
             )
         # status='skipped' (not quarter-end) → no line, normal evening.
     _seal_section(lines, _meta_start)

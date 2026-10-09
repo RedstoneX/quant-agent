@@ -32,9 +32,7 @@ from __future__ import annotations
 
 __all__ = ["fallback_outcome", "midday_payload"]
 
-_NO_BASIS = (
-    "no thesis_invalid_if and no verified structural level under the stop"
-)
+_NO_BASIS = "no thesis_invalid_if and no verified structural level under the stop"
 
 
 def midday_payload(
@@ -115,11 +113,19 @@ def fallback_outcome(
         f"inside_band={str(bool(is_noise)).lower()} | "
     )
     if is_noise:
-        return True, "noise_band_intact", (
-            f"{payload}{_NO_BASIS}; adverse move ({adverse:.4g}) is within "
-            f"the {band_multiple}x ATR noise band — protected"
+        return (
+            True,
+            "noise_band_intact",
+            (
+                f"{payload}{_NO_BASIS}; adverse move ({adverse:.4g}) is within "
+                f"the {band_multiple}x ATR noise band — protected"
+            ),
         )
-    return False, "noise_band_broken", (
-        f"{payload}{_NO_BASIS}; adverse move ({adverse:.4g}) exceeds the "
-        f"{band_multiple}x ATR noise band — not protected"
+    return (
+        False,
+        "noise_band_broken",
+        (
+            f"{payload}{_NO_BASIS}; adverse move ({adverse:.4g}) exceeds the "
+            f"{band_multiple}x ATR noise band — not protected"
+        ),
     )

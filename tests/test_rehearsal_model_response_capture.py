@@ -25,8 +25,7 @@ def _insert(path, run_id, response, *, agent="portfolio_manager"):
         db.execute(
             "INSERT INTO agent_logs (run_id, agent_name, input_message, "
             "full_response, model, status, decision_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (run_id, agent, 'real prompt', response, 'served-model',
-             'success', 'decision-1'),
+            (run_id, agent, "real prompt", response, "served-model", "success", "decision-1"),
         )
 
 
@@ -57,8 +56,10 @@ def test_real_rows_round_trip_into_pre_session_copy(tmp_path):
     assert bundle.stat().st_mode & 0o777 == 0o600
     assert import_model_responses(bundle, replay) == 2
     with sqlite3.connect(after) as captured, sqlite3.connect(replay) as restored:
-        assert restored.execute("SELECT * FROM agent_logs ORDER BY id").fetchall() == \
-            captured.execute("SELECT * FROM agent_logs ORDER BY id").fetchall()
+        assert (
+            restored.execute("SELECT * FROM agent_logs ORDER BY id").fetchall()
+            == captured.execute("SELECT * FROM agent_logs ORDER BY id").fetchall()
+        )
     with pytest.raises(ModelResponseCaptureError, match="differs"):
         import_model_responses(bundle, replay)
 

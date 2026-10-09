@@ -340,14 +340,16 @@ STATUS_FRESHNESS: dict[str, str] = {
 #: because the advisory always saw 2+ "failures" on a clean reuse tick.
 #: Age-as-staleness is not the defect; empty/failed carry-forward still
 #: refuses BEFORE the Portfolio Manager, via CATEGORY_LOST above.
-INTEGRITY_CLEAN_STATUSES: frozenset[str] = frozenset({
-    "ok",
-    "empty",
-    "carried_from_morning",
-    "not_run_intraday",
-    "remembered",
-    "chose_not_to_refetch",
-})
+INTEGRITY_CLEAN_STATUSES: frozenset[str] = frozenset(
+    {
+        "ok",
+        "empty",
+        "carried_from_morning",
+        "not_run_intraday",
+        "remembered",
+        "chose_not_to_refetch",
+    }
+)
 
 
 #: DEGRADED-AND-DISCLOSED vs DEGRADED-AND-WORTH-A-RED-PAGE.
@@ -425,10 +427,7 @@ def page_worthy_statuses(data_status: dict | None) -> dict:
     """
     if not isinstance(data_status, dict):
         return {}
-    return {
-        seat: value for seat, value in data_status.items()
-        if warrants_data_quality_page(value)
-    }
+    return {seat: value for seat, value in data_status.items() if warrants_data_quality_page(value)}
 
 
 def data_quality_page_input(result):
@@ -474,10 +473,6 @@ def counts_as_degraded(status: str) -> bool:
     return str(status) not in INTEGRITY_CLEAN_STATUSES
 
 
-
-
-
-
 @dataclass(frozen=True)
 class SeatReadState:
     """One honest answer to "how old is this seat's read?"."""
@@ -496,22 +491,21 @@ class SeatReadState:
     @property
     def summary(self) -> str:
         if self.state == _freshness.READ_REFRESHED:
-            return (f"{self.seat}: read in this run"
-                    f"{f' ({self.mode})' if self.mode else ''}")
+            return f"{self.seat}: read in this run{f' ({self.mode})' if self.mode else ''}"
         if self.state == _freshness.READ_CARRIED:
             if self.age_seconds is None:
-                return (f"{self.seat}: carried forward from an earlier run, "
-                        f"age unknown — NOT read in this run")
-            return (f"{self.seat}: carried forward, {self.age_seconds}s old "
-                    f"(last read in {self.run_id or 'an earlier run'})"
-                    f" — NOT read in this run")
+                return f"{self.seat}: carried forward from an earlier run, age unknown — NOT read in this run"
+            return (
+                f"{self.seat}: carried forward, {self.age_seconds}s old "
+                f"(last read in {self.run_id or 'an earlier run'})"
+                f" — NOT read in this run"
+            )
         if self.state == _freshness.READ_ABSENT:
             return f"{self.seat}: no usable answer at all (absent, not stale)"
         return f"{self.seat}: state not classifiable — NOT counted as read"
 
 
-def seat_read_state(record: dict | None, seat: str,
-                    run_id: str | None = None) -> SeatReadState:
+def seat_read_state(record: dict | None, seat: str, run_id: str | None = None) -> SeatReadState:
     """THE predicate. Was `seat` refreshed in this session, or not?
 
     `record` is an `EvidenceFreshness.to_evidence()` dict — the same one
@@ -531,10 +525,12 @@ def seat_read_state(record: dict | None, seat: str,
         # A record written before stamping existed. Fall back to the
         # bucket lists, which carry no provenance — so say so by leaving
         # run_id/at None rather than claiming this run's identity.
-        for key, state in (("fresh_seats", _freshness.READ_REFRESHED),
-                           ("carried_seats", _freshness.READ_CARRIED),
-                           ("absent_seats", _freshness.READ_ABSENT),
-                           ("unknown_freshness_seats", _freshness.READ_UNKNOWN)):
+        for key, state in (
+            ("fresh_seats", _freshness.READ_REFRESHED),
+            ("carried_seats", _freshness.READ_CARRIED),
+            ("absent_seats", _freshness.READ_ABSENT),
+            ("unknown_freshness_seats", _freshness.READ_UNKNOWN),
+        ):
             if name in (record.get(key) or ()):
                 return SeatReadState(seat=name, state=state)
         return SeatReadState(seat=name, state=_freshness.READ_ABSENT)
@@ -544,11 +540,11 @@ def seat_read_state(record: dict | None, seat: str,
     state = str(entry.get("state") or _freshness.READ_UNKNOWN)
     stamp_run = entry.get("run_id")
     age = entry.get("age_seconds")
-    if (state == _freshness.READ_REFRESHED and run_id is not None
-            and str(stamp_run) != str(run_id)):
+    if state == _freshness.READ_REFRESHED and run_id is not None and str(stamp_run) != str(run_id):
         state, age = _freshness.READ_CARRIED, None
     return SeatReadState(
-        seat=name, state=state,
+        seat=name,
+        state=state,
         run_id=None if stamp_run is None else str(stamp_run),
         mode=None if entry.get("mode") is None else str(entry.get("mode")),
         at=None if entry.get("at") is None else str(entry.get("at")),
@@ -562,9 +558,7 @@ def seat_read_state(record: dict | None, seat: str,
 #: here is the only place that decides what "fresh" means.
 _FRESHNESS_READER = _freshness.build_freshness_reader(
     status_freshness=STATUS_FRESHNESS,
-    expired_statuses=frozenset(
-        word for word, cat in STATUS_CATEGORY.items() if cat == CATEGORY_EXPIRED
-    ),
+    expired_statuses=frozenset(word for word, cat in STATUS_CATEGORY.items() if cat == CATEGORY_EXPIRED),
     fresh_label=FRESHNESS_FRESH,
     carried_label=FRESHNESS_CARRIED,
     absent_label=FRESHNESS_ABSENT,
@@ -582,9 +576,7 @@ class EvidenceGateVerdict:
     expired: list[str] = field(default_factory=list)
     unclassified: list[str] = field(default_factory=list)
     data_status: dict[str, str] = field(default_factory=dict)
-    freshness: _freshness.EvidenceFreshness = field(
-        default_factory=_freshness.EvidenceFreshness
-    )
+    freshness: _freshness.EvidenceFreshness = field(default_factory=_freshness.EvidenceFreshness)
 
     @property
     def blocking_lost(self) -> list[str]:
@@ -611,9 +603,7 @@ class EvidenceGateVerdict:
         blocking = self.blocking_lost
         if not blocking:
             if self.lost:
-                detail = ", ".join(
-                    f"{seat}={self.data_status.get(seat)}" for seat in self.lost
-                )
+                detail = ", ".join(f"{seat}={self.data_status.get(seat)}" for seat in self.lost)
                 return (
                     f"decision proceeded: {len(self.lost)} advisory seat(s) "
                     f"were asked and their answer never arrived — {detail}. "
@@ -621,9 +611,7 @@ class EvidenceGateVerdict:
                     f"stop the desk. {self.freshness.summary}."
                 )
             return f"every seat reported or was honestly empty. {self.freshness.summary}."
-        detail = ", ".join(
-            f"{seat}={self.data_status.get(seat)}" for seat in blocking
-        )
+        detail = ", ".join(f"{seat}={self.data_status.get(seat)}" for seat in blocking)
         return (
             f"decision skipped: {len(blocking)} blocking seat(s) were asked "
             f"and their answer never arrived — {detail}. A decision resting "
@@ -687,7 +675,8 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
                 "— treating it as a reported answer and NOT refusing the "
                 "decision. Classify it in src/evidence_gate.py deliberately; "
                 "a refusal gate must never gain bite by accident.",
-                seat_name, text,
+                seat_name,
+                text,
             )
 
     return EvidenceGateVerdict(

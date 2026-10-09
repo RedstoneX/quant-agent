@@ -25,13 +25,17 @@ against real snapshots) is replaced by a stub returning hand-built
 `MetricDeltas`, so what is exercised here is the WIRING and the real
 `veto_contradicted_exit`, not the delta arithmetic.
 """
+
 from __future__ import annotations
 
 import json
 from unittest.mock import MagicMock, patch
 
 from src.models import (
-    PortfolioDecision, ReasoningChain, RiskReasoningChain, RiskVerdict,
+    PortfolioDecision,
+    ReasoningChain,
+    RiskReasoningChain,
+    RiskVerdict,
     TradeDecision,
 )
 from src.pipeline_context import RunContext
@@ -41,6 +45,7 @@ from tests.pipeline_factory import build_pipeline
 
 
 # --- delta fixtures (real MetricDeltas, built the same way the reader does) --
+
 
 def _improved_deltas(symbol: str = "ACME"):
     """Every metric that moved improved, nothing worsened → net_improved."""
@@ -65,40 +70,59 @@ def _worsened_deltas(symbol: str = "ACME"):
 def _no_prior_deltas(symbol: str = "ACME"):
     """First look — no snapshot to compare against → has_prior False."""
     return compute_deltas(
-        symbol, prior=None,
+        symbol,
+        prior=None,
         current={"thesis_progress_pct": 40.0, "r_multiple": 1.00},
     )
 
 
 # --- stage harness (mirrors tests/test_holding_discipline_block.py) ----------
 
+
 def _rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
         cash_target="x",
     )
 
 
 def _sell(symbol: str, reasoning: str) -> TradeDecision:
     return TradeDecision(
-        action="SELL", symbol=symbol, allocation_pct=100.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
+        action="SELL",
+        symbol=symbol,
+        allocation_pct=100.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=115.0,
         reasoning=reasoning,
     )
 
 
 def _buy(symbol: str) -> TradeDecision:
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=6.0, entry_price=24.00,
-        stop_loss=22.50, take_profit=28.55, reasoning="unrelated breakout",
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=6.0,
+        entry_price=24.00,
+        stop_loss=22.50,
+        take_profit=28.55,
+        reasoning="unrelated breakout",
         thesis_invalid_if="closes below support",
     )
 
@@ -114,13 +138,34 @@ def _stage_pipeline(*, decisions, metric_deltas):
     from src.pipeline import TradingPipeline
 
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="clean",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="clean",
         reasoning="no objection at the book level",
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock(return_value=""), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=False, basis="noise_band_fallback", detail="no qualifying structural level", ), ), _build_position_facts=MagicMock(return_value={}), _build_review_metric_deltas=MagicMock(return_value=metric_deltas), risk_manager=MagicMock())
+    pipeline = build_pipeline(
+        db=MagicMock(),
+        _sweeper=MagicMock(return_value=None),
+        _filter_supported_symbols=MagicMock(return_value=(decisions, [])),
+        _refuse_queued_earnings_buys=MagicMock(return_value=decisions),
+        _filter_hard_risk_decisions=MagicMock(
+            side_effect=lambda d, *a, **kw: (list(d), [], []),
+        ),
+        _build_active_state_changes=MagicMock(return_value=""),
+        _structural_protection_for_holding=MagicMock(
+            return_value=StructuralProtectionCheck(
+                protected=False,
+                basis="noise_band_fallback",
+                detail="no qualifying structural level",
+            ),
+        ),
+        _build_position_facts=MagicMock(return_value={}),
+        _build_review_metric_deltas=MagicMock(return_value=metric_deltas),
+        risk_manager=MagicMock(),
+    )
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
     return pipeline
 
@@ -133,12 +178,11 @@ def _ctx(decisions) -> RunContext:
     ctx.cash = 50_000.0
     ctx.macro_analysis = {"regime": "risk-on"}
     ctx.data_status = {"macro": "ok"}
-    ctx.position_history = {
-        d.symbol: {"entry_price": 100.0, "stop_loss": 95.0}
-        for d in decisions
-    }
+    ctx.position_history = {d.symbol: {"entry_price": 100.0, "stop_loss": 95.0} for d in decisions}
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
     return ctx
 
@@ -154,10 +198,14 @@ def _events(pipeline) -> list[tuple[str, str, str, str]]:
         if kwargs.get("kind") != "pipeline_event":
             continue
         payload = json.loads(kwargs["evidence_json"])
-        out.append((
-            kwargs.get("symbol"), payload.get("stage"),
-            payload.get("outcome"), payload.get("reason"),
-        ))
+        out.append(
+            (
+                kwargs.get("symbol"),
+                payload.get("stage"),
+                payload.get("outcome"),
+                payload.get("reason"),
+            )
+        )
     return out
 
 
@@ -173,13 +221,14 @@ def _exit_refusals(pipeline) -> list[dict]:
 
 # --- the four pinned behaviours ---------------------------------------------
 
+
 def test_false_stall_claim_contradicted_by_the_numbers_is_blocked():
     """The headline. A SELL saying the position is "stalling" while every
     metric that moved improved since the last review must not reach orders."""
-    decisions = [_sell("ACME", "Cutting ACME — it is stalling, no progress."),
-                 _buy("CHPX")]
+    decisions = [_sell("ACME", "Cutting ACME — it is stalling, no progress."), _buy("CHPX")]
     pipeline = _stage_pipeline(
-        decisions=decisions, metric_deltas={"ACME": _improved_deltas()},
+        decisions=decisions,
+        metric_deltas={"ACME": _improved_deltas()},
     )
     ctx = _ctx(decisions)
 
@@ -195,8 +244,7 @@ def test_false_stall_claim_contradicted_by_the_numbers_is_blocked():
 
     refusals = _exit_refusals(pipeline)
     assert any(
-        r["code"] == "contradicts_own_metrics" and r["dropped"] is True
-        and r["layer"] == "metric_contradiction"
+        r["code"] == "contradicts_own_metrics" and r["dropped"] is True and r["layer"] == "metric_contradiction"
         for r in refusals
     ), "the durable exit-refusal row the reader writes must be written here too"
 
@@ -206,7 +254,8 @@ def test_a_genuinely_deteriorating_position_exit_passes():
     backwards. The gate must NOT block a real protective exit."""
     decisions = [_sell("ACME", "Cutting ACME — it is stalling, no progress.")]
     pipeline = _stage_pipeline(
-        decisions=decisions, metric_deltas={"ACME": _worsened_deltas()},
+        decisions=decisions,
+        metric_deltas={"ACME": _worsened_deltas()},
     )
     ctx = _ctx(decisions)
 
@@ -224,12 +273,15 @@ def test_a_news_thesis_exit_passes_however_good_the_numbers():
     """Exit on NEW INFORMATION, not a claim about the trajectory. Even with
     net-improved numbers this is never vetoed — the reviewer keeps full
     authority over exits on news/earnings/regime/invalidation (Phase 3.8)."""
-    decisions = [_sell(
-        "ACME",
-        "Selling ACME on this morning's surprise guidance cut and CEO exit.",
-    )]
+    decisions = [
+        _sell(
+            "ACME",
+            "Selling ACME on this morning's surprise guidance cut and CEO exit.",
+        )
+    ]
     pipeline = _stage_pipeline(
-        decisions=decisions, metric_deltas={"ACME": _improved_deltas()},
+        decisions=decisions,
+        metric_deltas={"ACME": _improved_deltas()},
     )
     ctx = _ctx(decisions)
 
@@ -248,7 +300,8 @@ def test_no_prior_snapshot_means_no_veto():
     cannot be adjudicated, so the exit passes (no wrong comparison)."""
     decisions = [_sell("ACME", "Cutting ACME — it is stalling, dead money.")]
     pipeline = _stage_pipeline(
-        decisions=decisions, metric_deltas={"ACME": _no_prior_deltas()},
+        decisions=decisions,
+        metric_deltas={"ACME": _no_prior_deltas()},
     )
     ctx = _ctx(decisions)
 
@@ -266,7 +319,8 @@ def test_blocking_the_only_leg_returns_the_terminal_rejected_status():
     returns the same terminal rejected status a per-symbol refusal does."""
     decisions = [_sell("ACME", "Cutting ACME — it is stalling, no progress.")]
     pipeline = _stage_pipeline(
-        decisions=decisions, metric_deltas={"ACME": _improved_deltas()},
+        decisions=decisions,
+        metric_deltas={"ACME": _improved_deltas()},
     )
     ctx = _ctx(decisions)
 

@@ -2,6 +2,7 @@
 
 `ledger` is the TradeLedger (`self` before the move).
 """
+
 from __future__ import annotations
 
 import logging
@@ -73,7 +74,10 @@ def _accumulate_excursions(ledger, position) -> None:
 
 
 def record_overnight_gap(
-    ledger, symbol: str, prev_close: float, open_price: float,
+    ledger,
+    symbol: str,
+    prev_close: float,
+    open_price: float,
     session_date: str,
 ) -> bool:
     """Record one session's ADVERSE overnight gap against an open SHORT.
@@ -246,8 +250,7 @@ def sync_positions(ledger, positions) -> None:
                              current_price=excluded.current_price, market_value=excluded.market_value,
                              unrealized_pnl=excluded.unrealized_pnl, sector=excluded.sector,
                              updated_at=datetime('now')""",
-                    (p.symbol, p.qty, p.avg_entry, p.current_price, p.market_value,
-                     p.unrealized_pnl, p.sector),
+                    (p.symbol, p.qty, p.avg_entry, p.current_price, p.market_value, p.unrealized_pnl, p.sector),
                 )
                 # Stop-floor evidence, RECORDING ONLY — see the
                 # `max_adverse_excursion` migration note for what this
@@ -263,7 +266,8 @@ def sync_positions(ledger, positions) -> None:
                 except Exception:
                     logger.debug(
                         "excursion recording skipped for %s",
-                        getattr(p, "symbol", "?"), exc_info=True,
+                        getattr(p, "symbol", "?"),
+                        exc_info=True,
                     )
             ledger.conn.commit()
         except Exception:

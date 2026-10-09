@@ -40,6 +40,7 @@ vc = _load_module()
 
 # --- redact_proxy: the agent token must never reach output -----------------
 
+
 def test_redact_proxy_hides_the_agent_token():
     proxy = "http://x:aoc_supersecrettokenvalue@127.0.0.1:10255"
     out = vc.redact_proxy(proxy)
@@ -61,6 +62,7 @@ def test_redact_proxy_keeps_only_the_last_at_sign_segment():
 
 
 # --- classify_injection: the direct-vs-gateway proof ----------------------
+
 
 def test_injection_proven_when_direct_rejects_and_gateway_accepts():
     status, detail = vc.classify_injection(401, 200)
@@ -94,6 +96,7 @@ def test_injection_skips_when_a_leg_is_unevaluable():
 
 # --- check_agent_routing: every seat on the model the policy gives it -----
 
+
 def _roster(**overrides):
     """A roster that matches EXPECTED_ROUTING exactly — built FROM the policy
     map so these tests keep testing the check rather than a frozen copy of
@@ -122,15 +125,10 @@ def test_routing_fails_when_a_seat_runs_another_seats_model():
     "provider is openrouter and the model is one we use" is true of a
     mis-wired seat too. Swapping a specialist's cheap model onto the risk
     manager must fail."""
-    specialists = [
-        m for a, m in vc.EXPECTED_ROUTING.items()
-        if m != vc.EXPECTED_ROUTING["risk_manager"]
-    ]
+    specialists = [m for a, m in vc.EXPECTED_ROUTING.items() if m != vc.EXPECTED_ROUTING["risk_manager"]]
     if not specialists:  # a single-model policy has nothing to swap
         pytest.skip("policy currently routes every seat to one model")
-    status, detail = vc.check_agent_routing(
-        _roster(risk_manager={"configured_model": specialists[0]})
-    )
+    status, detail = vc.check_agent_routing(_roster(risk_manager={"configured_model": specialists[0]}))
     assert status == vc.FAIL
     assert "risk_manager" in detail
 
@@ -143,9 +141,7 @@ def test_routing_fails_when_a_seat_is_missing_from_the_roster():
 
 
 def test_routing_fails_on_a_single_drifted_model():
-    status, detail = vc.check_agent_routing(
-        _roster(risk_manager={"configured_model": "openai/gpt-4o"})
-    )
+    status, detail = vc.check_agent_routing(_roster(risk_manager={"configured_model": "openai/gpt-4o"}))
     assert status == vc.FAIL
     assert "risk_manager" in detail
 
@@ -157,9 +153,7 @@ def test_routing_fails_when_a_provider_is_left_to_prefix_inference():
     provider, so an unset provider is a real misconfiguration here, not a
     harmless default.
     """
-    status, detail = vc.check_agent_routing(
-        _roster(macro_analyst={"configured_provider": None})
-    )
+    status, detail = vc.check_agent_routing(_roster(macro_analyst={"configured_provider": None}))
     assert status == vc.FAIL
     assert "macro_analyst=inferred" in detail
 
@@ -170,28 +164,44 @@ def test_routing_fails_on_an_empty_roster():
 
 # --- looks_like_placeholder ----------------------------------------------
 
-@pytest.mark.parametrize("value", [
-    "", "   ", "placeholder", "PLACEHOLDER", "changeme", "your-key-here",
-    "managed-by-onecli", "xxx-not-real-xxx",
-])
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "placeholder",
+        "PLACEHOLDER",
+        "changeme",
+        "your-key-here",
+        "managed-by-onecli",
+        "xxx-not-real-xxx",
+    ],
+)
 def test_recognized_placeholders(value):
     assert vc.looks_like_placeholder(value) is True
 
 
-@pytest.mark.parametrize("value", [
-    "sk-or-v1-abcdef0123456789abcdef0123456789",
-    "PKTESTKEYID0123456789",
-    "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "sk-or-v1-abcdef0123456789abcdef0123456789",
+        "PKTESTKEYID0123456789",
+        "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+    ],
+)
 def test_real_looking_values_are_not_treated_as_placeholders(value):
     assert vc.looks_like_placeholder(value) is False
 
 
 # --- parse_health: broker_reachable is the commissioning signal -----------
 
+
 def _verdicts(**overrides):
     body = {
-        "status": "ok", "db_reachable": True, "paper": True,
+        "status": "ok",
+        "db_reachable": True,
+        "paper": True,
         "broker_reachable": True,
     }
     body.update(overrides)
@@ -256,29 +266,31 @@ def test_disabled_timer_with_enabled_preset_is_not_reported_as_enabled():
 def test_all_disabled_timers_with_enabled_presets_are_clean():
     """The shape the runtime actually prints once every timer is masked off:
     several units, each `disabled`, each with an `enabled` preset."""
-    stdout = "\n".join([
-        "quant-agent-morning.timer disabled enabled",
-        "quant-agent-midday.timer disabled enabled",
-        "quant-agent-close.timer disabled enabled",
-        "quant-agent-evening.timer disabled enabled",
-    ])
+    stdout = "\n".join(
+        [
+            "quant-agent-morning.timer disabled enabled",
+            "quant-agent-midday.timer disabled enabled",
+            "quant-agent-close.timer disabled enabled",
+            "quant-agent-evening.timer disabled enabled",
+        ]
+    )
     assert vc.enabled_timer_units(stdout) == []
 
 
 def test_genuinely_enabled_timer_is_still_caught():
     """The fix must not blind the gate it was protecting."""
-    stdout = "\n".join([
-        "quant-agent-morning.timer enabled  enabled",
-        "quant-agent-midday.timer  disabled enabled",
-    ])
+    stdout = "\n".join(
+        [
+            "quant-agent-morning.timer enabled  enabled",
+            "quant-agent-midday.timer  disabled enabled",
+        ]
+    )
     assert vc.enabled_timer_units(stdout) == ["quant-agent-morning.timer"]
 
 
 def test_enabled_runtime_counts_as_enabled():
     """`enabled-runtime` is a transient enable — it still starts the timer."""
-    assert vc.enabled_timer_units(
-        "quant-agent-morning.timer enabled-runtime enabled"
-    ) == ["quant-agent-morning.timer"]
+    assert vc.enabled_timer_units("quant-agent-morning.timer enabled-runtime enabled") == ["quant-agent-morning.timer"]
 
 
 @pytest.mark.parametrize("state", ["disabled", "masked", "masked-runtime", "bad"])
@@ -295,37 +307,37 @@ def test_unrecognized_or_ambiguous_states_fail_closed(state: str):
     does not exist yet. All of them are surfaced for a human rather than
     silently cleared.
     """
-    assert vc.enabled_timer_units(f"quant-agent-morning.timer {state} enabled") == [
-        "quant-agent-morning.timer"
-    ]
+    assert vc.enabled_timer_units(f"quant-agent-morning.timer {state} enabled") == ["quant-agent-morning.timer"]
 
 
 def test_missing_state_column_fails_closed():
     """Truncated output must not read as evidence that the timer is off."""
-    assert vc.enabled_timer_units("quant-agent-morning.timer") == [
-        "quant-agent-morning.timer"
-    ]
+    assert vc.enabled_timer_units("quant-agent-morning.timer") == ["quant-agent-morning.timer"]
 
 
 def test_non_timer_units_are_ignored():
     """`quant-agent*` also matches the API service and the trading services.
     Only `.timer` units schedule a session."""
-    stdout = "\n".join([
-        "quant-agent-api.service enabled enabled",
-        "quant-agent-morning.timer disabled enabled",
-    ])
+    stdout = "\n".join(
+        [
+            "quant-agent-api.service enabled enabled",
+            "quant-agent-morning.timer disabled enabled",
+        ]
+    )
     assert vc.enabled_timer_units(stdout) == []
 
 
 def test_a_legend_header_is_not_mistaken_for_a_unit():
     """`--no-legend` is passed, but a header must be inert if it ever appears
     — "UNIT FILE" does not end in `.timer`."""
-    stdout = "\n".join([
-        "UNIT FILE                 STATE    PRESET",
-        "quant-agent-morning.timer disabled enabled",
-        "",
-        "1 unit files listed.",
-    ])
+    stdout = "\n".join(
+        [
+            "UNIT FILE                 STATE    PRESET",
+            "quant-agent-morning.timer disabled enabled",
+            "",
+            "1 unit files listed.",
+        ]
+    )
     assert vc.enabled_timer_units(stdout) == []
 
 
@@ -339,12 +351,11 @@ def test_empty_and_blank_output_yields_no_enabled_timers():
 def test_column_alignment_padding_does_not_affect_the_verdict():
     """systemd pads columns to align them; splitting on runs of whitespace
     must give the same answer as single spaces."""
-    assert vc.enabled_timer_units(
-        "quant-agent-morning.timer      disabled        enabled"
-    ) == []
+    assert vc.enabled_timer_units("quant-agent-morning.timer      disabled        enabled") == []
 
 
 # --- is_missing_credentials_error: the dev-vs-runtime distinction ---------
+
 
 def test_missing_credentials_error_is_recognized():
     exc = ValueError("Required API key 'alpaca_key' is empty — check your .env file")
@@ -363,9 +374,11 @@ def test_other_config_errors_are_not_excused():
 
 # --- exit-code contract ---------------------------------------------------
 
+
 def test_main_exits_nonzero_when_any_check_fails(monkeypatch, capsys):
     monkeypatch.setitem(
-        vc.GROUPS, "config",
+        vc.GROUPS,
+        "config",
         lambda ctx: ctx.add("config", "synthetic", vc.FAIL, "forced"),
     )
     assert vc.main(["--group", "config", "--no-network"]) == 1
@@ -375,7 +388,8 @@ def test_main_exits_nonzero_when_any_check_fails(monkeypatch, capsys):
 def test_main_exits_zero_when_checks_only_skip(monkeypatch, capsys):
     """SKIP must never fail the run — it means "not evaluable here"."""
     monkeypatch.setitem(
-        vc.GROUPS, "config",
+        vc.GROUPS,
+        "config",
         lambda ctx: ctx.add("config", "synthetic", vc.SKIP, "not evaluable"),
     )
     assert vc.main(["--group", "config", "--no-network"]) == 0
@@ -388,7 +402,8 @@ def test_json_output_is_machine_readable(monkeypatch, capsys):
     import json
 
     monkeypatch.setitem(
-        vc.GROUPS, "config",
+        vc.GROUPS,
+        "config",
         lambda ctx: ctx.add("config", "synthetic", vc.PASS, "ok"),
     )
     vc.main(["--group", "config", "--no-network", "--json"])
@@ -437,7 +452,8 @@ def test_main_does_not_enable_live_by_default(monkeypatch):
     """A bare invocation must never spend money or make authenticated calls."""
     seen = {}
     monkeypatch.setitem(
-        vc.GROUPS, "preflight",
+        vc.GROUPS,
+        "preflight",
         lambda ctx: seen.update(live=ctx.live),
     )
     vc.main(["--group", "preflight", "--no-network"])
@@ -447,7 +463,8 @@ def test_main_does_not_enable_live_by_default(monkeypatch):
 def test_main_passes_the_live_flag_through(monkeypatch):
     seen = {}
     monkeypatch.setitem(
-        vc.GROUPS, "preflight",
+        vc.GROUPS,
+        "preflight",
         lambda ctx: seen.update(live=ctx.live),
     )
     vc.main(["--group", "preflight", "--no-network", "--live"])
@@ -455,6 +472,7 @@ def test_main_passes_the_live_flag_through(monkeypatch):
 
 
 # --- credential selection for the preflight -------------------------------
+
 
 def test_preflight_credentials_fall_back_to_a_placeholder(monkeypatch):
     """On `dev` the credential env vars are deliberately empty, so
@@ -475,14 +493,23 @@ def test_preflight_prefers_the_runtime_configuration(monkeypatch):
     import src.api.deps as deps
     from types import SimpleNamespace
 
-    monkeypatch.setattr(deps, "get_config", lambda: SimpleNamespace(
-        api_keys=SimpleNamespace(
-            openrouter="or-value", alpaca_key="ak-value",
-            alpaca_secret="as-value", fred="fred-value",
+    monkeypatch.setattr(
+        deps,
+        "get_config",
+        lambda: SimpleNamespace(
+            api_keys=SimpleNamespace(
+                openrouter="or-value",
+                alpaca_key="ak-value",
+                alpaca_secret="as-value",
+                fred="fred-value",
+            ),
         ),
-    ))
+    )
     assert vc._credentials_for_preflight() == (
-        "or-value", "ak-value", "as-value", "fred-value",
+        "or-value",
+        "ak-value",
+        "as-value",
+        "fred-value",
     )
 
 
@@ -497,8 +524,7 @@ def test_preflight_prefers_the_runtime_configuration(monkeypatch):
 
 
 def _r(group, name, status, resolved_by=None):
-    return vc.Result(group=group, name=name, status=status, detail="",
-                     resolved_by=resolved_by)
+    return vc.Result(group=group, name=name, status=status, detail="", resolved_by=resolved_by)
 
 
 def test_coverage_is_complete_when_nothing_waits_on_another_account():
@@ -524,16 +550,14 @@ def test_coverage_names_the_account_that_resolves_each_pending_check():
 def test_coverage_ignores_checks_this_account_already_resolved():
     """A SKIP tagged with the CURRENT account is not pending — it skipped
     for some other reason and must not be reported as waiting on itself."""
-    results = [_r("isolation", "runtime credentials are unreadable off-account",
-                  vc.SKIP, resolved_by="dev")]
+    results = [_r("isolation", "runtime credentials are unreadable off-account", vc.SKIP, resolved_by="dev")]
     assert vc.coverage_note(results, "dev").startswith("ACCOUNT COVERAGE: complete")
 
 
 def test_coverage_reports_the_isolation_check_as_pending_from_the_runtime():
     """Run from `qamc`, the isolation check proves nothing — it needs an
     account that should NOT be able to read the runtime's home."""
-    results = [_r("isolation", "runtime credentials are unreadable off-account",
-                  vc.SKIP, resolved_by="dev")]
+    results = [_r("isolation", "runtime credentials are unreadable off-account", vc.SKIP, resolved_by="dev")]
     note = vc.coverage_note(results, "qamc")
     assert "as dev:" in note
 
@@ -555,8 +579,7 @@ def test_coverage_ignores_untagged_skips():
 
 
 def test_render_appends_the_coverage_note(capsys):
-    out = vc.render([_r("safety", "trading timers disabled", vc.SKIP,
-                        resolved_by="qamc")], account="dev")
+    out = vc.render([_r("safety", "trading timers disabled", vc.SKIP, resolved_by="qamc")], account="dev")
     assert "COMMISSIONING ACCEPTANCE" in out
     assert "ACCOUNT COVERAGE: partial" in out
 
@@ -565,9 +588,9 @@ def test_json_output_carries_the_account_and_pending_list(monkeypatch, capsys):
     import json
 
     monkeypatch.setitem(
-        vc.GROUPS, "safety",
-        lambda ctx: ctx.add("safety", "trading timers disabled", vc.SKIP,
-                            "no session", resolved_by="qamc"),
+        vc.GROUPS,
+        "safety",
+        lambda ctx: ctx.add("safety", "trading timers disabled", vc.SKIP, "no session", resolved_by="qamc"),
     )
     vc.main(["--group", "safety", "--no-network", "--json"])
     payload = json.loads(capsys.readouterr().out)
@@ -605,7 +628,8 @@ def test_loopback_plus_exact_host_tailscale_addresses_is_private():
     """The exact operator evidence from the aborted rollout: 127.0.0.1 via
     docker-proxy, plus the v4 and v6 tailnet addresses via tailscaled."""
     status, detail = vc.listener_privacy_verdict(
-        ["127.0.0.1", TS4, f"[{TS6}]"], TAILNET,
+        ["127.0.0.1", TS4, f"[{TS6}]"],
+        TAILNET,
     )
     assert status == vc.PASS, detail
     assert "tailnet-only" in detail
@@ -673,7 +697,8 @@ def test_tailscale_lookup_unavailable_with_only_loopback_still_passes():
 
 def test_one_foreign_address_fails_the_whole_port():
     status, detail = vc.listener_privacy_verdict(
-        ["127.0.0.1", TS4, "51.222.13.44"], TAILNET,
+        ["127.0.0.1", TS4, "51.222.13.44"],
+        TAILNET,
     )
     assert status == vc.FAIL
     assert "51.222.13.44" in detail
@@ -701,7 +726,8 @@ def test_tailscale_local_addresses_prefers_status_json(monkeypatch):
         calls.append(cmd)
         if cmd[1:3] == ["status", "--json"]:
             return _sp.CompletedProcess(
-                cmd, 0,
+                cmd,
+                0,
                 stdout='{"Self": {"TailscaleIPs": ["100.111.170.97", "fd7a:115c:a1e0::9034:aa62"]}}',
                 stderr="",
             )
@@ -763,6 +789,7 @@ def test_tailscale_local_addresses_returns_none_when_unavailable(monkeypatch):
     on it. If this ever returned an empty set instead, a tailnet listener would
     be reclassified as foreign, which is safe, but an absent binary would be
     indistinguishable from a host genuinely off the tailnet."""
+
     def fake_run(cmd, **kwargs):
         raise OSError("tailscale: command not found")
 
@@ -790,9 +817,7 @@ def test_routing_fails_when_a_seat_loses_its_endpoint_preference():
     seat = next(iter(vc.EXPECTED_PROVIDER_ORDER), None)
     if seat is None:  # no seat currently pins an endpoint
         pytest.skip("policy currently pins no endpoint preference")
-    status, detail = vc.check_agent_routing(
-        _roster(**{seat: {"configured_provider_order": None}})
-    )
+    status, detail = vc.check_agent_routing(_roster(**{seat: {"configured_provider_order": None}}))
     assert status == vc.FAIL
     assert "endpoint preference" in detail
 
@@ -801,13 +826,9 @@ def test_routing_fails_when_a_seat_gains_an_unreviewed_endpoint_preference():
     """Symmetric: pinning a seat to an endpoint nobody reviewed is also a
     deployed-vs-reviewed divergence, and can pin a seat to a slow or
     expensive endpoint just as easily as a cheap one."""
-    unpinned = next(
-        (a for a in vc.EXPECTED_ROUTING if a not in vc.EXPECTED_PROVIDER_ORDER), None
-    )
+    unpinned = next((a for a in vc.EXPECTED_ROUTING if a not in vc.EXPECTED_PROVIDER_ORDER), None)
     if unpinned is None:
         pytest.skip("every seat already pins an endpoint")
-    status, detail = vc.check_agent_routing(
-        _roster(**{unpinned: {"configured_provider_order": ["openai/flex"]}})
-    )
+    status, detail = vc.check_agent_routing(_roster(**{unpinned: {"configured_provider_order": ["openai/flex"]}}))
     assert status == vc.FAIL
     assert "endpoint preference" in detail

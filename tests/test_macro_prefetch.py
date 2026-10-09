@@ -39,6 +39,7 @@ from src.trading_calendar import ET
 # DEFECT 2 — the publication calendar
 # --------------------------------------------------------------------------
 
+
 def _provider_with(monkeypatch, tmp_path, observations, info, today):
     """A provider whose FRED returns `observations`/`info` and whose clock is
     pinned to `today`."""
@@ -69,7 +70,11 @@ def test_a_due_date_landing_on_a_weekend_is_not_overdue_on_monday(monkeypatch, t
     info = pd.Series({"observation_end": "2026-09-17", "last_updated": "2026-09-18"})
 
     provider = _provider_with(
-        monkeypatch, tmp_path, observations, info, today=date(2026, 9, 21),
+        monkeypatch,
+        tmp_path,
+        observations,
+        info,
+        today=date(2026, 9, 21),
     )
     freshness = provider._safe_get_series("DFF") is not None and provider._run_freshness["DFF"]
 
@@ -77,8 +82,7 @@ def test_a_due_date_landing_on_a_weekend_is_not_overdue_on_monday(monkeypatch, t
         "the Saturday due date must roll to the next publication day (Monday)"
     )
     assert freshness.status == FRESHNESS_CURRENT, (
-        "a print due on a Saturday cannot be overdue on the following Monday — "
-        "nothing publishes at a weekend"
+        "a print due on a Saturday cannot be overdue on the following Monday — nothing publishes at a weekend"
     )
 
 
@@ -94,7 +98,11 @@ def test_a_genuinely_late_print_is_still_reported_overdue(monkeypatch, tmp_path)
     info = pd.Series({"observation_end": "2026-09-17", "last_updated": "2026-09-18"})
 
     provider = _provider_with(
-        monkeypatch, tmp_path, observations, info, today=date(2026, 9, 23),
+        monkeypatch,
+        tmp_path,
+        observations,
+        info,
+        today=date(2026, 9, 23),
     )
     provider._safe_get_series("DFF")
     assert provider._run_freshness["DFF"].status == "overdue"
@@ -130,12 +138,11 @@ def test_the_roll_only_ever_moves_a_due_date_later():
 # The cache-validity test — the release clock, not an age
 # --------------------------------------------------------------------------
 
+
 def _entry(fetched_at, expected_next_by=None):
     return {
         "fetched_at": fetched_at.isoformat(),
-        "expected_next_by": (
-            expected_next_by.isoformat() if expected_next_by is not None else None
-        ),
+        "expected_next_by": (expected_next_by.isoformat() if expected_next_by is not None else None),
     }
 
 
@@ -143,8 +150,8 @@ def test_the_0845_cache_serves_the_morning_and_midday_reads():
     """No publication boundary sits between 08:45 and either read."""
     fetched = datetime(2026, 9, 22, 8, 45, tzinfo=ET)
     for read_at in (
-        datetime(2026, 9, 22, 9, 30, 49, tzinfo=ET),   # measured morning read
-        datetime(2026, 9, 22, 13, 0, tzinfo=ET),       # midday session
+        datetime(2026, 9, 22, 9, 30, 49, tzinfo=ET),  # measured morning read
+        datetime(2026, 9, 22, 13, 0, tzinfo=ET),  # midday session
     ):
         assert MacroSeriesCache.is_usable(_entry(fetched), read_at)
 
@@ -198,7 +205,8 @@ def test_an_entry_with_no_readable_timestamp_is_a_miss():
     # A naive timestamp cannot be placed on the ET clock, so it is refused
     # rather than guessed at.
     assert not MacroSeriesCache.is_usable(
-        {"fetched_at": datetime(2026, 9, 22, 8, 45).isoformat()}, read_at,
+        {"fetched_at": datetime(2026, 9, 22, 8, 45).isoformat()},
+        read_at,
     )
 
 
@@ -216,11 +224,14 @@ def test_a_weekend_gap_crosses_no_boundary():
 # DEFECT 1 — the fetch leaves the trading path
 # --------------------------------------------------------------------------
 
+
 def _stub_fred(provider):
     index = pd.DatetimeIndex([date(2026, 9, 21), date(2026, 9, 22)])
     provider.fred = MagicMock()
     provider.fred.get_series.return_value = pd.Series(
-        [1.0, 1.0], index=index, dtype=float,
+        [1.0, 1.0],
+        index=index,
+        dtype=float,
     )
     provider.fred.get_series_info.return_value = pd.Series(
         {"observation_end": "2026-09-22", "last_updated": "2026-09-22"}
@@ -232,9 +243,12 @@ def test_the_configured_series_tuple_matches_what_a_full_fetch_asks_for(tmp_path
     """Mechanical, not prose: `prefetch_deadline_s` sizes itself off
     CONFIGURED_SERIES, so a sixteenth series added to a fetcher without being
     listed there would silently under-budget the prefetch. This fails instead."""
-    provider = _stub_fred(MacroDataProvider(
-        api_key="test-key", series_cache=MacroSeriesCache(str(tmp_path / "cache")),
-    ))
+    provider = _stub_fred(
+        MacroDataProvider(
+            api_key="test-key",
+            series_cache=MacroSeriesCache(str(tmp_path / "cache")),
+        )
+    )
     provider.get_macro_summary()
     asked = {call.args[0] for call in provider.fred.get_series.call_args_list}
     assert asked == set(CONFIGURED_SERIES)
@@ -244,9 +258,12 @@ def test_a_session_never_writes_the_cache(tmp_path):
     """Only the prefetch writes. A session that half-failed must not be able to
     turn its own partial fetch into the next session's 'cached' answer."""
     cache_dir = tmp_path / "cache"
-    provider = _stub_fred(MacroDataProvider(
-        api_key="test-key", series_cache=MacroSeriesCache(str(cache_dir)),
-    ))
+    provider = _stub_fred(
+        MacroDataProvider(
+            api_key="test-key",
+            series_cache=MacroSeriesCache(str(cache_dir)),
+        )
+    )
     provider.get_macro_summary()
     assert not cache_dir.exists() or not list(cache_dir.glob("*.json"))
 
@@ -263,20 +280,22 @@ def test_the_prefetch_fills_the_cache_and_the_next_session_makes_no_http_call(tm
     fetched_at = datetime(2026, 9, 22, 8, 45, tzinfo=ET)
 
     prefetcher = _stub_fred(MacroDataProvider(api_key="test-key", series_cache=cache))
-    with patch("src.data.macro.et_now", return_value=fetched_at), \
-            patch("src.data.macro.et_today", return_value=fetched_at.date()):
+    with (
+        patch("src.data.macro.et_now", return_value=fetched_at),
+        patch("src.data.macro.et_today", return_value=fetched_at.date()),
+    ):
         prefetcher.prefetch_series_cache()
     assert prefetcher.last_coverage.complete
 
     session = _stub_fred(MacroDataProvider(api_key="test-key", series_cache=cache))
     read_at = datetime(2026, 9, 22, 9, 30, 49, tzinfo=ET)
-    with patch("src.data.macro.et_now", return_value=read_at), \
-            patch("src.data.macro.et_today", return_value=read_at.date()):
+    with (
+        patch("src.data.macro.et_now", return_value=read_at),
+        patch("src.data.macro.et_today", return_value=read_at.date()),
+    ):
         session.get_macro_summary()
 
-    assert session.fred.get_series.call_count == 0, (
-        "the session went to the wire despite a valid pre-open cache"
-    )
+    assert session.fred.get_series.call_count == 0, "the session went to the wire despite a valid pre-open cache"
     assert session.fred.get_series_info.call_count == 0
     assert session.last_coverage.complete
     assert len(session._run_cache_served) == len(CONFIGURED_SERIES)
@@ -295,8 +314,10 @@ def test_the_cache_does_not_launder_an_overdue_series(tmp_path):
         {"observation_end": "2026-09-15", "last_updated": "2026-09-15"}
     )
     fetched_at = datetime(2026, 9, 22, 8, 45, tzinfo=ET)
-    with patch("src.data.macro.et_now", return_value=fetched_at), \
-            patch("src.data.macro.et_today", return_value=fetched_at.date()):
+    with (
+        patch("src.data.macro.et_now", return_value=fetched_at),
+        patch("src.data.macro.et_today", return_value=fetched_at.date()),
+    ):
         provider._prefetch_mode = True
         provider._safe_get_series("DGS10")
         provider._prefetch_mode = False
@@ -321,7 +342,8 @@ def test_the_prefetch_uses_its_own_ceiling_not_the_trading_one(tmp_path):
     waits on the prefetch, so borrowing that ceiling here would be the
     starvation again, just an hour earlier."""
     provider = MacroDataProvider(
-        api_key="test-key", series_cache=MacroSeriesCache(str(tmp_path / "c")),
+        api_key="test-key",
+        series_cache=MacroSeriesCache(str(tmp_path / "c")),
     )
     assert provider.budget.prefetch_deadline_s > provider.total_fetch_deadline_s
 

@@ -1,4 +1,5 @@
 """Reconnect-guard flag handlers: swallowed fault, clean pass, unreached site, no ledger handle."""
+
 import logging
 from types import SimpleNamespace
 

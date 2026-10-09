@@ -47,13 +47,13 @@ def _orcl_bars() -> list[OHLCV]:
     closes += [160.29 + i * 0.3 for i in range(6)]
     start = date(2026, 5, 1)
     return [
-        OHLCV(date=start + timedelta(days=i), open=c, high=c + 0.5,
-              low=c - 0.5, close=c, volume=1_000_000)
+        OHLCV(date=start + timedelta(days=i), open=c, high=c + 0.5, low=c - 0.5, close=c, volume=1_000_000)
         for i, c in enumerate(closes)
     ]
 
 
 # --- trading calendar -------------------------------------------------------
+
 
 def test_regular_session_bounds():
     assert in_regular_session(ORCL_OPEN) is True
@@ -82,19 +82,22 @@ def test_live_price_is_today_rejects_prior_session_and_naive_timestamps():
 
 # --- get_ohlcv window -------------------------------------------------------
 
+
 def _frame(days: list[date]) -> pd.DataFrame:
     n = len(days)
     return pd.DataFrame(
-        {"Open": [1.0] * n, "High": [2.0] * n, "Low": [0.5] * n,
-         "Close": [1.5] * n, "Volume": [100] * n},
+        {"Open": [1.0] * n, "High": [2.0] * n, "Low": [0.5] * n, "Close": [1.5] * n, "Volume": [100] * n},
         index=pd.DatetimeIndex([pd.Timestamp(d) for d in days]),
     )
 
 
-@pytest.mark.parametrize("now, expected_end, expected_last", [
-    (ORCL_OPEN, "2026-09-10", date(2026, 9, 9)),      # in session: through yesterday
-    (ORCL_EVENING, "2026-09-11", date(2026, 9, 10)),  # after close: today included
-])
+@pytest.mark.parametrize(
+    "now, expected_end, expected_last",
+    [
+        (ORCL_OPEN, "2026-09-10", date(2026, 9, 9)),  # in session: through yesterday
+        (ORCL_EVENING, "2026-09-11", date(2026, 9, 10)),  # after close: today included
+    ],
+)
 def test_get_ohlcv_end_follows_completed_bar_date(monkeypatch, now, expected_end, expected_last):
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
     monkeypatch.setattr("src.data.market.et_today", lambda: now.date())
@@ -108,10 +111,8 @@ def test_get_ohlcv_end_follows_completed_bar_date(monkeypatch, now, expected_end
 
 def test_get_ohlcv_drops_in_progress_bar_from_alpaca_fallback(monkeypatch):
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: ORCL_OPEN)
-    partial = OHLCV(date=date(2026, 9, 10), open=160, high=160, low=158.38,
-                    close=158.38, volume=10)
-    done = OHLCV(date=date(2026, 9, 9), open=161, high=162, low=160,
-                 close=161.79, volume=10)
+    partial = OHLCV(date=date(2026, 9, 10), open=160, high=160, low=158.38, close=158.38, volume=10)
+    done = OHLCV(date=date(2026, 9, 9), open=161, high=162, low=160, close=161.79, volume=10)
     provider = MarketDataProvider(fallback_bars=lambda s, n: [done, partial])
     with patch("src.data.market.yf.download", return_value=pd.DataFrame()):
         bars = provider.get_ohlcv("ORCL", lookback_days=10)
@@ -119,6 +120,7 @@ def test_get_ohlcv_drops_in_progress_bar_from_alpaca_fallback(monkeypatch):
 
 
 # --- ORCL 2026-09-10 09:30: price vs support ---------------------------------
+
 
 def test_orcl_open_below_support_is_seen_with_live_price():
     bars = _orcl_bars()
@@ -137,6 +139,7 @@ def test_orcl_open_below_support_is_seen_with_live_price():
 
 def _tech_msg(intraday_context):
     from src.agents.tech_analyst import TechAnalystAgent
+
     bars = _orcl_bars()
     ind = TechnicalIndicators(symbol="ORCL", ma_20=165.0, rsi_14=50.0, atr_14=3.0)
     with patch("anthropic.Anthropic"):
@@ -148,11 +151,19 @@ def _tech_msg(intraday_context):
 
 
 def test_tech_prompt_at_orcl_open_puts_support_above_live_price():
-    msg = _tech_msg({"ORCL": {
-        "live_price": ORCL_LIVE, "live_price_description": "last trade print",
-        "prev_close": 161.79, "session_open": ORCL_LIVE,
-        "session_high": 160.0, "session_low": ORCL_LIVE, "session_volume": 1000,
-    }})
+    msg = _tech_msg(
+        {
+            "ORCL": {
+                "live_price": ORCL_LIVE,
+                "live_price_description": "last trade print",
+                "prev_close": 161.79,
+                "session_open": ORCL_LIVE,
+                "session_high": 160.0,
+                "session_low": ORCL_LIVE,
+                "session_volume": 1000,
+            }
+        }
+    )
     levels = msg.split("Structural levels")[1].split("Price (last")[0]
     resistance, support = levels.split(">>>")[0], levels.split("<<<")[1]
     assert "$159.79" in resistance and "$159.79" not in support
@@ -171,8 +182,10 @@ def test_tech_prompt_labels_unavailable_live_price_as_stale():
 
 # --- pipeline live-session context -----------------------------------------
 
+
 def _pipeline(snapshots):
     from src.pipeline import TradingPipeline
+
     p = build_pipeline(broker=MagicMock())
     p.broker.get_intraday_snapshots.return_value = snapshots
     return p
@@ -188,11 +201,13 @@ def test_live_session_context_empty_outside_market_hours(monkeypatch):
 def test_live_session_context_in_session_live_missing_and_stale(monkeypatch, caplog):
     now = ORCL_OPEN.replace(minute=31)
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
-    p = _pipeline({
-        "ORCL": {"last_price": ORCL_LIVE, "last_trade_at": now},
-        "MSFT": {"last_price": None},
-        "AAPL": {"last_price": 230.0, "last_trade_at": datetime(2026, 9, 9, 15, 59, tzinfo=ET)},
-    })
+    p = _pipeline(
+        {
+            "ORCL": {"last_price": ORCL_LIVE, "last_trade_at": now},
+            "MSFT": {"last_price": None},
+            "AAPL": {"last_price": 230.0, "last_trade_at": datetime(2026, 9, 9, 15, 59, tzinfo=ET)},
+        }
+    )
     with caplog.at_level("WARNING"):
         out = p._live_session_context(["ORCL", "MSFT", "AAPL"])
     assert out["ORCL"]["live_price"] == ORCL_LIVE
@@ -211,18 +226,26 @@ def test_live_session_context_broker_failure_marks_every_symbol_stale(monkeypatc
 
 def test_prefilter_band_proximity_uses_live_price():
     from src.pipeline import TradingPipeline
-    ind = TechnicalIndicators(symbol="ORCL", rsi_14=50.0, bb_upper=170.0,
-                              bb_lower=158.0, volume_change_pct=0.0)
+
+    ind = TechnicalIndicators(symbol="ORCL", rsi_14=50.0, bb_upper=170.0, bb_lower=158.0, volume_change_pct=0.0)
     # Last completed close far from both bands; live price at the lower band.
     far = [MagicMock(close=164.0) for _ in range(5)]
     assert RiskGate._has_actionable_signal_fn(ind, "ORCL", far, []) is False
-    assert RiskGate._has_actionable_signal_fn(
-        ind, "ORCL", far, [], live_price=ORCL_LIVE,
-    ) is True
+    assert (
+        RiskGate._has_actionable_signal_fn(
+            ind,
+            "ORCL",
+            far,
+            [],
+            live_price=ORCL_LIVE,
+        )
+        is True
+    )
 
 
 def test_stage_live_price_kwarg_only_for_usable_live_price():
     from src.pipeline_stages import MorningResearchStage
+
     kw = MorningResearchStage._live_price_kwarg
     assert kw({"ORCL": {"live_price": ORCL_LIVE}}, "ORCL") == {"live_price": ORCL_LIVE}
     assert kw({"ORCL": {"live_unavailable": "x", "live_price": 1.0}}, "ORCL") == {}
@@ -241,13 +264,17 @@ def test_stage_live_price_kwarg_only_for_usable_live_price():
 # a live trade. These pin the order path to today's data.
 # ---------------------------------------------------------------------------
 
+
 def _stamped_broker(price, *, source="last_trade", is_today=True, is_today_print=True):
     from src.execution.broker import LivePrice
 
     broker = MagicMock()
     broker.get_latest_price_stamped.return_value = LivePrice(
-        price=price, source=source, trade_at=None,
-        is_today=is_today, is_today_print=is_today_print,
+        price=price,
+        source=source,
+        trade_at=None,
+        is_today=is_today,
+        is_today_print=is_today_print,
     )
     return broker
 
@@ -268,7 +295,10 @@ def test_order_path_accepts_a_live_quote_mid_as_a_fill_reference():
 
     pipeline = MagicMock()
     pipeline.broker = _stamped_broker(
-        100.0, source="quote_mid", is_today=True, is_today_print=False,
+        100.0,
+        source="quote_mid",
+        is_today=True,
+        is_today_print=False,
     )
     assert _today_order_price(pipeline, "NVDA") == 100.0
 
@@ -351,16 +381,24 @@ SEP16_BAR_AT = datetime(2026, 9, 16, 0, 0, tzinfo=ET)
 def _snap(**kw) -> dict:
     """A `get_intraday_snapshots` payload with every field present."""
     base = {
-        "last_price": None, "last_trade_at": None, "prev_close": 100.0,
-        "session_bar_at": None, "minute_close": None, "minute_bar_at": None,
-        "session_open": None, "session_close": None, "session_high": None,
-        "session_low": None, "session_volume": None,
+        "last_price": None,
+        "last_trade_at": None,
+        "prev_close": 100.0,
+        "session_bar_at": None,
+        "minute_close": None,
+        "minute_bar_at": None,
+        "session_open": None,
+        "session_close": None,
+        "session_high": None,
+        "session_low": None,
+        "session_volume": None,
     }
     base.update(kw)
     return base
 
 
 # --- the reported scenario --------------------------------------------------
+
 
 def test_yesterdays_last_trade_at_the_open_is_never_returned_as_todays_price():
     """THE BUG. Last trade is yesterday's; nothing else is today either."""
@@ -382,12 +420,16 @@ def test_a_stale_last_trade_is_rescued_by_todays_forming_bar_not_lost():
     it is NOT the stale 161.79.
     """
     r = resolve_live_price(
-        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
-              session_bar_at=SEP17_BAR_AT, session_open=158.38,
-              session_close=158.55),
+        _snap(
+            last_price=161.79,
+            last_trade_at=SEP16_CLOSE,
+            session_bar_at=SEP17_BAR_AT,
+            session_open=158.38,
+            session_close=158.55,
+        ),
         when=SEP17_OPEN.replace(minute=31),
     )
-    assert r.price == 158.55          # the forming bar's CLOSE, not its open
+    assert r.price == 158.55  # the forming bar's CLOSE, not its open
     assert r.source == SOURCE_SESSION_BAR
     assert r.session_bar_is_today is True
     assert "forming session bar" in r.describe()
@@ -397,9 +439,14 @@ def test_a_stale_last_trade_prefers_todays_minute_bar_over_the_daily_bar():
     """A 1-minute bar is finer-grained than the forming daily bar, so it wins
     when both are today's."""
     r = resolve_live_price(
-        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
-              minute_close=158.60, minute_bar_at=SEP17_OPEN.replace(minute=32),
-              session_bar_at=SEP17_BAR_AT, session_close=158.55),
+        _snap(
+            last_price=161.79,
+            last_trade_at=SEP16_CLOSE,
+            minute_close=158.60,
+            minute_bar_at=SEP17_OPEN.replace(minute=32),
+            session_bar_at=SEP17_BAR_AT,
+            session_close=158.55,
+        ),
         when=SEP17_OPEN.replace(minute=33),
     )
     assert r.price == 158.60
@@ -419,10 +466,15 @@ def test_a_quote_mid_can_never_become_the_price():
 
 # --- the normal case must NOT be flagged ------------------------------------
 
+
 def test_a_genuinely_fresh_print_is_not_flagged_stale():
     r = resolve_live_price(
-        _snap(last_price=158.38, last_trade_at=SEP17_OPEN.replace(minute=30, second=2),
-              session_bar_at=SEP17_BAR_AT, session_close=158.38),
+        _snap(
+            last_price=158.38,
+            last_trade_at=SEP17_OPEN.replace(minute=30, second=2),
+            session_bar_at=SEP17_BAR_AT,
+            session_close=158.38,
+        ),
         when=SEP17_OPEN.replace(minute=31),
     )
     assert r.price == 158.38
@@ -433,8 +485,9 @@ def test_a_genuinely_fresh_print_is_not_flagged_stale():
 
 def test_a_fresh_print_late_in_the_session_is_not_flagged_stale():
     r = resolve_live_price(
-        _snap(last_price=159.10, last_trade_at=datetime(2026, 9, 17, 15, 59, 59, tzinfo=ET),
-              session_bar_at=SEP17_BAR_AT),
+        _snap(
+            last_price=159.10, last_trade_at=datetime(2026, 9, 17, 15, 59, 59, tzinfo=ET), session_bar_at=SEP17_BAR_AT
+        ),
         when=datetime(2026, 9, 17, 16, 0, tzinfo=ET),
     )
     assert r.price == 159.10 and r.source == SOURCE_LAST_TRADE
@@ -447,9 +500,7 @@ def test_a_utc_stamped_print_from_today_is_not_flagged_stale():
     from src.trading_calendar import UTC
 
     r = resolve_live_price(
-        _snap(last_price=158.38,
-              last_trade_at=datetime(2026, 9, 17, 13, 31, tzinfo=UTC),
-              session_bar_at=SEP17_BAR_AT),
+        _snap(last_price=158.38, last_trade_at=datetime(2026, 9, 17, 13, 31, tzinfo=UTC), session_bar_at=SEP17_BAR_AT),
         when=SEP17_OPEN.replace(minute=32),
     )
     assert r.price == 158.38
@@ -457,15 +508,22 @@ def test_a_utc_stamped_print_from_today_is_not_flagged_stale():
 
 # --- the halted / no-print name is a DIFFERENT condition --------------------
 
+
 def test_a_halted_name_with_no_print_for_days_is_a_lost_seat_not_a_guess():
     """A halt is not the reported bug. The name has no today print anywhere;
     the honest answer is no price, and the completed-bar structure stays
     valid. It must not be rescued by anything."""
     halted_since = datetime(2026, 9, 11, 10, 15, tzinfo=ET)
     r = resolve_live_price(
-        _snap(last_price=44.10, last_trade_at=halted_since,
-              session_bar_at=SEP16_BAR_AT, session_close=44.10,
-              session_open=44.10, session_high=44.10, session_low=44.10),
+        _snap(
+            last_price=44.10,
+            last_trade_at=halted_since,
+            session_bar_at=SEP16_BAR_AT,
+            session_close=44.10,
+            session_open=44.10,
+            session_high=44.10,
+            session_low=44.10,
+        ),
         when=SEP17_OPEN.replace(hour=11),
     )
     assert r.price is None
@@ -474,7 +532,7 @@ def test_a_halted_name_with_no_print_for_days_is_a_lost_seat_not_a_guess():
 
 
 def test_a_name_the_feed_returned_nothing_for_is_distinguished_from_a_stale_one():
-    """"the feed gave us nothing" and "the feed gave us yesterday" are
+    """ "the feed gave us nothing" and "the feed gave us yesterday" are
     different problems and the log has to tell them apart."""
     assert resolve_live_price(_snap(), when=SEP17_OPEN).unavailable == NO_PRICE_AT_ALL
     assert resolve_live_price({}, when=SEP17_OPEN).price is None
@@ -482,6 +540,7 @@ def test_a_name_the_feed_returned_nothing_for_is_distinguished_from_a_stale_one(
 
 
 # --- the 09:30 boundary and other deliberate breakage attempts --------------
+
 
 def test_the_first_second_of_the_session_is_today_and_the_last_of_the_prior_is_not():
     """BREAKAGE ATTEMPT — off-by-one at the session boundary.
@@ -501,22 +560,22 @@ def test_the_first_second_of_the_session_is_today_and_the_last_of_the_prior_is_n
     # would let a 04:00 ET print be rendered at 09:30 as the current price
     # — the exact weakness the desk rejected a proposal over on 2026-09-18.
     premarket = resolve_live_price(
-        _snap(last_price=158.00,
-              last_trade_at=datetime(2026, 9, 17, 4, 0, tzinfo=ET)),
+        _snap(last_price=158.00, last_trade_at=datetime(2026, 9, 17, 4, 0, tzinfo=ET)),
         when=SEP17_OPEN,
     )
     assert premarket.price is None
 
     # …and one second before the open is still pre-market.
-    assert resolve_live_price(
-        _snap(last_price=158.00,
-              last_trade_at=datetime(2026, 9, 17, 9, 29, 59, tzinfo=ET)),
-        when=SEP17_OPEN,
-    ).price is None
+    assert (
+        resolve_live_price(
+            _snap(last_price=158.00, last_trade_at=datetime(2026, 9, 17, 9, 29, 59, tzinfo=ET)),
+            when=SEP17_OPEN,
+        ).price
+        is None
+    )
 
     one_second_before_midnight = resolve_live_price(
-        _snap(last_price=161.79,
-              last_trade_at=datetime(2026, 9, 16, 23, 59, 59, tzinfo=ET)),
+        _snap(last_price=161.79, last_trade_at=datetime(2026, 9, 16, 23, 59, 59, tzinfo=ET)),
         when=SEP17_OPEN,
     )
     assert one_second_before_midnight.price is None
@@ -535,15 +594,13 @@ def test_a_utc_stamp_that_is_still_yesterday_in_et_is_stale():
     from src.trading_calendar import UTC
 
     evening_et_same_session = resolve_live_price(
-        _snap(last_price=159.0,
-              last_trade_at=datetime(2026, 9, 18, 0, 30, tzinfo=UTC)),
+        _snap(last_price=159.0, last_trade_at=datetime(2026, 9, 18, 0, 30, tzinfo=UTC)),
         when=datetime(2026, 9, 17, 20, 35, tzinfo=ET),
     )
     assert evening_et_same_session.price == 159.0  # 20:30 ET, after the open
 
     utc_date_matches_but_et_date_does_not = resolve_live_price(
-        _snap(last_price=161.79,
-              last_trade_at=datetime(2026, 9, 17, 1, 0, tzinfo=UTC)),
+        _snap(last_price=161.79, last_trade_at=datetime(2026, 9, 17, 1, 0, tzinfo=UTC)),
         when=SEP17_OPEN,
     )
     assert utc_date_matches_but_et_date_does_not.price is None
@@ -574,10 +631,13 @@ def test_a_monday_open_does_not_accept_fridays_print_or_bar():
     """
     monday_open = datetime(2026, 9, 21, 9, 30, tzinfo=ET)
     r = resolve_live_price(
-        _snap(last_price=160.0,
-              last_trade_at=datetime(2026, 9, 18, 15, 59, tzinfo=ET),
-              session_bar_at=datetime(2026, 9, 18, 0, 0, tzinfo=ET),
-              session_close=160.0, session_open=159.0),
+        _snap(
+            last_price=160.0,
+            last_trade_at=datetime(2026, 9, 18, 15, 59, tzinfo=ET),
+            session_bar_at=datetime(2026, 9, 18, 0, 0, tzinfo=ET),
+            session_close=160.0,
+            session_open=159.0,
+        ),
         when=monday_open,
     )
     assert r.price is None
@@ -593,10 +653,12 @@ def test_a_holiday_resolves_to_no_today_print_with_no_holiday_calendar():
     """
     thanksgiving = datetime(2026, 11, 26, 10, 0, tzinfo=ET)
     r = resolve_live_price(
-        _snap(last_price=160.0,
-              last_trade_at=datetime(2026, 11, 25, 15, 59, tzinfo=ET),
-              session_bar_at=datetime(2026, 11, 25, 0, 0, tzinfo=ET),
-              session_close=160.0),
+        _snap(
+            last_price=160.0,
+            last_trade_at=datetime(2026, 11, 25, 15, 59, tzinfo=ET),
+            session_bar_at=datetime(2026, 11, 25, 0, 0, tzinfo=ET),
+            session_close=160.0,
+        ),
         when=thanksgiving,
     )
     assert r.price is None
@@ -606,8 +668,7 @@ def test_a_zero_or_negative_or_nan_price_is_not_a_price():
     """BREAKAGE ATTEMPT — a provider glitch dressed as a number."""
     for bad in (0.0, -1.0, float("nan"), float("inf"), True, "158.38", None):
         r = resolve_live_price(
-            _snap(last_price=bad, last_trade_at=SEP17_OPEN,
-                  session_bar_at=SEP17_BAR_AT, session_close=158.55),
+            _snap(last_price=bad, last_trade_at=SEP17_OPEN, session_bar_at=SEP17_BAR_AT, session_close=158.55),
             when=SEP17_OPEN.replace(minute=31),
         )
         assert r.source == SOURCE_SESSION_BAR, f"{bad!r} was accepted as a price"
@@ -638,10 +699,14 @@ def test_the_most_recent_usable_print_wins_not_the_purest():
     defect in same-day form and no date test can catch it.
     """
     r = resolve_live_price(
-        _snap(last_price=158.38, last_trade_at=SEP17_OPEN.replace(minute=31),
-              minute_close=162.10,
-              minute_bar_at=datetime(2026, 9, 17, 15, 59, tzinfo=ET),
-              session_bar_at=SEP17_BAR_AT, session_close=162.10),
+        _snap(
+            last_price=158.38,
+            last_trade_at=SEP17_OPEN.replace(minute=31),
+            minute_close=162.10,
+            minute_bar_at=datetime(2026, 9, 17, 15, 59, tzinfo=ET),
+            session_bar_at=SEP17_BAR_AT,
+            session_close=162.10,
+        ),
         when=datetime(2026, 9, 17, 16, 0, tzinfo=ET),
     )
     assert r.price == 162.10
@@ -650,8 +715,7 @@ def test_the_most_recent_usable_print_wins_not_the_purest():
     # …and purity still breaks a genuine tie.
     same_instant = SEP17_OPEN.replace(minute=45)
     tied = resolve_live_price(
-        _snap(last_price=158.38, last_trade_at=same_instant,
-              minute_close=158.40, minute_bar_at=same_instant),
+        _snap(last_price=158.38, last_trade_at=same_instant, minute_close=158.40, minute_bar_at=same_instant),
         when=same_instant,
     )
     assert tied.source == SOURCE_LAST_TRADE
@@ -659,29 +723,45 @@ def test_the_most_recent_usable_print_wins_not_the_purest():
 
 # --- the pipeline and the prompt, end to end --------------------------------
 
+
 def test_live_session_context_rescues_the_stale_name_and_blanks_yesterdays_bar(
-    monkeypatch, caplog,
+    monkeypatch,
+    caplog,
 ):
     now = SEP17_OPEN.replace(minute=31)
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
-    p = _pipeline({
-        # stale print, today's bar present — rescued
-        "ORCL": _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
-                      session_bar_at=SEP17_BAR_AT, session_open=158.38,
-                      session_close=158.55, session_high=158.9,
-                      session_low=158.2, session_volume=4000),
-        # stale everywhere — lost seat, and yesterday's bar must be blanked
-        "AAPL": _snap(last_price=230.0, last_trade_at=SEP16_CLOSE,
-                      session_bar_at=SEP16_BAR_AT, session_open=229.0,
-                      session_close=230.0, session_high=231.0,
-                      session_low=228.0, session_volume=9000),
-    })
+    p = _pipeline(
+        {
+            # stale print, today's bar present — rescued
+            "ORCL": _snap(
+                last_price=161.79,
+                last_trade_at=SEP16_CLOSE,
+                session_bar_at=SEP17_BAR_AT,
+                session_open=158.38,
+                session_close=158.55,
+                session_high=158.9,
+                session_low=158.2,
+                session_volume=4000,
+            ),
+            # stale everywhere — lost seat, and yesterday's bar must be blanked
+            "AAPL": _snap(
+                last_price=230.0,
+                last_trade_at=SEP16_CLOSE,
+                session_bar_at=SEP16_BAR_AT,
+                session_open=229.0,
+                session_close=230.0,
+                session_high=231.0,
+                session_low=228.0,
+                session_volume=9000,
+            ),
+        }
+    )
     with caplog.at_level("INFO"):
         out = p._live_session_context(["ORCL", "AAPL"])
 
     assert out["ORCL"]["live_price"] == 158.55
     assert out["ORCL"]["live_price_source"] == SOURCE_SESSION_BAR
-    assert out["ORCL"]["session_high"] == 158.9      # today's bar survives
+    assert out["ORCL"]["session_high"] == 158.9  # today's bar survives
     assert "item 120" in caplog.text
 
     assert "live_unavailable" in out["AAPL"]
@@ -700,36 +780,60 @@ def test_live_session_context_blanks_a_prior_sessions_bar_even_when_priced(
     """
     now = SEP17_OPEN.replace(second=5)
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
-    p = _pipeline({"ORCL": _snap(
-        last_price=158.38, last_trade_at=now,
-        session_bar_at=SEP16_BAR_AT, session_open=160.0, session_close=161.79,
-        session_high=162.0, session_low=159.5, session_volume=8_000_000,
-    )})
+    p = _pipeline(
+        {
+            "ORCL": _snap(
+                last_price=158.38,
+                last_trade_at=now,
+                session_bar_at=SEP16_BAR_AT,
+                session_open=160.0,
+                session_close=161.79,
+                session_high=162.0,
+                session_low=159.5,
+                session_volume=8_000_000,
+            )
+        }
+    )
     out = p._live_session_context(["ORCL"])
     assert out["ORCL"]["live_price"] == 158.38
     assert out["ORCL"]["live_price_source"] == SOURCE_LAST_TRADE
-    for field in ("session_open", "session_close", "session_high",
-                  "session_low", "session_volume"):
+    for field in ("session_open", "session_close", "session_high", "session_low", "session_volume"):
         assert out["ORCL"][field] is None, f"{field} kept a prior session's value"
 
 
 def test_tech_prompt_never_shows_a_session_range_it_does_not_have():
-    msg = _tech_msg({"ORCL": {
-        "live_price": ORCL_LIVE, "live_price_description": "last trade print",
-        "prev_close": 161.79, "session_open": None, "session_close": None,
-        "session_high": None, "session_low": None, "session_volume": None,
-    }})
+    msg = _tech_msg(
+        {
+            "ORCL": {
+                "live_price": ORCL_LIVE,
+                "live_price_description": "last trade print",
+                "prev_close": 161.79,
+                "session_open": None,
+                "session_close": None,
+                "session_high": None,
+                "session_low": None,
+                "session_volume": None,
+            }
+        }
+    )
     assert "Session so far: NOT AVAILABLE" in msg
     assert "158.38" in msg  # the price itself is still shown
 
 
 def test_tech_prompt_names_the_source_when_the_price_is_not_a_last_trade():
-    msg = _tech_msg({"ORCL": {
-        "live_price": ORCL_LIVE,
-        "live_price_description": "close of today's still-forming session bar",
-        "prev_close": 161.79, "session_open": ORCL_LIVE,
-        "session_high": 160.0, "session_low": ORCL_LIVE, "session_volume": 1000,
-    }})
+    msg = _tech_msg(
+        {
+            "ORCL": {
+                "live_price": ORCL_LIVE,
+                "live_price_description": "close of today's still-forming session bar",
+                "prev_close": 161.79,
+                "session_open": ORCL_LIVE,
+                "session_high": 160.0,
+                "session_low": ORCL_LIVE,
+                "session_volume": 1000,
+            }
+        }
+    )
     assert "still-forming session bar" in msg
     assert "Current price: $158.38" in msg
 
@@ -745,8 +849,7 @@ def test_the_intraday_mover_scan_does_not_buy_a_paid_look_on_yesterdays_move(
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
     p = build_pipeline(broker=MagicMock())
     p.broker.get_intraday_snapshots.return_value = {
-        "ORCL": _snap(last_price=140.0, last_trade_at=SEP16_CLOSE,
-                      prev_close=161.79),
+        "ORCL": _snap(last_price=140.0, last_trade_at=SEP16_CLOSE, prev_close=161.79),
         "MSFT": _snap(last_price=400.0, last_trade_at=now, prev_close=440.0),
     }
     p.config = MagicMock()
@@ -805,9 +908,14 @@ def test_the_cockpit_does_not_render_a_prior_sessions_range_as_this_session(
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
     broker = MagicMock()
     broker.get_intraday_snapshots.return_value = {
-        "AAPL": _snap(last_price=230.0, last_trade_at=SEP16_CLOSE,
-                      session_bar_at=SEP16_BAR_AT, session_open=229.0,
-                      session_high=231.0, session_low=228.0),
+        "AAPL": _snap(
+            last_price=230.0,
+            last_trade_at=SEP16_CLOSE,
+            session_bar_at=SEP16_BAR_AT,
+            session_open=229.0,
+            session_high=231.0,
+            session_low=228.0,
+        ),
     }
     broker.get_session_open.return_value = SEP17_OPEN
     monkeypatch.setattr(broker_reads, "_get_broker", lambda: broker)
@@ -829,8 +937,7 @@ def test_a_prior_sessions_minute_bar_is_not_used_either():
     every other test still passed when that check was removed.
     """
     r = resolve_live_price(
-        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
-              minute_close=161.79, minute_bar_at=SEP16_CLOSE),
+        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE, minute_close=161.79, minute_bar_at=SEP16_CLOSE),
         when=SEP17_OPEN.replace(minute=31),
     )
     assert r.price is None
@@ -839,9 +946,14 @@ def test_a_prior_sessions_minute_bar_is_not_used_either():
     # …and with a today session bar present it is the SESSION BAR that
     # rescues the name, never the prior session's minute bar.
     rescued = resolve_live_price(
-        _snap(last_price=161.79, last_trade_at=SEP16_CLOSE,
-              minute_close=161.79, minute_bar_at=SEP16_CLOSE,
-              session_bar_at=SEP17_BAR_AT, session_close=158.55),
+        _snap(
+            last_price=161.79,
+            last_trade_at=SEP16_CLOSE,
+            minute_close=161.79,
+            minute_bar_at=SEP16_CLOSE,
+            session_bar_at=SEP17_BAR_AT,
+            session_close=158.55,
+        ),
         when=SEP17_OPEN.replace(minute=31),
     )
     assert rescued.price == 158.55
@@ -856,31 +968,39 @@ def test_the_tech_prompt_never_falls_back_to_the_raw_provider_field():
     the resolved one. A reader that prefers `last_price`, or falls back to
     it, prints yesterday. Nothing else in this file caught that.
     """
-    msg = _tech_msg({"ORCL": {
-        "last_price": 161.79,                      # yesterday, raw
-        "last_trade_at": SEP16_CLOSE,
-        "live_price": ORCL_LIVE,                   # today, resolved
-        "live_price_description": "close of today's still-forming session bar",
-        "prev_close": 161.79, "session_open": ORCL_LIVE,
-        "session_high": 160.0, "session_low": ORCL_LIVE, "session_volume": 1000,
-    }})
-    price_line = [
-        line for line in msg.splitlines() if "Current price:" in line
-    ]
+    msg = _tech_msg(
+        {
+            "ORCL": {
+                "last_price": 161.79,  # yesterday, raw
+                "last_trade_at": SEP16_CLOSE,
+                "live_price": ORCL_LIVE,  # today, resolved
+                "live_price_description": "close of today's still-forming session bar",
+                "prev_close": 161.79,
+                "session_open": ORCL_LIVE,
+                "session_high": 160.0,
+                "session_low": ORCL_LIVE,
+                "session_volume": 1000,
+            }
+        }
+    )
+    price_line = [line for line in msg.splitlines() if "Current price:" in line]
     assert len(price_line) == 1
     # 161.79 is legitimately present on this line as the PRIOR CLOSE the
     # move is measured against; what must not appear is the raw field in
     # the price slot itself.
     assert price_line[0].strip().startswith("Current price: $158.38"), price_line[0]
-    assert "Current price: $161.79" not in msg, (
-        "the prior session's raw last_price reached the live-price line"
-    )
+    assert "Current price: $161.79" not in msg, "the prior session's raw last_price reached the live-price line"
 
     # And with NO resolved price the section must refuse outright rather
     # than reaching for the raw field.
-    lost = _tech_msg({"ORCL": {
-        "last_price": 161.79, "last_trade_at": SEP16_CLOSE,
-        "live_unavailable": ONLY_STALE,
-    }})
+    lost = _tech_msg(
+        {
+            "ORCL": {
+                "last_price": 161.79,
+                "last_trade_at": SEP16_CLOSE,
+                "live_unavailable": ONLY_STALE,
+            }
+        }
+    )
     assert "NO PRICE FROM TODAY" in lost
     assert "CURRENT SESSION" not in lost

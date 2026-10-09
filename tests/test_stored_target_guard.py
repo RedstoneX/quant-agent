@@ -8,6 +8,7 @@ out. The code was corrected; the numbers already frozen on
 `trades.take_profit` for positions opened before it were not, and nothing
 compared a stored target against what the code says today.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -28,6 +29,7 @@ from scripts.check_stored_targets import (
 # The correction re-asks the ORIGINAL question with working code.
 # --------------------------------------------------------------------------
 
+
 def test_the_backfill_returns_the_nearest_wall_on_the_meta_case():
     """The desk's own reproduced case (PR #790): the 2026-09-21 META add at
     $728.41 with ATR $21.22 put the old noise floor at $749.63, which
@@ -38,11 +40,16 @@ def test_the_backfill_returns_the_nearest_wall_on_the_meta_case():
     answer is the nearest wall.
     """
     out = tr.assess_bugfix_backfill(
-        symbol="META", direction="long", entry_price=728.41,
-        stored_target=785.20, pinned_horizon_sessions=12,
+        symbol="META",
+        direction="long",
+        entry_price=728.41,
+        stored_target=785.20,
+        pinned_horizon_sessions=12,
         setup_type="breakout",
         levels=[672.94, 688.26, 707.03, 730.41, 739.84, 784.58],
-        atr=21.22, close_price=725.00, levels_coverage="full",
+        atr=21.22,
+        close_price=725.00,
+        levels_coverage="full",
     )
     assert out.new_price == 730.41
     assert out.code == tr.TRIGGER_DERIVATION_CORRECTED
@@ -71,10 +78,7 @@ def test_the_backfill_holds_entry_horizon_and_setup_and_takes_no_current_price()
     # `close_price` exists ONLY to answer "has price already passed this"
     # and to drop levels price has closed through — never as an anchor.
     assert "close_price" in params
-    assert "sessions_held" not in params, (
-        "sessions_held only feeds the re-anchor, which a correction may "
-        "never use"
-    )
+    assert "sessions_held" not in params, "sessions_held only feeds the re-anchor, which a correction may never use"
 
 
 # --------------------------------------------------------------------------
@@ -82,12 +86,24 @@ def test_the_backfill_holds_entry_horizon_and_setup_and_takes_no_current_price()
 # --------------------------------------------------------------------------
 
 _REANCHOR_CASE = dict(
-    sym="T", direction="long", is_short=False, entry=100.0, target=130.0,
-    target_level=None, horizon=10, setup_type="range",
-    levels=[105.0, 140.0], vol=4.0, close=125.0, levels_coverage="full",
-    trigger="X", sessions_held=3,
-    min_target_atr_multiple=1.0, breakout_projection_atr_multiple=1.0,
-    max_reach_atr_multiple=1.5, max_horizon_sessions=60,
+    sym="T",
+    direction="long",
+    is_short=False,
+    entry=100.0,
+    target=130.0,
+    target_level=None,
+    horizon=10,
+    setup_type="range",
+    levels=[105.0, 140.0],
+    vol=4.0,
+    close=125.0,
+    levels_coverage="full",
+    trigger="X",
+    sessions_held=3,
+    min_target_atr_multiple=1.0,
+    breakout_projection_atr_multiple=1.0,
+    max_reach_atr_multiple=1.5,
+    max_horizon_sessions=60,
     break_margin_atr_multiple=BREAK_CONFIRMATION_ATR_MULTIPLE,
 )
 
@@ -132,54 +148,77 @@ def test_there_is_exactly_one_rederivation_body():
     # Every call to the levels derivation lives inside the shared helper.
     helper_start = body.index("def _rederive_on_todays_bars")
     before = body[:helper_start]
-    assert "derive_structural_target(" not in before, (
-        "a derivation call escaped the shared helper"
-    )
+    assert "derive_structural_target(" not in before, "a derivation call escaped the shared helper"
 
 
 # --------------------------------------------------------------------------
 # The guard's predicate: pure, and testable without bars.
 # --------------------------------------------------------------------------
 
+
 def test_a_wall_between_entry_and_target_is_the_finding():
     assert walls_between(
-        stored_target=785.20, reference_price=710.62,
-        surviving_levels=[688.26, 730.41, 739.84, 900.0], is_short=False,
+        stored_target=785.20,
+        reference_price=710.62,
+        surviving_levels=[688.26, 730.41, 739.84, 900.0],
+        is_short=False,
     ) == [730.41, 739.84]
 
 
 def test_a_target_sitting_on_its_own_wall_is_not_a_finding():
     """The correct outcome is not an error. Strict inequalities both ends."""
-    assert walls_between(
-        stored_target=730.41, reference_price=710.62,
-        surviving_levels=[730.41], is_short=False,
-    ) == []
+    assert (
+        walls_between(
+            stored_target=730.41,
+            reference_price=710.62,
+            surviving_levels=[730.41],
+            is_short=False,
+        )
+        == []
+    )
 
 
 def test_levels_behind_the_entry_are_not_walls():
-    assert walls_between(
-        stored_target=120.0, reference_price=100.0,
-        surviving_levels=[80.0, 95.0, 130.0], is_short=False,
-    ) == []
+    assert (
+        walls_between(
+            stored_target=120.0,
+            reference_price=100.0,
+            surviving_levels=[80.0, 95.0, 130.0],
+            is_short=False,
+        )
+        == []
+    )
 
 
 def test_the_short_side_is_the_mirror_and_nearest_comes_first():
     assert walls_between(
-        stored_target=90.79, reference_price=93.78,
-        surviving_levels=[92.82, 91.71, 88.0, 95.54], is_short=True,
+        stored_target=90.79,
+        reference_price=93.78,
+        surviving_levels=[92.82, 91.71, 88.0, 95.54],
+        is_short=True,
     ) == [92.82, 91.71]
 
 
 @pytest.mark.parametrize("bad", [None, 0.0, -5.0, "x"])
 def test_an_unreadable_input_finds_nothing_rather_than_guessing(bad):
-    assert walls_between(
-        stored_target=bad, reference_price=100.0,
-        surviving_levels=[110.0], is_short=False,
-    ) == []
-    assert walls_between(
-        stored_target=120.0, reference_price=bad,
-        surviving_levels=[110.0], is_short=False,
-    ) == []
+    assert (
+        walls_between(
+            stored_target=bad,
+            reference_price=100.0,
+            surviving_levels=[110.0],
+            is_short=False,
+        )
+        == []
+    )
+    assert (
+        walls_between(
+            stored_target=120.0,
+            reference_price=bad,
+            surviving_levels=[110.0],
+            is_short=False,
+        )
+        == []
+    )
 
 
 def test_drift_and_the_wall_finding_are_different_severities():
@@ -190,8 +229,7 @@ def test_drift_and_the_wall_finding_are_different_severities():
     reads it."""
     assert FINDING_AIMS_PAST_WALL != FINDING_DRIFT
     source = pathlib.Path(
-        pathlib.Path(__file__).resolve().parent.parent
-        / "scripts" / "check_stored_targets.py",
+        pathlib.Path(__file__).resolve().parent.parent / "scripts" / "check_stored_targets.py",
     ).read_text()
     assert "return 1 if bad else 0" in source
     assert 'r.get("finding") == FINDING_AIMS_PAST_WALL' in source
@@ -245,12 +283,12 @@ def test_the_report_names_what_it_cannot_correct_rather_than_going_quiet():
     silence. And no number is substituted for the refusal."""
     from scripts.check_stored_targets import format_message
 
-    msg = format_message([
-        {"symbol": "AAPL", "finding": FINDING_AIMS_PAST_WALL,
-         "stored_target": 359.93, "derived_target": 344.81},
-        {"symbol": "META", "finding": FINDING_AIMS_PAST_WALL,
-         "stored_target": 785.20, "derived_target": None},
-    ])
+    msg = format_message(
+        [
+            {"symbol": "AAPL", "finding": FINDING_AIMS_PAST_WALL, "stored_target": 359.93, "derived_target": 344.81},
+            {"symbol": "META", "finding": FINDING_AIMS_PAST_WALL, "stored_target": 785.20, "derived_target": None},
+        ]
+    )
     # The correctable one carries both numbers so the reader can check it.
     assert "$359.93" in msg and "$344.81" in msg
     # The uncorrectable one is named, said to be wrong, and said to have no
@@ -266,10 +304,15 @@ def test_a_clean_book_says_nothing():
     from scripts.check_stored_targets import FINDING_AGREES, format_message
 
     assert format_message([]) == ""
-    assert format_message([
-        {"symbol": "ETN", "finding": FINDING_DRIFT, "stored_target": 487.69},
-        {"symbol": "UPS", "finding": FINDING_AGREES, "stored_target": 92.82},
-    ]) == ""
+    assert (
+        format_message(
+            [
+                {"symbol": "ETN", "finding": FINDING_DRIFT, "stored_target": 487.69},
+                {"symbol": "UPS", "finding": FINDING_AGREES, "stored_target": 92.82},
+            ]
+        )
+        == ""
+    )
 
 
 def test_the_wall_test_has_exactly_one_definition():

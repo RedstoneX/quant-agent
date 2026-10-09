@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_operator.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 from typing import Any, Callable, TypeVar
 from src.cost_circuit.clock import _et_day_and_utc_bounds
@@ -11,7 +12,8 @@ from src.cost_circuit.schema import ensure_cost_circuit_schema
 
 class OperatorControls:
     def __init__(
-        self, *,
+        self,
+        *,
         enabled,
         context,
         connect,
@@ -86,12 +88,15 @@ class OperatorControls:
             self._seed_today(conn)
             self._reconcile_quota_holds_locked(conn, current_day=day)
             state = self._effective_state_locked(
-                conn, day=day, run_id=run_id, mode=mode,
+                conn,
+                day=day,
+                run_id=run_id,
+                mode=mode,
             )
             daily, session = self._totals(conn, day, run_id)
             session_row = conn.execute(
-                "SELECT logical_calls, provider_attempts, retry_attempts FROM llm_budget_sessions "
-                "WHERE run_id=?", (run_id,),
+                "SELECT logical_calls, provider_attempts, retry_attempts FROM llm_budget_sessions WHERE run_id=?",
+                (run_id,),
             ).fetchone()
             result = dict(state)
             result.update(
@@ -164,25 +169,16 @@ class OperatorControls:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 state = self._state_row(conn)
-                emergency_latched = bool(
-                    self._emergency_latch_path is not None
-                    and self._emergency_latch_path.exists()
-                )
+                emergency_latched = bool(self._emergency_latch_path is not None and self._emergency_latch_path.exists())
                 current_day, _, _ = _et_day_and_utc_bounds()
                 day_row = conn.execute(
-                    "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days "
-                    "WHERE day=?",
+                    "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days WHERE day=?",
                     (current_day,),
                 ).fetchone()
                 day_inexact = day_row is not None and (
-                    int(day_row["unknown_cost_rows"] or 0)
-                    or not bool(day_row["costs_exact"])
+                    int(day_row["unknown_cost_rows"] or 0) or not bool(day_row["costs_exact"])
                 )
-                if (
-                    not int(state.get("suspended") or 0)
-                    and not emergency_latched
-                    and not day_inexact
-                ):
+                if not int(state.get("suspended") or 0) and not emergency_latched and not day_inexact:
                     raise ValueError(
                         "no operator-resettable hard circuit is active and the "
                         "current ET day's accounting is exact; scoped quota "
@@ -199,8 +195,7 @@ class OperatorControls:
                 elapsed_minutes: float | None = None
                 if suspended_at:
                     elapsed_row = conn.execute(
-                        "SELECT (julianday('now') - julianday(?)) * 1440.0 "
-                        "AS minutes",
+                        "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
                         (suspended_at,),
                     ).fetchone()
                     if elapsed_row is not None and elapsed_row["minutes"] is not None:
@@ -218,7 +213,10 @@ class OperatorControls:
                     "session_cost_usd, daily_cost_usd, suspension_alert_state) VALUES "
                     "('reset', ?, ?, ?, ?, 'operator', ?, ?, ?, ?)",
                     (
-                        state.get("trigger_code"), event_detail, run_id, mode,
+                        state.get("trigger_code"),
+                        event_detail,
+                        run_id,
+                        mode,
                         int(state.get("session_attempts") or 0),
                         float(state.get("session_cost_usd") or 0),
                         float(state.get("daily_cost_usd") or 0),
@@ -259,9 +257,7 @@ class OperatorControls:
             if self._emergency_latch_path is not None:
                 self._emergency_latch_path.unlink(missing_ok=True)
                 if self._emergency_latch_path.exists():
-                    raise RuntimeError(
-                        f"could not clear durable circuit latch {self._emergency_latch_path}"
-                    )
+                    raise RuntimeError(f"could not clear durable circuit latch {self._emergency_latch_path}")
         with self._infrastructure_lock:
             self._infrastructure_error = None
             self._unavailable_sentinel = None

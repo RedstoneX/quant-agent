@@ -111,19 +111,18 @@ SECTION_PREAMBLE = (
 )
 
 # One entry line: "- [QUARTER] text <!--hash:HEX-->"
-_ENTRY_RE = re.compile(
-    r"^- \[(?P<period>[^]]+)\] (?P<text>.+?) <!--hash:(?P<hash>[0-9a-f]+)-->\s*$"
-)
+_ENTRY_RE = re.compile(r"^- \[(?P<period>[^]]+)\] (?P<text>.+?) <!--hash:(?P<hash>[0-9a-f]+)-->\s*$")
 
 
 # ---------------------------------------------------------------------------
 # Result / rejection types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AppliedEdit:
     agent_name: str
-    operation: str           # "append" | "retract"
+    operation: str  # "append" | "retract"
     learning_text: str
     content_hash: str
     period: str
@@ -166,6 +165,7 @@ class ApplicationReport:
 # PromptEditor
 # ---------------------------------------------------------------------------
 
+
 class PromptEditor:
     def __init__(
         self,
@@ -180,25 +180,26 @@ class PromptEditor:
         self.evolution_dir = Path(evolution_dir)
         self.evolution_dir.mkdir(parents=True, exist_ok=True)
         # Caller may override flags for tests / forced-apply scenarios.
-        self._auto_commit = (
-            auto_commit if auto_commit is not None else config.auto_commit
-        )
-        self._dry_run = (
-            dry_run if dry_run is not None else config.dry_run
-        )
+        self._auto_commit = auto_commit if auto_commit is not None else config.auto_commit
+        self._dry_run = dry_run if dry_run is not None else config.dry_run
         # Pre-build a single regex that catches any prohibited word or phrase
         # as a whole word / case-insensitive. Multi-word phrases ("ignore all",
         # "must always") are allowed in the list; we escape each and allow
         # whitespace between tokens to be forgiving.
         parts = []
-        for phrase in (config.prohibited_words or []):
+        for phrase in config.prohibited_words or []:
             tokens = [re.escape(t) for t in phrase.strip().split() if t.strip()]
             if not tokens:
                 continue
             parts.append(r"\b" + r"\s+".join(tokens) + r"\b")
-        self._prohibited_re = re.compile(
-            "|".join(parts), re.IGNORECASE,
-        ) if parts else None
+        self._prohibited_re = (
+            re.compile(
+                "|".join(parts),
+                re.IGNORECASE,
+            )
+            if parts
+            else None
+        )
 
     # -- public entry points -------------------------------------------------
 
@@ -227,16 +228,13 @@ class PromptEditor:
         # directly (audit round 2, #20).
         if isinstance(reflection, dict):
             from src.models import QuarterlyMetaReflection
+
             reflection = QuarterlyMetaReflection.model_validate(reflection)
 
         # audit round 2 (#20): apply-from-file lane — see docstring.
         saved_flag = os.getenv("EVOLUTION_APPLY_SAVED", "").strip()
         if saved_flag and saved_flag != "0":
-            period = (
-                reflection.period
-                if saved_flag.lower() in ("1", "true", "yes")
-                else saved_flag
-            )
+            period = reflection.period if saved_flag.lower() in ("1", "true", "yes") else saved_flag
             saved = load_saved_reflection(period, evolution_dir=self.evolution_dir)
             if saved is None:
                 # Fail SAFE: do NOT fall back to the fresh reflection — the
@@ -245,21 +243,26 @@ class PromptEditor:
                     "EVOLUTION_APPLY_SAVED=%s but no valid saved reflection "
                     "for period %s under %s — applying NOTHING (fail-safe; "
                     "the freshly-generated reflection is not a reviewed "
-                    "artifact)", saved_flag, period, self.evolution_dir,
+                    "artifact)",
+                    saved_flag,
+                    period,
+                    self.evolution_dir,
                 )
                 report = ApplicationReport(period=period)
                 for learning in reflection.proposed_learnings:
-                    report.rejected.append(Rejection(
-                        agent_name=learning.agent_name,
-                        operation=learning.operation,
-                        learning_text=learning.learning_text,
-                        reason=(
-                            f"EVOLUTION_APPLY_SAVED={saved_flag} set but "
-                            f"{Path(self.evolution_dir) / period / 'reflection.json'} "
-                            f"is missing/invalid — fresh reflection not applied"
-                        ),
-                        period=period,
-                    ))
+                    report.rejected.append(
+                        Rejection(
+                            agent_name=learning.agent_name,
+                            operation=learning.operation,
+                            learning_text=learning.learning_text,
+                            reason=(
+                                f"EVOLUTION_APPLY_SAVED={saved_flag} set but "
+                                f"{Path(self.evolution_dir) / period / 'reflection.json'} "
+                                f"is missing/invalid — fresh reflection not applied"
+                            ),
+                            period=period,
+                        )
+                    )
                 self._audit_log(report)
                 return report
             # Same-period re-run hazard: the pipeline persists the FRESH
@@ -269,28 +272,22 @@ class PromptEditor:
             # proposed_edits.json is NOT rewritten by a live-apply run
             # (dry_run=false skips staging) — cross-check against it and
             # fail safe on mismatch rather than apply unreviewed content.
-            staged_path = (
-                Path(self.evolution_dir) / period / "proposed_edits.json"
-            )
+            staged_path = Path(self.evolution_dir) / period / "proposed_edits.json"
             if staged_path.exists():
                 mismatch = False
                 try:
                     staged = json.loads(staged_path.read_text())
                     staged_set = {
-                        (p.get("agent_name"), p.get("operation"),
-                         p.get("learning_text"))
+                        (p.get("agent_name"), p.get("operation"), p.get("learning_text"))
                         for p in (staged.get("proposals") or [])
                     }
-                    saved_set = {
-                        (ln.agent_name, ln.operation, ln.learning_text)
-                        for ln in saved.proposed_learnings
-                    }
+                    saved_set = {(ln.agent_name, ln.operation, ln.learning_text) for ln in saved.proposed_learnings}
                     mismatch = staged_set != saved_set
                 except Exception as exc:  # unreadable staging file → warn only
                     logger.warning(
-                        "EVOLUTION_APPLY_SAVED: could not cross-check %s "
-                        "(%s); proceeding on reflection.json alone",
-                        staged_path, exc,
+                        "EVOLUTION_APPLY_SAVED: could not cross-check %s (%s); proceeding on reflection.json alone",
+                        staged_path,
+                        exc,
                     )
                 if mismatch:
                     logger.error(
@@ -305,17 +302,19 @@ class PromptEditor:
                     )
                     report = ApplicationReport(period=period)
                     for learning in saved.proposed_learnings:
-                        report.rejected.append(Rejection(
-                            agent_name=learning.agent_name,
-                            operation=learning.operation,
-                            learning_text=learning.learning_text,
-                            reason=(
-                                "EVOLUTION_APPLY_SAVED: reflection.json "
-                                "disagrees with the reviewed "
-                                "proposed_edits.json — not applied"
-                            ),
-                            period=period,
-                        ))
+                        report.rejected.append(
+                            Rejection(
+                                agent_name=learning.agent_name,
+                                operation=learning.operation,
+                                learning_text=learning.learning_text,
+                                reason=(
+                                    "EVOLUTION_APPLY_SAVED: reflection.json "
+                                    "disagrees with the reviewed "
+                                    "proposed_edits.json — not applied"
+                                ),
+                                period=period,
+                            )
+                        )
                     self._audit_log(report)
                     return report
             logger.warning(
@@ -345,22 +344,21 @@ class PromptEditor:
                 "proposed_edits.json for human review, NO prompt files modified"
             )
         else:
-            effective_mode = (
-                "LIVE-APPLY — dry_run=false: proposals will be written into "
-                "prompt files + git-committed"
-            )
+            effective_mode = "LIVE-APPLY — dry_run=false: proposals will be written into prompt files + git-committed"
         logger.warning("PromptEditor effective mode: %s", effective_mode)
 
         if not self.config.enabled:
             # Feature-flag off — record the intent but don't touch any file.
             for learning in reflection.proposed_learnings:
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation=learning.operation,
-                    learning_text=learning.learning_text,
-                    reason="evolution.enabled=false (observe-only mode)",
-                    period=reflection.period,
-                ))
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation=learning.operation,
+                        learning_text=learning.learning_text,
+                        reason="evolution.enabled=false (observe-only mode)",
+                        period=reflection.period,
+                    )
+                )
             self._audit_log(report)
             return report
 
@@ -399,18 +397,16 @@ class PromptEditor:
             #   acceptable.
             #
             #   Reject only when a NEW agent would push past the limit:
-            if (learning.agent_name not in agents_edited
-                    and len(agents_edited) >= self.config.max_agents_per_cycle):
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation=learning.operation,
-                    learning_text=learning.learning_text,
-                    reason=(
-                        f"max_agents_per_cycle={self.config.max_agents_per_cycle} "
-                        f"already reached"
-                    ),
-                    period=reflection.period,
-                ))
+            if learning.agent_name not in agents_edited and len(agents_edited) >= self.config.max_agents_per_cycle:
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation=learning.operation,
+                        learning_text=learning.learning_text,
+                        reason=(f"max_agents_per_cycle={self.config.max_agents_per_cycle} already reached"),
+                        period=reflection.period,
+                    )
+                )
                 continue
 
             outcome = self._apply_one(learning, reflection.period, report)
@@ -422,7 +418,9 @@ class PromptEditor:
         # One consolidated git commit if anything actually changed on disk.
         if self._auto_commit and modified_paths and report.applied:
             sha = self._git_commit_changes(
-                modified_paths, reflection.period, len(report.applied),
+                modified_paths,
+                reflection.period,
+                len(report.applied),
             )
             report.git_commit = sha
 
@@ -453,7 +451,8 @@ class PromptEditor:
             logger.warning(
                 "prompt_editor: learning_text for %s contained newlines/"
                 "irregular whitespace — normalized to a single line before "
-                "guardrail checks", learning.agent_name,
+                "guardrail checks",
+                learning.agent_name,
             )
             learning = learning.model_copy(
                 update={"learning_text": normalized},
@@ -461,24 +460,28 @@ class PromptEditor:
 
         reason = self._validate_learning(learning)
         if reason is not None:
-            report.rejected.append(Rejection(
-                agent_name=learning.agent_name,
-                operation=learning.operation,
-                learning_text=learning.learning_text,
-                reason=reason,
-                period=period,
-            ))
+            report.rejected.append(
+                Rejection(
+                    agent_name=learning.agent_name,
+                    operation=learning.operation,
+                    learning_text=learning.learning_text,
+                    reason=reason,
+                    period=period,
+                )
+            )
             return None
 
         prompt_path = self._prompt_path_for(learning.agent_name)
         if not prompt_path.exists():
-            report.rejected.append(Rejection(
-                agent_name=learning.agent_name,
-                operation=learning.operation,
-                learning_text=learning.learning_text,
-                reason=f"prompt file not found: {prompt_path}",
-                period=period,
-            ))
+            report.rejected.append(
+                Rejection(
+                    agent_name=learning.agent_name,
+                    operation=learning.operation,
+                    learning_text=learning.learning_text,
+                    reason=f"prompt file not found: {prompt_path}",
+                    period=period,
+                )
+            )
             return None
 
         # audit round 2 (#48): when auto_commit is on, refuse to edit a
@@ -493,47 +496,54 @@ class PromptEditor:
                 "prompt_editor: %s has uncommitted operator edits — "
                 "skipping %s's learning so the evolution git commit stays "
                 "revert-clean (commit or stash your changes, then re-apply)",
-                prompt_path, learning.agent_name,
+                prompt_path,
+                learning.agent_name,
             )
-            report.rejected.append(Rejection(
-                agent_name=learning.agent_name,
-                operation=learning.operation,
-                learning_text=learning.learning_text,
-                reason=(
-                    f"prompt file has uncommitted operator edits "
-                    f"({prompt_path}) — skipped to keep the evolution "
-                    f"commit revert-clean"
-                ),
-                period=period,
-            ))
+            report.rejected.append(
+                Rejection(
+                    agent_name=learning.agent_name,
+                    operation=learning.operation,
+                    learning_text=learning.learning_text,
+                    reason=(
+                        f"prompt file has uncommitted operator edits "
+                        f"({prompt_path}) — skipped to keep the evolution "
+                        f"commit revert-clean"
+                    ),
+                    period=period,
+                )
+            )
             return None
 
         text = prompt_path.read_text()
 
         if learning.operation == "retract":
             if not learning.retract_target_hash:
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation="retract",
-                    learning_text=learning.learning_text,
-                    reason="retract requires retract_target_hash",
-                    period=period,
-                ))
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation="retract",
+                        learning_text=learning.learning_text,
+                        reason="retract requires retract_target_hash",
+                        period=period,
+                    )
+                )
                 return None
             new_text, removed = _remove_entry_by_hash(
-                text, learning.retract_target_hash,
+                text,
+                learning.retract_target_hash,
             )
             if not removed:
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation="retract",
-                    learning_text=learning.learning_text,
-                    reason=(
-                        f"retract_target_hash={learning.retract_target_hash} "
-                        f"not present in {prompt_path.name}"
-                    ),
-                    period=period,
-                ))
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation="retract",
+                        learning_text=learning.learning_text,
+                        reason=(
+                            f"retract_target_hash={learning.retract_target_hash} not present in {prompt_path.name}"
+                        ),
+                        period=period,
+                    )
+                )
                 return None
             try:
                 _atomic_write(prompt_path, new_text)
@@ -541,19 +551,23 @@ class PromptEditor:
                 # Disk full / permission / cross-mount rename failure. The
                 # file was NOT updated — record as a rejection rather than
                 # letting the audit log claim an edit that didn't happen.
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation="retract",
-                    learning_text=learning.learning_text,
-                    reason=f"atomic write failed: {exc}",
-                    period=period,
-                ))
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation="retract",
+                        learning_text=learning.learning_text,
+                        reason=f"atomic write failed: {exc}",
+                        period=period,
+                    )
+                )
                 return None
             return AppliedEdit(
-                agent_name=learning.agent_name, operation="retract",
+                agent_name=learning.agent_name,
+                operation="retract",
                 learning_text=learning.learning_text,
                 content_hash=learning.retract_target_hash,
-                period=period, prompt_path=str(prompt_path),
+                period=period,
+                prompt_path=str(prompt_path),
             )
 
         # append path — the common case
@@ -564,17 +578,19 @@ class PromptEditor:
         for e in existing:
             sim = _jaccard(learning.learning_text, e["text"])
             if sim >= self.config.jaccard_dedup_threshold:
-                report.rejected.append(Rejection(
-                    agent_name=learning.agent_name,
-                    operation="append",
-                    learning_text=learning.learning_text,
-                    reason=(
-                        f"jaccard_similarity={sim:.2f} ≥ "
-                        f"{self.config.jaccard_dedup_threshold} vs existing "
-                        f"entry [{e['period']}] hash={e['hash'][:6]}"
-                    ),
-                    period=period,
-                ))
+                report.rejected.append(
+                    Rejection(
+                        agent_name=learning.agent_name,
+                        operation="append",
+                        learning_text=learning.learning_text,
+                        reason=(
+                            f"jaccard_similarity={sim:.2f} ≥ "
+                            f"{self.config.jaccard_dedup_threshold} vs existing "
+                            f"entry [{e['period']}] hash={e['hash'][:6]}"
+                        ),
+                        period=period,
+                    )
+                )
                 return None
 
         new_text, rolled_off_entries = _append_entry(
@@ -590,28 +606,34 @@ class PromptEditor:
             # Disk/permission failure. File untouched — NOT appending to
             # report.applied; record rejection + audit-log it so the
             # discrepancy is visible rather than silent.
-            report.rejected.append(Rejection(
-                agent_name=learning.agent_name,
-                operation="append",
-                learning_text=learning.learning_text,
-                reason=f"atomic write failed: {exc}",
-                period=period,
-            ))
+            report.rejected.append(
+                Rejection(
+                    agent_name=learning.agent_name,
+                    operation="append",
+                    learning_text=learning.learning_text,
+                    reason=f"atomic write failed: {exc}",
+                    period=period,
+                )
+            )
             return None
 
         for roll in rolled_off_entries:
-            report.rolled_off.append({
-                "agent": learning.agent_name,
-                "period": roll["period"],
-                "hash": roll["hash"],
-                "text": roll["text"],
-            })
+            report.rolled_off.append(
+                {
+                    "agent": learning.agent_name,
+                    "period": roll["period"],
+                    "hash": roll["hash"],
+                    "text": roll["text"],
+                }
+            )
 
         return AppliedEdit(
-            agent_name=learning.agent_name, operation="append",
+            agent_name=learning.agent_name,
+            operation="append",
             learning_text=learning.learning_text,
             content_hash=content_hash,
-            period=period, prompt_path=str(prompt_path),
+            period=period,
+            prompt_path=str(prompt_path),
         )
 
     # -- validation ---------------------------------------------------------
@@ -636,10 +658,7 @@ class PromptEditor:
         if self._prohibited_re is not None:
             match = self._prohibited_re.search(learning.learning_text)
             if match is not None:
-                return (
-                    f"learning_text contains prohibited word/phrase "
-                    f"{match.group(0)!r}"
-                )
+                return f"learning_text contains prohibited word/phrase {match.group(0)!r}"
         return None
 
     def _prompt_path_for(self, agent_name: str) -> Path:
@@ -665,10 +684,17 @@ class PromptEditor:
         try:
             proc = subprocess.run(
                 [
-                    "git", "-C", str(prompt_path.parent),
-                    "status", "--porcelain", "--", str(prompt_path),
+                    "git",
+                    "-C",
+                    str(prompt_path.parent),
+                    "status",
+                    "--porcelain",
+                    "--",
+                    str(prompt_path),
                 ],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
         except Exception:
             return False
@@ -704,18 +730,20 @@ class PromptEditor:
 
         proposals: list[dict] = []
         for learning in reflection.proposed_learnings:
-            proposals.append({
-                "agent_name": learning.agent_name,
-                "operation": learning.operation,
-                "learning_text": learning.learning_text,
-                "retract_target_hash": getattr(
-                    learning, "retract_target_hash", None,
-                ),
-                "justification": getattr(learning, "justification", ""),
-                "target_prompt_path": str(
-                    self._prompt_path_for(learning.agent_name)
-                ),
-            })
+            proposals.append(
+                {
+                    "agent_name": learning.agent_name,
+                    "operation": learning.operation,
+                    "learning_text": learning.learning_text,
+                    "retract_target_hash": getattr(
+                        learning,
+                        "retract_target_hash",
+                        None,
+                    ),
+                    "justification": getattr(learning, "justification", ""),
+                    "target_prompt_path": str(self._prompt_path_for(learning.agent_name)),
+                }
+            )
 
         payload = {
             "period": reflection.period,
@@ -757,20 +785,23 @@ class PromptEditor:
         # so the ApplicationReport carries an audit trail explaining
         # WHY nothing landed. The reason makes it greppable.
         for learning in reflection.proposed_learnings:
-            report.rejected.append(Rejection(
-                agent_name=learning.agent_name,
-                operation=learning.operation,
-                learning_text=learning.learning_text,
-                reason=(
-                    f"dry_run=True; proposal staged to {out_path} for "
-                    f"operator review (set evolution.dry_run=false to apply)"
-                ),
-                period=reflection.period,
-            ))
+            report.rejected.append(
+                Rejection(
+                    agent_name=learning.agent_name,
+                    operation=learning.operation,
+                    learning_text=learning.learning_text,
+                    reason=(
+                        f"dry_run=True; proposal staged to {out_path} for "
+                        f"operator review (set evolution.dry_run=false to apply)"
+                    ),
+                    period=reflection.period,
+                )
+            )
 
         logger.info(
             "PromptEditor dry-run: staged %d proposal(s) to %s",
-            len(proposals), out_path,
+            len(proposals),
+            out_path,
         )
 
     # -- audit + git --------------------------------------------------------
@@ -780,14 +811,11 @@ class PromptEditor:
         rows: list[dict] = []
         ts = datetime.now(tz=timezone.utc).isoformat()
         for e in report.applied:
-            rows.append({"ts": ts, "period": report.period,
-                         "kind": "applied", **e.__dict__})
+            rows.append({"ts": ts, "period": report.period, "kind": "applied", **e.__dict__})
         for r in report.rejected:
-            rows.append({"ts": ts, "period": report.period,
-                         "kind": "rejected", **r.__dict__})
+            rows.append({"ts": ts, "period": report.period, "kind": "rejected", **r.__dict__})
         for roll in report.rolled_off:
-            rows.append({"ts": ts, "period": report.period,
-                         "kind": "rolled_off", **roll})
+            rows.append({"ts": ts, "period": report.period, "kind": "rolled_off", **roll})
         if not rows:
             # audit round 2 (#1): never return without writing. The 2026-Q2
             # production run proposed exactly one learning, meta_reflector
@@ -796,14 +824,18 @@ class PromptEditor:
             # left ZERO durable trace in edits.jsonl, contradicting the
             # audit-log invariant in the module docstring. Write a single
             # marker row so every apply_reflection run is reconstructible.
-            rows.append({
-                "ts": ts, "period": report.period, "kind": "empty",
-                "note": (
-                    "apply_reflection ran with no applied/rejected/"
-                    "rolled_off entries (reflection carried zero "
-                    "proposed_learnings by the time it reached the editor)"
-                ),
-            })
+            rows.append(
+                {
+                    "ts": ts,
+                    "period": report.period,
+                    "kind": "empty",
+                    "note": (
+                        "apply_reflection ran with no applied/rejected/"
+                        "rolled_off entries (reflection carried zero "
+                        "proposed_learnings by the time it reached the editor)"
+                    ),
+                }
+            )
         try:
             with log_path.open("a") as f:
                 for row in rows:
@@ -835,19 +867,21 @@ class PromptEditor:
             path_args = [str(p.resolve()) for p in sorted(paths)]
             subprocess.run(
                 ["git", "-C", str(repo_root), "add"] + path_args,
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
-            msg = (
-                f"chore(prompts): quarterly meta-reflection {period} — "
-                f"{n_learnings} learning(s)"
-            )
+            msg = f"chore(prompts): quarterly meta-reflection {period} — {n_learnings} learning(s)"
             commit_proc = subprocess.run(
                 ["git", "-C", str(repo_root), "commit", "-m", msg, "--"] + path_args,
-                check=True, capture_output=True, text=True,
+                check=True,
+                capture_output=True,
+                text=True,
             )
             sha_proc = subprocess.run(
                 ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-                check=True, capture_output=True, text=True,
+                check=True,
+                capture_output=True,
+                text=True,
             )
             return sha_proc.stdout.strip()
         except subprocess.CalledProcessError as exc:
@@ -858,7 +892,8 @@ class PromptEditor:
                 stderr = stderr.decode(errors="replace")
             logger.warning(
                 "prompt_editor git_auto_commit failed (rc=%s): %s",
-                exc.returncode, stderr,
+                exc.returncode,
+                stderr,
             )
             return None
         except Exception as exc:
@@ -869,6 +904,7 @@ class PromptEditor:
 # ---------------------------------------------------------------------------
 # Apply-from-file loader (audit round 2, #20)
 # ---------------------------------------------------------------------------
+
 
 def load_saved_reflection(
     period: str,
@@ -900,13 +936,14 @@ def load_saved_reflection(
     except Exception as exc:
         logger.error(
             "load_saved_reflection: %s failed to parse/validate: %s",
-            path, exc,
+            path,
+            exc,
         )
         return None
     logger.info(
-        "load_saved_reflection: loaded reviewed reflection %s "
-        "(%d proposed learning(s))",
-        path, len(reflection.proposed_learnings),
+        "load_saved_reflection: loaded reviewed reflection %s (%d proposed learning(s))",
+        path,
+        len(reflection.proposed_learnings),
     )
     return reflection
 
@@ -914,6 +951,7 @@ def load_saved_reflection(
 # ---------------------------------------------------------------------------
 # Pure helpers — parsing / writing / similarity
 # ---------------------------------------------------------------------------
+
 
 def _hash_text(text: str) -> str:
     """Stable content hash for retract-targeting. First 12 hex chars of
@@ -951,11 +989,13 @@ def _parse_entries(full_text: str) -> list[dict]:
         m = _ENTRY_RE.match(line)
         if not m:
             continue
-        entries.append({
-            "period": m.group("period"),
-            "text":   m.group("text").strip(),
-            "hash":   m.group("hash"),
-        })
+        entries.append(
+            {
+                "period": m.group("period"),
+                "text": m.group("text").strip(),
+                "hash": m.group("hash"),
+            }
+        )
     return entries
 
 
@@ -965,8 +1005,7 @@ def _extract_section_body(full_text: str) -> str | None:
     to the next `^## ` header OR end-of-file."""
     lines = full_text.splitlines(keepends=False)
     try:
-        start = next(i for i, line in enumerate(lines)
-                     if line.strip() == SECTION_HEADER)
+        start = next(i for i, line in enumerate(lines) if line.strip() == SECTION_HEADER)
     except StopIteration:
         return None
     # Find next top-level header (^## ) after start, or EOF.
@@ -975,7 +1014,7 @@ def _extract_section_body(full_text: str) -> str | None:
         if lines[i].startswith("## "):
             end = i
             break
-    return "\n".join(lines[start + 1:end])
+    return "\n".join(lines[start + 1 : end])
 
 
 def _append_entry(
@@ -992,30 +1031,22 @@ def _append_entry(
     text = full_text.rstrip() + "\n"  # normalize trailing newline
     # audit round 2 (#21): collapse internal whitespace — the entry MUST be
     # a single line or _ENTRY_RE (FIFO / dedup / retract) can never see it.
-    new_entry = (
-        f"- [{period}] {' '.join(learning_text.split())} "
-        f"<!--hash:{content_hash}-->"
-    )
+    new_entry = f"- [{period}] {' '.join(learning_text.split())} <!--hash:{content_hash}-->"
 
     if _extract_section_body(text) is None:
         # Create the section from scratch at end of file.
-        block = (
-            "\n" + SECTION_HEADER + "\n"
-            + SECTION_PREAMBLE + "\n"
-            + new_entry + "\n"
-        )
+        block = "\n" + SECTION_HEADER + "\n" + SECTION_PREAMBLE + "\n" + new_entry + "\n"
         return text + block, []
 
     # Section exists — locate header + body boundaries, splice in.
     lines = text.splitlines(keepends=False)
-    start = next(i for i, line in enumerate(lines)
-                 if line.strip() == SECTION_HEADER)
+    start = next(i for i, line in enumerate(lines) if line.strip() == SECTION_HEADER)
     end = len(lines)
     for i in range(start + 1, len(lines)):
         if lines[i].startswith("## "):
             end = i
             break
-    body_lines = lines[start + 1:end]
+    body_lines = lines[start + 1 : end]
 
     # Preamble = every line between the section header and the FIRST entry
     # (_ENTRY_RE match). This is robust to multi-line HTML comments: our
@@ -1050,11 +1081,13 @@ def _append_entry(
         dropped = entry_lines.pop(0)
         m = _ENTRY_RE.match(dropped)
         if m:
-            rolled_off.append({
-                "period": m.group("period"),
-                "text":   m.group("text").strip(),
-                "hash":   m.group("hash"),
-            })
+            rolled_off.append(
+                {
+                    "period": m.group("period"),
+                    "text": m.group("text").strip(),
+                    "hash": m.group("hash"),
+                }
+            )
 
     entry_lines.append(new_entry)
 
@@ -1064,7 +1097,7 @@ def _append_entry(
         preamble = [SECTION_PREAMBLE]
     new_body = "\n".join(preamble + entry_lines + other)
 
-    new_lines = lines[:start + 1] + [new_body] + lines[end:]
+    new_lines = lines[: start + 1] + [new_body] + lines[end:]
     return "\n".join(new_lines).rstrip() + "\n", rolled_off
 
 
@@ -1077,17 +1110,16 @@ def _remove_entry_by_hash(full_text: str, target_hash: str) -> tuple[str, bool]:
         return full_text, False
 
     lines = full_text.splitlines(keepends=False)
-    start = next(i for i, line in enumerate(lines)
-                 if line.strip() == SECTION_HEADER)
+    start = next(i for i, line in enumerate(lines) if line.strip() == SECTION_HEADER)
     end = len(lines)
     for i in range(start + 1, len(lines)):
         if lines[i].startswith("## "):
             end = i
             break
 
-    new_lines: list[str] = list(lines[:start + 1])
+    new_lines: list[str] = list(lines[: start + 1])
     removed = False
-    for line in lines[start + 1:end]:
+    for line in lines[start + 1 : end]:
         m = _ENTRY_RE.match(line)
         if m and m.group("hash") == target_hash:
             removed = True

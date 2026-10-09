@@ -47,9 +47,7 @@ def get_journal_dates(limit: int = 60) -> JournalDatesResponse:
 @router.get("/journal/{date}", response_model=JournalDayResponse)
 def get_journal_day(date: str) -> JournalDayResponse:
     detail = db_reads.get_journal_day(date)
-    has_data = bool(
-        detail["daily_pnl"] or detail["insights"] or detail["runs"] or detail["trades"]
-    )
+    has_data = bool(detail["daily_pnl"] or detail["insights"] or detail["runs"] or detail["trades"])
     if not has_data:
         raise HTTPException(404, "no journal data for this date")
     return JournalDayResponse(
@@ -70,17 +68,25 @@ def search(q: str = "", limit: int = 50) -> SearchResponse:
         query=q,
         trades=[
             SearchTradeHit(
-                id=t["id"], symbol=t["symbol"], action=t["action"],
-                run_id=t.get("run_id"), decision_id=t.get("decision_id"),
-                timestamp=t.get("timestamp"), reasoning=t.get("reasoning"),
+                id=t["id"],
+                symbol=t["symbol"],
+                action=t["action"],
+                run_id=t.get("run_id"),
+                decision_id=t.get("decision_id"),
+                timestamp=t.get("timestamp"),
+                reasoning=t.get("reasoning"),
             )
             for t in result["trades"]
         ],
         agent_logs=[
             SearchAgentLogHit(
-                id=a["id"], agent_name=a["agent_name"], run_id=a.get("run_id"),
-                decision_id=a.get("decision_id"), timestamp=a.get("timestamp"),
-                model=a.get("model"), output_summary=a.get("output_summary"),
+                id=a["id"],
+                agent_name=a["agent_name"],
+                run_id=a.get("run_id"),
+                decision_id=a.get("decision_id"),
+                timestamp=a.get("timestamp"),
+                model=a.get("model"),
+                output_summary=a.get("output_summary"),
             )
             for a in result["agent_logs"]
         ],

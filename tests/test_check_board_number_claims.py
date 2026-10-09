@@ -1,6 +1,7 @@
 """The advisory half: does THIS open PR's new board item number collide with
 another currently open PR's? See `scripts/check_board_number_claims.py`'s
 module docstring for why this is advisory, never a required check."""
+
 from __future__ import annotations
 
 from scripts.check_board_number_claims import find_collisions

@@ -48,6 +48,7 @@ def _live_scoped_text() -> str:
     """
     return "".join(f'    "{p}",\n' for p in SCOPED_PATHS)
 
+
 def test_duplicated_pipeline_methods_match_the_fixed_list() -> None:
     """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
     whichever is first in the bases list. Absolute rule; existing pairs are in
@@ -111,13 +112,9 @@ def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
     helpers_path = REPO_ROOT / "src" / "stage_risk_helpers.py"
     helpers_baseline = module_inventory(helpers_path)
     first_module_function = helpers_baseline["module_functions"][0]
-    assert first_module_function in inventory_of(
-        helpers_path.read_text(encoding="utf-8")
-    )["module_functions"]
+    assert first_module_function in inventory_of(helpers_path.read_text(encoding="utf-8"))["module_functions"]
     dropped = inventory_of(helpers_path.read_text(encoding="utf-8"))
-    dropped["module_functions"] = [
-        n for n in dropped["module_functions"] if n != first_module_function
-    ]
+    dropped["module_functions"] = [n for n in dropped["module_functions"] if n != first_module_function]
     assert dropped != helpers_baseline, "removing a module function must be visible"
 
 
@@ -140,9 +137,23 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
-    assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 0 and \
-        len(ledger_ids_for_module("src.delever.forced", ledger)) == 1  # _force_delever moved to its part 2026-10-04
-    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.decisions", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.watchlist", ledger)) == 1 and len(ledger_ids_for_module("src.prompt_facts.pm_facts", ledger)) == 1 and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6 and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.review.grading", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.exits", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.review.calibration", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.blocked", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.replay", ledger)) == 0  # 14 review ids split by fact family 2026-10-04; moved 2026-10-02; the parent's 5 ids moved with their bodies to decisions/watchlist/pm_facts 2026-10-04
+    assert (
+        len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 0
+        and len(ledger_ids_for_module("src.delever.forced", ledger)) == 1
+    )  # _force_delever moved to its part 2026-10-04
+    assert (
+        len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 0
+        and len(ledger_ids_for_module("src.prompt_facts.decisions", ledger)) == 3
+        and len(ledger_ids_for_module("src.prompt_facts.watchlist", ledger)) == 1
+        and len(ledger_ids_for_module("src.prompt_facts.pm_facts", ledger)) == 1
+        and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6
+        and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 0
+        and len(ledger_ids_for_module("src.prompt_facts.review.grading", ledger)) == 3
+        and len(ledger_ids_for_module("src.prompt_facts.review.exits", ledger)) == 5
+        and len(ledger_ids_for_module("src.prompt_facts.review.calibration", ledger)) == 3
+        and len(ledger_ids_for_module("src.prompt_facts.review.blocked", ledger)) == 3
+        and len(ledger_ids_for_module("src.prompt_facts.review.replay", ledger)) == 0
+    )  # 14 review ids split by fact family 2026-10-04; moved 2026-10-02; the parent's 5 ids moved with their bodies to decisions/watchlist/pm_facts 2026-10-04
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
     # with the class into `src.stage_execution`; step 11 then moved 12 more into
     # `src.pipeline_sizing` and `src.pipeline_earnings_quality`; step 12 moved
@@ -150,8 +161,10 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     # with the rotation-execution block. Every half is asserted so the total
     # cannot quietly shrink.
     assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 4
-    assert len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 0 and \
-        len(ledger_ids_for_module("src.rotation_projection", ledger)) == 4  # moved verbatim to its part 2026-10-08
+    assert (
+        len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 0
+        and len(ledger_ids_for_module("src.rotation_projection", ledger)) == 4
+    )  # moved verbatim to its part 2026-10-08
     assert len(ledger_ids_for_module("src.pipeline_entry_orders", ledger)) == 0
     assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_sizing", ledger)) == 1
@@ -250,9 +263,7 @@ def test_verifier_catches_a_duplicated_id() -> None:
     plan = plan_move(spec, ledger, scoped)
     new_ledger, new_scoped = apply_move(plan, ledger, scoped)
     duped_id = sorted(plan.id_rewrites.values())[0]
-    duped = new_ledger.replace(
-        f"- id: {duped_id}\n", f"- id: {duped_id}\n  - id: {duped_id}\n", 1
-    )
+    duped = new_ledger.replace(f"- id: {duped_id}\n", f"- id: {duped_id}\n  - id: {duped_id}\n", 1)
     assert any("duplicate ledger id" in p for p in verify_move(plan, duped, new_scoped))
 
 

@@ -1,6 +1,7 @@
 """Default HTTP timeout for Alpaca SDK clients, lifted verbatim from
 src/execution/broker_parts/market_data.py (re-exported there and by
 src.execution.broker)."""
+
 from __future__ import annotations
 
 from src.infra_retry_policy import _BROKER_HTTP_TIMEOUT  # noqa: F401 (re-export)

@@ -20,16 +20,19 @@ import pytest
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    AnalystVerdict, NO_STATED_STRENGTH, StockNewsItem,
+    AnalystVerdict,
+    NO_STATED_STRENGTH,
+    StockNewsItem,
     news_verdict_for_symbol,
 )
 from src.quantities import collapse_stances
 
 
-def _item(sentiment: str, conviction: str, headline: str = "headline",
-          impact_summary: str = "impact") -> StockNewsItem:
+def _item(sentiment: str, conviction: str, headline: str = "headline", impact_summary: str = "impact") -> StockNewsItem:
     return StockNewsItem(
-        headline=headline, sentiment=sentiment, conviction=conviction,
+        headline=headline,
+        sentiment=sentiment,
+        conviction=conviction,
         impact_summary=impact_summary,
     )
 
@@ -37,6 +40,7 @@ def _item(sentiment: str, conviction: str, headline: str = "headline",
 # ==========================================================================
 # 1. All items agree.
 # ==========================================================================
+
 
 def test_all_agree_bullish_collapses_to_bullish():
     items = [
@@ -72,8 +76,8 @@ def test_a_low_conviction_directional_call_still_states_its_direction():
     assert v.direction == "bearish"
     assert v.conviction == "low"
     assert v.magnitude is NO_STATED_STRENGTH is None
-    assert v.invalidation           # still falsifiable
-    assert v.evidence               # still cited
+    assert v.invalidation  # still falsifiable
+    assert v.evidence  # still cited
 
 
 def test_news_magnitude_does_not_track_conviction():
@@ -93,6 +97,7 @@ def test_news_magnitude_does_not_track_conviction():
 # ==========================================================================
 # 2. Mixed items that still resolve to one side.
 # ==========================================================================
+
 
 def test_mixed_items_that_are_all_positive_polarity_collapse_to_bullish():
     """collapse_stances treats {"strong_buy"-style positive labels} as one
@@ -154,6 +159,7 @@ def test_conviction_selection_ignores_the_losing_sides_conviction():
 # 3. All neutral / empty.
 # ==========================================================================
 
+
 def test_all_neutral_items_produce_a_neutral_verdict():
     items = [_item("neutral", "medium"), _item("neutral", "low")]
     assert collapse_stances(i.sentiment for i in items) == "neutral"
@@ -176,6 +182,7 @@ def test_empty_items_fail_soft_to_neutral():
 # ==========================================================================
 # 4. Invalidation construction.
 # ==========================================================================
+
 
 def test_a_directional_call_never_has_a_disagreeing_item_to_quote():
     """Proves the claim in `news_verdict_for_symbol`'s invalidation
@@ -208,6 +215,7 @@ def test_invalidation_falls_back_to_a_generic_statement_when_all_items_agree():
 # 5. Evidence capping.
 # ==========================================================================
 
+
 def test_evidence_is_capped_and_headline_plus_summary_are_both_present():
     items = [_item("bullish", "high", f"headline {i}", f"impact {i}") for i in range(8)]
     v = news_verdict_for_symbol("MSFT", items)
@@ -220,6 +228,7 @@ def test_evidence_is_capped_and_headline_plus_summary_are_both_present():
 # ==========================================================================
 # 6. The shape itself.
 # ==========================================================================
+
 
 def test_result_is_a_real_analystverdict_and_validates():
     v = news_verdict_for_symbol("GOOG", [_item("bearish", "high")])
@@ -234,17 +243,21 @@ def test_result_is_a_real_analystverdict_and_validates():
 # 7. Cross-check: the shared collapse rule cannot silently drift.
 # ==========================================================================
 
-@pytest.mark.parametrize("sentiments", [
-    ["bullish"],
-    ["bearish"],
-    ["neutral"],
-    ["bullish", "bullish"],
-    ["bullish", "bearish"],
-    ["bullish", "neutral"],
-    ["neutral", "neutral"],
-    ["bullish", "bullish", "bearish"],
-    [],
-])
+
+@pytest.mark.parametrize(
+    "sentiments",
+    [
+        ["bullish"],
+        ["bearish"],
+        ["neutral"],
+        ["bullish", "bullish"],
+        ["bullish", "bearish"],
+        ["bullish", "neutral"],
+        ["neutral", "neutral"],
+        ["bullish", "bullish", "bearish"],
+        [],
+    ],
+)
 def test_collapse_stances_and_the_pm_wrapper_agree(sentiments):
     """`PortfolioManagerAgent._collapse_stances` is now a thin wrapper over
     `src.quantities.collapse_stances` — this pins that the two can never

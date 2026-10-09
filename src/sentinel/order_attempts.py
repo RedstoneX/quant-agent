@@ -11,6 +11,7 @@ entry and stop submissions (src/execution/order_idempotency.py), but the adapter
 does not surface it in the dict it returns, so the column is NULL on every row
 until it does: nothing is fabricated.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,17 +26,25 @@ class OrderAttemptLog:
     def __init__(self, *, conn: sqlite3.Connection):
         self.conn = conn
 
-    def record(self, *, symbol: str | None, side: str | None, qty: float | None,
-               outcome: str, client_order_id: str | None = None,
-               broker_order_id: str | None = None, run_id: str | None = None,
-               reason: str = "", limit_price: float | None = None) -> int:
+    def record(
+        self,
+        *,
+        symbol: str | None,
+        side: str | None,
+        qty: float | None,
+        outcome: str,
+        client_order_id: str | None = None,
+        broker_order_id: str | None = None,
+        run_id: str | None = None,
+        reason: str = "",
+        limit_price: float | None = None,
+    ) -> int:
         """Append one attempt row; returns its rowid."""
         cur = self.conn.execute(
             "INSERT INTO order_attempts (symbol, side, qty, outcome, client_order_id,"
             " broker_order_id, run_id, reason, limit_price)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (symbol, side, qty, outcome, client_order_id, broker_order_id,
-             run_id, reason, limit_price),
+            (symbol, side, qty, outcome, client_order_id, broker_order_id, run_id, reason, limit_price),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -45,7 +54,8 @@ class OrderAttemptLog:
         cur = self.conn.execute(
             "SELECT id, recorded_at, symbol, side, qty, outcome, client_order_id,"
             " broker_order_id, run_id, reason, limit_price FROM order_attempts"
-            " ORDER BY id DESC LIMIT ?", (int(limit),),
+            " ORDER BY id DESC LIMIT ?",
+            (int(limit),),
         )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -53,13 +63,15 @@ class OrderAttemptLog:
     def count_since(self, *, since_utc: str) -> int:
         """Attempts recorded at or after `since_utc` ('YYYY-MM-DD HH:MM:SS', UTC) -- the breaker's rate input."""
         cur = self.conn.execute(
-            "SELECT COUNT(*) FROM order_attempts WHERE recorded_at >= ?", (since_utc,),
+            "SELECT COUNT(*) FROM order_attempts WHERE recorded_at >= ?",
+            (since_utc,),
         )
         return int(cur.fetchone()[0])
 
 
-def record_order_attempt_from_event(*, db, symbol, outcome: str, reason: str,
-                                    run_id: str | None, details: dict) -> None:
+def record_order_attempt_from_event(
+    *, db, symbol, outcome: str, reason: str, run_id: str | None, details: dict
+) -> None:
     """Funnel hook: turn an `order` lifecycle event into one attempt row.
 
     `db` is whatever the pipeline holds; only a real sqlite connection on it
@@ -71,9 +83,13 @@ def record_order_attempt_from_event(*, db, symbol, outcome: str, reason: str,
         return
     qty = details.get("qty")
     OrderAttemptLog(conn=conn).record(
-        symbol=symbol, side=details.get("side"),
-        qty=float(qty) if qty is not None else None, outcome=outcome,
+        symbol=symbol,
+        side=details.get("side"),
+        qty=float(qty) if qty is not None else None,
+        outcome=outcome,
         client_order_id=details.get("client_order_id"),
-        broker_order_id=details.get("broker_order_id"), run_id=run_id,
-        reason=reason, limit_price=details.get("limit_price"),
+        broker_order_id=details.get("broker_order_id"),
+        run_id=run_id,
+        reason=reason,
+        limit_price=details.get("limit_price"),
     )

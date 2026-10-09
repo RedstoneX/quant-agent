@@ -51,6 +51,7 @@ RE-READING AN EVENING REPORT
     nothing is sent; a stored row that is missing pieces says which ones,
     in words, rather than rendering them as zero or as blank.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,15 +73,20 @@ def build_parser() -> argparse.ArgumentParser:
         description="Send (or print) the current desk status to Telegram.",
     )
     parser.add_argument(
-        "--config", default="config/settings.yaml",
+        "--config",
+        default="config/settings.yaml",
         help="Path to the config file (default: config/settings.yaml).",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print the message to stdout and send nothing.",
     )
     parser.add_argument(
-        "--evening", nargs="?", const="latest", metavar="DATE",
+        "--evening",
+        nargs="?",
+        const="latest",
+        metavar="DATE",
         help=(
             "Re-render a stored evening report instead of the live desk "
             "status. DATE is a trading day (YYYY-MM-DD); omit it for the "
@@ -90,7 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for mode in ("morning", "midday", "close"):
         parser.add_argument(
-            f"--{mode}", nargs="?", const="latest", metavar="DATE",
+            f"--{mode}",
+            nargs="?",
+            const="latest",
+            metavar="DATE",
             help=(
                 f"Re-render a stored {mode} report instead of the live desk "
                 "status. DATE is a trading day (YYYY-MM-DD); omit it for "
@@ -99,7 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
             ),
         )
     parser.add_argument(
-        "--intra", nargs="?", const="latest", metavar="RUN_ID_OR_DATE",
+        "--intra",
+        nargs="?",
+        const="latest",
+        metavar="RUN_ID_OR_DATE",
         help=(
             "Re-render one stored intra_check tick instead of the live "
             "desk status. Accepts a run id, a trading day (YYYY-MM-DD, "
@@ -180,13 +192,15 @@ def _deliver(message: str, config, *, dry_run: bool) -> int:
     # preserve_structural_markup=True: the shared trader-feed formatters
     # embed literal <b>/<blockquote expandable> tags on purpose.
     sent, _ = send_owner_alert_with_outcome(
-        message, notifier=notifier, kind="desk_status", pnl_header=False,
+        message,
+        notifier=notifier,
+        kind="desk_status",
+        pnl_header=False,
         preserve_structural_markup=True,
     )
     if not sent:
         print(
-            "ERROR: Telegram send failed or the notifier is not configured "
-            "(TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).",
+            "ERROR: Telegram send failed or the notifier is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).",
             file=sys.stderr,
         )
         return 4
@@ -300,8 +314,7 @@ def _send_stored_intra_check(args, config) -> int:
     if record is None:
         which = f"for {raw}" if raw else "at all"
         print(
-            f"ERROR: no readable intra_check tick stored {which} — nothing "
-            f"sent. There is no honest message to send.",
+            f"ERROR: no readable intra_check tick stored {which} — nothing sent. There is no honest message to send.",
             file=sys.stderr,
         )
         return 3

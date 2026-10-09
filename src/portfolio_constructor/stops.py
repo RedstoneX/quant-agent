@@ -44,7 +44,10 @@ from src.data.levels import (
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
-    Position, TargetPosition, TechAnalysisResult, TradeDecision,
+    Position,
+    TargetPosition,
+    TechAnalysisResult,
+    TradeDecision,
     stated_soft_exit,
 )
 from src.risk.constants import (
@@ -106,7 +109,9 @@ class StopRules:
         return self._entry_stop_resolver()._resolve_entry_and_stop(*args, **kwargs)
 
     def _stop_atr_multiple(
-        self, analysis: TechAnalysisResult | None, regime: str | None,
+        self,
+        analysis: TechAnalysisResult | None,
+        regime: str | None,
     ) -> float:
         """How many ATRs of room THIS trade deserves, not a global constant.
 
@@ -270,16 +275,13 @@ class StopRules:
         def _beyond(level_price: float) -> float:
             # Just past the level on the losing side: below it for a long,
             # above it for a short.
-            return (
-                level_price * (1.0 + buffer_pct) if is_short
-                else level_price * (1.0 - buffer_pct)
-            )
+            return level_price * (1.0 + buffer_pct) if is_short else level_price * (1.0 - buffer_pct)
 
         def _usable(stop_price: float) -> bool:
             return (
-                math.isfinite(stop_price) and stop_price > 0
-                and (stop_price > entry_price if is_short
-                     else stop_price < entry_price)
+                math.isfinite(stop_price)
+                and stop_price > 0
+                and (stop_price > entry_price if is_short else stop_price < entry_price)
             )
 
         # ---- Tier 1: nearest verified computed structural level ----------
@@ -290,7 +292,11 @@ class StopRules:
         best_gap = float("inf")
         candidates = 0
         row = no_atr_rows.recorder(
-            analysis, is_short, entry_price, buffer_pct, min_touches,
+            analysis,
+            is_short,
+            entry_price,
+            buffer_pct,
+            min_touches,
         )
         for raw in raw_levels:
             try:
@@ -322,26 +328,33 @@ class StopRules:
                 return row(
                     no_atr_rows.OUTCOME_LEVEL,
                     (best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR),
-                    touches_by_price.get(best_level), candidates,
+                    touches_by_price.get(best_level),
+                    candidates,
                 )
 
         # ---- Tier 2: the signal (prior) bar's far edge -------------------
         bar_edge = getattr(
-            analysis, "signal_bar_high" if is_short else "signal_bar_low", None,
+            analysis,
+            "signal_bar_high" if is_short else "signal_bar_low",
+            None,
         )
         try:
             bar_edge = float(bar_edge) if bar_edge is not None else None
         except (TypeError, ValueError):
             bar_edge = None
-        if bar_edge is not None and math.isfinite(bar_edge) and bar_edge > 0 and (
-            bar_edge > entry_price if is_short else bar_edge < entry_price
+        if (
+            bar_edge is not None
+            and math.isfinite(bar_edge)
+            and bar_edge > 0
+            and (bar_edge > entry_price if is_short else bar_edge < entry_price)
         ):
             stop = _beyond(bar_edge)
             if _usable(stop):
                 return row(
                     no_atr_rows.OUTCOME_PRIOR_BAR,
                     (bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR),
-                    None, candidates,
+                    None,
+                    candidates,
                 )
 
         # Ran and found nothing. The row keeps that distinguishable from
@@ -395,13 +408,13 @@ class StopRules:
             return None
         if atr is None or not math.isfinite(atr) or atr <= 0:
             return None
-        if (
-            not math.isfinite(entry_price) or entry_price <= 0
-            or not math.isfinite(stop_loss) or stop_loss <= 0
-        ):
+        if not math.isfinite(entry_price) or entry_price <= 0 or not math.isfinite(stop_loss) or stop_loss <= 0:
             return None
         level = self._level_backing_stop(
-            analysis, entry_price, stop_loss, direction == "short",
+            analysis,
+            entry_price,
+            stop_loss,
+            direction == "short",
         )
         return STOP_RULE_LEVEL_HONOURED if level is not None else None
 
@@ -444,10 +457,7 @@ class StopRules:
             stop_f = float(stop_loss)
         except (TypeError, ValueError):
             return None
-        if (
-            not math.isfinite(entry_f) or entry_f <= 0
-            or not math.isfinite(stop_f) or stop_f <= 0
-        ):
+        if not math.isfinite(entry_f) or entry_f <= 0 or not math.isfinite(stop_f) or stop_f <= 0:
             return None
         is_short = direction == "short"
         level = self._level_backing_stop(analysis, entry_f, stop_f, is_short)
@@ -464,7 +474,10 @@ class StopRules:
         # allowed to suppress the record: without it a later reader cannot
         # tell "no level" from "level, but no ATR to be exempt from".
         record["shipped_stop_rule"] = self.shipped_stop_rule(
-            analysis, entry_f, stop_f, direction,
+            analysis,
+            entry_f,
+            stop_f,
+            direction,
         )
         record["levels_coverage"] = getattr(analysis, "levels_coverage", None)
         try:

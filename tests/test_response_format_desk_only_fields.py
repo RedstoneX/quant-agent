@@ -103,9 +103,7 @@ def test_desk_only_fields_still_exist_on_the_storage_model(model_cls, desk_field
     if model_cls is SmartMoneySynthesis:
         model_cls = SmartMoneyFinding
     for field in desk_fields:
-        assert field in model_cls.model_fields, (
-            f"{model_cls.__name__}.{field} was removed, not hidden"
-        )
+        assert field in model_cls.model_fields, f"{model_cls.__name__}.{field} was removed, not hidden"
 
 
 def test_smart_money_observation_rows_are_no_longer_demanded_of_the_seat():
@@ -127,7 +125,11 @@ def test_smart_money_schema_now_matches_the_contract_its_prompt_states():
     schema = _response_format_for(SmartMoneySynthesis)["json_schema"]["schema"]
     finding = schema["$defs"]["SmartMoneyFinding"]
     assert list(finding["properties"]) == [
-        "symbol", "stance", "economic_role", "summary", "why_now",
+        "symbol",
+        "stance",
+        "economic_role",
+        "summary",
+        "why_now",
         "thesis_invalid_if",
     ]
     assert sorted(finding["required"]) == sorted(finding["properties"])
@@ -136,9 +138,13 @@ def test_smart_money_schema_now_matches_the_contract_its_prompt_states():
 def test_portfolio_decision_still_round_trips_pipeline_written_fields():
     decision = PortfolioDecision(
         reasoning_chain={
-            "macro_filter": "x", "news_check": "x", "earnings_check": "x",
-            "signal_conflicts": "x", "sizing_logic": "x",
-            "portfolio_balance": "x", "cash_target": "x",
+            "macro_filter": "x",
+            "news_check": "x",
+            "earnings_check": "x",
+            "signal_conflicts": "x",
+            "sizing_logic": "x",
+            "portfolio_balance": "x",
+            "cash_target": "x",
         },
         portfolio_view="x",
     )
@@ -152,8 +158,10 @@ def test_portfolio_decision_still_round_trips_pipeline_written_fields():
 def test_news_report_still_stores_dropped_symbols_set_after_parse():
     report = NewsIntelligenceReport(
         macro_narrative={
-            "last_updated": "2026-09-23", "era_themes": ["AI capex"],
-            "current_regime": "risk-on", "key_state_tracker": {},
+            "last_updated": "2026-09-23",
+            "era_themes": ["AI capex"],
+            "current_regime": "risk-on",
+            "key_state_tracker": {},
         },
         pm_briefing="No material overnight change.",
         market_sentiment="neutral",

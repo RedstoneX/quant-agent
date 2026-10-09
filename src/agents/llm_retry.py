@@ -2,6 +2,7 @@
 
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
+
 import os
 import random
 import re
@@ -60,7 +61,7 @@ def _retry_backoff_seconds(attempt: int) -> float:
     Sequence of upper bounds for attempt 0..5: 1, 2, 4, 8, 16, 32 (then
     capped at 60). Each returned value is uniform in [0, bound).
     """
-    return random.uniform(0.0, min(_BACKOFF_CAP_S, float(2 ** attempt)))
+    return random.uniform(0.0, min(_BACKOFF_CAP_S, float(2**attempt)))
 
 
 # Google's own documented "wait a short time before the first retry (for
@@ -286,24 +287,35 @@ def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
         return max(_MIN_CAPACITY_BACKOFF_S, wait)
     return wait
 
+
 # Exception class names that are always transient regardless of any status
 # code (connection resets, DNS blackouts, read timeouts, provider 5xx /
 # rate-limit). Matched by name so we don't have to import both SDKs.
-_RETRYABLE_EXC_NAMES = frozenset({
-    "APIConnectionError", "APITimeoutError", "APIConnectionTimeoutError",
-    "InternalServerError", "RateLimitError", "APIError",
-    "Timeout", "ConnectionError", "ConnectTimeout", "ReadTimeout",
-    # Our own degenerate-response classes (see definitions above): explicit
-    # here so they stay retryable even if the unknown-exception fallback in
-    # _is_retryable is ever tightened.
-    "LLMEmptyResponseError", "LLMStreamInterruptedError",
-    # LLMStreamErrorChunk is DELIBERATELY absent. This set is checked BEFORE
-    # status_code below, so listing it would make a mid-stream 400/401 retry
-    # for the full backoff budget. It carries the provider's own status, so
-    # the status_code branch classifies it correctly: 429 and 5xx retry, other
-    # 4xx fast-fail to the failover — which is the whole point of surfacing
-    # that code instead of discarding it.
-})
+_RETRYABLE_EXC_NAMES = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "APIConnectionTimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+        "APIError",
+        "Timeout",
+        "ConnectionError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        # Our own degenerate-response classes (see definitions above): explicit
+        # here so they stay retryable even if the unknown-exception fallback in
+        # _is_retryable is ever tightened.
+        "LLMEmptyResponseError",
+        "LLMStreamInterruptedError",
+        # LLMStreamErrorChunk is DELIBERATELY absent. This set is checked BEFORE
+        # status_code below, so listing it would make a mid-stream 400/401 retry
+        # for the full backoff budget. It carries the provider's own status, so
+        # the status_code branch classifies it correctly: 429 and 5xx retry, other
+        # 4xx fast-fail to the failover — which is the whole point of surfacing
+        # that code instead of discarding it.
+    }
+)
 
 
 # --- 402 "fewer max_tokens" shrink-retry -------------------------------------
@@ -335,7 +347,8 @@ _RETRYABLE_EXC_NAMES = frozenset({
 _INSUFFICIENT_CREDIT_STATUS = 402
 
 _AFFORDABLE_MAX_TOKENS_RE = re.compile(
-    r"can only afford\s+(\d+)", re.IGNORECASE,
+    r"can only afford\s+(\d+)",
+    re.IGNORECASE,
 )
 
 

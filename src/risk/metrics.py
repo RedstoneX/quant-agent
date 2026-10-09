@@ -244,13 +244,17 @@ def position_risk(
         # scored every short as riskless.
         notional = max(0.0, shares * cur_f)
         return PositionRisk(
-            symbol=symbol, qty=qty_f, entry=entry_f, current_price=cur_f,
-            stop=None, initial_stop=init_f,
-            budget_risk_dollars=notional, open_risk_dollars=notional,
-            risk_released=False, protected=False,
-            r_multiple=(
-                r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None
-            ),
+            symbol=symbol,
+            qty=qty_f,
+            entry=entry_f,
+            current_price=cur_f,
+            stop=None,
+            initial_stop=init_f,
+            budget_risk_dollars=notional,
+            open_risk_dollars=notional,
+            risk_released=False,
+            protected=False,
+            r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None),
         )
 
     assert stop_f is not None  # narrowed by `protected`
@@ -260,14 +264,17 @@ def position_risk(
     budget = 0.0 if released else max(0.0, shares * side * (entry_f - stop_f))
     open_r = max(0.0, shares * side * (cur_f - stop_f))
     return PositionRisk(
-        symbol=symbol, qty=qty_f, entry=entry_f, current_price=cur_f,
-        stop=stop_f, initial_stop=init_f,
+        symbol=symbol,
+        qty=qty_f,
+        entry=entry_f,
+        current_price=cur_f,
+        stop=stop_f,
+        initial_stop=init_f,
         budget_risk_dollars=round(budget, 2),
         open_risk_dollars=round(open_r, 2),
-        risk_released=released, protected=True,
-        r_multiple=(
-            r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None
-        ),
+        risk_released=released,
+        protected=True,
+        r_multiple=(r_multiple(cur_f, entry_f, init_f, qty_f) if init_f else None),
     )
 
 
@@ -339,14 +346,16 @@ def portfolio_heat(
         # Skipping qty <= 0 exempted every short from the at-risk ceiling.
         if qty == 0:
             continue
-        rows.append(position_risk(
-            symbol=symbol,
-            qty=qty,
-            entry=getattr(p, "avg_entry", 0.0),
-            current_price=getattr(p, "current_price", 0.0),
-            stop=stops.get(symbol),
-            initial_stop=initial_stops.get(symbol),
-        ))
+        rows.append(
+            position_risk(
+                symbol=symbol,
+                qty=qty,
+                entry=getattr(p, "avg_entry", 0.0),
+                current_price=getattr(p, "current_price", 0.0),
+                stop=stops.get(symbol),
+                initial_stop=initial_stops.get(symbol),
+            )
+        )
     return PortfolioHeat(equity=max(0.0, equity_f), per_position=rows)
 
 
@@ -358,11 +367,7 @@ def format_heat_block(
 ) -> str:
     """Render heat for an agent prompt. Facts only — no instruction text."""
     if not heat.per_position:
-        return (
-            f"## {title}\n"
-            f"- No risk-bearing positions. Full {ceiling_pct:.0f}% risk budget "
-            f"is available.\n"
-        )
+        return f"## {title}\n- No risk-bearing positions. Full {ceiling_pct:.0f}% risk budget is available.\n"
     lines = [
         f"## {title}",
         f"- At-risk (vs entry, consumes the budget): "
@@ -374,14 +379,10 @@ def format_heat_block(
     ]
     if heat.released:
         lines.append(
-            f"- Risk RELEASED (stop can no longer lose vs entry, consumes no budget): "
-            f"{', '.join(heat.released)}"
+            f"- Risk RELEASED (stop can no longer lose vs entry, consumes no budget): {', '.join(heat.released)}"
         )
     if heat.unprotected:
-        lines.append(
-            f"- ⚠️ UNPROTECTED (no stop found — charged at full notional): "
-            f"{', '.join(heat.unprotected)}"
-        )
+        lines.append(f"- ⚠️ UNPROTECTED (no stop found — charged at full notional): {', '.join(heat.unprotected)}")
     if getattr(heat, "unreadable", None):
         lines.append(heat.unreadable_note())
     lines.append("- Per position: symbol | at-risk $ | % equity | R-multiple")
@@ -393,8 +394,5 @@ def format_heat_block(
             flag = " (released)"
         elif not p.protected:
             flag = " (UNPROTECTED)"
-        lines.append(
-            f"  - {p.symbol}: ${p.budget_risk_dollars:,.0f} | {pct:.2f}% | "
-            f"{r_str}{flag}"
-        )
+        lines.append(f"  - {p.symbol}: ${p.budget_risk_dollars:,.0f} | {pct:.2f}% | {r_str}{flag}")
     return "\n".join(lines) + "\n"

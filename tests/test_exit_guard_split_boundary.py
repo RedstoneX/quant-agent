@@ -1,5 +1,6 @@
 """Boundary witness for the exit_guard lifts: each new module is imported and
 exercised directly, never through src.risk.exit_guard."""
+
 import sys
 from pathlib import Path
 

@@ -44,8 +44,12 @@ from src.data.levels import (
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
-    Position, TargetPosition, TechAnalysisResult, TradeDecision,
-    reward_to_risk, stated_soft_exit,
+    Position,
+    TargetPosition,
+    TechAnalysisResult,
+    TradeDecision,
+    reward_to_risk,
+    stated_soft_exit,
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
@@ -54,7 +58,9 @@ from src.risk.constants import (
     reward_risk_parity_refuses,
 )
 
-logger = logging.getLogger(__name__.rpartition(".")[0])  # "src.portfolio_constructor": the same logger as before the split
+logger = logging.getLogger(
+    __name__.rpartition(".")[0]
+)  # "src.portfolio_constructor": the same logger as before the split
 
 #: BOARD ITEM 222 — the one sentence that answers "how much of one stock may
 #: this desk hold?". Three limits used to claim to answer it; only TWO are
@@ -95,8 +101,7 @@ SINGLE_NAME_BINDING_SENTENCE = (
 )
 
 
-def single_name_crossover_stop_pct(risk_budget_pct: float,
-                                   max_position_pct: float) -> float:
+def single_name_crossover_stop_pct(risk_budget_pct: float, max_position_pct: float) -> float:
     """Stop distance, in percent of entry price, where the two bounds cross.
 
     Below it the notional ceiling binds; above it the risk envelope binds.
@@ -106,6 +111,7 @@ def single_name_crossover_stop_pct(risk_budget_pct: float,
     if max_position_pct <= 0:
         raise ValueError("max_position_pct must be positive")
     return risk_budget_pct / max_position_pct * 100.0
+
 
 # Python-stamped named trigger for a funding-trim / size-down. Checkable
 # from the same live-book weight (and risk, when passed) the constructor
@@ -124,10 +130,7 @@ def format_mechanical_size_down_reason(
     target_risk_pct: float | None = None,
 ) -> str:
     """Named trigger stamped from live-book numbers, never from PM prose."""
-    parts = [
-        f"{MECHANICAL_SIZE_DOWN_TRIGGER}: "
-        f"weight {current_weight_pct:.2f}% → {target_weight_pct:.2f}%"
-    ]
+    parts = [f"{MECHANICAL_SIZE_DOWN_TRIGGER}: weight {current_weight_pct:.2f}% → {target_weight_pct:.2f}%"]
     if (
         current_risk_pct is not None
         and target_risk_pct is not None
@@ -139,7 +142,10 @@ def format_mechanical_size_down_reason(
 
 
 def _size_down_checkable(
-    current_pct: float, target_pct: float, *, long_side: bool,
+    current_pct: float,
+    target_pct: float,
+    *,
+    long_side: bool,
 ) -> bool:
     if not math.isfinite(current_pct) or not math.isfinite(target_pct):
         return False
@@ -149,7 +155,8 @@ def _size_down_checkable(
 
 
 def _lookup_existing_risk(
-    existing_risk_pct: dict[str, float] | None, symbol: str,
+    existing_risk_pct: dict[str, float] | None,
+    symbol: str,
 ) -> float | None:
     if not existing_risk_pct:
         return None
@@ -194,8 +201,10 @@ def _named_reduction_trigger(
             "Constructor: %s %s skipped — blank thesis_invalid_if and "
             "size-down vs live book is not checkable (current_pct=%s "
             "target_pct=%s); PM thesis cannot create the sell",
-            "SELL" if long_side else "COVER", target.symbol,
-            current_pct, target_pct,
+            "SELL" if long_side else "COVER",
+            target.symbol,
+            current_pct,
+            target_pct,
         )
         return None
     trigger = format_mechanical_size_down_reason(
@@ -517,9 +526,7 @@ STOP_REFUSAL_NO_STOP_NO_VOLATILITY = "no_stop_and_no_volatility_reading"
 #: judges stop width at all and sizing is the only answer. The name is kept because tests
 #: reference it, exactly as STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER was kept
 #: after board item 183.
-STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY = (
-    "no_structural_stop_and_no_volatility_reading"
-)
+STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY = "no_structural_stop_and_no_volatility_reading"
 STOP_REFUSAL_STRUCTURAL_STOP_TOO_FAR = "structural_stop_past_sanity_bound"
 #: `_resolve_entry_and_stop`'s terminal side check: whatever the stop rules
 #: above produced is absent, non-positive, or on the wrong side of entry.
@@ -615,9 +622,12 @@ _GEOMETRY_REFUSAL_BY_RULE = {
 #: Stop rules whose stop sits on a level `find_structural_levels` COMPUTED.
 #: `src/pipeline_stages.py` reads this off `TradeDecision.stop_rule` to know
 #: it must not re-apply its own execution-time ATR floor to that stop.
-LEVEL_BACKED_STOP_RULES = frozenset({
-    STOP_RULE_LEVEL_HONOURED, STOP_RULE_ABSOLUTE_FLOOR,
-})
+LEVEL_BACKED_STOP_RULES = frozenset(
+    {
+        STOP_RULE_LEVEL_HONOURED,
+        STOP_RULE_ABSOLUTE_FLOOR,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -646,6 +656,7 @@ class RiskPlan:
 @dataclass
 class ConstructorConfig:
     """Tunables for how the constructor sizes and prices orders."""
+
     # Ceiling on any SINGLE position's risk, and the fallback sizing basis for
     # a legacy notional target. Owner-ratified at 5% (2026-08-27); the prior
     # 0.5% was a constructor default nobody chose. Under risk-based sizing
@@ -867,6 +878,7 @@ class ConstructorConfig:
         widest_setup = max([1.0, *(s for _, s in cls.stop_atr_setup_scale)])
         widest_regime = max([1.0, *(s for _, s in cls.stop_atr_regime_scale)])
         return float(base) * widest_setup * widest_regime
+
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
     # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
     # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
@@ -1027,5 +1039,3 @@ def widest_reachable_stop_atr_multiple(
     widest_setup = max([1.0] + [float(s) for _, s in setup_scales])
     widest_regime = max([1.0] + [float(s) for _, s in regime_scales])
     return float(base_multiple) * widest_setup * widest_regime
-
-

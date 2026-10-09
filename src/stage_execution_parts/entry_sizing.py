@@ -31,7 +31,9 @@ def entry_qty(run, decision, is_short, sizing_price, risk_sizing_price, stop_pri
     # is how a stop ends up covering a different number of shares
     # than the entry bought.
     fractional = _fractional_sizing_allowed(
-        pipeline, decision.symbol, is_short=is_short,
+        pipeline,
+        decision.symbol,
+        is_short=is_short,
     )
     qty_by_alloc = _size_shares(
         pipeline,
@@ -42,19 +44,24 @@ def entry_qty(run, decision, is_short, sizing_price, risk_sizing_price, stop_pri
     # one definition, so the dollars released can never drift
     # from the dollars spent.
     qty_by_risk = _qty_by_risk_budget(
-        pipeline, total_value=total_value,
-        sizing_price=risk_sizing_price, stop_price=stop_price,
-        is_short=is_short, fractional=fractional,
+        pipeline,
+        total_value=total_value,
+        sizing_price=risk_sizing_price,
+        stop_price=stop_price,
+        is_short=is_short,
+        fractional=fractional,
     )
     if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
         _risk_pct = _risk_budget_pct(pipeline)
         logger.info(
             "Vol-adjusted sizing for %s: qty_by_alloc=%s → qty_by_risk=%s "
             "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
-            decision.symbol, _fmt_shares(qty_by_alloc),
+            decision.symbol,
+            _fmt_shares(qty_by_alloc),
             _fmt_shares(qty_by_risk),
             abs(risk_sizing_price - stop_price),
-            total_value * _risk_pct / 100, _risk_pct,
+            total_value * _risk_pct / 100,
+            _risk_pct,
         )
         qty = qty_by_risk
     else:
@@ -62,9 +69,11 @@ def entry_qty(run, decision, is_short, sizing_price, risk_sizing_price, stop_pri
     if qty <= 0:
         logger.warning("Calculated qty=0 for %s, skipping", decision.symbol)
         _record_execution_skip(
-            pipeline, ctx, decision.symbol, "qty_zero",
-            f"allocation {decision.allocation_pct:.2f}% at "
-            f"${sizing_price:.2f} rounds to zero shares",
+            pipeline,
+            ctx,
+            decision.symbol,
+            "qty_zero",
+            f"allocation {decision.allocation_pct:.2f}% at ${sizing_price:.2f} rounds to zero shares",
         )
         return SKIP
     return qty, fractional, qty_by_alloc, qty_by_risk

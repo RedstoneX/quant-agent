@@ -29,7 +29,8 @@ def test_insert_and_query_trade(db):
         qty=10.0,
         price=500.0,
         reasoning="Test trade",
-        run_id="run-001", stop_loss=90.0,
+        run_id="run-001",
+        stop_loss=90.0,
     )
     trades = db.get_trades(symbol="SPY")
     assert len(trades) == 1
@@ -48,13 +49,23 @@ def test_structural_ceiling_is_additive_nullable_and_round_trips(db):
     assert db.get_symbol_last_buy("LEG")["structural_ceiling"] is None
 
     # Measured breakout (no overhead level) → stored 0, read back 0.
-    db.insert_trade("BRK", "BUY", 1.0, 100.0, "measured breakout", "r-brk",
-                    setup_type="range", structural_ceiling=False, stop_loss=90.0)
+    db.insert_trade(
+        "BRK",
+        "BUY",
+        1.0,
+        100.0,
+        "measured breakout",
+        "r-brk",
+        setup_type="range",
+        structural_ceiling=False,
+        stop_loss=90.0,
+    )
     assert db.get_symbol_last_buy("BRK")["structural_ceiling"] == 0
 
     # Measured ceiling present → stored 1, read back 1.
-    db.insert_trade("RNG", "BUY", 1.0, 100.0, "measured range", "r-rng",
-                    setup_type="range", structural_ceiling=True, stop_loss=90.0)
+    db.insert_trade(
+        "RNG", "BUY", 1.0, 100.0, "measured range", "r-rng", setup_type="range", structural_ceiling=True, stop_loss=90.0
+    )
     assert db.get_symbol_last_buy("RNG")["structural_ceiling"] == 1
 
 
@@ -89,8 +100,7 @@ def test_get_trades_today_only_uses_et_trading_day(db, monkeypatch):
     assert [t["symbol"] for t in trades] == ["LATE", "EARLY"]
 
 
-def _seed_position(db, symbol, qty, avg_entry, current_price, market_value,
-                    unrealized_pnl, sector):
+def _seed_position(db, symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector):
     """Write one `positions` row directly via SQL.
 
     Production never reads this table back (holdings come from the broker
@@ -137,18 +147,29 @@ def test_insert_and_query_specialist_evidence(db):
     Round-trips a run-scoped and a symbol-scoped row, including decision_id
     correlation for the symbol-scoped one."""
     run_row_id = db.insert_specialist_evidence(
-        run_id="run-001", agent_name="macro_analyst", kind="analysis",
-        scope="run", evidence_json='{"regime": "risk-on"}',
+        run_id="run-001",
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json='{"regime": "risk-on"}',
     )
     assert run_row_id
 
     db.insert_specialist_evidence(
-        run_id="run-001", agent_name="tech_analyst", kind="analysis",
-        scope="symbol", symbol="SPY", evidence_json='{"rating": "buy"}',
+        run_id="run-001",
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
+        symbol="SPY",
+        evidence_json='{"rating": "buy"}',
     )
     db.insert_specialist_evidence(
-        run_id="run-001", agent_name="portfolio_manager", kind="target",
-        scope="symbol", symbol="SPY", decision_id="run-001-dec-abc123",
+        run_id="run-001",
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="SPY",
+        decision_id="run-001-dec-abc123",
         evidence_json='{"target_weight_pct": 10.0}',
     )
 
@@ -225,10 +246,17 @@ def test_sync_positions_removes_closed_symbols(db):
     assert len(_read_positions(db)) == 2
 
     # Broker now reports only SPY — QQQ should be purged.
-    snapshot = [SimpleNamespace(
-        symbol="SPY", qty=12.0, avg_entry=502.0, current_price=515.0,
-        market_value=6180.0, unrealized_pnl=156.0, sector="ETF",
-    )]
+    snapshot = [
+        SimpleNamespace(
+            symbol="SPY",
+            qty=12.0,
+            avg_entry=502.0,
+            current_price=515.0,
+            market_value=6180.0,
+            unrealized_pnl=156.0,
+            sector="ETF",
+        )
+    ]
     db.sync_positions(snapshot)
 
     remaining = _read_positions(db)
@@ -253,8 +281,13 @@ def test_sync_positions_replaces_stale_subset_with_full_broker_book(db):
     _seed_position(db, "ORCL", 10.0, 140.0, 145.0, 1450.0, 50.0, "Tech")
     snapshot = [
         SimpleNamespace(
-            symbol=sym, qty=1.0, avg_entry=10.0, current_price=11.0,
-            market_value=11.0, unrealized_pnl=1.0, sector="Tech",
+            symbol=sym,
+            qty=1.0,
+            avg_entry=10.0,
+            current_price=11.0,
+            market_value=11.0,
+            unrealized_pnl=1.0,
+            sector="Tech",
         )
         for sym in ("ORCL", "MSFT", "NVDA", "AAPL", "AMZN", "GOOGL")
     ]
@@ -266,9 +299,7 @@ def test_sync_positions_replaces_stale_subset_with_full_broker_book(db):
 def test_prune_trades_respects_ttl(db):
     """Trades older than keep_days are dropped; recent ones are retained."""
     db.insert_trade("OLD", "BUY", 1.0, 100.0, "ancient", "r-old", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-2000 days') WHERE symbol='OLD'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-2000 days') WHERE symbol='OLD'")
     db.conn.commit()
     db.insert_trade("RECENT", "BUY", 2.0, 200.0, "fresh", "r-new", stop_loss=90.0)
 
@@ -290,9 +321,14 @@ def test_has_pending_action_for_symbol_matches_pending_row(db):
     tape went through without filling, the row sits as 'submitted'. Next
     intra tick must see this and skip — no duplicate emergency sell."""
     db.insert_trade(
-        symbol="AMZN", action="EMERGENCY_SELL", qty=51.0, price=230.0,
-        reasoning="intra-session daily-loss breach", run_id="run-1",
-        broker_order_id="alpaca-uuid-1", fill_status="submitted",
+        symbol="AMZN",
+        action="EMERGENCY_SELL",
+        qty=51.0,
+        price=230.0,
+        reasoning="intra-session daily-loss breach",
+        run_id="run-1",
+        broker_order_id="alpaca-uuid-1",
+        fill_status="submitted",
     )
     assert db.has_pending_action_for_symbol("AMZN", "EMERGENCY_SELL") is True
 
@@ -302,9 +338,14 @@ def test_has_pending_action_for_symbol_ignores_filled_row(db):
     is appropriate (residual position somehow grew, or we're on a
     different symbol). Don't block on completed history."""
     db.insert_trade(
-        symbol="AMZN", action="EMERGENCY_SELL", qty=51.0, price=230.0,
-        reasoning="prior fill", run_id="run-1",
-        broker_order_id="alpaca-uuid-1", fill_status="filled",
+        symbol="AMZN",
+        action="EMERGENCY_SELL",
+        qty=51.0,
+        price=230.0,
+        reasoning="prior fill",
+        run_id="run-1",
+        broker_order_id="alpaca-uuid-1",
+        fill_status="filled",
     )
     assert db.has_pending_action_for_symbol("AMZN", "EMERGENCY_SELL") is False
 
@@ -314,9 +355,14 @@ def test_has_pending_action_for_symbol_ignores_row_without_broker_id(db):
     in-flight order to dedupe against. (Edge case: filter exists to
     keep the predicate symmetric with get_unreconciled_orders.)"""
     db.insert_trade(
-        symbol="AMZN", action="EMERGENCY_SELL", qty=51.0, price=230.0,
-        reasoning="never submitted", run_id="run-1",
-        broker_order_id=None, fill_status="submitted",
+        symbol="AMZN",
+        action="EMERGENCY_SELL",
+        qty=51.0,
+        price=230.0,
+        reasoning="never submitted",
+        run_id="run-1",
+        broker_order_id=None,
+        fill_status="submitted",
     )
     assert db.has_pending_action_for_symbol("AMZN", "EMERGENCY_SELL") is False
 
@@ -325,14 +371,24 @@ def test_has_pending_action_for_symbol_scopes_by_symbol_and_action(db):
     """Another symbol's pending sell, or this symbol's pending REDUCE,
     must NOT block this symbol's EMERGENCY_SELL."""
     db.insert_trade(
-        symbol="JPM", action="EMERGENCY_SELL", qty=10.0, price=300.0,
-        reasoning="other symbol pending", run_id="run-1",
-        broker_order_id="alpaca-jpm", fill_status="submitted",
+        symbol="JPM",
+        action="EMERGENCY_SELL",
+        qty=10.0,
+        price=300.0,
+        reasoning="other symbol pending",
+        run_id="run-1",
+        broker_order_id="alpaca-jpm",
+        fill_status="submitted",
     )
     db.insert_trade(
-        symbol="AMZN", action="REDUCE", qty=10.0, price=230.0,
-        reasoning="different action pending", run_id="run-1",
-        broker_order_id="alpaca-amzn-reduce", fill_status="submitted",
+        symbol="AMZN",
+        action="REDUCE",
+        qty=10.0,
+        price=230.0,
+        reasoning="different action pending",
+        run_id="run-1",
+        broker_order_id="alpaca-amzn-reduce",
+        fill_status="submitted",
     )
     assert db.has_pending_action_for_symbol("AMZN", "EMERGENCY_SELL") is False
 
@@ -348,7 +404,9 @@ def test_has_pending_action_for_symbol_today_only_drops_yesterday(db, monkeypatc
 
     yesterday_ts = (
         datetime.combine(yesterday, time(14, 0), tzinfo=ET)
-        .astimezone(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+        .strftime("%Y-%m-%d %H:%M:%S")
     )
     db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
@@ -363,7 +421,9 @@ def test_has_pending_action_for_symbol_today_only_drops_yesterday(db, monkeypatc
     # Sanity: with today_only=False we DO see the stale row.
     assert (
         db.has_pending_action_for_symbol(
-            "AMZN", "EMERGENCY_SELL", today_only=False,
+            "AMZN",
+            "EMERGENCY_SELL",
+            today_only=False,
         )
         is True
     )
@@ -372,18 +432,26 @@ def test_has_pending_action_for_symbol_today_only_drops_yesterday(db, monkeypatc
 def test_prune_agent_logs(db):
     """Old rows dropped; recent rows retained."""
     db.insert_agent_log(
-        agent_name="old_agent", run_id="run-old", input_summary="old",
-        output_summary="", full_response="", model="m", tokens_used=1,
+        agent_name="old_agent",
+        run_id="run-old",
+        input_summary="old",
+        output_summary="",
+        full_response="",
+        model="m",
+        tokens_used=1,
     )
     # Force timestamp backdate on the just-inserted row.
-    db.conn.execute(
-        "UPDATE agent_logs SET timestamp = datetime('now', '-45 days') WHERE agent_name = 'old_agent'"
-    )
+    db.conn.execute("UPDATE agent_logs SET timestamp = datetime('now', '-45 days') WHERE agent_name = 'old_agent'")
     db.conn.commit()
 
     db.insert_agent_log(
-        agent_name="recent_agent", run_id="run-new", input_summary="new",
-        output_summary="", full_response="", model="m", tokens_used=1,
+        agent_name="recent_agent",
+        run_id="run-new",
+        input_summary="new",
+        output_summary="",
+        full_response="",
+        model="m",
+        tokens_used=1,
     )
 
     deleted = db.prune_agent_logs(keep_days=30)
@@ -398,18 +466,22 @@ def test_prune_specialist_evidence(db):
     """Stage 4 table needs the same retention discipline as agent_logs —
     old rows dropped, recent rows retained."""
     db.insert_specialist_evidence(
-        run_id="run-old", agent_name="macro_analyst", kind="analysis",
-        scope="run", evidence_json='{"regime": "risk-on"}',
+        run_id="run-old",
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json='{"regime": "risk-on"}',
     )
-    db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', '-45 days') "
-        "WHERE run_id = 'run-old'"
-    )
+    db.conn.execute("UPDATE specialist_evidence SET timestamp = datetime('now', '-45 days') WHERE run_id = 'run-old'")
     db.conn.commit()
 
     db.insert_specialist_evidence(
-        run_id="run-new", agent_name="tech_analyst", kind="analysis",
-        scope="symbol", symbol="AAPL", evidence_json='{"rating": "buy"}',
+        run_id="run-new",
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
+        symbol="AAPL",
+        evidence_json='{"rating": "buy"}',
     )
 
     deleted = db.prune_specialist_evidence(keep_days=30)
@@ -433,9 +505,7 @@ def test_initialize_creates_timestamp_indexes_for_prune(db):
     """prune_trades / prune_agent_logs / prune_pending_protection_restores
     all scan WHERE <ts_col> < ?. Indexes turn full-table scans into
     O(log n). Pin: indexes exist after init."""
-    rows = db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
-    ).fetchall()
+    rows = db.conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'").fetchall()
     names = {r[0] for r in rows}
     assert "idx_trades_timestamp" in names
     assert "idx_agent_logs_timestamp" in names
@@ -452,19 +522,20 @@ def test_prune_pending_protection_restores_drops_stale_rows(db):
 
     # Insert two rows.
     fresh_id = db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="ord-fresh",
+        symbol="NVDA",
+        sell_order_id="ord-fresh",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps([{"id": "s1", "qty": 100, "stop_price": 95.0}]),
     )
     stale_id = db.insert_pending_protection_restore(
-        symbol="AAPL", sell_order_id="ord-stale",
+        symbol="AAPL",
+        sell_order_id="ord-stale",
         position_qty_before_sell=50.0,
         specs_json=_json.dumps([{"id": "s2", "qty": 50, "stop_price": 170.0}]),
     )
     # Backdate the stale row by 45 days.
     db.conn.execute(
-        "UPDATE pending_protection_restores "
-        "SET created_at = datetime('now', '-45 days') WHERE id = ?",
+        "UPDATE pending_protection_restores SET created_at = datetime('now', '-45 days') WHERE id = ?",
         (stale_id,),
     )
     db.conn.commit()
@@ -489,12 +560,14 @@ def test_prune_pending_protection_restores_keeps_rows_within_window(db):
     import json as _json
 
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="ord-1",
+        symbol="NVDA",
+        sell_order_id="ord-1",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps([{"id": "s1", "qty": 100, "stop_price": 95.0}]),
     )
     db.insert_pending_protection_restore(
-        symbol="AAPL", sell_order_id="ord-2",
+        symbol="AAPL",
+        sell_order_id="ord-2",
         position_qty_before_sell=50.0,
         specs_json=_json.dumps([{"id": "s2", "qty": 50, "stop_price": 170.0}]),
     )
@@ -508,23 +581,41 @@ def test_sum_session_cost_aggregates_per_run_id(db):
     """Per-call costs land in agent_logs.cost_usd. The per-session sum
     feeds the Telegram push and any cost-monitoring tools."""
     db.insert_agent_log(
-        agent_name="tech_analyst", run_id="run-sum",
-        input_summary="x", output_summary="y", full_response="",
-        model="claude-opus-4-7", tokens_used=110_000,
-        input_tokens=80_000, output_tokens=30_000, cost_usd=3.45,
+        agent_name="tech_analyst",
+        run_id="run-sum",
+        input_summary="x",
+        output_summary="y",
+        full_response="",
+        model="claude-opus-4-7",
+        tokens_used=110_000,
+        input_tokens=80_000,
+        output_tokens=30_000,
+        cost_usd=3.45,
     )
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="run-sum",
-        input_summary="x", output_summary="y", full_response="",
-        model="claude-opus-4-7", tokens_used=52_000,
-        input_tokens=50_000, output_tokens=2_000, cost_usd=0.90,
+        agent_name="portfolio_manager",
+        run_id="run-sum",
+        input_summary="x",
+        output_summary="y",
+        full_response="",
+        model="claude-opus-4-7",
+        tokens_used=52_000,
+        input_tokens=50_000,
+        output_tokens=2_000,
+        cost_usd=0.90,
     )
     # Different run_id — must not be included.
     db.insert_agent_log(
-        agent_name="risk_manager", run_id="run-other",
-        input_summary="x", output_summary="y", full_response="",
-        model="claude-opus-4-7", tokens_used=10_000,
-        input_tokens=8_000, output_tokens=2_000, cost_usd=0.27,
+        agent_name="risk_manager",
+        run_id="run-other",
+        input_summary="x",
+        output_summary="y",
+        full_response="",
+        model="claude-opus-4-7",
+        tokens_used=10_000,
+        input_tokens=8_000,
+        output_tokens=2_000,
+        cost_usd=0.27,
     )
     total, count = db.sum_session_cost("run-sum")
     assert count == 2
@@ -536,16 +627,28 @@ def test_sum_session_cost_returns_none_when_any_row_has_null(db):
     its row stored NULL. Summing the known-only rows would silently
     understate — return None instead so the caller flags the gap."""
     db.insert_agent_log(
-        agent_name="tech_analyst", run_id="run-mixed",
-        input_summary="x", output_summary="y", full_response="",
-        model="claude-opus-4-7", tokens_used=100_000,
-        input_tokens=80_000, output_tokens=20_000, cost_usd=2.70,
+        agent_name="tech_analyst",
+        run_id="run-mixed",
+        input_summary="x",
+        output_summary="y",
+        full_response="",
+        model="claude-opus-4-7",
+        tokens_used=100_000,
+        input_tokens=80_000,
+        output_tokens=20_000,
+        cost_usd=2.70,
     )
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="run-mixed",
-        input_summary="x", output_summary="y", full_response="",
-        model="some-future-model", tokens_used=52_000,
-        input_tokens=50_000, output_tokens=2_000, cost_usd=None,
+        agent_name="portfolio_manager",
+        run_id="run-mixed",
+        input_summary="x",
+        output_summary="y",
+        full_response="",
+        model="some-future-model",
+        tokens_used=52_000,
+        input_tokens=50_000,
+        output_tokens=2_000,
+        cost_usd=None,
     )
     total, count = db.sum_session_cost("run-mixed")
     assert total is None
@@ -566,18 +669,24 @@ def test_prune_methods_reject_keep_days_zero_or_negative(db):
     import pytest as _pytest
 
     # Seed a row in each table so we can confirm nothing was deleted.
-    db.insert_trade(symbol="SPY", action="BUY", qty=1, price=500,
-                    reasoning="seed", run_id="r0", stop_loss=90.0)
-    db.insert_agent_log(agent_name="x", run_id="r0", input_summary="",
-                        output_summary="", full_response="", model="m", tokens_used=0)
+    db.insert_trade(symbol="SPY", action="BUY", qty=1, price=500, reasoning="seed", run_id="r0", stop_loss=90.0)
+    db.insert_agent_log(
+        agent_name="x", run_id="r0", input_summary="", output_summary="", full_response="", model="m", tokens_used=0
+    )
     import json as _json
+
     db.insert_pending_protection_restore(
-        symbol="X", sell_order_id="o0", position_qty_before_sell=1.0,
+        symbol="X",
+        sell_order_id="o0",
+        position_qty_before_sell=1.0,
         specs_json=_json.dumps([{"qty": 1, "stop_price": 1.0}]),
     )
     db.insert_specialist_evidence(
-        run_id="r0", agent_name="macro_analyst", kind="analysis",
-        scope="run", evidence_json="{}",
+        run_id="r0",
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json="{}",
     )
 
     for kd in (0, -1, -365):
@@ -608,15 +717,13 @@ def test_initialize_sets_busy_timeout_pragma(db):
     """
     row = db.conn.execute("PRAGMA busy_timeout").fetchone()
     # PRAGMA busy_timeout returns the current timeout in ms.
-    assert row[0] >= 5000, (
-        f"busy_timeout must be >= 5000ms for cross-process contention "
-        f"resilience; got {row[0]}"
-    )
+    assert row[0] >= 5000, f"busy_timeout must be >= 5000ms for cross-process contention resilience; got {row[0]}"
 
 
 # ===========================================================================
 # Write-ahead intent for BUY submission — audit F4
 # ===========================================================================
+
 
 def test_confirm_trade_submitted_updates_pending_row(db):
     """The write-ahead pattern inserts a pending_submit row BEFORE
@@ -627,23 +734,24 @@ def test_confirm_trade_submitted_updates_pending_row(db):
     an accepted order and DB with no row, and _reconcile_fills had no
     way to find it (it queries by broker_order_id)."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=150.0,
-        reasoning="write-ahead", run_id="r1",
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="write-ahead",
+        run_id="r1",
         fill_status="pending_submit",
-        broker_order_id=None, stop_loss=90.0,
+        broker_order_id=None,
+        stop_loss=90.0,
     )
-    rows = db.conn.execute(
-        "SELECT fill_status, broker_order_id FROM trades WHERE id = ?", (row_id,)
-    ).fetchall()
+    rows = db.conn.execute("SELECT fill_status, broker_order_id FROM trades WHERE id = ?", (row_id,)).fetchall()
     assert rows[0]["fill_status"] == "pending_submit"
     assert rows[0]["broker_order_id"] is None
 
     n = db.confirm_trade_submitted(row_id, broker_order_id="alpaca-12345")
     assert n == 1
 
-    rows = db.conn.execute(
-        "SELECT fill_status, broker_order_id FROM trades WHERE id = ?", (row_id,)
-    ).fetchall()
+    rows = db.conn.execute("SELECT fill_status, broker_order_id FROM trades WHERE id = ?", (row_id,)).fetchall()
     assert rows[0]["fill_status"] == "submitted"
     assert rows[0]["broker_order_id"] == "alpaca-12345"
 
@@ -654,17 +762,20 @@ def test_mark_trade_submit_failed_flags_pending_row(db):
     implies the broker accepted then rejected). Operator / reconcile
     sweeps these against the broker's order list by symbol + time."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=150.0,
-        reasoning="write-ahead", run_id="r1",
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="write-ahead",
+        run_id="r1",
         fill_status="pending_submit",
-        broker_order_id=None, stop_loss=90.0,
+        broker_order_id=None,
+        stop_loss=90.0,
     )
     n = db.mark_trade_submit_failed(row_id)
     assert n == 1
 
-    rows = db.conn.execute(
-        "SELECT fill_status FROM trades WHERE id = ?", (row_id,)
-    ).fetchall()
+    rows = db.conn.execute("SELECT fill_status FROM trades WHERE id = ?", (row_id,)).fetchall()
     assert rows[0]["fill_status"] == "submit_failed"
 
 
@@ -679,26 +790,53 @@ def test_pending_submit_row_distinguishable_from_orphan_terminal_states(db):
         filled/canceled/rejected/expired            → terminal, no further action
     """
     pending = db.insert_trade(
-        "NVDA", "BUY", 10, 150.0, "x", "r1",
-        fill_status="pending_submit", broker_order_id=None, stop_loss=90.0,
+        "NVDA",
+        "BUY",
+        10,
+        150.0,
+        "x",
+        "r1",
+        fill_status="pending_submit",
+        broker_order_id=None,
+        stop_loss=90.0,
     )
     failed = db.insert_trade(
-        "AAPL", "BUY", 10, 180.0, "x", "r1",
-        fill_status="submit_failed", broker_order_id=None, stop_loss=90.0,
+        "AAPL",
+        "BUY",
+        10,
+        180.0,
+        "x",
+        "r1",
+        fill_status="submit_failed",
+        broker_order_id=None,
+        stop_loss=90.0,
     )
     submitted = db.insert_trade(
-        "TSLA", "BUY", 10, 200.0, "x", "r1",
-        fill_status="submitted", broker_order_id="alpaca-1", stop_loss=90.0,
+        "TSLA",
+        "BUY",
+        10,
+        200.0,
+        "x",
+        "r1",
+        fill_status="submitted",
+        broker_order_id="alpaca-1",
+        stop_loss=90.0,
     )
     filled = db.insert_trade(
-        "META", "BUY", 10, 500.0, "x", "r1",
-        fill_status="filled", broker_order_id="alpaca-2", stop_loss=90.0,
+        "META",
+        "BUY",
+        10,
+        500.0,
+        "x",
+        "r1",
+        fill_status="filled",
+        broker_order_id="alpaca-2",
+        stop_loss=90.0,
     )
 
     # pending_submit + broker_order_id IS NULL is the orphan signature.
     orphans = db.conn.execute(
-        "SELECT id FROM trades WHERE fill_status = 'pending_submit' "
-        "AND broker_order_id IS NULL"
+        "SELECT id FROM trades WHERE fill_status = 'pending_submit' AND broker_order_id IS NULL"
     ).fetchall()
     assert len(orphans) == 1 and orphans[0]["id"] == pending
 
@@ -710,18 +848,25 @@ def test_get_recent_agent_outputs_unparseable_before_date_skips_filter(db, caplo
     rows instead. All production callers pass session_date_key() so this is
     defensive, but the old wrong comparison could silently drop every row."""
     import logging
+
     for i in range(2):
         db.insert_agent_log(
-            agent_name="portfolio_manager", run_id=f"r{i}",
-            input_summary="in", output_summary="out",
-            full_response="{}", model="x", tokens_used=1,
+            agent_name="portfolio_manager",
+            run_id=f"r{i}",
+            input_summary="in",
+            output_summary="out",
+            full_response="{}",
+            model="x",
+            tokens_used=1,
         )
     # "0000-99-99": fromisoformat rejects it (→ fallback). A naive
     # `date(timestamp) < '0000-99-99'` is False for any real timestamp, so
     # the buggy fallback dropped ALL rows. Correct behavior keeps them.
     with caplog.at_level(logging.WARNING, logger="src.storage.db"):
         rows = db.get_recent_agent_outputs(
-            "portfolio_manager", limit=5, before_date="0000-99-99",
+            "portfolio_manager",
+            limit=5,
+            before_date="0000-99-99",
         )
     assert len(rows) == 2, "unparseable before_date must not drop rows via a wrong filter"
     assert any("skipping the date filter" in r.getMessage() for r in caplog.records)
@@ -730,6 +875,7 @@ def test_get_recent_agent_outputs_unparseable_before_date_skips_filter(db, caplo
 class _ConnProxy:
     """Wraps a real sqlite3 connection so a test can inject failures on
     .execute (the C method itself can't be monkeypatched)."""
+
     def __init__(self, real, on_execute):
         self._real = real
         self._on_execute = on_execute
@@ -749,6 +895,7 @@ def test_locked_write_retries_then_succeeds(db, monkeypatch):
     outlasts busy_timeout) must be retried, not lost. insert_agent_log used
     to silently drop the row on OperationalError."""
     import sqlite3 as _sql
+
     calls = {"n": 0}
 
     def flaky(real, sql, *a, **k):
@@ -762,9 +909,13 @@ def test_locked_write_retries_then_succeeds(db, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
 
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="rlock",
-        input_summary="i", output_summary="o", full_response="{}",
-        model="x", tokens_used=1,
+        agent_name="portfolio_manager",
+        run_id="rlock",
+        input_summary="i",
+        output_summary="o",
+        full_response="{}",
+        model="x",
+        tokens_used=1,
     )
     # The row landed despite the first attempt hitting a lock.
     rows = db.get_recent_agent_outputs("portfolio_manager", limit=5)
@@ -786,8 +937,13 @@ def test_locked_write_reraises_non_lock_operational_error(db, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     with pytest.raises(_sql.OperationalError, match="no such column"):
         db.insert_trade(
-            symbol="NVDA", action="BUY", qty=1, price=1.0,
-            reasoning="x", run_id="r", stop_loss=90.0,
+            symbol="NVDA",
+            action="BUY",
+            qty=1,
+            price=1.0,
+            reasoning="x",
+            run_id="r",
+            stop_loss=90.0,
         )
 
 
@@ -797,8 +953,8 @@ def test_session_prefixes_logged_on_extracts_run_id_prefixes(db):
     db.insert_agent_log("tech_analyst", "run-aaaa1111", "i", "o", "{}", "m", 1)
     db.insert_agent_log("position_reviewer", "midday-bbbb2222", "i", "o", "{}", "m", 1)
     prefixes = db.session_prefixes_logged_on()
-    assert "run" in prefixes      # morning ran
-    assert "midday" in prefixes   # midday ran
+    assert "run" in prefixes  # morning ran
+    assert "midday" in prefixes  # midday ran
     assert "close" not in prefixes  # close did NOT run today
 
 
@@ -819,8 +975,8 @@ def test_daily_pnl_reinsert_preserves_equity_close_when_none(db):
     db.insert_daily_pnl("2026-05-28", 100_400.0, -600.0, -0.59, equity_close=100_500.0)
     db.insert_daily_pnl("2026-05-28", 100_450.0, -550.0, -0.55, equity_close=None)
     row = db.get_daily_pnl(limit=1)[0]
-    assert row["equity_close"] == 100_500.0   # preserved
-    assert row["daily_pnl"] == -550.0         # other columns still updated
+    assert row["equity_close"] == 100_500.0  # preserved
+    assert row["daily_pnl"] == -550.0  # other columns still updated
     db.insert_daily_pnl("2026-05-28", 100_450.0, -550.0, -0.55, equity_close=100_600.0)
     assert db.get_daily_pnl(limit=1)[0]["equity_close"] == 100_600.0  # real value overwrites
 
@@ -850,6 +1006,7 @@ def test_backfill_equity_close_no_row_for_date(db):
 
 
 # === Stage 1 (QAMC provider/model/correlation plumbing) ===
+
 
 def test_insert_agent_log_new_columns_roundtrip(db):
     db.insert_agent_log(
@@ -889,20 +1046,39 @@ def test_insert_agent_log_new_columns_default_null_when_omitted(db):
     or a caller whose result had no attribution) persists NULL, not a
     fabricated value — per DECISION #12 / the 'unknown stays unknown' rule."""
     db.insert_agent_log(
-        agent_name="macro_analyst", run_id="run-002", input_summary="s",
-        output_summary="o", full_response="{}", model="m", tokens_used=1,
+        agent_name="macro_analyst",
+        run_id="run-002",
+        input_summary="s",
+        output_summary="o",
+        full_response="{}",
+        model="m",
+        tokens_used=1,
     )
     row = db.get_agent_logs(run_id="run-002")[0]
-    for col in ("requested_provider", "requested_model", "actual_provider",
-                "prompt_version", "latency_s", "status", "finish_reason",
-                "truncated", "decision_id"):
+    for col in (
+        "requested_provider",
+        "requested_model",
+        "actual_provider",
+        "prompt_version",
+        "latency_s",
+        "status",
+        "finish_reason",
+        "truncated",
+        "decision_id",
+    ):
         assert row[col] is None, f"{col} should default to NULL, got {row[col]!r}"
 
 
 def test_insert_trade_decision_id_roundtrips(db):
     db.insert_trade(
-        symbol="SPY", action="BUY", qty=1.0, price=500.0,
-        reasoning="x", run_id="run-003", decision_id="run-003-dec-xyz", stop_loss=90.0,
+        symbol="SPY",
+        action="BUY",
+        qty=1.0,
+        price=500.0,
+        reasoning="x",
+        run_id="run-003",
+        decision_id="run-003-dec-xyz",
+        stop_loss=90.0,
     )
     trades = db.get_trades(symbol="SPY")
     assert trades[0]["decision_id"] == "run-003-dec-xyz"
@@ -912,8 +1088,12 @@ def test_insert_trade_decision_id_defaults_null(db):
     """A trade outside the PM/RM decision chain (e.g. a midday sell, an
     emergency sell, a cash-sweep order) legitimately carries no decision_id."""
     db.insert_trade(
-        symbol="SPY", action="SELL", qty=1.0, price=500.0,
-        reasoning="x", run_id="midday-001",
+        symbol="SPY",
+        action="SELL",
+        qty=1.0,
+        price=500.0,
+        reasoning="x",
+        run_id="midday-001",
     )
     trades = db.get_trades(symbol="SPY")
     assert trades[0]["decision_id"] is None
@@ -970,9 +1150,17 @@ def test_migration_adds_new_columns_on_legacy_db(tmp_path):
         agent_logs_cols = {r[1] for r in database.conn.execute("PRAGMA table_info(agent_logs)")}
         for col in ("decision_id", "realized_pnl"):
             assert col in trades_cols
-        for col in ("requested_provider", "requested_model", "actual_provider",
-                    "prompt_version", "latency_s", "status", "finish_reason",
-                    "truncated", "decision_id"):
+        for col in (
+            "requested_provider",
+            "requested_model",
+            "actual_provider",
+            "prompt_version",
+            "latency_s",
+            "status",
+            "finish_reason",
+            "truncated",
+            "decision_id",
+        ):
             assert col in agent_logs_cols
 
         legacy_trade = database.get_trades(symbol="SPY")[0]
@@ -998,13 +1186,26 @@ def test_migration_is_idempotent_on_already_migrated_db(db):
 
 def test_reconciled_exit_persists_deterministic_realized_pnl(db):
     db.insert_trade(
-        "AAPL", "BUY", 10, 100, "entry", "run-entry",
-        broker_order_id="buy-1", fill_status="submitted", stop_loss=90.0,
+        "AAPL",
+        "BUY",
+        10,
+        100,
+        "entry",
+        "run-entry",
+        broker_order_id="buy-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.update_trade_fill("buy-1", "filled", fill_qty=10, fill_price=101)
     db.insert_trade(
-        "AAPL", "SELL", 4, 110, "trim", "run-exit",
-        broker_order_id="sell-1", fill_status="submitted",
+        "AAPL",
+        "SELL",
+        4,
+        110,
+        "trim",
+        "run-exit",
+        broker_order_id="sell-1",
+        fill_status="submitted",
     )
     db.update_trade_fill("sell-1", "filled", fill_qty=4, fill_price=111)
 
@@ -1015,24 +1216,46 @@ def test_reconciled_exit_persists_deterministic_realized_pnl(db):
 
 def test_realized_pnl_stays_unknown_without_confirmed_cost_basis(db):
     db.insert_trade(
-        "MSFT", "SELL", 3, 200, "legacy exit", "run-exit",
-        broker_order_id="sell-no-basis", fill_status="submitted",
+        "MSFT",
+        "SELL",
+        3,
+        200,
+        "legacy exit",
+        "run-exit",
+        broker_order_id="sell-no-basis",
+        fill_status="submitted",
     )
     db.update_trade_fill(
-        "sell-no-basis", "filled", fill_qty=3, fill_price=201,
+        "sell-no-basis",
+        "filled",
+        fill_qty=3,
+        fill_price=201,
     )
     assert db.get_trades(symbol="MSFT")[0]["realized_pnl"] is None
 
 
 def test_terminal_partial_fill_books_only_confirmed_exit_quantity(db):
     db.insert_trade(
-        "NVDA", "BUY", 10, 100, "entry", "run-entry",
-        broker_order_id="nv-buy", fill_status="submitted", stop_loss=90.0,
+        "NVDA",
+        "BUY",
+        10,
+        100,
+        "entry",
+        "run-entry",
+        broker_order_id="nv-buy",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.update_trade_fill("nv-buy", "filled", fill_qty=10, fill_price=100)
     db.insert_trade(
-        "NVDA", "SELL", 10, 110, "exit attempt", "run-exit",
-        broker_order_id="nv-sell", fill_status="submitted",
+        "NVDA",
+        "SELL",
+        10,
+        110,
+        "exit attempt",
+        "run-exit",
+        broker_order_id="nv-sell",
+        fill_status="submitted",
     )
     db.update_trade_fill("nv-sell", "canceled", fill_qty=3, fill_price=110)
     assert db.get_trades(symbol="NVDA")[0]["realized_pnl"] == 30.0
@@ -1041,6 +1264,7 @@ def test_terminal_partial_fill_books_only_confirmed_exit_quantity(db):
 # ---------------------------------------------------------------------------
 # Phase 6 (§6.2a/e): position_id chain linking + exit_reason_category
 # ---------------------------------------------------------------------------
+
 
 def test_position_id_minted_on_buy_from_flat(db):
     db.insert_trade("AAPL", "BUY", 10, 150.0, "clean setup", "run-1", stop_loss=140.0)
@@ -1052,8 +1276,9 @@ def test_position_id_minted_on_buy_from_flat(db):
 def test_position_id_inherited_by_sell_reduce_trail_stop(db):
     db.insert_trade("AAPL", "BUY", 10, 150.0, "entry", "run-1", stop_loss=140.0)
     db.insert_trade("AAPL", "REDUCE", 3, 160.0, "risk-off macro shift", "run-1")
-    db.insert_trade("AAPL", "TRAIL_STOP", 7, 155.0, "trailing tighter", "run-1",
-                     broker_order_id="ts-1", fill_status="submitted")
+    db.insert_trade(
+        "AAPL", "TRAIL_STOP", 7, 155.0, "trailing tighter", "run-1", broker_order_id="ts-1", fill_status="submitted"
+    )
     db.insert_trade("AAPL", "SELL", 7, 165.0, "stop hit", "run-1")
     trades = db.get_trades(symbol="AAPL")
     position_ids = {t["position_id"] for t in trades}
@@ -1086,13 +1311,14 @@ def test_position_id_scale_in_buy_inherits_same_chain(db):
 
 def test_position_id_unfilled_trail_stop_inherits_but_stays_uncategorised_until_fill(db):
     db.insert_trade("NVDA", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
-    db.insert_trade("NVDA", "TRAIL_STOP", 10, 95.0, "trail tighter", "run-1",
-                     broker_order_id="ts-nvda", fill_status="submitted")
+    db.insert_trade(
+        "NVDA", "TRAIL_STOP", 10, 95.0, "trail tighter", "run-1", broker_order_id="ts-nvda", fill_status="submitted"
+    )
     trades = db.get_trades(symbol="NVDA")
     trail = next(t for t in trades if t["action"] == "TRAIL_STOP")
     buy = next(t for t in trades if t["action"] == "BUY")
-    assert trail["position_id"] == buy["position_id"]     # inherits regardless of fill
-    assert trail["exit_reason_category"] is None           # not confirmed fired yet
+    assert trail["position_id"] == buy["position_id"]  # inherits regardless of fill
+    assert trail["exit_reason_category"] is None  # not confirmed fired yet
 
     db.update_trade_fill("ts-nvda", "filled", fill_qty=10, fill_price=95.0)
     trail_after = db.get_trades(symbol="NVDA")[0]
@@ -1119,9 +1345,16 @@ def test_position_id_hold_and_sweep_rows_never_get_a_position_id(db):
 
 def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
     db.insert_trade("AMZN", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
-    db.insert_trade("AMZN", "TAKE_PROFIT", 2, 135.0,
-                     "Auto take-profit: +35.0% >= 30.0%, trimming 15%", "run-1",
-                     broker_order_id="tp-1", fill_status="submitted")
+    db.insert_trade(
+        "AMZN",
+        "TAKE_PROFIT",
+        2,
+        135.0,
+        "Auto take-profit: +35.0% >= 30.0%, trimming 15%",
+        "run-1",
+        broker_order_id="tp-1",
+        fill_status="submitted",
+    )
     submitted = db.get_trades(symbol="AMZN")[0]
     assert submitted["exit_reason_category"] is None
     db.update_trade_fill("tp-1", "filled", fill_qty=2, fill_price=135.0)
@@ -1129,16 +1362,19 @@ def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
     assert filled["exit_reason_category"] == "take_profit_target"
 
 
-@pytest.mark.parametrize("reasoning,expected", [
-    ("thesis_invalid: support broke", "thesis_invalidated"),
-    ("high-conviction bearish news on the sector", "adverse_news_or_state_change"),
-    ("bearish earnings, guidance cut", "earnings_or_filing"),
-    ("macro regime flip to risk-off", "macro_regime_shift"),
-    ("daily loss circuit breaker tripped", "risk_management_hard_stop"),
-    ("stopped out per broker fill", "broker_stop_fill"),
-    ("mechanical size-down vs live book: weight 3.35% → 1.76%", "mechanical_size_down"),
-    ("feels stretched, taking some off", "uncategorised"),
-])
+@pytest.mark.parametrize(
+    "reasoning,expected",
+    [
+        ("thesis_invalid: support broke", "thesis_invalidated"),
+        ("high-conviction bearish news on the sector", "adverse_news_or_state_change"),
+        ("bearish earnings, guidance cut", "earnings_or_filing"),
+        ("macro regime flip to risk-off", "macro_regime_shift"),
+        ("daily loss circuit breaker tripped", "risk_management_hard_stop"),
+        ("stopped out per broker fill", "broker_stop_fill"),
+        ("mechanical size-down vs live book: weight 3.35% → 1.76%", "mechanical_size_down"),
+        ("feels stretched, taking some off", "uncategorised"),
+    ],
+)
 def test_exit_reason_category_derived_from_hard_trigger_vocabulary(db, reasoning, expected):
     db.insert_trade("XOM", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
     db.insert_trade("XOM", "SELL", 10, 110.0, reasoning, "run-1")
@@ -1147,7 +1383,9 @@ def test_exit_reason_category_derived_from_hard_trigger_vocabulary(db, reasoning
 
 
 def test_exit_reason_category_stop_out_is_broker_stop_fill(db):
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "run-1", broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "ONDS", "BUY", 17, 8.53, "entry", "run-1", broker_order_id="buy-1", fill_status="filled", stop_loss=90.0
+    )
     db.insert_stop_out_trade(symbol="ONDS", qty=17, price=7.93, broker_order_id="stop-1", filled_at=None)
     stop_out = db.get_trades(symbol="ONDS")[0]
     assert stop_out["action"] == "STOP_OUT"
@@ -1165,6 +1403,7 @@ def test_exit_reason_category_none_for_buy_and_hold(db):
 # ---------------------------------------------------------------------------
 # Phase 6 (§6.2a): backfill_position_ids
 # ---------------------------------------------------------------------------
+
 
 def test_backfill_position_ids_assigns_confident_chains(db):
     db.conn.execute(
@@ -1260,15 +1499,14 @@ def test_backfill_position_ids_respects_rows_already_assigned_by_live_trading(db
 
 # --- intraday snapshot health (2026-09-10) ------------------------------
 
+
 def test_intraday_symbol_snapshot_ok_resets_streak(db):
     for _ in range(3):
         db.record_intraday_symbol_snapshot_result("ORCL", ok=False)
     result = db.record_intraday_symbol_snapshot_result("ORCL", ok=True)
     assert result["consecutive_misses"] == 0
     assert result["should_alert"] is False
-    row = db.conn.execute(
-        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='ORCL'"
-    ).fetchone()
+    row = db.conn.execute("SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='ORCL'").fetchone()
     assert row["consecutive_misses"] == 0
 
 
@@ -1304,8 +1542,7 @@ def test_intraday_symbol_snapshot_realerts_after_cooldown_elapses(db):
         db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
     # Simulate the cooldown having elapsed by backdating last_alert_at.
     db.conn.execute(
-        "UPDATE intraday_symbol_health SET last_alert_at = datetime('now', '-25 hours') "
-        "WHERE symbol='BADTIX'"
+        "UPDATE intraday_symbol_health SET last_alert_at = datetime('now', '-25 hours') WHERE symbol='BADTIX'"
     )
     db.conn.commit()
     result = db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
@@ -1326,12 +1563,14 @@ def test_intraday_symbol_snapshot_streaks_are_independent_per_symbol(db):
 # tracker (notifier._persist_margin_interest_daily) already measured.
 # ---------------------------------------------------------------------------
 
+
 class _Row:
     """Minimal stand-in for src.margin_interest.BackfilledDayEstimate —
     only the attributes backfill_margin_interest_daily reads."""
 
-    def __init__(self, trading_day, debit_balance, rate_pct, daily_usd,
-                 days_charged, period_usd, source="estimate_backfill"):
+    def __init__(
+        self, trading_day, debit_balance, rate_pct, daily_usd, days_charged, period_usd, source="estimate_backfill"
+    ):
         self.trading_day = trading_day
         self.debit_balance = debit_balance
         self.rate_pct = rate_pct
@@ -1365,7 +1604,8 @@ def test_backfill_margin_interest_daily_is_idempotent_on_rerun(db):
     db.backfill_margin_interest_daily(rows, dry_run=False)
     db.backfill_margin_interest_daily(rows, dry_run=False)
     count = db.conn.execute(
-        "SELECT COUNT(*) FROM margin_interest_daily WHERE date = ?", ("2026-08-14",),
+        "SELECT COUNT(*) FROM margin_interest_daily WHERE date = ?",
+        ("2026-08-14",),
     ).fetchone()[0]
     assert count == 1
 
@@ -1376,8 +1616,13 @@ def test_backfill_margin_interest_daily_never_overwrites_a_live_tracker_row(db):
     the reconstruction is strictly less accurate than a real morning
     read."""
     db.insert_margin_interest_daily(
-        "2026-08-14", debit_balance=500.0, rate_pct=6.25, daily_usd=0.09,
-        days_charged=1, period_usd=0.09, source="estimate",
+        "2026-08-14",
+        debit_balance=500.0,
+        rate_pct=6.25,
+        daily_usd=0.09,
+        days_charged=1,
+        period_usd=0.09,
+        source="estimate",
     )
     rows = [_Row(date(2026, 8, 14), 9999.0, 6.25, 99.0, 1, 99.0)]
     result = db.backfill_margin_interest_daily(rows, dry_run=False)
@@ -1407,8 +1652,13 @@ def test_backfill_margin_interest_daily_can_refine_its_own_prior_backfill(db):
 
 def test_backfill_margin_interest_daily_mixed_batch_partial_skip(db):
     db.insert_margin_interest_daily(
-        "2026-08-15", debit_balance=10.0, rate_pct=6.25, daily_usd=0.001,
-        days_charged=1, period_usd=0.001, source="broker_actual",
+        "2026-08-15",
+        debit_balance=10.0,
+        rate_pct=6.25,
+        daily_usd=0.001,
+        days_charged=1,
+        period_usd=0.001,
+        source="broker_actual",
     )
     rows = [
         _Row(date(2026, 8, 14), 1000.0, 6.25, 0.17, 1, 0.17),  # new

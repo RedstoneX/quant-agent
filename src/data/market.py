@@ -13,9 +13,9 @@ from src.sentinel.counted import record_swallowed
 logger = logging.getLogger(__name__)
 
 _VALUATION_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang
-_DOWNLOAD_TIMEOUT_S = 30   # per-call ceiling on yf.download() hang — same risk as .info,
-                            # without this a network stall hangs the whole session window
-                            # until the launchd outer kill (~20min) fires.
+_DOWNLOAD_TIMEOUT_S = 30  # per-call ceiling on yf.download() hang — same risk as .info,
+# without this a network stall hangs the whole session window
+# until the launchd outer kill (~20min) fires.
 
 # Keyed by the canonical sector name used everywhere else (yfinance + MacroSectorGuidance enum).
 SECTOR_ETFS = {
@@ -46,7 +46,10 @@ def _completed_only(bars: list, cutoff, symbol: str, source: str) -> list:
         logger.info(
             "get_ohlcv %s: dropped %d in-progress bar(s) dated after %s from %s "
             "(completed bars only; live price comes from the broker snapshot)",
-            symbol, len(bars) - len(kept), cutoff, source,
+            symbol,
+            len(bars) - len(kept),
+            cutoff,
+            source,
         )
     return kept
 
@@ -71,15 +74,13 @@ class MarketDataProvider:
         try:
             bars = self._fallback_bars(symbol, lookback_days) or []
             if bars:
-                logger.info("%s for %s, fallback source returned %d bars",
-                            reason, symbol, len(bars))
+                logger.info("%s for %s, fallback source returned %d bars", reason, symbol, len(bars))
             if not bars:
                 # audit round 2: an ALL-NaN frame passed the `df.empty` gate
                 # (it isn't empty) and only died at the dropna scrub below it —
                 # returning [] without ever trying the Alpaca fallback that the
                 # truly-empty path uses. Same degraded feed, different route.
-                return self._try_fallback(symbol, lookback_days,
-                                          reason="yfinance all-NaN")
+                return self._try_fallback(symbol, lookback_days, reason="yfinance all-NaN")
             return bars
         except Exception as e:  # noqa: BLE001
             record_swallowed("data.market.fallback_bars", e, log=logger, symbol=symbol)
@@ -124,7 +125,9 @@ class MarketDataProvider:
             # yfinance returned nothing — try fallback before giving up.
             return _completed_only(
                 self._try_fallback(symbol, lookback_days, reason="yfinance empty"),
-                cutoff, symbol, "fallback",
+                cutoff,
+                symbol,
+                "fallback",
             )
         # yfinance may return MultiIndex columns for single ticker
         if isinstance(df.columns, pd.MultiIndex):
@@ -141,9 +144,10 @@ class MarketDataProvider:
         clean_df = df.dropna(subset=required_cols) if required_cols else df
         if len(clean_df) < len(df):
             logger.warning(
-                "yfinance returned %d row(s) with NaN OHLCV for %s — dropped; "
-                "%d clean rows remain",
-                len(df) - len(clean_df), symbol, len(clean_df),
+                "yfinance returned %d row(s) with NaN OHLCV for %s — dropped; %d clean rows remain",
+                len(df) - len(clean_df),
+                symbol,
+                len(clean_df),
             )
         bars = []
         for idx, row in clean_df.iterrows():
@@ -177,8 +181,13 @@ class MarketDataProvider:
 
         def _download():
             return yf.download(
-                wanted, start=str(start), end=str(end), progress=False,
-                group_by="ticker", auto_adjust=False, threads=True,
+                wanted,
+                start=str(start),
+                end=str(end),
+                progress=False,
+                group_by="ticker",
+                auto_adjust=False,
+                threads=True,
             )
 
         with ThreadPoolExecutor(max_workers=1) as ex:
@@ -202,8 +211,11 @@ class MarketDataProvider:
             clean = frame.dropna(subset=cols)
             bars = [
                 OHLCV(
-                    date=idx.date(), open=float(row["Open"]), high=float(row["High"]),
-                    low=float(row["Low"]), close=float(row["Close"]),
+                    date=idx.date(),
+                    open=float(row["Open"]),
+                    high=float(row["High"]),
+                    low=float(row["Low"]),
+                    close=float(row["Close"]),
                     volume=int(row["Volume"]),
                 )
                 for idx, row in clean.iterrows()
@@ -215,6 +227,7 @@ class MarketDataProvider:
         """{"market_cap_usd", "sector_raw", "quote_type"} from yfinance, or None
         when it could not be read. Bounded by the same per-symbol timeout as
         valuations."""
+
         def _fetch():
             return yf.Ticker(symbol).info or {}
 
@@ -277,6 +290,7 @@ class MarketDataProvider:
             # audit round 2: exDividendDate is UTC-midnight epoch; a host-local
             # parse shifts the date on any TZ east of UTC (SG host: +1 day off).
             from datetime import datetime as _dtt, timezone as _tz
+
             ex_date = _dtt.fromtimestamp(float(ex_ts), tz=_tz.utc).date()
         except (TypeError, ValueError, OSError, OverflowError):
             # OverflowError is NOT a ValueError subclass: an absurd epoch
@@ -424,7 +438,8 @@ class MarketDataProvider:
                     "past-earnings source unavailable for %s (%s) — "
                     "falling back to next-date-only; results may be "
                     "incomplete, not genuinely empty",
-                    symbol, earnings_degraded,
+                    symbol,
+                    earnings_degraded,
                 )
 
             # `ticker.calendar` needs no optional dependency and is already
@@ -445,10 +460,7 @@ class MarketDataProvider:
             except Exception as e:
                 logger.debug("earnings calendar unavailable for %s: %s", symbol, e)
 
-            earnings = [
-                {"date": d.isoformat(), "upcoming": d > today}
-                for d in sorted(earnings_dates)
-            ]
+            earnings = [{"date": d.isoformat(), "upcoming": d > today} for d in sorted(earnings_dates)]
 
             return {
                 "dividends": dividends,
@@ -462,14 +474,15 @@ class MarketDataProvider:
         except FuturesTimeout:
             logger.warning("price-chart events fetch timed out for %s", symbol)
             return {
-                "dividends": [], "earnings": [],
-                "earnings_degraded": "TimeoutError: fetch exceeded "
-                f"{_VALUATION_TIMEOUT_S}s",
+                "dividends": [],
+                "earnings": [],
+                "earnings_degraded": f"TimeoutError: fetch exceeded {_VALUATION_TIMEOUT_S}s",
             }
         except Exception as e:
             logger.warning("price-chart events fetch failed for %s: %s", symbol, e)
             return {
-                "dividends": [], "earnings": [],
+                "dividends": [],
+                "earnings": [],
                 "earnings_degraded": f"{type(e).__name__}: {e}",
             }
 
@@ -481,6 +494,7 @@ class MarketDataProvider:
         comes back as None. Bounded by a 10s timeout per symbol so a stalled
         network request can't eat the morning's launchd budget.
         """
+
         def _fetch():
             try:
                 info = yf.Ticker(symbol).info or {}

@@ -1,5 +1,6 @@
 """Boundary witness for the order_desk lift: the new module is checked and
 exercised directly, never through OrderDesk or the pipeline."""
+
 import sys
 from pathlib import Path
 

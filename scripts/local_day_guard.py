@@ -40,6 +40,7 @@ one-word kind.
 
 Run it directly: ``python -m scripts.local_day_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -62,8 +63,13 @@ Site = tuple[str, str, str, str]
 # ``src``/``tests`` never saw it. Only ``import_time_stamp`` is tests-only.
 SCAN_PATTERN = "*.py"
 
-_CLOCK_READERS = {"et_today", "et_now", "todays_session_stamp",
-                  "todays_session_bar_stamp", "todays_session_snapshot_stamps"}
+_CLOCK_READERS = {
+    "et_today",
+    "et_now",
+    "todays_session_stamp",
+    "todays_session_bar_stamp",
+    "todays_session_snapshot_stamps",
+}
 
 
 def _name(node: ast.AST) -> str:
@@ -84,12 +90,22 @@ def _classify_call(call: ast.Call) -> str | None:
     if isinstance(fn, ast.Attribute) and fn.attr == "today" and _name(fn.value) in {"date", "datetime"}:
         return "local_today"
     # datetime.now() with no tz
-    if isinstance(fn, ast.Attribute) and fn.attr == "now" and _name(fn.value) == "datetime" \
-            and not call.args and not call.keywords:
+    if (
+        isinstance(fn, ast.Attribute)
+        and fn.attr == "now"
+        and _name(fn.value) == "datetime"
+        and not call.args
+        and not call.keywords
+    ):
         return "naive_now"
     # datetime.fromtimestamp(ts) / date.fromtimestamp(ts) with no tz: the runner's local time
-    if isinstance(fn, ast.Attribute) and fn.attr == "fromtimestamp" \
-            and _name(fn.value) in {"date", "datetime"} and len(call.args) == 1 and not call.keywords:
+    if (
+        isinstance(fn, ast.Attribute)
+        and fn.attr == "fromtimestamp"
+        and _name(fn.value) in {"date", "datetime"}
+        and len(call.args) == 1
+        and not call.keywords
+    ):
         return "naive_now"
     # <now(...)|utcnow()>.date()
     if isinstance(fn, ast.Attribute) and fn.attr == "date" and _is_now_call(fn.value):
@@ -126,8 +142,7 @@ def scan_sites(path: str, text: str) -> list[tuple[str, int, str, str]]:
                 found.append((kind, node.lineno, *site_identity(node, scopes)))
     if path.split("/", 1)[0] == "tests":
         for node in tree.body:  # module level only
-            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None \
-                    and _reads_clock(node.value):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None and _reads_clock(node.value):
                 found.append(("import_time_stamp", node.lineno, *site_identity(node, scopes)))
     return found
 

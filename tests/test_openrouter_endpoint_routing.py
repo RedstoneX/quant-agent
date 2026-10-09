@@ -49,14 +49,18 @@ def _stream_mock_with_usage(usage):
 
 def _openrouter_agent(client, **kwargs):
     return ConcreteAgent(
-        api_key="k", model="openai/gpt-5.5", max_tokens=4096,
-        provider="openrouter", **kwargs,
+        api_key="k",
+        model="openai/gpt-5.5",
+        max_tokens=4096,
+        provider="openrouter",
+        **kwargs,
     )
 
 
 # --------------------------------------------------------------------------
 # Endpoint preference reaches the wire
 # --------------------------------------------------------------------------
+
 
 def test_provider_order_is_sent_as_openrouter_provider_routing():
     """The preference must arrive as OpenRouter's `provider.order`, with
@@ -114,6 +118,7 @@ def test_plain_openai_sends_no_extra_body():
 # Provider-reported cost
 # --------------------------------------------------------------------------
 
+
 def test_reported_cost_beats_the_pinned_estimate():
     """The pinned table prices `openai/gpt-5.5` at the full $5/$30 endpoint.
     Served by flex the call really costs half that, and the recorded figure
@@ -153,22 +158,23 @@ def test_zero_tokens_still_reports_unknown_cost():
     zero tokens means the response carried no telemetry, which the operator
     must investigate rather than see summed into a daily total."""
     with patch("openai.OpenAI") as oai_cls:
-        oai_cls.return_value = _stream_mock_with_usage(
-            _usage(prompt=0, completion=0, cost=0.5)
-        )
+        oai_cls.return_value = _stream_mock_with_usage(_usage(prompt=0, completion=0, cost=0.5))
         agent = _openrouter_agent(None)
         result = agent.run(data="x")
     assert result.cost_usd is None
 
 
-@pytest.mark.parametrize("bad", [
-    True,                    # bool is an int subclass — True would price at $1
-    "0.002",                 # a string rate is not a number
-    float("nan"),
-    float("inf"),
-    -0.001,                  # a negative charge would REFUND the daily budget
-    None,
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        True,  # bool is an int subclass — True would price at $1
+        "0.002",  # a string rate is not a number
+        float("nan"),
+        float("inf"),
+        -0.001,  # a negative charge would REFUND the daily budget
+        None,
+    ],
+)
 def test_unusable_reported_cost_degrades_to_the_estimate(bad):
     """Under-reporting is the dangerous direction: the daily cost circuit
     spends against this number, so anything that is not a finite non-negative

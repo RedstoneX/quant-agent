@@ -7,7 +7,10 @@ from src.models import TechAnalysisResult, TechReasoningChain, Position
 
 def _tech_rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
@@ -24,19 +27,29 @@ def sample_analyses():
         # one it was written for. See tests/test_subfloor_catalyst_gate.py
         # for the rule's own coverage.
         TechAnalysisResult(
-            symbol="SPY", rating="buy", entry_price=507.0,
-            reference_target=540.0, stop_loss=490.0,
-            support_levels=[490.0], resistance_levels=[540.0],
-            setup_type="range", expected_horizon_sessions=10,
-            reasoning="Strong uptrend", reasoning_chain=_tech_rc(),
-        thesis_invalid_if="closes below support",
-    ),
+            symbol="SPY",
+            rating="buy",
+            entry_price=507.0,
+            reference_target=540.0,
+            stop_loss=490.0,
+            support_levels=[490.0],
+            resistance_levels=[540.0],
+            setup_type="range",
+            expected_horizon_sessions=10,
+            reasoning="Strong uptrend",
+            reasoning_chain=_tech_rc(),
+            thesis_invalid_if="closes below support",
+        ),
         TechAnalysisResult(
-            symbol="QQQ", rating="neutral", entry_price=None,
-            reference_target=None, stop_loss=None,
-            reasoning="Mixed signals", reasoning_chain=_tech_rc(),
-        thesis_invalid_if="closes below support",
-    ),
+            symbol="QQQ",
+            rating="neutral",
+            entry_price=None,
+            reference_target=None,
+            stop_loss=None,
+            reasoning="Mixed signals",
+            reasoning_chain=_tech_rc(),
+            thesis_invalid_if="closes below support",
+        ),
     ]
 
 
@@ -44,8 +57,13 @@ def sample_analyses():
 def sample_positions():
     return [
         Position(
-            symbol="AAPL", qty=5, avg_entry=180.0, current_price=190.0,
-            market_value=950.0, unrealized_pnl=50.0, sector="Technology",
+            symbol="AAPL",
+            qty=5,
+            avg_entry=180.0,
+            current_price=190.0,
+            market_value=950.0,
+            unrealized_pnl=50.0,
+            sector="Technology",
         ),
     ]
 
@@ -61,31 +79,37 @@ def sample_macro():
 
 @pytest.fixture
 def mock_pm_response():
-    return json.dumps({
-        "reasoning_chain": {
-            "macro_filter": "risk-on regime, tech overweight",
-            "news_check": "no fresh HIGH bearish state changes",
-            "earnings_check": "SPY n/a, AAPL filing intact",
-            "signal_conflicts": "SPY: technical signal supports the target",
-            "sizing_logic": "high conviction → 10%",
-            "portfolio_balance": "Tech 60% well under 40% cap",
-            "cash_target": "current 50% → after ~40%, fine for risk-on",
-        },
-        "targets": [
-            {
-                "symbol": "SPY",
-                "target_weight_pct": 10.0,
-                "conviction": "high",
-                "thesis": "Technical setup supports a target.",
-                "thesis_invalid_if": "closes below 490",
-                "provenance": [{
-                    "source": "technical", "observed_stance": "buy",
-                    "relationship": "supports", "evidence": "validated buy rating",
-                }],
-            }
-        ],
-        "portfolio_view": "Cautiously bullish, 60% invested",
-    })
+    return json.dumps(
+        {
+            "reasoning_chain": {
+                "macro_filter": "risk-on regime, tech overweight",
+                "news_check": "no fresh HIGH bearish state changes",
+                "earnings_check": "SPY n/a, AAPL filing intact",
+                "signal_conflicts": "SPY: technical signal supports the target",
+                "sizing_logic": "high conviction → 10%",
+                "portfolio_balance": "Tech 60% well under 40% cap",
+                "cash_target": "current 50% → after ~40%, fine for risk-on",
+            },
+            "targets": [
+                {
+                    "symbol": "SPY",
+                    "target_weight_pct": 10.0,
+                    "conviction": "high",
+                    "thesis": "Technical setup supports a target.",
+                    "thesis_invalid_if": "closes below 490",
+                    "provenance": [
+                        {
+                            "source": "technical",
+                            "observed_stance": "buy",
+                            "relationship": "supports",
+                            "evidence": "validated buy rating",
+                        }
+                    ],
+                }
+            ],
+            "portfolio_view": "Cautiously bullish, 60% invested",
+        }
+    )
 
 
 @patch("anthropic.Anthropic")
@@ -143,6 +167,7 @@ def test_portfolio_manager_bad_response(mock_cls, sample_analyses, sample_positi
 # other target lost → entire morning session executes 0 trades.
 # ---------------------------------------------------------------------------
 
+
 def _valid_pm_targets_json() -> dict:
     return {
         "reasoning_chain": {
@@ -167,10 +192,14 @@ def _valid_target(symbol: str = "NVDA", weight: float = 8.0) -> dict:
         "conviction": "high",
         "thesis": "Technical setup supports the target.",
         "thesis_invalid_if": "Price closes below MA50.",
-        "provenance": [{
-            "source": "technical", "observed_stance": "buy",
-            "relationship": "supports", "evidence": "validated buy rating",
-        }],
+        "provenance": [
+            {
+                "source": "technical",
+                "observed_stance": "buy",
+                "relationship": "supports",
+                "evidence": "validated buy rating",
+            }
+        ],
     }
 
 
@@ -297,12 +326,18 @@ def test_pm_decide_survives_one_malformed_target(mock_cls, sample_analyses, samp
 # (proven in tests/test_earnings_analyst.py, not here).
 # ===========================================================================
 
+
 def _full_earnings_analysis(
-    symbol="AAPL", sentiment="bullish", conviction="medium",
-    bull_case="not disclosed", bear_case="Competition erodes margins.",
+    symbol="AAPL",
+    sentiment="bullish",
+    conviction="medium",
+    bull_case="not disclosed",
+    bear_case="Competition erodes margins.",
 ):
     return {
-        "symbol": symbol, "form_type": "10-Q", "filing_date": "2026-08-01",
+        "symbol": symbol,
+        "form_type": "10-Q",
+        "filing_date": "2026-08-01",
         "revenue": {"total": "$10.0 billion", "yoy_growth": "+5%"},
         "profitability": {"gross_margin": "45%", "operating_margin": "20%", "eps": "$1.00"},
         "cash_flow": {"operating_cf": "$3.0 billion"},
@@ -318,7 +353,8 @@ def _full_earnings_analysis(
         },
         "strategy_consistency": "Consistent with prior quarter",
         "investment_implications": {
-            "sentiment": sentiment, "conviction": conviction,
+            "sentiment": sentiment,
+            "conviction": conviction,
             "reasoning_chain": {
                 "fundamental_quality": "Revenue +5% with margin expansion",
                 "growth_trajectory": "Operating leverage building QoQ",
@@ -331,7 +367,8 @@ def _full_earnings_analysis(
                 "core products. This holds as long as cloud investment keeps "
                 "paying back in gross margin, not just top-line growth."
             ),
-            "bull_case": bull_case, "bear_case": bear_case,
+            "bull_case": bull_case,
+            "bear_case": bear_case,
         },
         "data_quality": "Filing text complete through MD&A.",
     }
@@ -348,19 +385,25 @@ def test_earnings_section_renders_short_verdict_not_the_eight_field_form(mock_cl
     """
     agent = PortfolioManagerAgent(api_key="test", model="test-model")
     ea = {
-        "symbol": "AAPL", "analysis": _full_earnings_analysis(),
-        "is_new": True, "form_type": "10-Q", "filing_date": "2026-08-01",
+        "symbol": "AAPL",
+        "analysis": _full_earnings_analysis(),
+        "is_new": True,
+        "form_type": "10-Q",
+        "filing_date": "2026-08-01",
         "analysis_path": "/data/earnings/AAPL/analysis_10-Q_2026-08-01.md",
     }
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=1000.0,
+        total_value=1000.0,
         earnings_analyses=[ea],
     )
 
     start = msg.find("## Earnings Analysis")
     end = msg.find("\n## ", start + 3)
-    section = msg[start: end if end != -1 else len(msg)]
+    section = msg[start : end if end != -1 else len(msg)]
 
     # The short verdict IS there.
     assert "Call: bullish (medium)" in section
@@ -370,9 +413,14 @@ def test_earnings_section_renders_short_verdict_not_the_eight_field_form(mock_cl
 
     # The old eight-field form is NOT there.
     for old_label in (
-        "Filing metrics:", "Filing guidance:", "Competitive positioning:",
-        "Strategy consistency:", "Analyst synthesis:", "Data quality:",
-        "Strategic risks:", "Operational risks:",
+        "Filing metrics:",
+        "Filing guidance:",
+        "Competitive positioning:",
+        "Strategy consistency:",
+        "Analyst synthesis:",
+        "Data quality:",
+        "Strategic risks:",
+        "Operational risks:",
     ):
         assert old_label not in section, f"old form label {old_label!r} leaked into PM prompt"
 
@@ -395,20 +443,27 @@ def test_earnings_section_falls_back_when_falsifier_undisclosed(mock_cls):
     ea = {
         "symbol": "ORCL",
         "analysis": _full_earnings_analysis(
-            symbol="ORCL", sentiment="bullish",
-            bull_case="not disclosed", bear_case="not disclosed",
+            symbol="ORCL",
+            sentiment="bullish",
+            bull_case="not disclosed",
+            bear_case="not disclosed",
         ),
-        "is_new": False, "form_type": "10-Q", "filing_date": "2026-08-01",
+        "is_new": False,
+        "form_type": "10-Q",
+        "filing_date": "2026-08-01",
     }
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=1000.0,
+        total_value=1000.0,
         earnings_analyses=[ea],
     )
 
     start = msg.find("## Earnings Analysis")
     end = msg.find("\n## ", start + 3)
-    section = msg[start: end if end != -1 else len(msg)]
+    section = msg[start : end if end != -1 else len(msg)]
 
     assert "Call: bullish (medium)" in section
     assert "Invalidated if: not disclosed by the analyst" in section
@@ -423,9 +478,11 @@ def test_earnings_section_falls_back_when_falsifier_undisclosed(mock_cls):
 # 2026-09-12.
 # --------------------------------------------------------------------------
 
+
 @patch("anthropic.Anthropic")
 def test_the_ranking_the_prompt_was_rendered_from_is_kept_for_the_constructor(
-    mock_cls, sample_analyses,
+    mock_cls,
+    sample_analyses,
 ):
     """`last_candidate_ranking` is what `DecisionStage` hands the constructor
     as the order to spend the risk budget in. It must be the SAME object the
@@ -435,7 +492,9 @@ def test_the_ranking_the_prompt_was_rendered_from_is_kept_for_the_constructor(
     assert agent.last_candidate_ranking is None
 
     msg = agent.build_user_message(
-        analyses=sample_analyses, positions=[], cash_balance=100_000.0,
+        analyses=sample_analyses,
+        positions=[],
+        cash_balance=100_000.0,
         total_value=100_000.0,
     )
 
@@ -458,7 +517,10 @@ def test_a_previous_sessions_ranking_can_never_leak_into_the_next(mock_cls):
     agent = PortfolioManagerAgent(api_key="test", model="test-model")
     agent.last_candidate_ranking = ["stale"]
     agent.build_user_message(
-        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=1000.0,
+        total_value=1000.0,
     )
     assert not agent.last_candidate_ranking
 
@@ -467,21 +529,29 @@ def test_a_previous_sessions_ranking_can_never_leak_into_the_next(mock_cls):
 # PM TEST GATE item 4, second half — a dropped news symbol must be VISIBLE
 # --------------------------------------------------------------------------
 
+
 def _news_intel_with_dropped_symbols(dropped: list[str]):
     from src.models import MacroNarrative, NewsIntelligenceReport
+
     report = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-14", era_themes=["test"],
+            last_updated="2026-09-14",
+            era_themes=["test"],
             current_regime="risk-on",
         ),
         stock_news={
-            "NVDA": [{
-                "headline": "chip news", "sentiment": "bullish",
-                "conviction": "medium", "impact_summary": "positive",
-            }]
+            "NVDA": [
+                {
+                    "headline": "chip news",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "positive",
+                }
+            ]
         },
         pm_briefing="NVDA bullish.",
-        market_sentiment="bullish", confidence="medium",
+        market_sentiment="bullish",
+        confidence="medium",
     )
     report.dropped_news_symbols = dropped
     return report
@@ -499,13 +569,16 @@ def test_dropped_news_symbol_renders_as_lost_not_as_silence(mock_cls):
     news_intel = _news_intel_with_dropped_symbols(["AMD"])
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=1000.0,
+        total_value=1000.0,
         news_intel=news_intel,
     )
 
     start = msg.find("## News Intelligence")
     end = msg.find("\n## ", start + 3)
-    section = msg[start: end if end != -1 else len(msg)]
+    section = msg[start : end if end != -1 else len(msg)]
 
     assert "News Answer Lost" in section
     assert "AMD" in section
@@ -522,13 +595,16 @@ def test_no_dropped_news_symbols_renders_no_lost_section(mock_cls):
     news_intel = _news_intel_with_dropped_symbols([])
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        analyses=[],
+        positions=[],
+        cash_balance=1000.0,
+        total_value=1000.0,
         news_intel=news_intel,
     )
 
     start = msg.find("## News Intelligence")
     end = msg.find("\n## ", start + 3)
-    section = msg[start: end if end != -1 else len(msg)]
+    section = msg[start : end if end != -1 else len(msg)]
 
     assert "News Answer Lost" not in section
 
@@ -538,11 +614,15 @@ def test_collect_seat_verdicts_skips_uncovered_empty_stock_news(mock_cls):
     """An empty stock_news list is uncovered, not a fake neutral news lean.
     Ranking must skip it the same way a missing key was skipped."""
     from src.models import AnalystVerdict
+
     news_intel = _news_intel_with_dropped_symbols(["AMD"])
     news_intel.stock_news["AMD"] = []
     verdicts = PortfolioManagerAgent._collect_seat_verdicts(
-        analyses=[], news_intel=news_intel, macro_analysis=None,
-        earnings_analyses=[], smart_money_findings=None,
+        analyses=[],
+        news_intel=news_intel,
+        macro_analysis=None,
+        earnings_analyses=[],
+        smart_money_findings=None,
     )
     news_verdicts = [v for v in verdicts if isinstance(v, AnalystVerdict) and v.seat == "news"]
     assert {v.symbol for v in news_verdicts} == {"NVDA"}
@@ -553,8 +633,11 @@ def test_evidence_registry_does_not_file_a_news_stance_for_empty_stock_news(mock
     news_intel = _news_intel_with_dropped_symbols([])
     news_intel.stock_news["AMD"] = []
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], positions=[], news_intel=news_intel,
-        earnings_analyses=[], smart_money_findings=[],
+        analyses=[],
+        positions=[],
+        news_intel=news_intel,
+        earnings_analyses=[],
+        smart_money_findings=[],
         macro_analysis=None,
     )
     assert "AMD" not in registry or "news" not in registry.get("AMD", {})

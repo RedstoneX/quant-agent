@@ -125,7 +125,8 @@ def test_code_enforces_what_the_tech_prompt_promises() -> None:
 
 
 @pytest.mark.parametrize(
-    "stem", sorted(ANALYST_SEATS_STATE_A_FALSIFIER),
+    "stem",
+    sorted(ANALYST_SEATS_STATE_A_FALSIFIER),
 )
 def test_each_seats_carrier_declares_the_field(stem: str) -> None:
     """Prompt and schema must agree: asked for AND stored, on every seat.
@@ -152,18 +153,30 @@ def test_stored_falsifier_is_the_shape_the_exit_checker_reads() -> None:
     from src.risk.exit_guard import check_thesis_invalid_if
 
     priced = models.Nomination(
-        symbol="JPM", conviction="medium", observation="regime turn",
+        symbol="JPM",
+        conviction="medium",
+        observation="regime turn",
         thesis_invalid_if="closes below the $180 level",
     )
-    assert check_thesis_invalid_if(
-        priced.thesis_invalid_if, 170.0,
-    ).status == "TRIGGERED"
-    assert check_thesis_invalid_if(
-        priced.thesis_invalid_if, 190.0,
-    ).status == "NOT_TRIGGERED"
+    assert (
+        check_thesis_invalid_if(
+            priced.thesis_invalid_if,
+            170.0,
+        ).status
+        == "TRIGGERED"
+    )
+    assert (
+        check_thesis_invalid_if(
+            priced.thesis_invalid_if,
+            190.0,
+        ).status
+        == "NOT_TRIGGERED"
+    )
 
     qualitative = models.Nomination(
-        symbol="NVDA", conviction="high", observation="contract award",
+        symbol="NVDA",
+        conviction="high",
+        observation="contract award",
         thesis_invalid_if="the award is rescinded",
     )
     result = check_thesis_invalid_if(qualitative.thesis_invalid_if, 100.0)
@@ -178,31 +191,45 @@ def test_stored_falsifier_is_the_shape_the_exit_checker_reads() -> None:
 def test_missing_falsifier_is_recorded_as_missing_not_invented() -> None:
     """No template stands in for a seat that gave nothing."""
     silent = models.Nomination(
-        symbol="AAPL", conviction="low", observation="in-line filing",
+        symbol="AAPL",
+        conviction="low",
+        observation="in-line filing",
     )
     assert silent.thesis_invalid_if == ""
     assert models.missing_stated_falsifier(silent.thesis_invalid_if)
     from src.risk.exit_guard import check_thesis_invalid_if
 
-    assert check_thesis_invalid_if(
-        silent.thesis_invalid_if, 100.0,
-    ).status == "UNPARSEABLE"
+    assert (
+        check_thesis_invalid_if(
+            silent.thesis_invalid_if,
+            100.0,
+        ).status
+        == "UNPARSEABLE"
+    )
 
 
 def test_neutral_smart_money_finding_keeps_the_slot_empty() -> None:
     """A stance with no call has nothing to disprove (same rule as Tech)."""
     obs = models.SmartMoneyObservation(
-        symbol="AAPL", stream="insider", actor="Example Officer",
-        direction="buy", amount_range="$50,001-$100,000",
+        symbol="AAPL",
+        stream="insider",
+        actor="Example Officer",
+        direction="buy",
+        amount_range="$50,001-$100,000",
         transaction_date=date(2026, 8, 20),
         disclosure_date=date(2026, 8, 20),
         source_url="https://example.test/filing",
-        lag_days=2, disclosure_age_days=1, freshness="fresh",
+        lag_days=2,
+        disclosure_age_days=1,
+        freshness="fresh",
         economic_role="historical",
     )
     neutral = models.SmartMoneyFinding(
-        symbol="AAPL", stance="neutral", economic_role="historical",
-        summary="no directional read", why_now="single stale filing",
+        symbol="AAPL",
+        stance="neutral",
+        economic_role="historical",
+        summary="no directional read",
+        why_now="single stale filing",
         observations=[obs],
         thesis_invalid_if="this should not survive",
     )
@@ -212,8 +239,7 @@ def test_neutral_smart_money_finding_keeps_the_slot_empty() -> None:
 
 def test_nomination_prompts_forbid_a_placeholder_falsifier() -> None:
     """Every nominating seat is told not to invent one."""
-    for stem in ("news_analyst", "earnings_analyst", "macro_analyst",
-                 "smart_money_analyst"):
+    for stem in ("news_analyst", "earnings_analyst", "macro_analyst", "smart_money_analyst"):
         text = _prompt_text(stem).lower()
         assert "never write a generic placeholder" in text, (
             f"{stem}.md no longer forbids a placeholder falsifier. Without "

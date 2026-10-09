@@ -81,6 +81,7 @@ def _healthy_transport():
 # 1. A healthy path is recorded as healthy — and stays silent
 # ===========================================================================
 
+
 def test_a_verified_channel_is_recorded_ok_and_reads_ok(db, telegram_env):
     with patch("src.notifier.requests.post") as post:
         post.side_effect = _healthy_transport()
@@ -104,12 +105,24 @@ def test_a_working_channel_says_nothing_to_the_operator(db, telegram_env):
         result = alert_watchdog.verify_alert_channel(source="morning")
 
     assert alert_watchdog.session_note(before, result) is None
-    assert alert_watchdog.annotate_session_message(
-        None, mode="intra_check", before=before, result=result,
-    ) is None
-    assert alert_watchdog.annotate_session_message(
-        "🟢 morning done", mode="morning", before=before, result=result,
-    ) == "🟢 morning done"
+    assert (
+        alert_watchdog.annotate_session_message(
+            None,
+            mode="intra_check",
+            before=before,
+            result=result,
+        )
+        is None
+    )
+    assert (
+        alert_watchdog.annotate_session_message(
+            "🟢 morning done",
+            mode="morning",
+            before=before,
+            result=result,
+        )
+        == "🟢 morning done"
+    )
 
 
 def test_the_source_of_every_check_is_kept(db, telegram_env):
@@ -122,9 +135,7 @@ def test_the_source_of_every_check_is_kept(db, telegram_env):
 
     conn = sqlite3.connect(db)
     try:
-        rows = conn.execute(
-            f"SELECT source, ok FROM {alert_watchdog.TABLE}"
-        ).fetchall()
+        rows = conn.execute(f"SELECT source, ok FROM {alert_watchdog.TABLE}").fetchall()
     finally:
         conn.close()
     assert rows == [("midday", 1)]
@@ -177,7 +188,9 @@ def broken_channel(request, telegram_env):
         else:
             post.side_effect = behaviour * 8
         yield SimpleNamespace(
-            name=request.param, post=post, expected_stage=expected_stage,
+            name=request.param,
+            post=post,
+            expected_stage=expected_stage,
         )
 
 
@@ -189,8 +202,7 @@ def test_a_broken_channel_is_recorded_as_broken(db, broken_channel):
 
     health = alert_watchdog.read_health()
     assert health.status == "broken", (
-        f"{broken_channel.name}: the desk cannot reach the operator and the "
-        f"record says {health.status!r}"
+        f"{broken_channel.name}: the desk cannot reach the operator and the record says {health.status!r}"
     )
     assert health.degraded is True
     assert health.consecutive_failures == 1
@@ -198,7 +210,8 @@ def test_a_broken_channel_is_recorded_as_broken(db, broken_channel):
 
 
 def test_a_broken_channel_forces_a_message_out_of_a_silent_session(
-    db, broken_channel,
+    db,
+    broken_channel,
 ):
     """intra_check's ~14 OK ticks a day are deliberately silent. A broken
     alarm that is only reported by sessions that happened to be chatty is an
@@ -207,11 +220,12 @@ def test_a_broken_channel_forces_a_message_out_of_a_silent_session(
     result = alert_watchdog.verify_alert_channel(source="intra_check")
 
     message = alert_watchdog.annotate_session_message(
-        None, mode="intra_check", before=before, result=result,
+        None,
+        mode="intra_check",
+        before=before,
+        result=result,
     )
-    assert message is not None, (
-        f"{broken_channel.name}: a silent session swallowed a broken alarm"
-    )
+    assert message is not None, f"{broken_channel.name}: a silent session swallowed a broken alarm"
     assert "ALERT CHANNEL FAILED" in message
     assert broken_channel.expected_stage in message
 
@@ -272,8 +286,10 @@ def test_a_muted_channel_is_reported_broken_not_healthy(db, telegram_env, monkey
 # 3. Recovery — the one message that reaches him without him looking
 # ===========================================================================
 
+
 def test_recovery_is_reported_over_the_channel_that_just_came_back(
-    db, telegram_env,
+    db,
+    telegram_env,
 ):
     """While the channel is down nothing can reach him; the record and
     Mission Control are all there is. The moment it works again, the first
@@ -292,7 +308,10 @@ def test_recovery_is_reported_over_the_channel_that_just_came_back(
         result = alert_watchdog.verify_alert_channel(source="midday")
 
     message = alert_watchdog.annotate_session_message(
-        None, mode="midday", before=before, result=result,
+        None,
+        mode="midday",
+        before=before,
+        result=result,
     )
     assert message is not None
     assert "RECOVERED" in message
@@ -304,6 +323,7 @@ def test_recovery_is_reported_over_the_channel_that_just_came_back(
 # 4. Staleness — "nothing is known" is not "everything is fine"
 # ===========================================================================
 
+
 def test_a_stale_record_is_not_reported_as_healthy(db, telegram_env):
     """The checks themselves stopping is its own failure mode: sessions not
     firing, the daily timer disabled, the box asleep. Nothing is known to be
@@ -313,7 +333,10 @@ def test_a_stale_record_is_not_reported_as_healthy(db, telegram_env):
         hours=alert_watchdog.STALE_AFTER_HOURS + 2,
     )
     alert_watchdog.record_check(
-        ok=True, stage="delivered", source="morning", now=old,
+        ok=True,
+        stage="delivered",
+        source="morning",
+        now=old,
     )
 
     health = alert_watchdog.read_health()
@@ -328,7 +351,10 @@ def test_a_check_inside_the_window_is_not_stale(db):
         hours=alert_watchdog.STALE_AFTER_HOURS - 2,
     )
     alert_watchdog.record_check(
-        ok=True, stage="delivered", source="heartbeat_timer", now=recent,
+        ok=True,
+        stage="delivered",
+        source="heartbeat_timer",
+        now=recent,
     )
     assert alert_watchdog.read_health().status == "ok"
 
@@ -351,6 +377,7 @@ def test_a_broken_check_stays_broken_even_when_it_is_also_stale(db):
 # ===========================================================================
 # 5. Unknown — an unconfigured/unmeasured channel never reads as healthy
 # ===========================================================================
+
 
 def test_a_database_with_no_checks_reports_unknown_not_ok(db):
     health = alert_watchdog.read_health()
@@ -384,6 +411,7 @@ def test_a_missing_database_reports_unknown_rather_than_raising(tmp_path, monkey
 # ===========================================================================
 # 6. The watchdog must never become the fault
 # ===========================================================================
+
 
 def test_an_unwritable_database_does_not_break_the_check(tmp_path, monkeypatch, telegram_env):
     """A watchdog that can take a session down is worse than no watchdog.
@@ -452,9 +480,7 @@ def test_the_record_does_not_grow_without_bound(db, monkeypatch):
 
     conn = sqlite3.connect(db)
     try:
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM {alert_watchdog.TABLE}"
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM {alert_watchdog.TABLE}").fetchone()[0]
     finally:
         conn.close()
     assert count == 5
@@ -488,6 +514,7 @@ def test_the_detail_never_carries_the_bot_token(db, telegram_env):
 # 7. The sessions really do run it — end to end through main()
 # ===========================================================================
 
+
 def _fake_config(db_path: Path):
     return SimpleNamespace(
         storage=SimpleNamespace(db_path=str(db_path)),
@@ -519,7 +546,9 @@ def _run_session(monkeypatch, tmp_path, mode="intra_check", result=None):
 
 
 def test_a_real_session_verifies_and_records_the_alert_path(
-    tmp_path, monkeypatch, telegram_env,
+    tmp_path,
+    monkeypatch,
+    telegram_env,
 ):
     """The whole design in one test: the thing that depends on the alarm is
     the thing that tests it, as part of its own ordinary run."""
@@ -531,18 +560,16 @@ def test_a_real_session_verifies_and_records_the_alert_path(
     assert health.status == "ok"
     conn = sqlite3.connect(db_path)
     try:
-        sources = [
-            r[0] for r in conn.execute(
-                f"SELECT source FROM {alert_watchdog.TABLE}"
-            ).fetchall()
-        ]
+        sources = [r[0] for r in conn.execute(f"SELECT source FROM {alert_watchdog.TABLE}").fetchall()]
     finally:
         conn.close()
     assert sources == ["intra_check"]
 
 
 def test_a_real_session_on_a_broken_channel_records_it_and_shouts(
-    tmp_path, monkeypatch, telegram_env,
+    tmp_path,
+    monkeypatch,
+    telegram_env,
 ):
     """End to end, the load-bearing case: a session whose noise policy is
     silent, on a channel that is genuinely refusing sends, must still leave
@@ -550,10 +577,7 @@ def test_a_real_session_on_a_broken_channel_records_it_and_shouts(
     with patch("src.notifier.requests.post") as post:
         post.return_value = _response(401, {"ok": False, "description": "Unauthorized"})
         db_path = _run_session(monkeypatch, tmp_path)
-        sent = [
-            call.kwargs.get("json", {}).get("text", "")
-            for call in post.call_args_list
-        ]
+        sent = [call.kwargs.get("json", {}).get("text", "") for call in post.call_args_list]
 
     health = alert_watchdog.read_health(db_path)
     assert health.status == "broken"
@@ -565,7 +589,9 @@ def test_a_real_session_on_a_broken_channel_records_it_and_shouts(
 
 
 def test_the_watchdog_never_replaces_the_sessions_own_exception(
-    tmp_path, monkeypatch, telegram_env,
+    tmp_path,
+    monkeypatch,
+    telegram_env,
 ):
     """It runs inside `finally`. A raise there would hide the real fault
     behind a watchdog bug — the failure mode that makes a watchdog a
@@ -577,13 +603,16 @@ def test_the_watchdog_never_replaces_the_sessions_own_exception(
     pipeline.run_intra_check.side_effect = boom
 
     monkeypatch.setattr(
-        main_mod, "load_config", lambda _p: _fake_config(tmp_path / "x.db"),
+        main_mod,
+        "load_config",
+        lambda _p: _fake_config(tmp_path / "x.db"),
     )
     monkeypatch.setattr(main_mod, "refresh_pricing", lambda: None)
     monkeypatch.setattr(main_mod, "TradingPipeline", lambda _c: pipeline)
     monkeypatch.setattr("sys.argv", ["main.py", "--mode", "intra_check"])
     monkeypatch.setattr(
-        alert_watchdog, "verify_alert_channel",
+        alert_watchdog,
+        "verify_alert_channel",
         MagicMock(side_effect=RuntimeError("watchdog is itself broken")),
     )
 
@@ -598,8 +627,11 @@ def test_the_watchdog_never_replaces_the_sessions_own_exception(
 # 8. Mission Control renders it — including the states that are NOT faults
 # ===========================================================================
 
+
 def test_the_health_endpoint_reports_a_broken_channel_as_degraded(
-    db, telegram_env, monkeypatch,
+    db,
+    telegram_env,
+    monkeypatch,
 ):
     import src.api.routes_live as routes_live
 
@@ -608,7 +640,9 @@ def test_the_health_endpoint_reports_a_broken_channel_as_degraded(
         alert_watchdog.verify_alert_channel(source="morning")
 
     monkeypatch.setattr(
-        routes_live, "check_broker_reachable", lambda: True,
+        routes_live,
+        "check_broker_reachable",
+        lambda: True,
     )
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
     monkeypatch.setattr(
@@ -620,8 +654,7 @@ def test_the_health_endpoint_reports_a_broken_channel_as_degraded(
     assert response.alert_channel is not None
     assert response.alert_channel["status"] == "broken"
     assert response.status == "degraded", (
-        "a desk that cannot raise an alarm hides every other fault on this "
-        "board, so it must not render green"
+        "a desk that cannot raise an alarm hides every other fault on this board, so it must not render green"
     )
 
 
@@ -642,7 +675,8 @@ def test_the_health_endpoint_never_omits_the_alert_channel(monkeypatch):
 
 
 def test_the_health_endpoint_does_not_flip_red_on_a_fresh_database(
-    db, monkeypatch,
+    db,
+    monkeypatch,
 ):
     """`unknown` is a missing measurement, not a detected fault. A board
     that is red on every fresh deploy teaches the operator to ignore red —
@@ -666,7 +700,9 @@ def test_the_db_reads_helper_never_raises_without_config(monkeypatch):
     from src.api import db_reads
 
     monkeypatch.setattr(
-        db_reads, "get_db_path", MagicMock(side_effect=RuntimeError("no config")),
+        db_reads,
+        "get_db_path",
+        MagicMock(side_effect=RuntimeError("no config")),
     )
     payload = db_reads.get_alert_channel_health()
     assert payload["status"] == "unknown"
@@ -676,6 +712,7 @@ def test_the_db_reads_helper_never_raises_without_config(monkeypatch):
 # 9. The probe is reused, not reimplemented
 # ===========================================================================
 
+
 def test_the_watchdog_uses_the_notifiers_own_probe(db, telegram_env):
     """A second implementation of 'is the channel alive' is a self-test that
     can pass while the path it stands in for is broken. The message shape,
@@ -683,7 +720,9 @@ def test_the_watchdog_uses_the_notifiers_own_probe(db, telegram_env):
     ones."""
     notifier = TelegramNotifier()
     with patch.object(
-        notifier, "probe", return_value=ProbeResult(True, "delivered"),
+        notifier,
+        "probe",
+        return_value=ProbeResult(True, "delivered"),
     ) as probe:
         alert_watchdog.verify_alert_channel(notifier, source="close")
     probe.assert_called_once_with()
@@ -702,6 +741,7 @@ def test_the_watchdog_uses_the_notifiers_own_probe(db, telegram_env):
 # ProbeResult(ok=False, stage="transport")) and every request it makes is
 # bounded by `HTTP_TIMEOUT_S`. These tests hold both properties down.
 
+
 def test_every_probe_request_is_bounded_by_a_timeout(telegram_env):
     """The structural guarantee: no socket the watchdog opens can hang.
 
@@ -711,8 +751,7 @@ def test_every_probe_request_is_bounded_by_a_timeout(telegram_env):
     """
     assert TelegramNotifier.HTTP_TIMEOUT_S > 0
     assert TelegramNotifier.HTTP_TIMEOUT_S <= 15, (
-        f"HTTP_TIMEOUT_S={TelegramNotifier.HTTP_TIMEOUT_S}s is too long to sit "
-        "on the trading path"
+        f"HTTP_TIMEOUT_S={TelegramNotifier.HTTP_TIMEOUT_S}s is too long to sit on the trading path"
     )
 
     with patch("src.notifier.requests.post") as post:
@@ -735,13 +774,14 @@ def test_a_slow_endpoint_delays_a_session_by_at_most_its_timeout(telegram_env):
     """
     worst_case = 2 * TelegramNotifier.HTTP_TIMEOUT_S
     assert worst_case <= 30, (
-        f"worst-case watchdog delay is {worst_case}s — too much to add to a "
-        "session on the trading path"
+        f"worst-case watchdog delay is {worst_case}s — too much to add to a session on the trading path"
     )
 
 
 def test_a_watchdog_that_hangs_cannot_block_the_sessions_own_alert(
-    tmp_path, monkeypatch, telegram_env,
+    tmp_path,
+    monkeypatch,
+    telegram_env,
 ):
     """Ordering: the session's own message still goes out after a dead probe.
 

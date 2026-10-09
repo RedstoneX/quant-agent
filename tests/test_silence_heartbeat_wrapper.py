@@ -6,6 +6,7 @@ trading-mode timer is enabled before it checks anything else. An alarm that
 cries wolf about a thing somebody chose on purpose gets muted, and a muted
 alarm is the failure item 17c exists to prevent.
 """
+
 import os
 import subprocess
 import sys
@@ -28,16 +29,11 @@ def _env_with_fake_systemctl(tmp_path: Path, *, running: bool) -> dict:
     # stopping the timers, which leaves them all still reading "enabled".
     _write_executable(
         bin_dir / "systemctl",
-        "#!/bin/bash\n"
-        '[[ \"$2\" == is-active ]] || exit 1\n'
-        "exit {}\n".format(0 if running else 1),
+        '#!/bin/bash\n[[ "$2" == is-active ]] || exit 1\nexit {}\n'.format(0 if running else 1),
     )
     _write_executable(
         tmp_path / "timeout",
-        "#!/bin/bash\n"
-        "# drop the timeout flags, then report rather than run\n"
-        "shift 3\n"
-        'echo \"WOULD RUN: $*\"\n',
+        '#!/bin/bash\n# drop the timeout flags, then report rather than run\nshift 3\necho "WOULD RUN: $*"\n',
     )
     return os.environ | {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -53,7 +49,9 @@ def test_a_paused_desk_is_not_reported_as_a_silent_one(tmp_path):
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         env=_env_with_fake_systemctl(tmp_path, running=False),
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "paused on purpose" in result.stdout
@@ -70,7 +68,9 @@ def test_a_paused_desk_still_gets_the_reminder_path(tmp_path):
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         env=_env_with_fake_systemctl(tmp_path, running=False),
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "WOULD RUN" in result.stdout
@@ -81,7 +81,9 @@ def test_a_running_desk_still_gets_checked(tmp_path):
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         env=_env_with_fake_systemctl(tmp_path, running=True),
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "scripts/silence_heartbeat.py" in result.stdout
@@ -94,7 +96,9 @@ def test_the_pause_check_can_be_bypassed_by_hand(tmp_path):
     result = subprocess.run(
         ["bash", str(SCRIPT), "--paused-ok"],
         env=_env_with_fake_systemctl(tmp_path, running=False),
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "scripts/silence_heartbeat.py" in result.stdout

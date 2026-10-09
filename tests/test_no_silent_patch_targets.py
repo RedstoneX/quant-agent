@@ -10,6 +10,7 @@ config/check_allowlists/struct_silent_patch_targets.txt (shrink-only, sorted).
 Nothing is compared with any trunk.  A site not in the list fails, and so does a
 listed site that no longer occurs.
 """
+
 from __future__ import annotations
 
 from scripts import struct_allowlist

@@ -16,52 +16,100 @@ from pathlib import Path
 
 import yfinance as yf
 from alpaca.trading.client import TradingClient
+
 try:
     from alpaca.trading.stream import TradingStream
 except ImportError:  # pragma: no cover - optional dependency surface
     TradingStream = None
 from alpaca.trading.requests import (
-    MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest,
+    MarketOrderRequest,
+    LimitOrderRequest,
+    StopLimitOrderRequest,
     StopOrderRequest,
-    TakeProfitRequest, StopLossRequest, ReplaceOrderRequest,
+    TakeProfitRequest,
+    StopLossRequest,
+    ReplaceOrderRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
-from src.stop_cancel_outcome import (StopCancelOutcome, StopCoverageLost, settle_cancel)
+from src.stop_cancel_outcome import StopCancelOutcome, StopCoverageLost, settle_cancel
 from src.models import Position
 from src import sector_reference as _sector_reference
+
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
 # imports nothing from this module, so this is a leaf dependency.
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 from src.execution.held_qty import cover_qty_for_rearm
 from src.execution.broker_parts.stop_amend import (  # noqa: F401 (re-exports keep patch targets)
-    StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
+    StopAmender,
+    _AMEND_NOT_ATTEMPTED,
+    _is_terminal_broker_rejection,
+    _quantize_price,
 )
 from src.execution.broker_parts.stop_place import (  # noqa: F401 (re-exports keep patch targets)
-    StopPlacer, PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
+    StopPlacer,
+    PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES,
+    PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
+    _STOP_PLACEMENT_MAX_ATTEMPTS,
+    _STOP_PLACEMENT_BACKOFF_S,
+    _FRACTIONAL_QTY_EPSILON,
+    PROTECTIVE_ORDER_ACTIVE_STATUSES,
+    _is_held_for_orders_error,
+    _is_unsupported_stop_market_rejection,
+    _split_protective_qty,
+    _derive_stop_tif,
+    _alpaca_symbol,
+    _internal_symbol,
+    real_broker_order_id,
 )
 from src.execution.broker_parts.order_desk import (  # noqa: F401 (re-exports keep patch targets)
-    OrderDesk, _PLAIN_PRICE_LABELS, _outlier_refusal_detail, _is_terminal_submission_rejection,
+    OrderDesk,
+    _PLAIN_PRICE_LABELS,
+    _outlier_refusal_detail,
+    _is_terminal_submission_rejection,
 )
 from src.execution.broker_parts.account_reads import AccountReads
 from src.sentinel.guarded import attach_reconciliation_db, record_guarded_pass  # noqa: F401 (re-export)
 from src.execution.order_gates import BadOrderQuantity, QTY_REJECTED, check_order_quantity  # noqa: F401 (re-exports keep patch targets)
 from src.execution.order_idempotency import _client_order_id, _is_dead_stop_result, _session_date_key  # noqa: F401 (re-exports keep patch targets)
 from src.execution.broker_parts.trade_stream import (  # noqa: F401 (re-exports keep patch targets)
-    TradeStreamAuthRejected, TradeStreamGaveUp, TradeStreamWarmup, _ALPACA_STREAM_AUTH_DEADLINE_S,
-    _ALPACA_STREAM_RECONNECT_MAX_S, _ALPACA_STREAM_RECONNECT_MIN_S, _HubWaiter,
-    _STREAM_ATTEMPT_BUDGET, _STREAM_ATTEMPT_CEILING_PER_DAY, _STREAM_ATTEMPT_CEILING_PER_SESSION,
-    _STREAM_AUTH_DEPRECATION_MARKER, _STREAM_RATE_LIMIT_STAND_DOWN_S, _StreamAttemptBudget,
-    _TRADE_UPDATES_STREAM_LOCK, _TradeUpdatesHub, _TradeUpdatesLease, _alert_stream_gave_up,
-    _credential_fingerprint, _default_trade_updates_lease_path, _equal_jitter_backoff,
-    _fell_back_to_deprecated_auth, _install_trading_stream_auth_diagnostics,
-    _install_trading_stream_reconnect_guard, _note_current_auth_format_accepted,
-    _note_stream_auth_deprecation, _parse_stream_auth_reply, _stream_giveup_owner_message,
-    _stream_http_status, _stream_retry_after_seconds, _trading_stream_reconnect_delay,
+    TradeStreamAuthRejected,
+    TradeStreamGaveUp,
+    TradeStreamWarmup,
+    _ALPACA_STREAM_AUTH_DEADLINE_S,
+    _ALPACA_STREAM_RECONNECT_MAX_S,
+    _ALPACA_STREAM_RECONNECT_MIN_S,
+    _HubWaiter,
+    _STREAM_ATTEMPT_BUDGET,
+    _STREAM_ATTEMPT_CEILING_PER_DAY,
+    _STREAM_ATTEMPT_CEILING_PER_SESSION,
+    _STREAM_AUTH_DEPRECATION_MARKER,
+    _STREAM_RATE_LIMIT_STAND_DOWN_S,
+    _StreamAttemptBudget,
+    _TRADE_UPDATES_STREAM_LOCK,
+    _TradeUpdatesHub,
+    _TradeUpdatesLease,
+    _alert_stream_gave_up,
+    _credential_fingerprint,
+    _default_trade_updates_lease_path,
+    _equal_jitter_backoff,
+    _fell_back_to_deprecated_auth,
+    _install_trading_stream_auth_diagnostics,
+    _install_trading_stream_reconnect_guard,
+    _note_current_auth_format_accepted,
+    _note_stream_auth_deprecation,
+    _parse_stream_auth_reply,
+    _stream_giveup_owner_message,
+    _stream_http_status,
+    _stream_retry_after_seconds,
+    _trading_stream_reconnect_delay,
     TradeStreamWaits,
 )
 from src.execution.broker_parts.market_data import (  # noqa: F401 (re-exports keep patch targets)
-    LivePrice, _BROKER_HTTP_TIMEOUT, _install_http_timeout, MarketData,
+    LivePrice,
+    _BROKER_HTTP_TIMEOUT,
+    _install_http_timeout,
+    MarketData,
 )
 
 from src.execution.broker_parts.stop_order_snapshot import snapshot_stop_order
@@ -164,9 +212,7 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 #:
 #: `pending_cancel` stays OUT of both sets: a dying order is never
 #: protection, whichever question is being asked.
-PROTECTIVE_ORDER_ALIVE_STATUSES = (
-    PROTECTIVE_ORDER_ACTIVE_STATUSES | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
-)
+PROTECTIVE_ORDER_ALIVE_STATUSES = PROTECTIVE_ORDER_ACTIVE_STATUSES | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
 
 
 # `real_broker_order_id` moved to src/execution/broker_parts/stop_place.py (re-exported above).
@@ -219,11 +265,17 @@ class AlpacaBroker:
     #: 2026-09-17, on in production again since 2026-09-18);
     #: src/pipeline.py is the only site that passes it.
     _fill_stream_enabled: bool = False
-    def __init__(self, api_key: str, secret_key: str, paper: bool = True,
-                 kill_switch_path: str | None = None,
-                 trade_updates_lease_path: str | None = None,
-                 fill_stream_enabled: bool = False,
-                 max_position_pct: float | None = None):
+
+    def __init__(
+        self,
+        api_key: str,
+        secret_key: str,
+        paper: bool = True,
+        kill_switch_path: str | None = None,
+        trade_updates_lease_path: str | None = None,
+        fill_stream_enabled: bool = False,
+        max_position_pct: float | None = None,
+    ):
         self.api_key = api_key
         self._max_position_pct = max_position_pct  # RiskConfig via src/pipeline.py; None = no notional check
         self.secret_key = secret_key
@@ -243,9 +295,7 @@ class AlpacaBroker:
         # this parameter and never threads a path through (e.g. an isolated
         # unit test building `AlpacaBroker` directly) — `src/pipeline.py`
         # always passes the configured path. See `_kill_switch_active`.
-        self._kill_switch_path = (
-            Path(kill_switch_path) if kill_switch_path else None
-        )
+        self._kill_switch_path = Path(kill_switch_path) if kill_switch_path else None
         # Per-date cache for is_trading_day. Trading-day status is set by
         # the exchange calendar months in advance — invariant within the
         # day — so a per-date dict that grows unbounded over a multi-year
@@ -363,16 +413,18 @@ class AlpacaBroker:
         positions = []
         for p in raw_positions:
             symbol = _internal_symbol(p.symbol)
-            positions.append(Position(
-                symbol=symbol,
-                qty=float(p.qty),
-                avg_entry=float(p.avg_entry_price),
-                current_price=float(p.current_price),
-                market_value=float(p.market_value),
-                unrealized_pnl=float(p.unrealized_pl),
-                unrealized_intraday_pnl=float(getattr(p, "unrealized_intraday_pl", 0) or 0),
-                sector=_sector_reference._get_sector(symbol),
-            ))
+            positions.append(
+                Position(
+                    symbol=symbol,
+                    qty=float(p.qty),
+                    avg_entry=float(p.avg_entry_price),
+                    current_price=float(p.current_price),
+                    market_value=float(p.market_value),
+                    unrealized_pnl=float(p.unrealized_pl),
+                    unrealized_intraday_pnl=float(getattr(p, "unrealized_intraday_pl", 0) or 0),
+                    sector=_sector_reference._get_sector(symbol),
+                )
+            )
         return positions
 
     def is_trading_day(self, *args, **kwargs):
@@ -398,7 +450,6 @@ class AlpacaBroker:
     def _session_edge(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
         return self._account_reads()._session_edge(*args, **kwargs)
-
 
     def _market_data(self) -> MarketData:
         """Thin shim: builds the standalone object from this broker's collaborators
@@ -452,11 +503,9 @@ class AlpacaBroker:
     def _extract_symbol_payload(self, *args, **kwargs):
         return self._market_data()._extract_symbol_payload(*args, **kwargs)
 
-
     def get_current_stop_price(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
         return self._account_reads().get_current_stop_price(*args, **kwargs)
-
 
     def _order_desk(self) -> OrderDesk:
         """Thin shim: builds the standalone order desk from this broker's collaborators
@@ -497,7 +546,10 @@ class AlpacaBroker:
         return self._order_desk().cancel_open_orders(*args, **kwargs)
 
     def snapshot_protective_stops(
-        self, symbol: str, *, side: str = "sell",
+        self,
+        symbol: str,
+        *,
+        side: str = "sell",
     ) -> tuple[bool, list[dict]]:
         """List + snapshot open protective stop orders WITHOUT cancelling them.
 
@@ -505,7 +557,9 @@ class AlpacaBroker:
         return _stop_cancel.snapshot_protective_stops(self, symbol, side=side)
 
     def cancel_snapshotted_stops(
-        self, symbol: str, specs: list[dict],
+        self,
+        symbol: str,
+        specs: list[dict],
     ) -> StopCancelOutcome:
         """Cancel pre-snapshotted protective stops by id.
 
@@ -519,7 +573,10 @@ class AlpacaBroker:
         return _stop_cancel.cancel_protective_stops(self, symbol)
 
     def cancel_stray_protective_stops(
-        self, symbol: str, *, side: str = "sell",
+        self,
+        symbol: str,
+        *,
+        side: str = "sell",
     ) -> int:
         """Cancel every protective stop still resting on a symbol that is
 
@@ -557,10 +614,17 @@ class AlpacaBroker:
     #: `OrderStatus`/`TradeEvent` values that mean "this order will not
     #: change again" — shared between the stream and polling paths so the
     #: two mechanisms can never quietly disagree about what "terminal" means.
-    _ORDER_TERMINAL_STATES = frozenset({
-        "filled", "canceled", "cancelled", "expired", "rejected",
-        "done_for_day", "replaced",
-    })
+    _ORDER_TERMINAL_STATES = frozenset(
+        {
+            "filled",
+            "canceled",
+            "cancelled",
+            "expired",
+            "rejected",
+            "done_for_day",
+            "replaced",
+        }
+    )
 
     #: Statuses in which Alpaca has the order but the EXECUTION VENUE does
     #: not yet. Source: Alpaca's own order-lifecycle reference
@@ -661,7 +725,6 @@ class AlpacaBroker:
     def _wait_for_order_status_via_stream_locked(self, *args, **kwargs):
         return self._trade_stream_waits()._wait_for_order_status_via_stream_locked(*args, **kwargs)
 
-
     def wait_for_order_at_exchange(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
         return self._order_desk().wait_for_order_at_exchange(*args, **kwargs)
@@ -677,7 +740,6 @@ class AlpacaBroker:
     def _wait_for_order_terminal_via_stream(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
         return self._order_desk()._wait_for_order_terminal_via_stream(*args, **kwargs)
-
 
     def _wait_for_order_terminal_via_polling(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
@@ -717,10 +779,18 @@ class AlpacaBroker:
     STOP_LIMIT_BUFFER_PCT = 0.03
 
     # Order states that mean "this order can never fill another share".
-    _TERMINAL_ORDER_STATES = frozenset({
-        "filled", "canceled", "cancelled", "expired", "rejected",
-        "done_for_day", "stopped", "suspended",
-    })
+    _TERMINAL_ORDER_STATES = frozenset(
+        {
+            "filled",
+            "canceled",
+            "cancelled",
+            "expired",
+            "rejected",
+            "done_for_day",
+            "stopped",
+            "suspended",
+        }
+    )
 
     # Bounded number of `replaced_by` hops to follow when resolving what a
     # replaced order became. Each re-peg adds exactly one hop and re-pegs are
@@ -745,8 +815,13 @@ class AlpacaBroker:
         return self._order_desk().await_replacement_confirmed(*args, **kwargs)
 
     def place_entry_protection(
-        self, symbol: str, order_id: str, stop_price: float,
-        *, requested_qty: float | None = None, side: str = "buy",
+        self,
+        symbol: str,
+        order_id: str,
+        stop_price: float,
+        *,
+        requested_qty: float | None = None,
+        side: str = "buy",
         superseded_filled_qty: float = 0.0,
         on_unfilled_cancel=None,
         cover_full_position: bool = False,
@@ -755,7 +830,19 @@ class AlpacaBroker:
         """Wait for an entry order to reach terminal, then place a GTC
 
         Thin shim: body moved to src/execution/broker_parts/entry_protection.py."""
-        return _entry_protection.place_entry_protection(self, symbol, order_id, stop_price, requested_qty=requested_qty, side=side, superseded_filled_qty=superseded_filled_qty, on_unfilled_cancel=on_unfilled_cancel, cover_full_position=cover_full_position, held_qty_before=held_qty_before, _ENTRY_FILL_TIMEOUT_S=_ENTRY_FILL_TIMEOUT_S)
+        return _entry_protection.place_entry_protection(
+            self,
+            symbol,
+            order_id,
+            stop_price,
+            requested_qty=requested_qty,
+            side=side,
+            superseded_filled_qty=superseded_filled_qty,
+            on_unfilled_cancel=on_unfilled_cancel,
+            cover_full_position=cover_full_position,
+            held_qty_before=held_qty_before,
+            _ENTRY_FILL_TIMEOUT_S=_ENTRY_FILL_TIMEOUT_S,
+        )
 
     def _stop_placer(self) -> StopPlacer:
         """Thin shim: builds the standalone placer from this broker's collaborators
@@ -773,9 +860,11 @@ class AlpacaBroker:
             cancel_snapshotted_stops=self.cancel_snapshotted_stops,
             get_positions=self.get_positions,
             kill_switch_active=self._kill_switch_active,
-            kill_switch_path=self._kill_switch_path, wait_for_order_terminal=self.wait_for_order_terminal,
+            kill_switch_path=self._kill_switch_path,
+            wait_for_order_terminal=self.wait_for_order_terminal,
             protective_stop_block_recorder=self.protective_stop_block_recorder,
-            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT, window_log=self.__dict__.setdefault("_unprotected_windows", []),
+            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT,
+            window_log=self.__dict__.setdefault("_unprotected_windows", []),
             # Six collaborators below are themselves moved bodies, so the
             # placer already owns them. Passing this broker's same-named shim
             # would overwrite the placer's own method with a function that
@@ -818,7 +907,10 @@ class AlpacaBroker:
         return self._order_desk().close_position(*args, **kwargs)
 
     def _list_open_stop_orders_by_side(
-        self, symbol: str, *, errors: list | None = None,
+        self,
+        symbol: str,
+        *,
+        errors: list | None = None,
     ) -> tuple[list, list]:
         """Single order-book fetch for `symbol`, split into (sell_stops, buy_stops).
 
@@ -842,8 +934,13 @@ class AlpacaBroker:
             )
             record_guarded_pass(self, "replace_stop_loss.list_open_orders", context={"symbol": symbol})
         except Exception as exc:
-            record_guarded_pass(self, "replace_stop_loss.list_open_orders", exc, log=logger,
-                       context={"symbol": symbol, "effect": "no stop orders returned to the caller"})
+            record_guarded_pass(
+                self,
+                "replace_stop_loss.list_open_orders",
+                exc,
+                log=logger,
+                context={"symbol": symbol, "effect": "no stop orders returned to the caller"},
+            )
             # Board item 172 — same contract as the sell-side lister above.
             if errors is not None:
                 errors.append(f"open-order listing failed: {exc}")
@@ -852,12 +949,12 @@ class AlpacaBroker:
         sell_orders: list = []
         buy_orders: list = []
         for order in orders or []:
-            order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                    getattr(order, "order_type", ""))).lower()
+            order_type = str(
+                getattr(getattr(order, "order_type", None), "value", getattr(order, "order_type", ""))
+            ).lower()
             if "stop" not in order_type:
                 continue
-            order_side = str(getattr(getattr(order, "side", None), "value",
-                                    getattr(order, "side", ""))).lower()
+            order_side = str(getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))).lower()
             if order_side == "sell":
                 sell_orders.append(order)
             elif order_side == "buy":
@@ -865,7 +962,11 @@ class AlpacaBroker:
         return sell_orders, buy_orders
 
     def _list_open_protective_stop_orders(
-        self, symbol: str, *, side: str = "sell", errors: list | None = None,
+        self,
+        symbol: str,
+        *,
+        side: str = "sell",
+        errors: list | None = None,
     ) -> list:
         """List open stop orders on `side` for `symbol`.
 
@@ -880,7 +981,8 @@ class AlpacaBroker:
         """
         if side.lower() == "buy":
             _, buy_orders = self._list_open_stop_orders_by_side(
-                symbol, errors=errors,
+                symbol,
+                errors=errors,
             )
             return buy_orders
         return self._list_open_sell_stop_orders(symbol, errors=errors)
@@ -907,18 +1009,23 @@ class AlpacaBroker:
             )
             record_guarded_pass(self, "replace_stop_loss.list_open_orders_buyside", context={"symbol": symbol})
         except Exception as exc:
-            record_guarded_pass(self, "replace_stop_loss.list_open_orders_buyside", exc, log=logger,
-                       context={"symbol": symbol, "effect": "no stop orders returned to the caller"})
+            record_guarded_pass(
+                self,
+                "replace_stop_loss.list_open_orders_buyside",
+                exc,
+                log=logger,
+                context={"symbol": symbol, "effect": "no stop orders returned to the caller"},
+            )
             if errors is not None:
                 errors.append(f"open-order listing failed: {exc}")
             return []
 
         stop_orders = []
         for order in orders or []:
-            order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                    getattr(order, "order_type", ""))).lower()
-            order_side = str(getattr(getattr(order, "side", None), "value",
-                                    getattr(order, "side", ""))).lower()
+            order_type = str(
+                getattr(getattr(order, "order_type", None), "value", getattr(order, "order_type", ""))
+            ).lower()
+            order_side = str(getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))).lower()
             if "stop" in order_type and order_side == "sell":
                 stop_orders.append(order)
         return stop_orders
@@ -956,7 +1063,9 @@ class AlpacaBroker:
 
     def _classify_after_dead_replacement(self, *, symbol: str, spec: dict, new_price: float, leg: dict) -> str:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
-        return self._stop_amender()._classify_after_dead_replacement(symbol=symbol, spec=spec, new_price=new_price, leg=leg)
+        return self._stop_amender()._classify_after_dead_replacement(
+            symbol=symbol, spec=spec, new_price=new_price, leg=leg
+        )
 
     def _amend_one_stop_price(self, **kw) -> dict:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
@@ -964,9 +1073,17 @@ class AlpacaBroker:
 
     _stop_order_amendable_in_place = staticmethod(StopAmender._stop_order_amendable_in_place)
 
-    def _amend_resting_stop_price(self, *, symbol: str, live_orders: list, stop_specs: list[dict], new_stop_price: float, position_qty: float):
+    def _amend_resting_stop_price(
+        self, *, symbol: str, live_orders: list, stop_specs: list[dict], new_stop_price: float, position_qty: float
+    ):
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
-        return self._stop_amender()._amend_resting_stop_price(symbol=symbol, live_orders=live_orders, stop_specs=stop_specs, new_stop_price=new_stop_price, position_qty=position_qty)
+        return self._stop_amender()._amend_resting_stop_price(
+            symbol=symbol,
+            live_orders=live_orders,
+            stop_specs=stop_specs,
+            new_stop_price=new_stop_price,
+            position_qty=position_qty,
+        )
 
     def replace_stop_loss(self, *args, **kwargs):
         """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
@@ -991,12 +1108,21 @@ from src.execution.broker_parts import trade_stream as _trade_stream_part
 # is mirrored into the owning module (via _MIRRORED_PARTS) and a read is always
 # live from it. The copy kept in this module's dict exists so `unittest.mock.patch`
 # sees the name as local and restores it with a plain setattr, which writes through.
-_SECTOR_MIRROR_NAMES = frozenset({
-    "_get_sector", "_sector_resolution_status_for", "_canonicalize_sector",
-    "_sector_cache", "_sector_lock", "_sector_resolution_status",
-    "_INDEX_ETFS", "_ETF_SECTORS", "_SECTOR_LOOKUP_TIMEOUT_S",
-    "_ALLOWED_SECTORS", "_SECTOR_ALIASES",
-})
+_SECTOR_MIRROR_NAMES = frozenset(
+    {
+        "_get_sector",
+        "_sector_resolution_status_for",
+        "_canonicalize_sector",
+        "_sector_cache",
+        "_sector_lock",
+        "_sector_resolution_status",
+        "_INDEX_ETFS",
+        "_ETF_SECTORS",
+        "_SECTOR_LOOKUP_TIMEOUT_S",
+        "_ALLOWED_SECTORS",
+        "_SECTOR_ALIASES",
+    }
+)
 _MIRRORED_PARTS = (_trade_stream_part, *_trade_stream_part._SPLIT_PARTS, _market_data_part, _sector_reference)
 _FORWARDED_GLOBALS = {
     "_stream_auth_deprecation_logged": _trade_stream_part._SPLIT_PARTS[1],

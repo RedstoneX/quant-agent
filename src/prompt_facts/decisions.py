@@ -23,15 +23,15 @@ class PromptDecisions:
     """Recent risk verdicts, recent PM decisions, review metric deltas and own recent decisions; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         parse_logged_agent_response=None,
     ) -> None:
         self.db = db
         self._parse_logged_agent_response = parse_logged_agent_response  # the host's parser, handed in
 
-    def _cut_candidates(self, *, agent_name: str, limit: int,
-                        before_date: str | None, where: str) -> list[dict]:
+    def _cut_candidates(self, *, agent_name: str, limit: int, before_date: str | None, where: str) -> list[dict]:
         """The limited read, plus one row recording what the LIMIT hid.
 
         The cut used to happen inside the query, so the number of candidates
@@ -45,23 +45,31 @@ class PromptDecisions:
         formed later in the session and is not observable at this site.
         """
         rows = self.db.get_recent_agent_outputs(
-            agent_name=agent_name, limit=limit, before_date=before_date,
+            agent_name=agent_name,
+            limit=limit,
+            before_date=before_date,
         )
         try:
             before = count_recent_agent_outputs(
-                conn=self.db.conn, lock=self.db._lock,
-                agent_name=agent_name, before_date=before_date,
+                conn=self.db.conn,
+                lock=self.db._lock,
+                agent_name=agent_name,
+                before_date=before_date,
             )
         except Exception:  # noqa: BLE001 - an observer never breaks the prompt
             record_swallowed_here(where, log=logger)
             return rows
         ReconciliationLog(conn=self.db.conn).record(
-            kind=where, agreed=True, detail=json.dumps({
-                "candidates_before_cut": before, "survived": len(rows),
-                "cut_limit": limit,
-                "oldest_surviving": min(
-                    (r.get("timestamp") or "") for r in rows)[:10] if rows else None,
-            }),
+            kind=where,
+            agreed=True,
+            detail=json.dumps(
+                {
+                    "candidates_before_cut": before,
+                    "survived": len(rows),
+                    "cut_limit": limit,
+                    "oldest_surviving": min((r.get("timestamp") or "") for r in rows)[:10] if rows else None,
+                }
+            ),
         )
         return rows
 
@@ -74,7 +82,8 @@ class PromptDecisions:
         """
         try:
             rows = self._cut_candidates(
-                agent_name="risk_manager", limit=limit,
+                agent_name="risk_manager",
+                limit=limit,
                 before_date=session_date_key(),
                 where="prompt_facts.rm_recent_verdicts.cut",
             )
@@ -95,7 +104,8 @@ class PromptDecisions:
                 # corruption pattern shows up in logs.
                 logger.warning(
                     "rm_recent_verdicts: JSON parse failed for row %s: %s",
-                    ts or "?", "no decision object found",
+                    ts or "?",
+                    "no decision object found",
                 )
                 continue
             approved = data.get("approved")
@@ -121,11 +131,10 @@ class PromptDecisions:
             # because a display line must never raise on a historical row.
             rejected = data.get("rejected_symbols") or []
             if isinstance(rejected, list):
-                rej_syms = sorted({
-                    (r.get("symbol") if isinstance(r, dict) else r)
-                    for r in rejected
-                    if isinstance(r, (dict, str))
-                } - {None, ""})
+                rej_syms = sorted(
+                    {(r.get("symbol") if isinstance(r, dict) else r) for r in rejected if isinstance(r, (dict, str))}
+                    - {None, ""}
+                )
                 if rej_syms:
                     extras.append(f"refused {', '.join(str(s) for s in rej_syms)}")
             tag = f" [{'; '.join(extras)}]"
@@ -137,7 +146,8 @@ class PromptDecisions:
         """PM's own last N decision sets — used to spot flip-flopping against itself."""
         try:
             rows = self._cut_candidates(
-                agent_name="portfolio_manager", limit=limit,
+                agent_name="portfolio_manager",
+                limit=limit,
                 before_date=session_date_key(),
                 where="prompt_facts.pm_recent_decisions.cut",
             )
@@ -156,7 +166,8 @@ class PromptDecisions:
                 # the gap; same fix as L5 / L3d / L3f builders.
                 logger.warning(
                     "pm_recent_decisions: JSON parse failed for row %s: %s",
-                    ts or "?", "no decision object found",
+                    ts or "?",
+                    "no decision object found",
                 )
                 continue
             # Phase 2: new schema emits `targets` (target weights + thesis);
@@ -224,12 +235,13 @@ class PromptDecisions:
             return {}
         try:
             prior_rows = self.db.get_prior_position_review_metrics(
-                symbols, exclude_run_id=run_id,
+                symbols,
+                exclude_run_id=run_id,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "review memory: prior-metric read failed (%s) — this review "
-                "runs without memory of its own last look", e,
+                "review memory: prior-metric read failed (%s) — this review runs without memory of its own last look",
+                e,
             )
             prior_rows = {}
         deltas: dict = {}
@@ -241,12 +253,15 @@ class PromptDecisions:
                     prior = _json.loads(row.get("evidence_json") or "{}")
                 except (TypeError, ValueError) as e:
                     logger.warning(
-                        "review memory: %s prior snapshot is unparseable (%s) — "
-                        "treating as no prior", symbol, e,
+                        "review memory: %s prior snapshot is unparseable (%s) — treating as no prior",
+                        symbol,
+                        e,
                     )
                     prior = None
             deltas[symbol.upper()] = compute_deltas(
-                symbol, prior, current,
+                symbol,
+                prior,
+                current,
                 prior_timestamp=(row or {}).get("timestamp"),
             )
         return deltas
@@ -265,7 +280,9 @@ class PromptDecisions:
             # cutoff excluded exactly those rows. The current session's own
             # row is inserted AFTER this builder runs, so no self-read.
             rows = self._cut_candidates(
-                agent_name="position_reviewer", limit=limit, before_date=None,
+                agent_name="position_reviewer",
+                limit=limit,
+                before_date=None,
                 where="prompt_facts.own_recent_decisions.cut",
             )
         except Exception as e:

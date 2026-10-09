@@ -5,6 +5,7 @@ plant the exact shape that emptied `trades.entry_atr` for the whole life of
 that feature, assert the guard names it, then remove the plant and assert the
 same guard goes quiet.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -27,15 +28,15 @@ numbers:
       state: specified
 """
 
-_VIOLATION = '''
+_VIOLATION = """
 def write_entry(db, decision, analysis):
     db.record_trade(
         symbol=decision.symbol,
         entry_atr=getattr(analysis, "atr_14", None),
     )
-'''
+"""
 
-_CLEAN = '''
+_CLEAN = """
 from src.recording_accessors import pinned_evidence
 
 
@@ -44,12 +45,12 @@ def write_entry(db, decision, analysis):
         symbol=decision.symbol,
         entry_atr=pinned_evidence(analysis, "atr_14"),
     )
-'''
+"""
 
-_NONE_LITERAL = '''
+_NONE_LITERAL = """
 def write_entry(db):
     db.record_trade(stop_basis=None)
-'''
+"""
 
 
 def test_only_built_routes_contribute_fields() -> None:
@@ -58,8 +59,7 @@ def test_only_built_routes_contribute_fields() -> None:
 
 def test_planted_silent_default_is_named() -> None:
     found = offending_sites(_VIOLATION, "src/fake.py", {"entry_atr"})
-    assert found == [("src/fake.py", "write_entry", "entry_atr",
-                      "silent_default_getattr")]
+    assert found == [("src/fake.py", "write_entry", "entry_atr", "silent_default_getattr")]
 
 
 def test_removing_the_plant_passes() -> None:
@@ -93,7 +93,7 @@ def test_the_real_entry_write_no_longer_uses_a_silent_default() -> None:
     assert 'entry_atr=pinned_evidence(entry_analysis, "atr_14")' in text
     assert 'stop_basis=pinned_evidence(decision, "stop_rule")' in text
     assert 'requested_risk_pct=pinned_evidence(decision, "requested_risk_pct")' in text
-    assert "getattr(decision, \"requested_risk_pct\"" not in text
+    assert 'getattr(decision, "requested_risk_pct"' not in text
 
 
 class _Analysis:
@@ -158,9 +158,11 @@ def test_the_guard_reads_no_git_trunk() -> None:
 
 def test_the_subject_is_every_tracked_production_module_root_included() -> None:
     from scripts.settlement_fill_guard import _is_subject, _working_subject_paths
+
     paths = _working_subject_paths()
     assert "main.py" in paths and any(p.startswith("ops/") for p in paths)
     assert not any(p.startswith("tests/") for p in paths)
     assert _is_subject("main.py") and _is_subject("ops/x.py") and not _is_subject("tests/t.py")
     assert offending_sites(_VIOLATION, "main.py", {"entry_atr"}) == [
-        ("main.py", "write_entry", "entry_atr", "silent_default_getattr")]
+        ("main.py", "write_entry", "entry_atr", "silent_default_getattr")
+    ]

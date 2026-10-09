@@ -127,9 +127,9 @@ def _observed(day: date) -> date:
     Saturday is observed the preceding Friday; one falling on a Sunday is
     observed the following Monday.
     """
-    if day.weekday() == 5:          # Saturday
+    if day.weekday() == 5:  # Saturday
         return day - timedelta(days=1)
-    if day.weekday() == 6:          # Sunday
+    if day.weekday() == 6:  # Sunday
         return day + timedelta(days=1)
     return day
 
@@ -141,19 +141,21 @@ def federal_holidays(year: int) -> frozenset[date]:
     falls on a weekend appears on its observed weekday and NOT on the
     weekend date itself (which is already a non-publication day anyway).
     """
-    return frozenset({
-        _observed(date(year, 1, 1)),          # New Year's Day
-        _nth_weekday(year, 1, 0, 3),          # Birthday of Martin Luther King, Jr.
-        _nth_weekday(year, 2, 0, 3),          # Washington's Birthday
-        _last_weekday(year, 5, 0),            # Memorial Day
-        _observed(date(year, 6, 19)),         # Juneteenth National Independence Day
-        _observed(date(year, 7, 4)),          # Independence Day
-        _nth_weekday(year, 9, 0, 1),          # Labor Day
-        _nth_weekday(year, 10, 0, 2),         # Columbus Day
-        _observed(date(year, 11, 11)),        # Veterans Day
-        _nth_weekday(year, 11, 3, 4),         # Thanksgiving Day
-        _observed(date(year, 12, 25)),        # Christmas Day
-    })
+    return frozenset(
+        {
+            _observed(date(year, 1, 1)),  # New Year's Day
+            _nth_weekday(year, 1, 0, 3),  # Birthday of Martin Luther King, Jr.
+            _nth_weekday(year, 2, 0, 3),  # Washington's Birthday
+            _last_weekday(year, 5, 0),  # Memorial Day
+            _observed(date(year, 6, 19)),  # Juneteenth National Independence Day
+            _observed(date(year, 7, 4)),  # Independence Day
+            _nth_weekday(year, 9, 0, 1),  # Labor Day
+            _nth_weekday(year, 10, 0, 2),  # Columbus Day
+            _observed(date(year, 11, 11)),  # Veterans Day
+            _nth_weekday(year, 11, 3, 4),  # Thanksgiving Day
+            _observed(date(year, 12, 25)),  # Christmas Day
+        }
+    )
 
 
 def is_publication_day(day: date) -> bool:
@@ -195,9 +197,7 @@ def _boundary_instants(day: date) -> list[datetime]:
     """Every publication instant on `day`, empty on a non-publication day."""
     if not is_publication_day(day):
         return []
-    return [
-        datetime.combine(day, clock, tzinfo=ET) for clock in PUBLICATION_BOUNDARIES_ET
-    ]
+    return [datetime.combine(day, clock, tzinfo=ET) for clock in PUBLICATION_BOUNDARIES_ET]
 
 
 def next_publication_boundary(after: datetime) -> datetime:

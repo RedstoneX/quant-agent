@@ -36,21 +36,14 @@ def rotation_constraint_clause(
     An empty `binding` reproduces the legacy sentence byte-for-byte, so every
     caller that has not been threaded the funding view is unchanged.
     """
-    if "funding" in binding and isinstance(entry_budget_usd, (int, float)) \
-            and isinstance(min_order_usd, (int, float)):
+    if "funding" in binding and isinstance(entry_budget_usd, (int, float)) and isinstance(min_order_usd, (int, float)):
         risk = (
-            f"Risk headroom {headroom_pct:.2f}% of {ceiling_pct:.2f}%, under "
-            f"the {floor_pct:.2f}% minimum; "
-            if "risk_budget" in binding else ""
+            f"Risk headroom {headroom_pct:.2f}% of {ceiling_pct:.2f}%, under the {floor_pct:.2f}% minimum; "
+            if "risk_budget" in binding
+            else ""
         )
-        return (
-            f"{risk}${float(entry_budget_usd):,.0f} deployable, under "
-            "the smallest order the desk will place."
-        )
-    return (
-        f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk "
-        f"ceiling, under the {floor_pct:.2f}% minimum."
-    )
+        return f"{risk}${float(entry_budget_usd):,.0f} deployable, under the smallest order the desk will place."
+    return f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk ceiling, under the {floor_pct:.2f}% minimum."
 
 
 def rotation_sell_reason(
@@ -195,13 +188,15 @@ def _ranked_margin_sell_reason(
         f"BUY pre-cleared post-sale (deployable "
         f"${clearance.projected_entry_budget:.0f}, "
         f"{clearance.projected_budget_basis})."
-        if clearance is not None else
-        "CONTINGENT on the replacement BUY clearing its gates; withdrawn "
-        "with it if it does not."
+        if clearance is not None
+        else "CONTINGENT on the replacement BUY clearing its gates; withdrawn with it if it does not."
     )
     constraint_clause = rotation_constraint_clause(
-        binding=binding, headroom_pct=headroom_pct, ceiling_pct=ceiling_pct,
-        floor_pct=floor_pct, entry_budget_usd=entry_budget_usd,
+        binding=binding,
+        headroom_pct=headroom_pct,
+        ceiling_pct=ceiling_pct,
+        floor_pct=floor_pct,
+        entry_budget_usd=entry_budget_usd,
         min_order_usd=min_order_usd,
     )
     reason = (

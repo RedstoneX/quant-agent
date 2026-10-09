@@ -28,7 +28,8 @@ def _persist_evening_report(pipeline, result: dict) -> None:
         )
     except Exception as exc:  # noqa: BLE001 — never break the push
         logger.warning(
-            "evening report persistence failed (non-fatal): %s", exc,
+            "evening report persistence failed (non-fatal): %s",
+            exc,
         )
 
 
@@ -79,8 +80,11 @@ def _run_evening_body(pipeline) -> dict:
 def _evening_stop_proximity(pipeline, positions) -> list[dict]:
     """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
     from src.execution.stop_read import read_stop
+
     return EveningStopProximitySession(
-        stop_reader=read_stop, db=pipeline.db, atr_for_symbol=pipeline._collab("_atr_for_symbol"),
+        stop_reader=read_stop,
+        db=pipeline.db,
+        atr_for_symbol=pipeline._collab("_atr_for_symbol"),
         sweep_symbol=pipeline._collab("_sweep_symbol"),
         broker=pipeline._collab("broker"),
     ).run(positions)
@@ -103,11 +107,15 @@ def _evening_earnings_proximity(pipeline, positions) -> list[dict]:
         if not symbols or getattr(pipeline, "market", None) is None:
             return []
         from src.data.event_calendar import fetch_earnings_proximity
+
         event_cfg = getattr(getattr(pipeline, "config", None), "event_risk", None)
         rows = fetch_earnings_proximity(
-            pipeline.market, symbols,
+            pipeline.market,
+            symbols,
             per_symbol_timeout_s=getattr(
-                event_cfg, "earnings_symbol_timeout_s", 8.0,
+                event_cfg,
+                "earnings_symbol_timeout_s",
+                8.0,
             ),
             total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
         )
@@ -148,6 +156,7 @@ def _maybe_run_quarterly_meta(pipeline) -> dict | None:
     """
     try:
         from src.trading_calendar import et_today
+
         today = et_today()
         try:
             is_last = pipeline.broker.is_last_trading_day_of_quarter(on_date=today)
@@ -157,9 +166,9 @@ def _maybe_run_quarterly_meta(pipeline) -> dict | None:
         if not is_last:
             return None
         logger.info(
-            "Evening: today is last trading day of quarter %d-Q%d — "
-            "running auto meta-reflection",
-            today.year, (today.month - 1) // 3 + 1,
+            "Evening: today is last trading day of quarter %d-Q%d — running auto meta-reflection",
+            today.year,
+            (today.month - 1) // 3 + 1,
         )
         return pipeline.run_quarterly_meta_reflection(force=False)
     except Exception as e:
@@ -183,8 +192,7 @@ def run_evening(pipeline) -> dict:
     """
     result = pipeline._run_evening_body()
     if isinstance(result, dict) and result.get("status") != "market_holiday":
-        if (screen := pipeline.admission._run_universe_screen(
-                result.get("run_id") or "evening")) is not None:
+        if (screen := pipeline.admission._run_universe_screen(result.get("run_id") or "evening")) is not None:
             result["universe_screen"] = screen
     pipeline._persist_evening_report(result)
     return result

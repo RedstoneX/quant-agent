@@ -54,9 +54,7 @@ def day_pages(directory: Path) -> list[Path]:
 def index_html_for(pages: list[Path]) -> str:
     if not pages:
         return empty_index_html()
-    items = "\n".join(
-        f'  <li><a href="{p.name}">{p.stem}</a></li>' for p in pages
-    )
+    items = "\n".join(f'  <li><a href="{p.name}">{p.stem}</a></li>' for p in pages)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -109,9 +107,7 @@ def rebuild_diary_index(directory: Path | None = None) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Rebuild data/diary/index.html from dated day pages (newest first)."
-    )
+    parser = argparse.ArgumentParser(description="Rebuild data/diary/index.html from dated day pages (newest first).")
     parser.add_argument(
         "--dir",
         default=str(DIARY_DIR),

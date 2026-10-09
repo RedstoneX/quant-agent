@@ -68,9 +68,7 @@ def _config(**overrides):
         # free-failure-session count. High by default so tests not
         # exercising the cap itself never hit it.
         "max_calls_per_session": 1000,
-        "max_provider_attempts_per_call": provider_attempt_budget(
-            failover_available=True
-        ),
+        "max_provider_attempts_per_call": provider_attempt_budget(failover_available=True),
         "input_chars_per_token": 3.5,
     }
     values.update(overrides)
@@ -93,30 +91,24 @@ def test_budget_covers_primary_attempts_plus_one_failover():
     particular count. The worst case is `capacity_max_attempts()` — a
     capacity refusal (429/5xx) is bounded by the wall-clock retry deadline,
     not by `_max_retries()`, which still bounds every other failure."""
-    assert (provider_attempt_budget(failover_available=True)
-            == capacity_max_attempts() + 1)
+    assert provider_attempt_budget(failover_available=True) == capacity_max_attempts() + 1
     assert capacity_max_attempts() >= _max_retries()
 
 
 def test_budget_drops_the_failover_attempt_when_no_failover_is_possible():
     """An Anthropic-primary agent never fails over (Claude to Claude is
     pointless), so it cannot spend the extra attempt."""
-    assert (provider_attempt_budget(failover_available=False)
-            == capacity_max_attempts())
+    assert provider_attempt_budget(failover_available=False) == capacity_max_attempts()
 
 
 @pytest.mark.parametrize("retries", [1, 2, 3, 7])
-def test_budget_tracks_the_env_override_the_retry_loop_actually_reads(
-    monkeypatch, retries
-):
+def test_budget_tracks_the_env_override_the_retry_loop_actually_reads(monkeypatch, retries):
     """`.env` on the box carries a commented-out QUANT_AGENT_MAX_RETRIES=7.
     Uncommenting it must move the circuit's ceiling too, not silently
     recreate the 2026-08-31 mismatch three attempts wider. The ceiling
     tracks whichever of the two primary bounds is the wider one."""
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", str(retries))
-    assert provider_attempt_budget(failover_available=True) == max(
-        retries, capacity_max_attempts()
-    ) + 1
+    assert provider_attempt_budget(failover_available=True) == max(retries, capacity_max_attempts()) + 1
     assert provider_attempt_budget(failover_available=True) >= retries + 1
 
 
@@ -161,9 +153,15 @@ def _load_settings_with(ceiling):
 @pytest.fixture
 def _keys(monkeypatch):
     for var in (
-        "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
-        "OPENROUTER_API_KEY", "GOOGLE_API_KEY", "ALPACA_API_KEY",
-        "ALPACA_SECRET_KEY", "FRED_API_KEY", "TELEGRAM_BOT_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GOOGLE_API_KEY",
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+        "FRED_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
     ):
         monkeypatch.setenv(var, "test-key")
@@ -173,10 +171,7 @@ def test_shipped_settings_ceiling_covers_the_retry_loop(_keys):
     """The regression guard proper: whatever config/settings.yaml says today,
     it must not be below what one call can spend."""
     config = _load_settings_with(None)
-    assert (
-        config.llm_cost_circuit.max_provider_attempts_per_call
-        >= provider_attempt_budget(failover_available=True)
-    )
+    assert config.llm_cost_circuit.max_provider_attempts_per_call >= provider_attempt_budget(failover_available=True)
 
 
 def test_settings_does_not_re_pin_the_ceiling(_keys):
@@ -230,19 +225,29 @@ def test_config_failover_available_agrees_with_every_real_agents_own_gate(_keys)
         "google": config.api_keys.google,
     }
     agent_names = (
-        "tech_analyst", "news_analyst", "macro_analyst", "earnings_analyst",
-        "smart_money_analyst", "portfolio_manager", "risk_manager",
-        "position_reviewer", "evening_analyst", "meta_reflector",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "smart_money_analyst",
+        "portfolio_manager",
+        "risk_manager",
+        "position_reviewer",
+        "evening_analyst",
+        "meta_reflector",
     )
     any_agent_reachable = False
     for name in agent_names:
         model = getattr(config.llm, f"{name}_model")
         provider = config.llm.get_provider(name)
         from src.agents.base import resolve_provider
+
         resolved = resolve_provider(model, provider)
         agent = ConcreteAgent(
             api_key=key_for.get(resolved, config.api_keys.anthropic) or "placeholder",
-            model=model, max_tokens=64, provider=provider,
+            model=model,
+            max_tokens=64,
+            provider=provider,
             fallback_api_key=key_for.get(config.llm.fallback_provider, config.api_keys.anthropic),
             fallback_provider=config.llm.fallback_provider,
             fallback_model=config.llm.fallback_model,
@@ -326,9 +331,7 @@ def test_attempt_limit_holds_the_session_instead_of_latching_the_desk(tmp_path):
     # be set is the durable singleton latch: the row that outlives the session,
     # darkens every later one, and requires a human to clear.
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        latched = conn.execute(
-            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()[0]
+        latched = conn.execute("SELECT suspended FROM llm_circuit_state WHERE singleton=1").fetchone()[0]
     assert not latched
 
     alert = "\n".join(notifier.messages)
@@ -404,8 +407,12 @@ def _agent_with_circuit(circuit, **kwargs):
     kwargs.setdefault("fallback_provider", "anthropic")
     kwargs.setdefault("fallback_model", "claude-opus-4-7")
     agent = ConcreteAgent(
-        api_key="k", model="google/gemini-3.5-flash-lite", max_tokens=64,
-        fallback_api_key="fk", provider="openrouter", **kwargs
+        api_key="k",
+        model="google/gemini-3.5-flash-lite",
+        max_tokens=64,
+        fallback_api_key="fk",
+        provider="openrouter",
+        **kwargs,
     )
     agent.set_cost_circuit(circuit)
     return agent
@@ -435,22 +442,18 @@ def test_rate_limited_primary_fails_over_with_a_live_circuit(tmp_path, monkeypat
     anthropic_client = MagicMock()
     anthropic_client.messages.create.return_value = _good_anthropic_response()
 
-    with patch("openai.OpenAI", return_value=openrouter), \
-            patch("anthropic.Anthropic", return_value=anthropic_client):
+    with patch("openai.OpenAI", return_value=openrouter), patch("anthropic.Anthropic", return_value=anthropic_client):
         agent = _agent_with_circuit(circuit)
         result = agent.run(data="x")
 
     assert result.raw_text == '{"result": "ok"}'
     assert result.model == "claude-opus-4-7"
     # Primary exhausted — by the deadline-derived capacity cap, not by 2.
-    assert (openrouter.chat.completions.create.call_count
-            == capacity_max_attempts())
-    anthropic_client.messages.create.assert_called_once()       # single-shot failover
+    assert openrouter.chat.completions.create.call_count == capacity_max_attempts()
+    anthropic_client.messages.create.assert_called_once()  # single-shot failover
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        latched = conn.execute(
-            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()[0]
+        latched = conn.execute("SELECT suspended FROM llm_circuit_state WHERE singleton=1").fetchone()[0]
     assert not latched, "a transient rate-limit must not latch the desk"
 
 
@@ -472,16 +475,13 @@ def test_a_failover_that_also_fails_does_not_latch_the_desk(tmp_path, monkeypatc
     anthropic_client = MagicMock()
     anthropic_client.messages.create.side_effect = _Rate429("fallback down too")
 
-    with patch("openai.OpenAI", return_value=openrouter), \
-            patch("anthropic.Anthropic", return_value=anthropic_client):
+    with patch("openai.OpenAI", return_value=openrouter), patch("anthropic.Anthropic", return_value=anthropic_client):
         agent = _agent_with_circuit(circuit)
         with pytest.raises(Exception):
             agent.run(data="x")
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        latched = conn.execute(
-            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()[0]
+        latched = conn.execute("SELECT suspended FROM llm_circuit_state WHERE singleton=1").fetchone()[0]
     assert not latched
 
 
@@ -522,8 +522,7 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
     success_chunks = _openai_stream_mock().chat.completions.create.return_value
     client = MagicMock()
     client.chat.completions.create.side_effect = [
-        _Rate429("google free-tier rate-limited")
-        for _ in range(capacity_max_attempts())
+        _Rate429("google free-tier rate-limited") for _ in range(capacity_max_attempts())
     ] + [success_chunks]
 
     google_gov = base_mod._TOKEN_GOVERNORS["google"]
@@ -533,8 +532,11 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
 
     with patch("openai.OpenAI", return_value=client):
         agent = ConcreteAgent(
-            api_key="k", model="gemini-3.5-flash-lite", max_tokens=64,
-            provider="google", fallback_api_key="fk",
+            api_key="k",
+            model="gemini-3.5-flash-lite",
+            max_tokens=64,
+            provider="google",
+            fallback_api_key="fk",
         )
         assert agent._fallback_provider == "openrouter"
         assert agent._fallback_model == "google/gemini-3.5-flash-lite"
@@ -545,8 +547,7 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
     assert result.model == "google/gemini-3.5-flash-lite"
     assert result.actual_provider == "openrouter"
     assert result.used_fallback is True
-    assert (client.chat.completions.create.call_count
-            == capacity_max_attempts() + 1)  # primary attempts + 1 failover
+    assert client.chat.completions.create.call_count == capacity_max_attempts() + 1  # primary attempts + 1 failover
 
     assert google_gov.snapshot()["tokens_in_window"] > google_before, (
         "the primary attempts must be charged to the GOOGLE governor"
@@ -556,9 +557,7 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
     )
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        latched = conn.execute(
-            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()[0]
+        latched = conn.execute("SELECT suspended FROM llm_circuit_state WHERE singleton=1").fetchone()[0]
     assert not latched, "a transient rate-limit rescued by failover must not latch the desk"
 
 
@@ -580,9 +579,7 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
 
 def _make_day_inexact(circuit, day):
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        conn.execute(
-            "UPDATE llm_budget_days SET costs_exact=0 WHERE day=?", (day,)
-        )
+        conn.execute("UPDATE llm_budget_days SET costs_exact=0 WHERE day=?", (day,))
         conn.commit()
 
 
@@ -617,18 +614,13 @@ def test_the_reset_does_not_erase_the_days_recorded_spend(tmp_path):
     circuit.activate_session("run-keep", "morning")
     day = _current_day()
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        conn.execute(
-            "UPDATE llm_budget_days SET incremental_cost_usd=0.0524, costs_exact=0 "
-            "WHERE day=?", (day,)
-        )
+        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.0524, costs_exact=0 WHERE day=?", (day,))
         conn.commit()
 
     circuit.reset("accepted the conservative figure")
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        spend = conn.execute(
-            "SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)
-        ).fetchone()[0]
+        spend = conn.execute("SELECT incremental_cost_usd FROM llm_budget_days WHERE day=?", (day,)).fetchone()[0]
     assert spend == pytest.approx(0.0524)
 
 
@@ -731,9 +723,7 @@ def test_a_call_whose_every_attempt_was_refused_is_not_charged(tmp_path):
     from src.cost_circuit import _all_attempts_provably_free
 
     primary = _Status(429)
-    assert _all_attempts_provably_free(
-        primary, [primary, _Status(429), _Status(401)]
-    )
+    assert _all_attempts_provably_free(primary, [primary, _Status(429), _Status(401)])
 
 
 def test_one_ambiguous_attempt_makes_the_whole_call_chargeable(tmp_path):
@@ -744,9 +734,7 @@ def test_one_ambiguous_attempt_makes_the_whole_call_chargeable(tmp_path):
     from src.cost_circuit import _all_attempts_provably_free
 
     primary = _Status(429)
-    assert not _all_attempts_provably_free(
-        primary, [primary, LLMStreamInterruptedError("cut mid-generation")]
-    )
+    assert not _all_attempts_provably_free(primary, [primary, LLMStreamInterruptedError("cut mid-generation")])
 
 
 def test_a_caller_that_cannot_enumerate_attempts_keeps_the_old_behaviour(tmp_path):
@@ -770,17 +758,16 @@ def test_the_refused_call_neither_charges_nor_latches_the_desk(tmp_path):
 
     primary = _Status(429)
     circuit.fail_call(
-        reservation, primary,
+        reservation,
+        primary,
         attempt_errors=[primary, _Status(429), _Status(401)],
     )
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
-        latched, = conn.execute(
-            "SELECT suspended FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()
+        (latched,) = conn.execute("SELECT suspended FROM llm_circuit_state WHERE singleton=1").fetchone()
         spend, exact = conn.execute(
-            "SELECT incremental_cost_usd, costs_exact FROM llm_budget_days "
-            "WHERE day=?", (_current_day(),),
+            "SELECT incremental_cost_usd, costs_exact FROM llm_budget_days WHERE day=?",
+            (_current_day(),),
         ).fetchone()
     assert not latched, "a call that billed nothing must not latch the desk"
     assert spend == pytest.approx(0.0), "and must not appear on the ledger"
@@ -807,8 +794,7 @@ def test_an_ambiguous_failure_still_latches_without_inventing_a_charge(tmp_path)
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
         spend, unknown_rows = conn.execute(
-            "SELECT incremental_cost_usd, unknown_cost_rows "
-            "FROM llm_budget_days WHERE day=?",
+            "SELECT incremental_cost_usd, unknown_cost_rows FROM llm_budget_days WHERE day=?",
             (_current_day(),),
         ).fetchone()
     assert spend == 0, "no reservation exists to convert into a dollar charge"

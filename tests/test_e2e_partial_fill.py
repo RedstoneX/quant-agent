@@ -15,6 +15,7 @@ protective stop rests and its quantity equals the shares actually held.
 Synthetic symbol and prices only; no network, no broker.
 NOT COVERED: stream-driven fills, a re-peg racing a partial, shorts.
 """
+
 from __future__ import annotations
 
 import math
@@ -64,8 +65,11 @@ class _PartialClient(rb.RehearsalTradingClient):
         if order.order_id not in filled:
             return None
         reads[order.order_id] = reads.get(order.order_id, 0) + 1
-        if (self.finish_after is not None and order.status == "partially_filled"
-                and reads[order.order_id] > self.finish_after):
+        if (
+            self.finish_after is not None
+            and order.status == "partially_filled"
+            and reads[order.order_id] > self.finish_after
+        ):
             order.status = "filled"
             filled[order.order_id] = order.qty
         return filled[order.order_id]
@@ -97,9 +101,14 @@ class _PartialClient(rb.RehearsalTradingClient):
             if not q:
                 continue
             p = held.get(o.symbol) or SimpleNamespace(
-                symbol=o.symbol, qty=0.0, avg_entry_price=o.limit_price or 0.0,
-                current_price=self._price(o.symbol), market_value=0.0,
-                unrealized_pl=0.0, unrealized_intraday_pl=0.0)
+                symbol=o.symbol,
+                qty=0.0,
+                avg_entry_price=o.limit_price or 0.0,
+                current_price=self._price(o.symbol),
+                market_value=0.0,
+                unrealized_pl=0.0,
+                unrealized_intraday_pl=0.0,
+            )
             p.qty = p.qty + q if o.side == "buy" else p.qty - q
             p.market_value = p.qty * p.current_price
             held[o.symbol] = p
@@ -111,9 +120,14 @@ def _held(trading) -> float:
 
 
 def _resting_stops(trading) -> list:
-    return [o for o in trading._orders.values()
-            if o.symbol == SYMBOL and o.side == "sell" and "stop" in o.order_type
-            and o.status in ("new", "pre_existing", "accepted", "partially_filled")]
+    return [
+        o
+        for o in trading._orders.values()
+        if o.symbol == SYMBOL
+        and o.side == "sell"
+        and "stop" in o.order_type
+        and o.status in ("new", "pre_existing", "accepted", "partially_filled")
+    ]
 
 
 def _assert_protected_exactly(trading, expect_held: float) -> None:
@@ -127,8 +141,7 @@ def _assert_protected_exactly(trading, expect_held: float) -> None:
     )
 
 
-def _session(tmp_path, monkeypatch, *, plan=0.4, finish_after=None,
-             book_qty=0.0, target_pct=None, sell_plan=0.5):
+def _session(tmp_path, monkeypatch, *, plan=0.4, finish_after=None, book_qty=0.0, target_pct=None, sell_plan=0.5):
     """Run the morning session over the partial-fill broker."""
     _PartialClient.plan, _PartialClient.finish_after = plan, finish_after
     _PartialClient.sell_plan = sell_plan
@@ -136,10 +149,16 @@ def _session(tmp_path, monkeypatch, *, plan=0.4, finish_after=None,
 
     def install(broker, snapshot, *, now, **kw):
         if book_qty:
-            snapshot.positions.append({
-                "symbol": SYMBOL, "qty": book_qty, "avg_entry": morning.LAST_CLOSE,
-                "current_price": morning.LAST_CLOSE,
-                "market_value": book_qty * morning.LAST_CLOSE, "unrealized_pnl": 0.0})
+            snapshot.positions.append(
+                {
+                    "symbol": SYMBOL,
+                    "qty": book_qty,
+                    "avg_entry": morning.LAST_CLOSE,
+                    "current_price": morning.LAST_CLOSE,
+                    "market_value": book_qty * morning.LAST_CLOSE,
+                    "unrealized_pnl": 0.0,
+                }
+            )
             snapshot.standing_stops[SYMBOL] = round(morning.RANGE_LOW - 1.0, 2)
             snapshot.cash = snapshot.portfolio_value - book_qty * morning.LAST_CLOSE
         trading = real_install(broker, snapshot, now=now, **kw)
@@ -154,10 +173,13 @@ def _session(tmp_path, monkeypatch, *, plan=0.4, finish_after=None,
             a = real_answers()
             a["portfolio"]["targets"][0]["target_weight_pct"] = target_pct
             return a
+
         monkeypatch.setattr(morning, "_scripted_answers", answers)
     import src.execution.broker as sb
+
     monkeypatch.setattr(sb, "_ENTRY_FILL_TIMEOUT_S", 0.05)
     import time as _t
+
     real_sleep = _t.sleep
     monkeypatch.setattr(_t, "sleep", lambda s: real_sleep(min(s, 0.002)))
     _seed_company_profile_cache(tmp_path)

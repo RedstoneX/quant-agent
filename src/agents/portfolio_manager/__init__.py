@@ -11,11 +11,20 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
-    AnalystVerdict, CandidateRejection, EarningsAnalysis, MacroAnalysis,
+    AnalystVerdict,
+    CandidateRejection,
+    EarningsAnalysis,
+    MacroAnalysis,
     NewsIntelligenceReport,
-    PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
-    SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
-    open_target_missing_falsifier, parse_telemetry,
+    PortfolioDecision,
+    Position,
+    TargetPosition,
+    TechAnalysisResult,
+    SmartMoneyFinding,
+    news_verdict_for_symbol,
+    normalize_sector_stance,
+    open_target_missing_falsifier,
+    parse_telemetry,
 )
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.quantities import collapse_stances
@@ -40,8 +49,11 @@ from src.risk.rules import (
     weight_pct_of,
 )
 from src.rotation import (
-    RotationOpportunity, RotationPrecheck,
-    evaluate_rotation, funding_view_measured, holdings_below_entry_bar,
+    RotationOpportunity,
+    RotationPrecheck,
+    evaluate_rotation,
+    funding_view_measured,
+    holdings_below_entry_bar,
     rotation_binding_constraints,
 )
 from src.trading_calendar import et_today
@@ -65,8 +77,11 @@ from src.agents.portfolio_manager.ranking import hold_candidate_ranking
 from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
 from src.agents.portfolio_manager.registry_notes import (
-    broadcast_registry_note, omitted_rows_line, stale_registry_note,
+    broadcast_registry_note,
+    omitted_rows_line,
+    stale_registry_note,
 )
+
 
 class PortfolioManagerAgent(
     LiveLimitPrompt,
@@ -154,15 +169,19 @@ class PortfolioManagerAgent(
             symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
         evidence_registry_text = json.dumps(
-            evidence_registry, sort_keys=True, indent=2,
+            evidence_registry,
+            sort_keys=True,
+            indent=2,
         )
         if stale_sources:
             evidence_registry_text += stale_registry_note(
-                stale_sources, evidence_registry,
+                stale_sources,
+                evidence_registry,
             )
         if non_corroborating_sources:
             evidence_registry_text += broadcast_registry_note(
-                non_corroborating_sources, evidence_registry,
+                non_corroborating_sources,
+                evidence_registry,
             )
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
@@ -207,8 +226,7 @@ class PortfolioManagerAgent(
                     # source was broadcast. Prior wording repeated 130-odd
                     # characters of explanation per symbol, measured at 14.9%
                     # of the whole briefing.
-                    f"{', '.join(broadcast_here)} stance broadcast — "
-                    "one-sided, see note below"
+                    f"{', '.join(broadcast_here)} stance broadcast — one-sided, see note below"
                 )
             stale_note = f"; {'; '.join(notes)}" if notes else ""
             # The ALIGNED side drops both; the OPPOSED side drops only the
@@ -221,11 +239,17 @@ class PortfolioManagerAgent(
             short_for = count_aligned_sources(symbol, sources, "short", ignored_sources=for_ignored)
             short_against = count_opposing_sources(symbol, sources, "short", ignored_sources=ignored)
             long_net = signed_source_score(
-                symbol, sources, "long", ignored_sources=ignored,
+                symbol,
+                sources,
+                "long",
+                ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
             short_net = signed_source_score(
-                symbol, sources, "short", ignored_sources=ignored,
+                symbol,
+                sources,
+                "short",
+                ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
             if not any((long_for, long_against, short_for, short_against)):
@@ -244,36 +268,29 @@ class PortfolioManagerAgent(
                 f"(of {len(sources)} source(s) with current coverage{stale_note})"
             )
 
-        rendered_agreement = [
-            _agreement_line(symbol, sources)
-            for symbol, sources in sorted(evidence_registry.items())
-        ]
+        rendered_agreement = [_agreement_line(symbol, sources) for symbol, sources in sorted(evidence_registry.items())]
         agreement_lines = [line for line in rendered_agreement if line is not None]
-        omitted_agreement_rows = sum(
-            1 for line in rendered_agreement if line is None
-        )
+        omitted_agreement_rows = sum(1 for line in rendered_agreement if line is None)
         if omitted_agreement_rows:
-            agreement_lines.append(omitted_rows_line(
-                omitted_agreement_rows, len(omitted_broadcast), len(omitted_stale),
-            ))
-        agreement_text = (
-            "\n".join(agreement_lines) if agreement_lines
-            else "No symbols with current coverage."
+            agreement_lines.append(
+                omitted_rows_line(
+                    omitted_agreement_rows,
+                    len(omitted_broadcast),
+                    len(omitted_stale),
+                )
+            )
+        agreement_text = "\n".join(agreement_lines) if agreement_lines else "No symbols with current coverage."
+        allowed_buy_symbols = sorted(
+            {str(symbol).strip().upper() for symbol in (kwargs.get("allowed_buy_symbols") or []) if str(symbol).strip()}
         )
-        allowed_buy_symbols = sorted({
-            str(symbol).strip().upper()
-            for symbol in (kwargs.get("allowed_buy_symbols") or [])
-            if str(symbol).strip()
-        })
-        transient_admitted_symbols = sorted({
-            str(symbol).strip().upper()
-            for symbol in (kwargs.get("transient_admitted_symbols") or [])
-            if str(symbol).strip()
-        })
-        permanent_symbols = [
-            symbol for symbol in allowed_buy_symbols
-            if symbol not in set(transient_admitted_symbols)
-        ]
+        transient_admitted_symbols = sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in (kwargs.get("transient_admitted_symbols") or [])
+                if str(symbol).strip()
+            }
+        )
+        permanent_symbols = [symbol for symbol in allowed_buy_symbols if symbol not in set(transient_admitted_symbols)]
         eligibility_section = (
             "## Deterministic BUY Eligibility\n"
             f"- Permanent configured universe: {', '.join(permanent_symbols) or 'none'}\n"
@@ -315,6 +332,7 @@ class PortfolioManagerAgent(
                 f"  Invalid if: {invalid}\n"
                 f"  Reasoning: {a.reasoning}"
             )
+
         analyses_text = "\n".join(_fmt_tech(a) for a in analyses)
 
         # Phase 13 — the missing ordering step. Every gate above admits or
@@ -367,12 +385,11 @@ class PortfolioManagerAgent(
         # the ENTRY bar on soft grounds (no technical read, neutral technical,
         # support faded to neutral) is simply dropped from the ranked survivors
         # with no cull reason — it earns its right to STAY.
-        _held_now = {
-            (p.symbol or "").strip().upper()
-            for p in positions if (p.symbol or "").strip()
-        }
+        _held_now = {(p.symbol or "").strip().upper() for p in positions if (p.symbol or "").strip()}
         ranked, blocked = self._apply_conviction_bar(
-            ranked=ranked, blocked=blocked, held_symbols=_held_now,
+            ranked=ranked,
+            blocked=blocked,
+            held_symbols=_held_now,
             all_verdicts=self._collect_seat_verdicts(
                 analyses=analyses,
                 news_intel=news_intel,
@@ -398,12 +415,8 @@ class PortfolioManagerAgent(
         # not visible this session (facts unavailable) — same fail-open
         # posture as every other consumer of it, never a fabricated view.
         existing_risk_pct: dict[str, float] | None = kwargs.get("existing_risk_pct")
-        max_portfolio_risk_pct = float(
-            kwargs.get("max_portfolio_risk_pct", 25.0) or 25.0
-        )
-        held_symbols = {
-            p.symbol.upper() for p in positions if getattr(p, "qty", 0)
-        }
+        max_portfolio_risk_pct = float(kwargs.get("max_portfolio_risk_pct", 25.0) or 25.0)
+        held_symbols = {p.symbol.upper() for p in positions if getattr(p, "qty", 0)}
         # Phase 14b: the precheck is computed ONCE and kept on the agent so
         # `DecisionStage._apply_rotation_execution` acts on exactly the
         # numbers the model was shown — never a second evaluation against
@@ -420,29 +433,35 @@ class PortfolioManagerAgent(
         # room". See `src/rotation.py` for why this constraint, and not the
         # risk budget alone, is what has bound this desk.
         _entry_budget_usd = kwargs.get("margin_headroom_usd")
-        if not bool(kwargs.get("margin_ladder_backed", False)) or not isinstance(
-            _entry_budget_usd, (int, float),
-        ) or isinstance(_entry_budget_usd, bool):
+        if (
+            not bool(kwargs.get("margin_ladder_backed", False))
+            or not isinstance(
+                _entry_budget_usd,
+                (int, float),
+            )
+            or isinstance(_entry_budget_usd, bool)
+        ):
             _entry_budget_usd = None
         _min_order_usd = kwargs.get("min_order_usd")
         if not isinstance(_min_order_usd, (int, float)) or isinstance(
-            _min_order_usd, bool,
+            _min_order_usd,
+            bool,
         ):
             _min_order_usd = None
         rotation_precheck = self.rotation_precheck(
-            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+            ranked=ranked,
+            blocked=blocked,
+            held_symbols=held_symbols,
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
-            entry_budget_usd=(
-                None if _entry_budget_usd is None else float(_entry_budget_usd)
-            ),
-            min_order_usd=(
-                None if _min_order_usd is None else float(_min_order_usd)
-            ),
+            entry_budget_usd=(None if _entry_budget_usd is None else float(_entry_budget_usd)),
+            min_order_usd=(None if _min_order_usd is None else float(_min_order_usd)),
         )
         self.last_rotation_precheck = rotation_precheck
         rotation_section = self._render_rotation_section(
-            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+            ranked=ranked,
+            blocked=blocked,
+            held_symbols=held_symbols,
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
             precheck=rotation_precheck,
@@ -499,10 +518,7 @@ class PortfolioManagerAgent(
                 lines.append(f"  Bought: {label}")
             tech_hist = hist.get("tech_history") or []
             if tech_hist:
-                trail = " → ".join(
-                    f"{h.get('rating', '?')}({h.get('conviction', '?')[0]})"
-                    for h in tech_hist
-                )
+                trail = " → ".join(f"{h.get('rating', '?')}({h.get('conviction', '?')[0]})" for h in tech_hist)
                 lines.append(f"  Tech history (last {len(tech_hist)}d): {trail}")
             return "\n".join(lines)
 
@@ -510,19 +526,21 @@ class PortfolioManagerAgent(
 
         # Format macro analysis section
         if macro_analysis:
-            observations_text = "\n".join(
-                f"- {o['indicator']}: {o['reading']} — {o['interpretation']}"
-                for o in macro_analysis.get("key_observations", [])
-            ) if macro_analysis.get("key_observations") else "No observations."
+            observations_text = (
+                "\n".join(
+                    f"- {o['indicator']}: {o['reading']} — {o['interpretation']}"
+                    for o in macro_analysis.get("key_observations", [])
+                )
+                if macro_analysis.get("key_observations")
+                else "No observations."
+            )
 
             # Rendered through the same normalizer the evidence registry uses:
             # the model is told to copy the validated stance exactly, so a
             # Macro section speaking a different vocabulary than the registry
             # is an invitation to cite a stance the validator will reject.
             # `reason` survives only in the live shape — MacroStore drops it.
-            guidance_rows = self._sector_guidance_rows(
-                macro_analysis.get("sector_guidance")
-            )
+            guidance_rows = self._sector_guidance_rows(macro_analysis.get("sector_guidance"))
             reasons = {
                 str(row.get("sector")): str(row.get("reason") or "")
                 for row in (macro_analysis.get("sector_guidance") or [])
@@ -531,17 +549,17 @@ class PortfolioManagerAgent(
 
             def _fmt_guidance(row: dict) -> str:
                 reason = reasons.get(row["sector"], "")
-                return (
-                    f"- {row['sector']}: {row['stance']}"
-                    + (f" — {reason}" if reason else "")
-                )
-            sector_guidance_text = "\n".join(
-                _fmt_guidance(row) for row in guidance_rows
-            ) if guidance_rows else "No sector guidance."
+                return f"- {row['sector']}: {row['stance']}" + (f" — {reason}" if reason else "")
 
-            risk_factors_text = "\n".join(
-                f"- {r}" for r in macro_analysis.get("risk_factors", [])
-            ) if macro_analysis.get("risk_factors") else "None identified."
+            sector_guidance_text = (
+                "\n".join(_fmt_guidance(row) for row in guidance_rows) if guidance_rows else "No sector guidance."
+            )
+
+            risk_factors_text = (
+                "\n".join(f"- {r}" for r in macro_analysis.get("risk_factors", []))
+                if macro_analysis.get("risk_factors")
+                else "None identified."
+            )
 
             pos_guidance = macro_analysis.get("position_guidance", {}) or {}
             rc = macro_analysis.get("reasoning_chain", {}) or {}
@@ -558,12 +576,12 @@ class PortfolioManagerAgent(
                 reasoning_section = f"""
 
 ### Macro Reasoning Chain (audit these for logic errors — report in `reasoning_chain.macro_audit`)
-- Volatility: {rc.get('volatility_analysis', 'N/A')}
-- Yield curve: {rc.get('yield_curve_analysis', 'N/A')}
-- Monetary policy: {rc.get('monetary_policy_analysis', 'N/A')}
-- Inflation/labor/credit: {rc.get('inflation_labor_credit', 'N/A')}
-- Cross-signal synthesis: {rc.get('cross_signal_synthesis', 'N/A')}
-- Sector implications: {rc.get('sector_implications', 'N/A')}"""
+- Volatility: {rc.get("volatility_analysis", "N/A")}
+- Yield curve: {rc.get("yield_curve_analysis", "N/A")}
+- Monetary policy: {rc.get("monetary_policy_analysis", "N/A")}
+- Inflation/labor/credit: {rc.get("inflation_labor_credit", "N/A")}
+- Cross-signal synthesis: {rc.get("cross_signal_synthesis", "N/A")}
+- Sector implications: {rc.get("sector_implications", "N/A")}"""
 
             bull_triggers = macro_analysis.get("bull_triggers", []) or []
             bear_triggers = macro_analysis.get("bear_triggers", []) or []
@@ -606,8 +624,8 @@ Bear triggers (would turn defensive):
                     "below as confirming anything."
                 )
             macro_section = f"""## Macro Analysis{coverage_line}
-- Regime: {macro_analysis.get('regime', 'N/A')} | Outlook: {macro_analysis.get('equity_outlook', 'N/A')} | Confidence: {macro_analysis.get('confidence', 'N/A')}{shift_line}{alignment_line}
-- Summary: {macro_analysis.get('summary', 'N/A')}{reasoning_section}
+- Regime: {macro_analysis.get("regime", "N/A")} | Outlook: {macro_analysis.get("equity_outlook", "N/A")} | Confidence: {macro_analysis.get("confidence", "N/A")}{shift_line}{alignment_line}
+- Summary: {macro_analysis.get("summary", "N/A")}{reasoning_section}
 
 ### Key Observations
 {observations_text}
@@ -619,7 +637,7 @@ Bear triggers (would turn defensive):
 {risk_factors_text}{triggers_section}
 
 ### Directional Lean (the book stays fully invested — this is which way, not how much)
-- Reasoning: {pos_guidance.get('reasoning', 'N/A')}"""
+- Reasoning: {pos_guidance.get("reasoning", "N/A")}"""
         else:
             macro_section = "## Macro Analysis\nNo macro data available."
 
@@ -628,7 +646,11 @@ Bear triggers (would turn defensive):
             # Layer 1: Macro narrative
             mn = news_intel.macro_narrative
             era_text = "; ".join(mn.era_themes) if mn.era_themes else "N/A"
-            state_items = "\n".join(f"  - {k}: {v}" for k, v in mn.key_state_tracker.items()) if mn.key_state_tracker else "  No tracked states."
+            state_items = (
+                "\n".join(f"  - {k}: {v}" for k, v in mn.key_state_tracker.items())
+                if mn.key_state_tracker
+                else "  No tracked states."
+            )
 
             # Layer 2: State changes
             if news_intel.state_changes:
@@ -675,7 +697,9 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
                 for f in smart_money_findings
             )
         else:
-            smart_money_section = "## Smart Money Evidence\nNo material source-backed finding available. Do not claim coverage."
+            smart_money_section = (
+                "## Smart Money Evidence\nNo material source-backed finding available. Do not claim coverage."
+            )
 
         # Format earnings analysis section
         if earnings_analyses:
@@ -721,18 +745,23 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
                 # summary that hides a split between seats is worse for the
                 # decision seat than the prose it replaces.
                 if self._collapse_stances([impl.get("sentiment")]) in (None, "neutral"):
-                    earnings_no_call.append({
-                        "symbol": sym,
-                        "filing_label": filing_label,
-                        "conviction": impl.get("conviction", "N/A"),
-                        "source_note": source_note,
-                    })
+                    earnings_no_call.append(
+                        {
+                            "symbol": sym,
+                            "filing_label": filing_label,
+                            "conviction": impl.get("conviction", "N/A"),
+                            "source_note": source_note,
+                        }
+                    )
                     continue
 
                 earnings_items.append(
                     self._render_earnings_verdict(
-                        sym=sym, analysis=analysis, filing_label=filing_label,
-                        source_note=source_note, analysis_path=ea.get("analysis_path"),
+                        sym=sym,
+                        analysis=analysis,
+                        filing_label=filing_label,
+                        source_note=source_note,
+                        analysis_path=ea.get("analysis_path"),
                     )
                 )
             rollup = self._render_earnings_no_call_rollup(earnings_no_call)
@@ -765,6 +794,7 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         # without context.
         allow_margin: bool = bool(kwargs.get("allow_margin", True))
         from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
+
         if not allow_margin and cash_balance < -MARGIN_DEFICIT_FLOOR_USD:
             deficit = -cash_balance
             margin_section = (
@@ -804,11 +834,7 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             ladder_multiple = kwargs.get("margin_ladder_multiple")
             ladder_rung = kwargs.get("margin_ladder_rung")
             ladder_backed = bool(kwargs.get("margin_ladder_backed", False))
-            if (
-                ladder_backed
-                and isinstance(headroom_usd, (int, float))
-                and isinstance(ladder_multiple, (int, float))
-            ):
+            if ladder_backed and isinstance(headroom_usd, (int, float)) and isinstance(ladder_multiple, (int, float)):
                 margin_section = (
                     "## Margin Capacity (margin is ENABLED)\n"
                     f"- This account may run gross exposure up to "
@@ -849,25 +875,25 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             # to notice. Absent rate -> no cost lines, never a guessed one.
             try:
                 from src.margin_interest import format_borrowing_cost_lines
+
                 _rate_pct = kwargs.get("margin_interest_rate_pct")
                 _cost_lines = format_borrowing_cost_lines(
                     cash_balance,
-                    _rate_pct if isinstance(_rate_pct, (int, float))
-                    and not isinstance(_rate_pct, bool) else None,
-                    headroom_usd if isinstance(headroom_usd, (int, float))
-                    and not isinstance(headroom_usd, bool) else None,
+                    _rate_pct if isinstance(_rate_pct, (int, float)) and not isinstance(_rate_pct, bool) else None,
+                    headroom_usd
+                    if isinstance(headroom_usd, (int, float)) and not isinstance(headroom_usd, bool)
+                    else None,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Could not render the borrowing-cost lines for the PM "
                     "prompt (%s); the Margin Capacity block is being sent "
-                    "WITHOUT its cost of carry.", exc,
+                    "WITHOUT its cost of carry.",
+                    exc,
                 )
                 _cost_lines = []
             if _cost_lines:
-                margin_section += "\n\n### What borrowing costs\n" + "\n".join(
-                    _cost_lines
-                )
+                margin_section += "\n\n### What borrowing costs\n" + "\n".join(_cost_lines)
 
         # Recent system performance, REPORTING ONLY. The `in_drawdown`  # retired-ok
         # flag and its two thresholds used to live here and halved every new
@@ -935,10 +961,7 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             bias = yesterday_insights.get("tomorrow_bias") or "neutral"
             conviction = yesterday_insights.get("tomorrow_conviction") or "medium"
             sell_grade = (yesterday_insights.get("sell_decisions_assessment") or "").strip()
-            sell_line = (
-                f"- **SELL discipline grade** (previous run): {sell_grade[:400]}"
-                if sell_grade else ""
-            )
+            sell_line = f"- **SELL discipline grade** (previous run): {sell_grade[:400]}" if sell_grade else ""
 
             # Defect (d) fix: evening's structured "lesson categories" —
             # thesis_updates / selection_rules / discipline_notes — were
@@ -975,11 +998,11 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
 
             insights_section = f"""## Prior Evening Insights{freshness}
 - **Tilt for today**: bias={bias}, conviction={conviction}
-- Outlook (prose): {yesterday_insights.get('tomorrow_outlook', 'N/A')}
+- Outlook (prose): {yesterday_insights.get("tomorrow_outlook", "N/A")}
 - Key risks to watch today:
 {risks_text}
-- Lessons: {yesterday_insights.get('lessons', 'N/A')}
-- Risk Rating: {yesterday_insights.get('risk_rating', 'N/A')}
+- Lessons: {yesterday_insights.get("lessons", "N/A")}
+- Risk Rating: {yesterday_insights.get("risk_rating", "N/A")}
 - Suggested Actions:
 {actions_text}
 {sell_line}
@@ -1009,13 +1032,13 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
 
         narrative_section = (
             f"## Portfolio Narrative (last 7 trading days)\n{weekly_narrative}"
-            if weekly_narrative else
-            "## Portfolio Narrative\nNo prior narrative yet (fresh table)."
+            if weekly_narrative
+            else "## Portfolio Narrative\nNo prior narrative yet (fresh table)."
         )
         trajectory_section = (
             f"## Macro Regime Trajectory (last 7 days)\n{macro_trajectory}"
-            if macro_trajectory else
-            "## Macro Regime Trajectory\nNo prior snapshots yet."
+            if macro_trajectory
+            else "## Macro Regime Trajectory\nNo prior snapshots yet."
         )
         # The `[date]` prefix on each row is not decoration: it is the
         # citation key the sub-floor catalyst gate resolves against
@@ -1030,8 +1053,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             "`SYMBOL(bullish)` for a long, `SYMBOL(bearish)` for a short. "
             "`(neutral)` or `(unknown)` does not qualify either direction.\n"
             f"{active_state_changes}"
-            if active_state_changes else
-            "## Active News State Changes\n(none surfaced in the rolling 14-day "
+            if active_state_changes
+            else "## Active News State Changes\n(none surfaced in the rolling 14-day "
             "window — with no rows to cite, the sub-floor R/R exception is "
             "unavailable today)"
         )
@@ -1041,9 +1064,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             "If a theme has appeared 2+ times here, it's a coverage or "
             "timing blind-spot, not random noise. Take a fresh look at it "
             "today before it runs further away."
-            if recent_missed_lessons else
-            "## Recurring Missed Themes\n(no recurring missed themes in the "
-            "last 14 days)"
+            if recent_missed_lessons
+            else "## Recurring Missed Themes\n(no recurring missed themes in the last 14 days)"
         )
         loss_pits_section = (
             f"## Recent Loss Pits (last 14d — repeat failure modes on losing "
@@ -1051,8 +1073,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             "If a root-cause has 2+ occurrences, it's a discipline gap, not "
             "bad luck. Lean against it today — tighten entries / respect "
             "warnings / cut concentration before you do the same thing again."
-            if recent_loss_pits else
-            "## Recent Loss Pits\n(no repeat failure modes in the last 14 days)"
+            if recent_loss_pits
+            else "## Recent Loss Pits\n(no repeat failure modes in the last 14 days)"
         )
 
         # What you asked for and never got. Diagnostic only — nothing here
@@ -1067,8 +1089,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             "will fail the same way again — either fix what the reason names "
             "(geometry, sizing, cash) or drop the name. This is information, "
             "not a prohibition: none of these symbols is barred."
-            if blocked_proposals else
-            "## Proposal Conversion\n(no proposals on record in the last 21 days)"
+            if blocked_proposals
+            else "## Proposal Conversion\n(no proposals on record in the last 21 days)"
         )
 
         # Self-calibration layers: PM reads RM's recent verdicts on it + its own
@@ -1082,34 +1104,30 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
 
         rm_verdicts_section = (
             f"## Risk Manager Verdicts (last 5 sessions — self-calibrate)\n{rm_recent_verdicts}"
-            if rm_recent_verdicts else
-            "## Risk Manager Verdicts\n(no prior RM verdicts on record)"
+            if rm_recent_verdicts
+            else "## Risk Manager Verdicts\n(no prior RM verdicts on record)"
         )
         pm_decisions_section = (
             f"## Your Recent Decisions (last 3 sessions — avoid flip-flops)\n{pm_recent_decisions}"
-            if pm_recent_decisions else
-            "## Your Recent Decisions\n(no prior PM decisions on record)"
+            if pm_recent_decisions
+            else "## Your Recent Decisions\n(no prior PM decisions on record)"
         )
         projected_section = (
             f"## Projected Book Preview (if you rubber-stamp TA's BUYs at 5% each)\n{projected_portfolio}"
-            if projected_portfolio else
-            "## Projected Book Preview\n(no projection available — empty book or no BUY candidates)"
+            if projected_portfolio
+            else "## Projected Book Preview\n(no projection available — empty book or no BUY candidates)"
         )
         calibration_section = (
             f"## Trade Calibration (your actual realized outcomes)\n{calibration_note}"
-            if calibration_note else
-            "## Trade Calibration\n(not enough closed trades yet for calibration — <3 in window)"
+            if calibration_note
+            else "## Trade Calibration\n(not enough closed trades yet for calibration — <3 in window)"
         )
-        alignment_section = (
-            f"## Macro-Tech Alignment Advisory\n{macro_tech_alignment}"
-            if macro_tech_alignment else ""
-        )
+        alignment_section = f"## Macro-Tech Alignment Advisory\n{macro_tech_alignment}" if macro_tech_alignment else ""
         # Phase 4 #4: structured facts block — numbers, not prose. PM should
         # prefer these over the derived narrative sections below for quantitative
         # questions (win rate, sector weight, age distribution).
         facts_section = (
-            f"## Quantitative Facts (read these first for numbers)\n{facts.render()}"
-            if facts is not None else ""
+            f"## Quantitative Facts (read these first for numbers)\n{facts.render()}" if facts is not None else ""
         )
 
         reserve_line = (
@@ -1117,7 +1135,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
             f"cash-equivalent sweep vehicle; the desk does NOT sell it to "
             f"fund a BUY, and it is NOT part of the Cash Balance above — "
             f"do not size against it)"
-            if reserve_balance > 0 else ""
+            if reserve_balance > 0
+            else ""
         )
         # 2026-09-17 fix: this used to hardcode "no margin" regardless of
         # `allow_margin`. When margin is enabled, cash is still raw cash —
@@ -1125,7 +1144,8 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         # the label must not claim the account has none. See the Margin
         # Capacity / Margin Policy section below for what may still be spent.
         cash_status = (
-            "deployable this session, no margin" if not allow_margin
+            "deployable this session, no margin"
+            if not allow_margin
             else "raw cash — see Margin Capacity below for what may still be spent"
         )
         # Accounting re-ask (board item 133, 2026-09-18). Non-empty ONLY on
@@ -1137,10 +1157,7 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         # `src/pm_accounting.REASK_DIRECTIVE` for why it must not re-open
         # the decision.
         accounting_challenge: str = kwargs.get("accounting_challenge") or ""
-        accounting_section = (
-            f"### ⚠️ {accounting_challenge}\n\n"
-            if accounting_challenge else ""
-        )
+        accounting_section = f"### ⚠️ {accounting_challenge}\n\n" if accounting_challenge else ""
         return f"""{accounting_section}## Account Status
 - Total Value: ${total_value:,.2f}
 - Cash Balance: ${cash_balance:,.2f} ({cash_status}){reserve_line}
@@ -1245,95 +1262,99 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         result.semantic_error = str(error)
         return None, result
 
-    def decide(self, analyses: list[TechAnalysisResult], positions: list[Position],
-               macro_analysis: dict | None = None, cash_balance: float = 0,
-               reserve_balance: float = 0.0,
-               total_value: float = 0,
-               news_intel: NewsIntelligenceReport | None = None,
-               earnings_analyses: list[dict] | None = None,
-               smart_money_findings: list[SmartMoneyFinding] | None = None,
-               yesterday_insights: dict | None = None,
-               recent_performance: dict | None = None,
-               position_history: dict | None = None,
-               weekly_narrative: str = "",
-               macro_trajectory: str = "",
-               active_state_changes: str = "",
-               rm_recent_verdicts: str = "",
-               pm_recent_decisions: str = "",
-               projected_portfolio: str = "",
-               calibration_note: str = "",
-               macro_tech_alignment: str = "",
-               recent_missed_lessons: str = "",
-               recent_loss_pits: str = "",
-               blocked_proposals: str = "",
-               facts=None,
-               allow_margin: bool = True,
-               # §11.2 ladder headroom, threaded from the SAME computation
-               # execution's submit loop uses (`_entry_deployment_budget` /
-               # `_session_gross_ceiling` in `src/pipeline_stages.py`) so the
-               # Margin Capacity section never derives its own number.
-               # `margin_ladder_backed=False` means that computation could
-               # not resolve this session — the section says so rather than
-               # showing a stale or invented figure.
-               margin_headroom_usd: float | None = None,
-               margin_ladder_backed: bool = False,
-               margin_ladder_multiple: float | None = None,
-               margin_ladder_rung: str | None = None,
-               # Board item 95: the annual margin-interest rate the account
-               # is actually charged on its OVERNIGHT debit, threaded from
-               # the caller's already-loaded `config.risk`. `None` means the
-               # cost of carry is simply not stated — never guessed.
-               margin_interest_rate_pct: float | None = None,
-               # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
-               # smallest order this desk will place. Threaded rather than
-               # defaulted to a literal so the rotation pre-check tests the
-               # DEPLOYED floor, not a second copy of it. `None` switches
-               # the funding half of the rotation precondition off.
-               min_order_usd: float | None = None,
-               symbol_sectors: dict[str, str] | None = None,
-               session_type: str = "morning",
-               allowed_buy_symbols: set[str] | None = None,
-               transient_admitted_symbols: set[str] | None = None,
-               # The sub-floor catalyst gate's two thresholds. Defaults are
-               # the shared constants `RiskConfig` itself defaults to, so a
-               # caller that does not thread config (the model-policy
-               # harness, most tests) gates on exactly the production
-               # numbers rather than on a second opinion about them.
-               rr_floor: float = REWARD_RISK_FLOOR,
-               starter_risk_pct: float = STARTER_POSITION_RISK_PCT,
-               # Phase 14 (opportunity-cost rotation): the EXISTING book's
-               # per-symbol risk (before anything this session proposes) and
-               # the total-risk ceiling it is rationed against — the same
-               # inputs `PortfolioConstructor` rations orders against
-               # (`src/pipeline_stages.py::_book_risk_inputs`). `None` for
-               # `existing_risk_pct` disables the rotation check for this
-               # session rather than running it against a fabricated
-               # "book is empty" view — see `_render_rotation_section`.
-               existing_risk_pct: dict[str, float] | None = None,
-               max_portfolio_risk_pct: float = 25.0,
-               # Phase 14b: whether `execution.rotation_enabled` is on.
-               # Wording only — tells the model the desk may itself close
-               # a categorically-ineligible holding this session; the act
-               # is decided in `DecisionStage`, never in this prompt.
-               rotation_execute_enabled: bool = False,
-               rotation_ranked_margin_enabled: bool = False,
-               # 2026-09-04 fix: the SAME real derived reward:risk
-               # `PortfolioConstructor.construct_orders` gates on,
-               # keyed by upper-case symbol — see `candidate_eligibility`
-               # and `_apply_subfloor_catalyst_rule` for why this replaces
-               # `TechAnalysisResult.risk_reward` at both eligibility gates.
-               # `None` (the default) falls back to that field, for the rare
-               # caller with no `PortfolioConstructor` to preview from.
-               real_reward_risk_by_symbol: dict[str, float | None] | None = None,
-               # Item 54 (2026-09-12): the constructor's structured refusals
-               # from the same preview pass, so eligibility rule R6 can name
-               # a candidate the one shared funnel has already refused.
-               constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
-               # Board item 133 (2026-09-18): the ONE bookkeeping re-ask
-               # `DecisionStage` may make when this seat dropped a candidate
-               # without naming a ground. Empty on every ordinary call.
-               accounting_challenge: str = "",
-               ) -> tuple[PortfolioDecision | None, "AgentResult"]:
+    def decide(
+        self,
+        analyses: list[TechAnalysisResult],
+        positions: list[Position],
+        macro_analysis: dict | None = None,
+        cash_balance: float = 0,
+        reserve_balance: float = 0.0,
+        total_value: float = 0,
+        news_intel: NewsIntelligenceReport | None = None,
+        earnings_analyses: list[dict] | None = None,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
+        yesterday_insights: dict | None = None,
+        recent_performance: dict | None = None,
+        position_history: dict | None = None,
+        weekly_narrative: str = "",
+        macro_trajectory: str = "",
+        active_state_changes: str = "",
+        rm_recent_verdicts: str = "",
+        pm_recent_decisions: str = "",
+        projected_portfolio: str = "",
+        calibration_note: str = "",
+        macro_tech_alignment: str = "",
+        recent_missed_lessons: str = "",
+        recent_loss_pits: str = "",
+        blocked_proposals: str = "",
+        facts=None,
+        allow_margin: bool = True,
+        # §11.2 ladder headroom, threaded from the SAME computation
+        # execution's submit loop uses (`_entry_deployment_budget` /
+        # `_session_gross_ceiling` in `src/pipeline_stages.py`) so the
+        # Margin Capacity section never derives its own number.
+        # `margin_ladder_backed=False` means that computation could
+        # not resolve this session — the section says so rather than
+        # showing a stale or invented figure.
+        margin_headroom_usd: float | None = None,
+        margin_ladder_backed: bool = False,
+        margin_ladder_multiple: float | None = None,
+        margin_ladder_rung: str | None = None,
+        # Board item 95: the annual margin-interest rate the account
+        # is actually charged on its OVERNIGHT debit, threaded from
+        # the caller's already-loaded `config.risk`. `None` means the
+        # cost of carry is simply not stated — never guessed.
+        margin_interest_rate_pct: float | None = None,
+        # 2026-09-23: the §10.3 `cash_sweep.min_order_usd` floor, the
+        # smallest order this desk will place. Threaded rather than
+        # defaulted to a literal so the rotation pre-check tests the
+        # DEPLOYED floor, not a second copy of it. `None` switches
+        # the funding half of the rotation precondition off.
+        min_order_usd: float | None = None,
+        symbol_sectors: dict[str, str] | None = None,
+        session_type: str = "morning",
+        allowed_buy_symbols: set[str] | None = None,
+        transient_admitted_symbols: set[str] | None = None,
+        # The sub-floor catalyst gate's two thresholds. Defaults are
+        # the shared constants `RiskConfig` itself defaults to, so a
+        # caller that does not thread config (the model-policy
+        # harness, most tests) gates on exactly the production
+        # numbers rather than on a second opinion about them.
+        rr_floor: float = REWARD_RISK_FLOOR,
+        starter_risk_pct: float = STARTER_POSITION_RISK_PCT,
+        # Phase 14 (opportunity-cost rotation): the EXISTING book's
+        # per-symbol risk (before anything this session proposes) and
+        # the total-risk ceiling it is rationed against — the same
+        # inputs `PortfolioConstructor` rations orders against
+        # (`src/pipeline_stages.py::_book_risk_inputs`). `None` for
+        # `existing_risk_pct` disables the rotation check for this
+        # session rather than running it against a fabricated
+        # "book is empty" view — see `_render_rotation_section`.
+        existing_risk_pct: dict[str, float] | None = None,
+        max_portfolio_risk_pct: float = 25.0,
+        # Phase 14b: whether `execution.rotation_enabled` is on.
+        # Wording only — tells the model the desk may itself close
+        # a categorically-ineligible holding this session; the act
+        # is decided in `DecisionStage`, never in this prompt.
+        rotation_execute_enabled: bool = False,
+        rotation_ranked_margin_enabled: bool = False,
+        # 2026-09-04 fix: the SAME real derived reward:risk
+        # `PortfolioConstructor.construct_orders` gates on,
+        # keyed by upper-case symbol — see `candidate_eligibility`
+        # and `_apply_subfloor_catalyst_rule` for why this replaces
+        # `TechAnalysisResult.risk_reward` at both eligibility gates.
+        # `None` (the default) falls back to that field, for the rare
+        # caller with no `PortfolioConstructor` to preview from.
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        # Item 54 (2026-09-12): the constructor's structured refusals
+        # from the same preview pass, so eligibility rule R6 can name
+        # a candidate the one shared funnel has already refused.
+        constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+        # Board item 133 (2026-09-18): the ONE bookkeeping re-ask
+        # `DecisionStage` may make when this seat dropped a candidate
+        # without naming a ground. Empty on every ordinary call.
+        accounting_challenge: str = "",
+    ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         # One fill retry per decide() call — the agent is long-lived across
         # morning/midday/close. A morning miss must not spend the close's
         # shot, and a spent flag must not skip a later session.
@@ -1404,7 +1425,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         if parsed is None:
             logger.error("Portfolio manager returned non-JSON response")
             return self._semantic_failure(
-                result, "pm_parse_error", "response did not contain a valid decision JSON object",
+                result,
+                "pm_parse_error",
+                "response did not contain a valid decision JSON object",
             )
         if not isinstance(parsed, dict):
             # A PortfolioDecision is an OBJECT. A bare list here means the
@@ -1419,7 +1442,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 type(parsed).__name__,
             )
             return self._semantic_failure(
-                result, "pm_parse_error", f"parsed {type(parsed).__name__}, expected object",
+                result,
+                "pm_parse_error",
+                f"parsed {type(parsed).__name__}, expected object",
             )
         # Per-entry isolation for targets: a single malformed TargetPosition
         # (e.g. target_weight_pct=30 violating the 0-25 range, or empty
@@ -1438,7 +1463,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         )
         if isinstance(parsed, dict):
             parsed = self._drop_invalid_targets(
-                parsed, dropped=self.last_dropped_targets,
+                parsed,
+                dropped=self.last_dropped_targets,
             )
             parsed = self._drop_invalid_rejections(parsed)
         try:
@@ -1450,11 +1476,15 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     parsed_target_count,
                 )
                 return self._semantic_failure(
-                    result, "pm_schema_error",
+                    result,
+                    "pm_schema_error",
                     f"all {parsed_target_count} emitted targets were invalid",
                 )
             decision, result = self._fill_missing_open_falsifiers(
-                decision, result, positions=positions, total_value=total_value,
+                decision,
+                result,
+                positions=positions,
+                total_value=total_value,
                 existing_risk_pct=existing_risk_pct,
             )
             # §9.3 — drop any target that OPENS/INCREASES exposure while
@@ -1464,7 +1494,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # method's non-empty-error contract — it fails the ENTIRE
             # session, not one target).
             decision = self._drop_unadjudicated_conflicts(
-                decision, positions=positions, total_value=total_value,
+                decision,
+                positions=positions,
+                total_value=total_value,
                 existing_risk_pct=existing_risk_pct,
                 dropped=self.last_dropped_targets,
             )
@@ -1473,18 +1505,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # grounding: a target this rule removes must not be able to fail
             # the whole session on its way out.
             decision = self._apply_subfloor_catalyst_rule(
-                decision, analyses=analyses, positions=positions,
+                decision,
+                analyses=analyses,
+                positions=positions,
                 total_value=total_value,
                 active_state_changes=active_state_changes,
-                rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                rr_floor=rr_floor,
+                starter_risk_pct=starter_risk_pct,
                 real_reward_risk_by_symbol=real_reward_risk_by_symbol,
                 existing_risk_pct=existing_risk_pct,
             )
             errors = self.validate_grounding(
-                decision, analyses=analyses, positions=positions,
+                decision,
+                analyses=analyses,
+                positions=positions,
                 news_intel=news_intel,
                 earnings_analyses=earnings_analyses or [],
-                macro_analysis=macro_analysis, total_value=total_value,
+                macro_analysis=macro_analysis,
+                total_value=total_value,
                 smart_money_findings=smart_money_findings or [],
                 symbol_sectors=symbol_sectors or {},
                 allowed_buy_symbols=allowed_buy_symbols,
@@ -1496,7 +1534,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "; ".join(errors),
                 )
                 return self._semantic_failure(
-                    result, "pm_grounding_error", "; ".join(errors),
+                    result,
+                    "pm_grounding_error",
+                    "; ".join(errors),
                 )
             return decision, result
         except ValidationError as e:
@@ -1520,21 +1560,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     "Portfolio decision validation failure is rooted in a "
                     "decision-bearing field (%s) — not schema-repairable; "
                     "failing closed: %s",
-                    ", ".join(self._DECISION_FIELDS), e,
+                    ", ".join(self._DECISION_FIELDS),
+                    e,
                 )
                 return self._semantic_failure(result, "pm_schema_error", e)
             repaired = self.repair_reprompt(result, e, "PortfolioDecision")
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
                 repaired_target_count = (
-                    len(reparsed.get("targets", []))
-                    if isinstance(reparsed.get("targets", []), list) else 0
+                    len(reparsed.get("targets", [])) if isinstance(reparsed.get("targets", []), list) else 0
                 )
                 # The repaired answer replaces the first one, so its drops
                 # replace the first attempt's in the record too.
                 self.last_dropped_targets = []
                 reparsed = self._drop_invalid_targets(
-                    reparsed, dropped=self.last_dropped_targets,
+                    reparsed,
+                    dropped=self.last_dropped_targets,
                 )
                 reparsed = self._drop_invalid_rejections(reparsed)
                 if not self._decision_fields_unchanged(parsed, reparsed):
@@ -1545,48 +1586,59 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         "failing closed.",
                     )
                     return self._semantic_failure(
-                        repaired, "pm_repair_changed_decision",
+                        repaired,
+                        "pm_repair_changed_decision",
                         "schema repair changed target symbols or weights",
                     )
                 try:
                     decision = PortfolioDecision(**reparsed)
                     if repaired_target_count > 0 and not decision.targets:
                         logger.error(
-                            "Portfolio repair emitted %d target(s), but all were "
-                            "invalid; failing closed",
+                            "Portfolio repair emitted %d target(s), but all were invalid; failing closed",
                             repaired_target_count,
                         )
                         return self._semantic_failure(
-                            repaired, "pm_schema_error",
+                            repaired,
+                            "pm_schema_error",
                             f"all {repaired_target_count} repaired targets were invalid",
                         )
                     decision, repaired = self._fill_missing_open_falsifiers(
-                        decision, repaired, positions=positions,
+                        decision,
+                        repaired,
+                        positions=positions,
                         total_value=total_value,
                         existing_risk_pct=existing_risk_pct,
                     )
                     # §9.3 — same per-target conflict prune as the
                     # first-attempt path, applied before grounding here too.
                     decision = self._drop_unadjudicated_conflicts(
-                        decision, positions=positions, total_value=total_value,
+                        decision,
+                        positions=positions,
+                        total_value=total_value,
                         existing_risk_pct=existing_risk_pct,
                         dropped=self.last_dropped_targets,
                     )
                     # Same sub-floor catalyst gate as the first-attempt path.
                     # A schema repair must not be a way around it.
                     decision = self._apply_subfloor_catalyst_rule(
-                        decision, analyses=analyses, positions=positions,
+                        decision,
+                        analyses=analyses,
+                        positions=positions,
                         total_value=total_value,
                         active_state_changes=active_state_changes,
-                        rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                        rr_floor=rr_floor,
+                        starter_risk_pct=starter_risk_pct,
                         real_reward_risk_by_symbol=real_reward_risk_by_symbol,
                         existing_risk_pct=existing_risk_pct,
                     )
                     errors = self.validate_grounding(
-                        decision, analyses=analyses, positions=positions,
+                        decision,
+                        analyses=analyses,
+                        positions=positions,
                         news_intel=news_intel,
                         earnings_analyses=earnings_analyses or [],
-                        macro_analysis=macro_analysis, total_value=total_value,
+                        macro_analysis=macro_analysis,
+                        total_value=total_value,
                         smart_money_findings=smart_money_findings or [],
                         symbol_sectors=symbol_sectors or {},
                         allowed_buy_symbols=allowed_buy_symbols,
@@ -1594,11 +1646,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     )
                     if errors:
                         logger.error(
-                            "Repaired portfolio decision failed deterministic "
-                            "grounding: %s", "; ".join(errors),
+                            "Repaired portfolio decision failed deterministic grounding: %s",
+                            "; ".join(errors),
                         )
                         return self._semantic_failure(
-                            repaired, "pm_grounding_error", "; ".join(errors),
+                            repaired,
+                            "pm_grounding_error",
+                            "; ".join(errors),
                         )
                     logger.info(
                         "Portfolio decision repair succeeded (%d targets)",
@@ -1607,7 +1661,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     return decision, repaired
                 except Exception as e2:  # noqa: BLE001
                     logger.error(
-                        "Failed to parse portfolio decision after repair: %s", e2,
+                        "Failed to parse portfolio decision after repair: %s",
+                        e2,
                     )
                     return self._semantic_failure(repaired, "pm_schema_error", e2)
             logger.error(
@@ -1615,7 +1670,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 type(reparsed).__name__,
             )
             return self._semantic_failure(
-                repaired, "pm_parse_error",
+                repaired,
+                "pm_parse_error",
                 f"repair parsed {type(reparsed).__name__}, expected object",
             )
         except Exception as e:
@@ -1648,7 +1704,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             pass
 
     def _fill_missing_open_falsifiers(
-        self, decision, result, *, positions=None, total_value: float = 0.0,
+        self,
+        decision,
+        result,
+        *,
+        positions=None,
+        total_value: float = 0.0,
         existing_risk_pct=None,
     ):
         """One paid retry to fill a missing thesis_invalid_if. Never invents.
@@ -1663,27 +1724,32 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import (
-            HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
+            HEAL_CAP_BLOCKED,
+            HEAL_FAILED,
+            HEAL_NOT_ATTEMPTED,
+            HEAL_PAID_RETRY,
             merge_retry_falsifiers,
         )
         from src.soft_exit_never_blank import (
-            apply_mechanical_heal, soft_exit_fill_coda, soft_exit_retry_targets,
+            apply_mechanical_heal,
+            soft_exit_fill_coda,
+            soft_exit_retry_targets,
         )
 
         if decision is None:
             return decision, result
         retry_already_used = bool(getattr(self, "_soft_exit_retry_used", False))
-        held = {
-            str(getattr(p, "symbol", "")).upper(): p
-            for p in list(positions or [])
-            if getattr(p, "symbol", None)
-        }
+        held = {str(getattr(p, "symbol", "")).upper(): p for p in list(positions or []) if getattr(p, "symbol", None)}
         missing = [
-            t.symbol for t in list(getattr(decision, "targets", None) or [])
+            t.symbol
+            for t in list(getattr(decision, "targets", None) or [])
             if open_target_missing_falsifier(
                 t,
                 intent=self._target_intent(
-                    t, held, total_value, existing_risk_pct=existing_risk_pct,
+                    t,
+                    held,
+                    total_value,
+                    existing_risk_pct=existing_risk_pct,
                 ),
             )
         ]
@@ -1692,13 +1758,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
 
         # Mechanical heal of last resort, before any spend (board item 78).
         missing = apply_mechanical_heal(
-            decision, result, missing, self._record_soft_exit_heal, logger,
+            decision,
+            result,
+            missing,
+            self._record_soft_exit_heal,
+            logger,
         )
         if not missing:
             return decision, result
         if retry_already_used:
             self._record_soft_exit_heal(
-                missing, HEAL_NOT_ATTEMPTED,
+                missing,
+                HEAL_NOT_ATTEMPTED,
                 "the seat's one soft-exit fill retry was already spent on an "
                 "earlier attempt in this decide() call; no second retry was "
                 "bought and no falsifier was invented",
@@ -1707,11 +1778,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         user_message = getattr(result, "user_message", None) or ""
         if not str(user_message).strip():
             logger.warning(
-                "Open target(s) missing thesis_invalid_if (%s) — no user "
-                "message to replay for a fill retry", missing,
+                "Open target(s) missing thesis_invalid_if (%s) — no user message to replay for a fill retry",
+                missing,
             )
             self._record_soft_exit_heal(
-                missing, HEAL_NOT_ATTEMPTED,
+                missing,
+                HEAL_NOT_ATTEMPTED,
                 "no replayable user message survived, so the paid soft-exit "
                 "fill retry was NEVER ATTEMPTED for this name",
             )
@@ -1720,48 +1792,55 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         coda = soft_exit_fill_coda(missing)
         try:
             retried = self._execute(
-                str(user_message) + coda, retry_kind="soft_exit_fill",
+                str(user_message) + coda,
+                retry_kind="soft_exit_fill",
                 optional_retry=True,
             )
         except PaidAnalysisSuspended as exc:
             logger.warning(
                 "Soft-exit fill retry blocked by spend cap for %s: %s",
-                missing, exc,
+                missing,
+                exc,
             )
             self._record_soft_exit_heal(
-                missing, HEAL_CAP_BLOCKED,
+                missing,
+                HEAL_CAP_BLOCKED,
                 f"the paid soft-exit fill retry was blocked by the spend cap "
                 f"({exc}); the seat was never re-asked for this name",
             )
             return decision, result
         except Exception as exc:
             logger.warning(
-                "Soft-exit fill retry failed for %s: %s", missing, exc,
+                "Soft-exit fill retry failed for %s: %s",
+                missing,
+                exc,
             )
             self._record_soft_exit_heal(
-                missing, HEAL_FAILED,
-                f"the paid soft-exit fill retry was attempted and errored "
-                f"({type(exc).__name__}: {exc})",
+                missing,
+                HEAL_FAILED,
+                f"the paid soft-exit fill retry was attempted and errored ({type(exc).__name__}: {exc})",
             )
             return decision, result
         retry_targets = soft_exit_retry_targets(retried)
         merged, filled = merge_retry_falsifiers(
-            list(decision.targets), retry_targets,
+            list(decision.targets),
+            retry_targets,
         )
         if filled:
             decision.targets = merged
             logger.info(
-                "Soft-exit fill retry stated thesis_invalid_if for %s — "
-                "not invented", filled,
+                "Soft-exit fill retry stated thesis_invalid_if for %s — not invented",
+                filled,
             )
         else:
             logger.warning(
-                "Soft-exit fill retry did not produce a stated falsifier "
-                "for %s", missing,
+                "Soft-exit fill retry did not produce a stated falsifier for %s",
+                missing,
             )
         filled_keys = {str(s).strip().upper() for s in (filled or [])}
         self._record_soft_exit_heal(
-            filled, HEAL_PAID_RETRY,
+            filled,
+            HEAL_PAID_RETRY,
             "the seat stated a real thesis_invalid_if on the one paid "
             "soft-exit fill retry; the string is the seat's, not invented",
         )
@@ -1781,10 +1860,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
 # and the delete that `patch` performs on exit restores the pristine value.
 # This is the ONE mirror block for this package — a second one would cancel it.
 _SUBMODULES = (
-    "src.agents.portfolio_manager.prompt_evidence", "src.agents.portfolio_manager.evidence_prompting",
-    "src.agents.portfolio_manager.ranking", "src.agents.portfolio_manager.candidate_ranking",
-    "src.agents.portfolio_manager.rotation_section", "src.agents.portfolio_manager.rotation_rendering",
-    "src.agents.portfolio_manager.grounding", "src.agents.portfolio_manager.decision_grounding",
+    "src.agents.portfolio_manager.prompt_evidence",
+    "src.agents.portfolio_manager.evidence_prompting",
+    "src.agents.portfolio_manager.ranking",
+    "src.agents.portfolio_manager.candidate_ranking",
+    "src.agents.portfolio_manager.rotation_section",
+    "src.agents.portfolio_manager.rotation_rendering",
+    "src.agents.portfolio_manager.grounding",
+    "src.agents.portfolio_manager.decision_grounding",
 )
 _PRISTINE: dict[str, object] = {}
 

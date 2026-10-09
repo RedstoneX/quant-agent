@@ -19,6 +19,7 @@ definition, there). The backfills, the restore/repeg recovery queues and the
 excursion/gap/positions bodies live in backfills.py, recovery_queues.py and
 excursions.py; the same-named methods below are thin shims over them.
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,14 +64,19 @@ from src.storage.trades.exit_reasons import (  # noqa: F401  re-export: defined 
 logger = logging.getLogger(__name__)
 
 
-
-
 class TradeLedger:
     """Trade-ledger write cluster; see module docstring."""
 
-    def __init__(self, *, conn: sqlite3.Connection, lock: threading.Lock, locked_write: Callable,
-                 executed_trade_predicate: Callable[[], str], sqlite_utc_timestamp: Callable[[datetime], str],
-                 et_day_utc_bounds: Callable[..., tuple[str, str]]):
+    def __init__(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        lock: threading.Lock,
+        locked_write: Callable,
+        executed_trade_predicate: Callable[[], str],
+        sqlite_utc_timestamp: Callable[[datetime], str],
+        et_day_utc_bounds: Callable[..., tuple[str, str]],
+    ):
         self.conn = conn
         self._lock = lock
         self._locked_write = locked_write
@@ -78,23 +84,31 @@ class TradeLedger:
         self._sqlite_utc_timestamp = sqlite_utc_timestamp
         self._et_day_utc_bounds = et_day_utc_bounds
 
-    def insert_trade(self, symbol: str, action: str, qty: float, price: float,
-                     reasoning: str, run_id: str,
-                     stop_loss: float = 0, take_profit: float = 0,
-                     broker_order_id: str | None = None,
-                     fill_status: str | None = None,
-                     decision_id: str | None = None,
-                     expected_horizon_sessions: int | None = None,
-                     setup_type: str | None = None,
-                     conviction: str | None = None,
-                     requested_risk_pct: float | None = None,
-                     allocated_risk_pct: float | None = None,
-                     decision_model: str | None = None,
-                     thesis_invalid_if: str | None = None,
-                     structural_ceiling: bool | None = None,
-                     entry_atr: float | None = None,
-                     stop_basis: str | None = None,
-                     stop_level_basis: str | None = None) -> int:
+    def insert_trade(
+        self,
+        symbol: str,
+        action: str,
+        qty: float,
+        price: float,
+        reasoning: str,
+        run_id: str,
+        stop_loss: float = 0,
+        take_profit: float = 0,
+        broker_order_id: str | None = None,
+        fill_status: str | None = None,
+        decision_id: str | None = None,
+        expected_horizon_sessions: int | None = None,
+        setup_type: str | None = None,
+        conviction: str | None = None,
+        requested_risk_pct: float | None = None,
+        allocated_risk_pct: float | None = None,
+        decision_model: str | None = None,
+        thesis_invalid_if: str | None = None,
+        structural_ceiling: bool | None = None,
+        entry_atr: float | None = None,
+        stop_basis: str | None = None,
+        stop_level_basis: str | None = None,
+    ) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `entry_atr` / `stop_basis` are STOP-FLOOR EVIDENCE, pinned at entry
@@ -139,13 +153,15 @@ class TradeLedger:
         to `setup_type` alone (the conservative side).
         """
         # 0/1 for storage, None stays NULL — see the column's migration note.
-        structural_ceiling_stored = (
-            None if structural_ceiling is None else int(bool(structural_ceiling))
-        )
+        structural_ceiling_stored = None if structural_ceiling is None else int(bool(structural_ceiling))
 
         def _do():
             position_id = self._resolve_new_row_position_id(
-                symbol, action, qty=qty, fill_status=fill_status, fill_qty=None,
+                symbol,
+                action,
+                qty=qty,
+                fill_status=fill_status,
+                fill_qty=None,
             )
             exit_category = _categorize_exit_reason(action, reasoning, fill_status, None)
             decision_link_status = _resolve_decision_id_status(action, decision_id)
@@ -169,16 +185,39 @@ class TradeLedger:
                 "initial_take_profit, structural_ceiling, entry_atr, stop_basis, "
                 "stop_level_basis) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (symbol, action, qty, price, reasoning, run_id,
-                 stop_loss, take_profit, broker_order_id, fill_status, decision_id,
-                 expected_horizon_sessions, setup_type, position_id, exit_category,
-                 conviction, requested_risk_pct, allocated_risk_pct, decision_model,
-                 decision_link_status, thesis_invalid_if, initial_stop_loss,
-                 initial_take_profit, structural_ceiling_stored,
-                 entry_atr, stop_basis, stop_level_basis),
+                (
+                    symbol,
+                    action,
+                    qty,
+                    price,
+                    reasoning,
+                    run_id,
+                    stop_loss,
+                    take_profit,
+                    broker_order_id,
+                    fill_status,
+                    decision_id,
+                    expected_horizon_sessions,
+                    setup_type,
+                    position_id,
+                    exit_category,
+                    conviction,
+                    requested_risk_pct,
+                    allocated_risk_pct,
+                    decision_model,
+                    decision_link_status,
+                    thesis_invalid_if,
+                    initial_stop_loss,
+                    initial_take_profit,
+                    structural_ceiling_stored,
+                    entry_atr,
+                    stop_basis,
+                    stop_level_basis,
+                ),
             )
             self.conn.commit()
             return cur.lastrowid
+
         return self._locked_write(_do, label="insert_trade")
 
     def insert_trade_refusal(self, **kwargs) -> int | None:
@@ -190,7 +229,11 @@ class TradeLedger:
         return _refusals_store.get_all(self, refusal=refusal, limit=limit)
 
     def update_open_stop_loss(
-        self, symbol: str, new_stop_price: float, *, action: str | None = None,
+        self,
+        symbol: str,
+        new_stop_price: float,
+        *,
+        action: str | None = None,
     ) -> bool:
         """Write the live stop onto every opening row of this position.
 
@@ -217,16 +260,14 @@ class TradeLedger:
         opening = (action or "").upper() or None
         if opening is not None and opening not in ("BUY", "SHORT"):
             logger.warning(
-                "update_open_stop_loss: refusing unknown opening action %r "
-                "for %s", action, symbol_key,
+                "update_open_stop_loss: refusing unknown opening action %r for %s",
+                action,
+                symbol_key,
             )
             return False
 
         def _do():
-            predicate = (
-                f"({self._executed_trade_predicate()} "
-                "OR fill_status IN ('submitted', 'pending_submit'))"
-            )
+            predicate = f"({self._executed_trade_predicate()} OR fill_status IN ('submitted', 'pending_submit'))"
             if opening:
                 row = self.conn.execute(
                     "SELECT id, stop_loss, initial_stop_loss, position_id, action "
@@ -247,8 +288,9 @@ class TradeLedger:
                 ).fetchone()
             if row is None:
                 logger.warning(
-                    "update_open_stop_loss: no opening row for %s — live "
-                    "stop $%.4f was NOT recorded", symbol_key, price,
+                    "update_open_stop_loss: no opening row for %s — live stop $%.4f was NOT recorded",
+                    symbol_key,
+                    price,
                 )
                 return False
             side = opening or (row["action"] if row["action"] in ("BUY", "SHORT") else None)
@@ -282,17 +324,22 @@ class TradeLedger:
                     )
                 else:
                     self.conn.execute(
-                        "UPDATE trades SET stop_loss = ?, initial_stop_loss = ? "
-                        "WHERE id = ?",
+                        "UPDATE trades SET stop_loss = ?, initial_stop_loss = ? WHERE id = ?",
                         (price, frozen, row["id"]),
                     )
             self.conn.commit()
             return True
+
         return bool(self._locked_write(_do, label="update_open_stop_loss"))
 
     def _resolve_new_row_position_id(
-        self, symbol: str, action: str, *, qty: float,
-        fill_status: str | None, fill_qty: float | None,
+        self,
+        symbol: str,
+        action: str,
+        *,
+        qty: float,
+        fill_status: str | None,
+        fill_qty: float | None,
         timestamp: str | None = None,
     ) -> str | None:
         """Position-id for a row not yet inserted. Caller must already hold
@@ -326,9 +373,13 @@ class TradeLedger:
         ).fetchall()
         history = [dict(r) for r in rows]
         placeholder = {
-            "id": -1, "action": action, "qty": qty,
-            "fill_qty": fill_qty, "fill_status": fill_status,
-            "position_id": None, "timestamp": timestamp,
+            "id": -1,
+            "action": action,
+            "qty": qty,
+            "fill_qty": fill_qty,
+            "fill_status": fill_status,
+            "position_id": None,
+            "timestamp": timestamp,
         }
         if timestamp is None:
             history.append(placeholder)
@@ -342,7 +393,9 @@ class TradeLedger:
         return _assign_position_ids(history).get(-1)
 
     def confirm_trade_submitted(
-        self, row_id: int, broker_order_id: str | None,
+        self,
+        row_id: int,
+        broker_order_id: str | None,
     ) -> int:
         """Flip a pending_submit row to submitted after broker accepted.
 
@@ -361,15 +414,18 @@ class TradeLedger:
         """
         with self._lock:
             cur = self.conn.execute(
-                "UPDATE trades SET broker_order_id = ?, fill_status = 'submitted' "
-                "WHERE id = ?",
+                "UPDATE trades SET broker_order_id = ?, fill_status = 'submitted' WHERE id = ?",
                 (broker_order_id, row_id),
             )
             self.conn.commit()
             return cur.rowcount
 
     def repoint_trade_broker_order_id(
-        self, row_id: int, *, old_order_id: str, new_order_id: str,
+        self,
+        row_id: int,
+        *,
+        old_order_id: str,
+        new_order_id: str,
     ) -> int:
         """Repoint a trade row at the order id an Alpaca replacement minted.
 
@@ -388,8 +444,7 @@ class TradeLedger:
         """
         with self._lock:
             cur = self.conn.execute(
-                "UPDATE trades SET broker_order_id = ? "
-                "WHERE id = ? AND broker_order_id = ?",
+                "UPDATE trades SET broker_order_id = ? WHERE id = ? AND broker_order_id = ?",
                 (new_order_id, row_id, old_order_id),
             )
             self.conn.commit()
@@ -407,16 +462,18 @@ class TradeLedger:
         """
         with self._lock:
             cur = self.conn.execute(
-                "UPDATE trades SET fill_status = 'submit_failed' "
-                "WHERE id = ?",
+                "UPDATE trades SET fill_status = 'submit_failed' WHERE id = ?",
                 (row_id,),
             )
             self.conn.commit()
             return cur.rowcount
 
     def update_trade_fill(
-        self, broker_order_id: str, fill_status: str,
-        fill_qty: float | None = None, fill_price: float | None = None,
+        self,
+        broker_order_id: str,
+        fill_status: str,
+        fill_qty: float | None = None,
+        fill_price: float | None = None,
     ) -> int:
         """Update a trade row's fill reconciliation after broker terminal status.
 
@@ -435,8 +492,7 @@ class TradeLedger:
                 has_fill = False
             if has_fill and fill_price is not None:
                 row = self.conn.execute(
-                    "SELECT id, symbol, action, reasoning FROM trades "
-                    "WHERE broker_order_id = ?",
+                    "SELECT id, symbol, action, reasoning FROM trades WHERE broker_order_id = ?",
                     (broker_order_id,),
                 ).fetchone()
                 if row is not None and row["action"] not in {"BUY", "SWEEP_BUY", "HOLD"}:
@@ -449,11 +505,13 @@ class TradeLedger:
                     # A no-op recompute for every other action (already
                     # settled from `reasoning` at insert time).
                     exit_category = _categorize_exit_reason(
-                        row["action"], row["reasoning"], fill_status, fill_qty,
+                        row["action"],
+                        row["reasoning"],
+                        fill_status,
+                        fill_qty,
                     )
                     self.conn.execute(
-                        "UPDATE trades SET realized_pnl = ?, exit_reason_category = ? "
-                        "WHERE id = ?",
+                        "UPDATE trades SET realized_pnl = ?, exit_reason_category = ? WHERE id = ?",
                         (realized, exit_category, row["id"]),
                     )
             self.conn.commit()
@@ -474,16 +532,22 @@ class TradeLedger:
             actual_qty = float(row["fill_qty"] or 0)
             actual_price = row["fill_price"]
             # Only broker-confirmed execution facts are safe cost basis.
-            if actual_qty <= 0 or actual_price is None or status in {
-                "submitted", "pending_submit", "submit_failed",
-            }:
+            if (
+                actual_qty <= 0
+                or actual_price is None
+                or status
+                in {
+                    "submitted",
+                    "pending_submit",
+                    "submit_failed",
+                }
+            ):
                 continue
             actual_price = float(actual_price)
             if row["action"] in {"BUY", "SWEEP_BUY"}:
                 new_inventory = inventory + actual_qty
                 average_cost = (
-                    (inventory * average_cost + actual_qty * actual_price) / new_inventory
-                    if new_inventory > 0 else 0.0
+                    (inventory * average_cost + actual_qty * actual_price) / new_inventory if new_inventory > 0 else 0.0
                 )
                 inventory = new_inventory
                 continue
@@ -591,8 +655,7 @@ class TradeLedger:
             # STOP_OUT / SWEEP_SELL / a long's fired TRAIL_STOP, and SHORT
             # (a sell-to-open) — subtracts.
             base_action = action.split("(", 1)[0].strip()
-            if base_action in ("BUY", "SWEEP_BUY",
-                               "COVER", "EMERGENCY_COVER", "PARTIAL_COVER"):
+            if base_action in ("BUY", "SWEEP_BUY", "COVER", "EMERGENCY_COVER", "PARTIAL_COVER"):
                 sign = 1.0
             elif base_action == "TRAIL_STOP" and running < -1e-9:
                 sign = 1.0  # fired protective stop on a SHORT = buy-to-cover
@@ -613,16 +676,21 @@ class TradeLedger:
         """
         with self._lock:
             rows = self.conn.execute(
-                "SELECT broker_order_id FROM trades "
-                "WHERE symbol = ? AND broker_order_id IS NOT NULL",
+                "SELECT broker_order_id FROM trades WHERE symbol = ? AND broker_order_id IS NOT NULL",
                 (symbol,),
             ).fetchall()
         return {r[0] for r in rows}
 
     def insert_stop_out_trade(
-        self, *, symbol: str, qty: float, price: float,
-        broker_order_id: str, filled_at: str | None,
-        run_id: str | None = None, action: str = "STOP_OUT",
+        self,
+        *,
+        symbol: str,
+        qty: float,
+        price: float,
+        broker_order_id: str,
+        filled_at: str | None,
+        run_id: str | None = None,
+        action: str = "STOP_OUT",
         reasoning: str | None = None,
     ) -> tuple[int, bool]:
         """Idempotently record a broker-initiated exit the ledger never saw.
@@ -718,7 +786,11 @@ class TradeLedger:
                     "see ReconciliationConfig)."
                 )
             position_id = self._resolve_new_row_position_id(
-                symbol, action, qty=qty, fill_status="filled", fill_qty=qty,
+                symbol,
+                action,
+                qty=qty,
+                fill_status="filled",
+                fill_qty=qty,
                 timestamp=ts,
             )
             exit_category = _categorize_exit_reason(action, reasoning_final, "filled", qty)
@@ -735,9 +807,19 @@ class TradeLedger:
                 "decision_id_status) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, 'filled', ?, ?, datetime('now'), ?, ?, ?, ?)",
                 (
-                    symbol, action, qty, price, reasoning_final,
-                    run_id, broker_order_id, qty, price, ts,
-                    position_id, exit_category, decision_link_status,
+                    symbol,
+                    action,
+                    qty,
+                    price,
+                    reasoning_final,
+                    run_id,
+                    broker_order_id,
+                    qty,
+                    price,
+                    ts,
+                    position_id,
+                    exit_category,
+                    decision_link_status,
                 ),
             )
             row_id = cur.lastrowid
@@ -748,6 +830,7 @@ class TradeLedger:
             )
             self.conn.commit()
             return row_id, True
+
         return self._locked_write(_do, label="insert_stop_out_trade")
 
     def get_unreconciled_orders(self, run_id: str | None = None) -> list[dict]:
@@ -765,12 +848,14 @@ class TradeLedger:
         where = " AND ".join(conditions)
         with self._lock:
             rows = self.conn.execute(
-                f"SELECT * FROM trades WHERE {where}", tuple(params),
+                f"SELECT * FROM trades WHERE {where}",
+                tuple(params),
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_orphaned_pending_submits(
-        self, min_age_seconds: int = 120,
+        self,
+        min_age_seconds: int = 120,
     ) -> list[dict]:
         """BUY write-ahead rows the broker may or may not have received:
         fill_status 'pending_submit' with broker_order_id still NULL —
@@ -798,7 +883,10 @@ class TradeLedger:
         return [dict(r) for r in rows]
 
     def has_pending_action_for_symbol(
-        self, symbol: str, action: str, today_only: bool = True,
+        self,
+        symbol: str,
+        action: str,
+        today_only: bool = True,
     ) -> bool:
         """True if a (symbol, action) trade row exists with fill_status
         'submitted' and a broker_order_id — i.e., a previous submission
@@ -831,14 +919,20 @@ class TradeLedger:
         where = " AND ".join(conditions)
         with self._lock:
             row = self.conn.execute(
-                f"SELECT 1 FROM trades WHERE {where} LIMIT 1", tuple(params),
+                f"SELECT 1 FROM trades WHERE {where} LIMIT 1",
+                tuple(params),
             ).fetchone()
         return row is not None
 
     def insert_pending_protection_restore(
-        self, *, symbol: str, sell_order_id: str,
-        position_qty_before_sell: float, specs_json: str,
-        run_id: str | None = None, side: str | None = None,
+        self,
+        *,
+        symbol: str,
+        sell_order_id: str,
+        position_qty_before_sell: float,
+        specs_json: str,
+        run_id: str | None = None,
+        side: str | None = None,
     ) -> int:
         return _recovery_queues.insert_pending_protection_restore(
             self,
@@ -860,7 +954,9 @@ class TradeLedger:
         return _recovery_queues.delete_pending_protection_restore(self, row_id)
 
     def update_pending_protection_restore(
-        self, row_id: int, *,
+        self,
+        row_id: int,
+        *,
         sell_order_id: str | None = None,
         position_qty_before_sell: float | None = None,
         specs_json: str | None = None,
@@ -876,13 +972,20 @@ class TradeLedger:
         )
 
     def update_pending_protection_restore_specs(
-        self, row_id: int, specs_json: str,
+        self,
+        row_id: int,
+        specs_json: str,
     ) -> int:
         return _recovery_queues.update_pending_protection_restore_specs(self, row_id, specs_json)
 
     def insert_pending_repeg(
-        self, *, trade_row_id: int | None, symbol: str, old_order_id: str,
-        new_order_id: str, run_id: str | None = None,
+        self,
+        *,
+        trade_row_id: int | None,
+        symbol: str,
+        old_order_id: str,
+        new_order_id: str,
+        run_id: str | None = None,
     ) -> int:
         return _recovery_queues.insert_pending_repeg(
             self,
@@ -905,9 +1008,9 @@ class TradeLedger:
     def prune_pending_repegs(self, keep_days: int = 30) -> int:
         return _recovery_queues.prune_pending_repegs(self, keep_days)
 
-    def get_trades(self, symbol: str | None = None, limit: int = 100,
-                    today_only: bool = False,
-                    executed_only: bool = False) -> list[dict]:
+    def get_trades(
+        self, symbol: str | None = None, limit: int = 100, today_only: bool = False, executed_only: bool = False
+    ) -> list[dict]:
         conditions = []
         params: list = []
         if symbol:
@@ -938,7 +1041,10 @@ class TradeLedger:
         return _excursions._accumulate_excursions(self, position)
 
     def record_overnight_gap(
-        self, symbol: str, prev_close: float, open_price: float,
+        self,
+        symbol: str,
+        prev_close: float,
+        open_price: float,
         session_date: str,
     ) -> bool:
         return _excursions.record_overnight_gap(self, symbol, prev_close, open_price, session_date)
@@ -950,7 +1056,11 @@ class TradeLedger:
         return _excursions.sync_positions(self, positions)
 
     def update_open_take_profit(
-        self, symbol: str, new_target: float, *, action: str | None = None,
+        self,
+        symbol: str,
+        new_target: float,
+        *,
+        action: str | None = None,
     ) -> bool:
         """Write a re-derived target onto every opening row of this position.
 
@@ -968,29 +1078,25 @@ class TradeLedger:
             return False
         if not target > 0:
             logger.error(
-                "update_open_take_profit refused a non-positive target for "
-                "%s: %r", symbol, new_target,
+                "update_open_take_profit refused a non-positive target for %s: %r",
+                symbol,
+                new_target,
             )
             return False
         act = (action or "").strip().upper()
         if act and act not in ("BUY", "SHORT"):
             logger.error(
                 "update_open_take_profit refused unknown action %r for %s",
-                action, symbol,
+                action,
+                symbol,
             )
             return False
 
         def _do():
-            sql = (
-                "UPDATE trades SET take_profit = ? WHERE symbol = ? "
-                "AND UPPER(action) IN ('BUY', 'SHORT')"
-            )
+            sql = "UPDATE trades SET take_profit = ? WHERE symbol = ? AND UPPER(action) IN ('BUY', 'SHORT')"
             params: list = [target, symbol.upper()]
             if act:
-                sql = (
-                    "UPDATE trades SET take_profit = ? WHERE symbol = ? "
-                    "AND UPPER(action) = ?"
-                )
+                sql = "UPDATE trades SET take_profit = ? WHERE symbol = ? AND UPPER(action) = ?"
                 params = [target, symbol.upper(), act]
             sql += (
                 " AND position_id = (SELECT position_id FROM trades "
@@ -1001,6 +1107,7 @@ class TradeLedger:
             cur = self.conn.execute(sql, tuple(params))
             self.conn.commit()
             return cur.rowcount > 0
+
         return self._locked_write(_do, label="update_open_take_profit")
 
     def prune_trades(self, keep_days: int = 365 * 5) -> int:

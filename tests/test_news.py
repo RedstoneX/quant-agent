@@ -19,6 +19,7 @@ def _clean_telemetry():
 
 # === NewsDataProvider tests ===
 
+
 def test_news_provider_format_for_prompt():
     provider = NewsDataProvider()
     items = [
@@ -52,12 +53,27 @@ def test_news_provider_format_empty():
 def test_news_provider_deduplicate():
     provider = NewsDataProvider()
     items = [
-        NewsItem(title="Breaking: Market rallies", summary="", source="A",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link=""),
-        NewsItem(title="Breaking: Market rallies", summary="", source="B",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link=""),
-        NewsItem(title="Different headline", summary="", source="C",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link=""),
+        NewsItem(
+            title="Breaking: Market rallies",
+            summary="",
+            source="A",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="",
+        ),
+        NewsItem(
+            title="Breaking: Market rallies",
+            summary="",
+            source="B",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="",
+        ),
+        NewsItem(
+            title="Different headline",
+            summary="",
+            source="C",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="",
+        ),
     ]
     deduped = provider._deduplicate(items)
     assert len(deduped) == 2
@@ -71,18 +87,27 @@ def test_news_provider_dedup_catches_url_match_across_sources():
     provider = NewsDataProvider()
     same_url = "https://apnews.com/article/fed-rate-pause-2026"
     items = [
-        NewsItem(title="Reuters: Fed pauses rate hikes amid soft data",
-                 summary="", source="Reuters",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc),
-                 link=same_url + "?utm_source=reuters"),
-        NewsItem(title="CNBC: Markets cheer as Fed signals hold",
-                 summary="", source="CNBC",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc),
-                 link=same_url + "?ref=cnbc"),
-        NewsItem(title="Completely different topic",
-                 summary="", source="BBC",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc),
-                 link="https://bbc.com/news/x"),
+        NewsItem(
+            title="Reuters: Fed pauses rate hikes amid soft data",
+            summary="",
+            source="Reuters",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link=same_url + "?utm_source=reuters",
+        ),
+        NewsItem(
+            title="CNBC: Markets cheer as Fed signals hold",
+            summary="",
+            source="CNBC",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link=same_url + "?ref=cnbc",
+        ),
+        NewsItem(
+            title="Completely different topic",
+            summary="",
+            source="BBC",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="https://bbc.com/news/x",
+        ),
     ]
     deduped = provider._deduplicate(items)
     # First Reuters + BBC unique-different remain; CNBC duplicate URL drops.
@@ -105,8 +130,13 @@ def test_news_provider_normalize_link_strips_query_and_fragment():
 def test_news_provider_format_max_items():
     provider = NewsDataProvider()
     items = [
-        NewsItem(title=f"Headline {i}", summary="", source="Test",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="")
+        NewsItem(
+            title=f"Headline {i}",
+            summary="",
+            source="Test",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="",
+        )
         for i in range(100)
     ]
     text = provider.format_for_prompt(items, max_items=5)
@@ -117,39 +147,42 @@ def test_news_provider_format_max_items():
 
 # === NewsAnalystAgent tests ===
 
+
 @patch("anthropic.Anthropic")
 def test_news_analyst_analyze(mock_cls):
-    response_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15",
-            "era_themes": ["AI supercycle", "Fed easing"],
-            "current_regime": "Risk-on with caution",
-            "key_state_tracker": {"fed_policy": "Easing — paused at 3.6%"},
-        },
-        "state_changes": [
-            {
-                "event": "Fed signals pause in rate hikes",
-                "previous_state": "Cutting rates",
-                "new_state": "Pausing to assess",
-                "market_impact": "Slightly bearish for rate-sensitive sectors",
-                "affected_symbols": ["JPM"],
-                "conviction": "high",
-            }
-        ],
-        "stock_news": {
-            "NVDA": [
+    response_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle", "Fed easing"],
+                "current_regime": "Risk-on with caution",
+                "key_state_tracker": {"fed_policy": "Easing — paused at 3.6%"},
+            },
+            "state_changes": [
                 {
-                    "headline": "New chip announcement",
-                    "sentiment": "bullish",
-                    "conviction": "medium",
-                    "impact_summary": "Next-gen GPU may accelerate AI adoption",
+                    "event": "Fed signals pause in rate hikes",
+                    "previous_state": "Cutting rates",
+                    "new_state": "Pausing to assess",
+                    "market_impact": "Slightly bearish for rate-sensitive sectors",
+                    "affected_symbols": ["JPM"],
+                    "conviction": "high",
                 }
-            ]
-        },
-        "pm_briefing": "Fed pausing. NVDA new chip bullish. Risk-on with caution.",
-        "market_sentiment": "bullish",
-        "confidence": "medium",
-    })
+            ],
+            "stock_news": {
+                "NVDA": [
+                    {
+                        "headline": "New chip announcement",
+                        "sentiment": "bullish",
+                        "conviction": "medium",
+                        "impact_summary": "Next-gen GPU may accelerate AI adoption",
+                    }
+                ]
+            },
+            "pm_briefing": "Fed pausing. NVDA new chip bullish. Risk-on with caution.",
+            "market_sentiment": "bullish",
+            "confidence": "medium",
+        }
+    )
 
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -186,28 +219,30 @@ def test_news_analyst_analyze_flags_symbol_dropped_from_response(mock_cls):
     opener spliced onto a neighbouring symbol). Before this fix that loss
     was invisible: `stock_news` simply had no AMD key, indistinguishable
     from "AMD had no news today"."""
-    response_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15",
-            "era_themes": ["AI supercycle"],
-            "current_regime": "Risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [],
-        "stock_news": {
-            "NVDA": [
-                {
-                    "headline": "New chip announcement",
-                    "sentiment": "bullish",
-                    "conviction": "medium",
-                    "impact_summary": "Next-gen GPU may accelerate AI adoption",
-                }
-            ]
-        },
-        "pm_briefing": "NVDA new chip bullish.",
-        "market_sentiment": "bullish",
-        "confidence": "medium",
-    })
+    response_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle"],
+                "current_regime": "Risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {
+                "NVDA": [
+                    {
+                        "headline": "New chip announcement",
+                        "sentiment": "bullish",
+                        "conviction": "medium",
+                        "impact_summary": "Next-gen GPU may accelerate AI adoption",
+                    }
+                ]
+            },
+            "pm_briefing": "NVDA new chip bullish.",
+            "market_sentiment": "bullish",
+            "confidence": "medium",
+        }
+    )
 
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -218,8 +253,10 @@ def test_news_analyst_analyze_flags_symbol_dropped_from_response(mock_cls):
     mock_cls.return_value = mock_client
 
     amd_item = NewsItem(
-        title="AMD announces new datacenter chip", summary="",
-        source="wire", published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        title="AMD announces new datacenter chip",
+        summary="",
+        source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc),
         link="",
     )
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
@@ -244,28 +281,30 @@ def test_news_analyst_analyze_flags_symbol_dropped_from_response(mock_cls):
 def test_news_analyst_analyze_no_symbols_dropped_when_response_covers_every_mention(mock_cls):
     """Control case: every symbol shown real headline content is answered
     for, so nothing is flagged and nothing is recorded."""
-    response_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15",
-            "era_themes": ["AI supercycle"],
-            "current_regime": "Risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [],
-        "stock_news": {
-            "NVDA": [
-                {
-                    "headline": "New chip announcement",
-                    "sentiment": "bullish",
-                    "conviction": "medium",
-                    "impact_summary": "Accelerates AI adoption",
-                }
-            ]
-        },
-        "pm_briefing": "NVDA bullish.",
-        "market_sentiment": "bullish",
-        "confidence": "medium",
-    })
+    response_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle"],
+                "current_regime": "Risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {
+                "NVDA": [
+                    {
+                        "headline": "New chip announcement",
+                        "sentiment": "bullish",
+                        "conviction": "medium",
+                        "impact_summary": "Accelerates AI adoption",
+                    }
+                ]
+            },
+            "pm_briefing": "NVDA bullish.",
+            "market_sentiment": "bullish",
+            "confidence": "medium",
+        }
+    )
 
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -276,8 +315,11 @@ def test_news_analyst_analyze_no_symbols_dropped_when_response_covers_every_ment
     mock_cls.return_value = mock_client
 
     nvda_item = NewsItem(
-        title="NVDA new chip", summary="", source="wire",
-        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+        title="NVDA new chip",
+        summary="",
+        source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        link="",
     )
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     report, _ = agent.analyze(
@@ -296,29 +338,31 @@ def test_news_analyst_explicit_empty_list_is_uncovered_not_dropped(mock_cls):
     """The model answering `"AMD": []` is a complete uncovered marker —
     incidental / not decision-relevant, no headline invented. That is
     not a dropped key and must not trip symbol_dropped."""
-    response_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15",
-            "era_themes": ["AI supercycle"],
-            "current_regime": "Risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [],
-        "stock_news": {
-            "NVDA": [
-                {
-                    "headline": "New chip announcement",
-                    "sentiment": "bullish",
-                    "conviction": "medium",
-                    "impact_summary": "Accelerates AI adoption",
-                }
-            ],
-            "AMD": [],
-        },
-        "pm_briefing": "NVDA bullish; AMD mention incidental.",
-        "market_sentiment": "bullish",
-        "confidence": "medium",
-    })
+    response_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle"],
+                "current_regime": "Risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {
+                "NVDA": [
+                    {
+                        "headline": "New chip announcement",
+                        "sentiment": "bullish",
+                        "conviction": "medium",
+                        "impact_summary": "Accelerates AI adoption",
+                    }
+                ],
+                "AMD": [],
+            },
+            "pm_briefing": "NVDA bullish; AMD mention incidental.",
+            "market_sentiment": "bullish",
+            "confidence": "medium",
+        }
+    )
 
     mock_client = MagicMock()
     mock_response = MagicMock()
@@ -329,13 +373,18 @@ def test_news_analyst_explicit_empty_list_is_uncovered_not_dropped(mock_cls):
     mock_cls.return_value = mock_client
 
     amd_item = NewsItem(
-        title="AMD mentioned in passing in a market wrap", summary="",
-        source="wire", published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        title="AMD mentioned in passing in a market wrap",
+        summary="",
+        source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc),
         link="",
     )
     nvda_item = NewsItem(
-        title="NVDA new chip", summary="", source="wire",
-        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+        title="NVDA new chip",
+        summary="",
+        source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        link="",
     )
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     report, _ = agent.analyze(
@@ -356,8 +405,11 @@ def test_news_user_message_requires_a_stock_news_key_for_every_shown_symbol(mock
     stock_news key (real items or an empty list) so the seat cannot
     omit a shown symbol and have that read as silence."""
     spy_item = NewsItem(
-        title="SPY wraps a quiet session", summary="", source="wire",
-        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+        title="SPY wraps a quiet session",
+        summary="",
+        source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        link="",
     )
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     msg = agent.build_user_message(
@@ -368,7 +420,7 @@ def test_news_user_message_requires_a_stock_news_key_for_every_shown_symbol(mock
     )
     assert "## Shown symbols (must each be a key in stock_news)" in msg
     assert "SPY" in msg
-    assert '\"TICKER\": []' in msg or '"TICKER": []' in msg
+    assert '"TICKER": []' in msg or '"TICKER": []' in msg
     assert "Do not invent headlines" in msg
     assert "Do not omit a key" in msg
 
@@ -376,33 +428,38 @@ def test_news_user_message_requires_a_stock_news_key_for_every_shown_symbol(mock
 def _make_news_intel_report(state_changes: list[dict]):
     """Helper: build a minimal NewsIntelligenceReport with custom state_changes."""
     from src.models import NewsIntelligenceReport
-    return NewsIntelligenceReport.model_validate({
-        "macro_narrative": {
-            "last_updated": "2026-04-18",
-            "era_themes": ["test"],
-            "current_regime": "test regime",
-            "key_state_tracker": {},
-        },
-        "state_changes": state_changes,
-        "stock_news": {},
-        "pm_briefing": "test",
-        "market_sentiment": "neutral",
-        "confidence": "medium",
-    })
+
+    return NewsIntelligenceReport.model_validate(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-18",
+                "era_themes": ["test"],
+                "current_regime": "test regime",
+                "key_state_tracker": {},
+            },
+            "state_changes": state_changes,
+            "stock_news": {},
+            "pm_briefing": "test",
+            "market_sentiment": "neutral",
+            "confidence": "medium",
+        }
+    )
 
 
 def test_filter_drops_state_change_with_no_keyword_overlap():
     """Invented event — no keyword in headlines — must be dropped."""
-    report = _make_news_intel_report([
-        {
-            "event": "Iran ceasefire brokered",
-            "previous_state": "hot war",
-            "new_state": "truce",
-            "market_impact": "oil down",
-            "affected_symbols": ["XOM"],
-            "conviction": "high",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Iran ceasefire brokered",
+                "previous_state": "hot war",
+                "new_state": "truce",
+                "market_impact": "oil down",
+                "affected_symbols": ["XOM"],
+                "conviction": "high",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
         report, news_text="Fed signals pause in rate hikes; unrelated macro story."
     )
@@ -410,16 +467,18 @@ def test_filter_drops_state_change_with_no_keyword_overlap():
 
 
 def test_filter_keeps_state_change_when_event_keyword_present():
-    report = _make_news_intel_report([
-        {
-            "event": "Fed signals pause",
-            "previous_state": "cutting",
-            "new_state": "paused",
-            "market_impact": "bearish rate-sensitive",
-            "affected_symbols": [],
-            "conviction": "high",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Fed signals pause",
+                "previous_state": "cutting",
+                "new_state": "paused",
+                "market_impact": "bearish rate-sensitive",
+                "affected_symbols": [],
+                "conviction": "high",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
         report,
         news_text="The Fed today signals a pause in further rate hikes...",
@@ -431,16 +490,18 @@ def test_filter_keeps_state_change_when_event_keyword_present():
 def test_filter_keeps_state_change_when_affected_symbol_present():
     """Event wording may be paraphrased but if an affected ticker literally
     shows up in the headlines, treat the change as grounded enough to keep."""
-    report = _make_news_intel_report([
-        {
-            "event": "Regulatory pressure escalating",
-            "previous_state": "normal",
-            "new_state": "under scrutiny",
-            "market_impact": "bearish",
-            "affected_symbols": ["NVDA"],
-            "conviction": "medium",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Regulatory pressure escalating",
+                "previous_state": "normal",
+                "new_state": "under scrutiny",
+                "market_impact": "bearish",
+                "affected_symbols": ["NVDA"],
+                "conviction": "medium",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
         report,
         # "Regulatory", "pressure", "escalating", "scrutiny" aren't in text,
@@ -451,19 +512,26 @@ def test_filter_keeps_state_change_when_affected_symbol_present():
 
 
 def test_filter_drops_some_keeps_others_in_mixed_batch():
-    report = _make_news_intel_report([
-        {
-            "event": "Fed signals pause",
-            "previous_state": "cutting", "new_state": "paused",
-            "market_impact": "x", "affected_symbols": [], "conviction": "high",
-        },
-        {
-            "event": "Hurricane shuts Gulf refineries",
-            "previous_state": "normal", "new_state": "disrupted",
-            "market_impact": "oil up", "affected_symbols": ["XOM"],
-            "conviction": "high",
-        },
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Fed signals pause",
+                "previous_state": "cutting",
+                "new_state": "paused",
+                "market_impact": "x",
+                "affected_symbols": [],
+                "conviction": "high",
+            },
+            {
+                "event": "Hurricane shuts Gulf refineries",
+                "previous_state": "normal",
+                "new_state": "disrupted",
+                "market_impact": "oil up",
+                "affected_symbols": ["XOM"],
+                "conviction": "high",
+            },
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
         report,
         news_text="Fed officials signal pause on policy. No weather news.",
@@ -478,20 +546,28 @@ def test_filter_preserves_state_change_carried_from_prior_session():
     morning event forward (or mark it resolved) even when fresh headlines
     no longer repeat the phrasing verbatim. The filter must not drop the
     carry-forward as "hallucinated" just because fresh news moved on."""
-    report = _make_news_intel_report([
-        {
-            "event": "Fed signals pause",
-            "previous_state": "cutting", "new_state": "paused",
-            "market_impact": "bearish rate-sensitive",
-            "affected_symbols": [], "conviction": "high",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Fed signals pause",
+                "previous_state": "cutting",
+                "new_state": "paused",
+                "market_impact": "bearish rate-sensitive",
+                "affected_symbols": [],
+                "conviction": "high",
+            }
+        ]
+    )
     prior = {
         "state_changes": [
-            {"event": "Fed signals pause in hikes",
-             "previous_state": "cutting", "new_state": "paused",
-             "market_impact": "bearish rate-sensitive",
-             "affected_symbols": [], "conviction": "high"}
+            {
+                "event": "Fed signals pause in hikes",
+                "previous_state": "cutting",
+                "new_state": "paused",
+                "market_impact": "bearish rate-sensitive",
+                "affected_symbols": [],
+                "conviction": "high",
+            }
         ],
     }
     # Fresh midday headlines don't repeat the Fed language at all.
@@ -506,20 +582,28 @@ def test_filter_preserves_state_change_carried_from_prior_session():
 
 def test_filter_preserves_state_change_when_prior_symbol_matches():
     """Same carry-forward semantics via affected_symbols match."""
-    report = _make_news_intel_report([
-        {
-            "event": "Regulatory probe ongoing",
-            "previous_state": "opened", "new_state": "ongoing",
-            "market_impact": "bearish",
-            "affected_symbols": ["NVDA"], "conviction": "medium",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Regulatory probe ongoing",
+                "previous_state": "opened",
+                "new_state": "ongoing",
+                "market_impact": "bearish",
+                "affected_symbols": ["NVDA"],
+                "conviction": "medium",
+            }
+        ]
+    )
     prior = {
         "state_changes": [
-            {"event": "Regulatory probe opened",
-             "previous_state": "none", "new_state": "opened",
-             "market_impact": "bearish",
-             "affected_symbols": ["NVDA"], "conviction": "medium"}
+            {
+                "event": "Regulatory probe opened",
+                "previous_state": "none",
+                "new_state": "opened",
+                "market_impact": "bearish",
+                "affected_symbols": ["NVDA"],
+                "conviction": "medium",
+            }
         ],
     }
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
@@ -533,15 +617,21 @@ def test_filter_preserves_state_change_when_prior_symbol_matches():
 def test_filter_empty_news_text_keeps_all():
     """No news_text to verify against (unusual but possible) — err on keep
     rather than silently drop the LLM's whole state-change list."""
-    report = _make_news_intel_report([
-        {
-            "event": "Something happened",
-            "previous_state": "a", "new_state": "b",
-            "market_impact": "x", "affected_symbols": [], "conviction": "low",
-        }
-    ])
+    report = _make_news_intel_report(
+        [
+            {
+                "event": "Something happened",
+                "previous_state": "a",
+                "new_state": "b",
+                "market_impact": "x",
+                "affected_symbols": [],
+                "conviction": "low",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
-        report, news_text="",
+        report,
+        news_text="",
     )
     assert len(filtered.state_changes) == 1
 
@@ -551,34 +641,40 @@ def test_news_analyst_analyze_filters_hallucinated_state_change(mock_cls):
     """Integration: analyze() now runs the hallucination filter after parsing.
     An LLM-invented state_change (event keywords not in input) must not
     survive into the returned NewsIntelligenceReport."""
-    response_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-18",
-            "era_themes": ["AI"],
-            "current_regime": "risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [
-            # This one is supported by the headlines.
-            {
-                "event": "Fed signals pause",
-                "previous_state": "cutting", "new_state": "paused",
-                "market_impact": "bearish rate-sensitive",
-                "affected_symbols": [], "conviction": "high",
+    response_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-18",
+                "era_themes": ["AI"],
+                "current_regime": "risk-on",
+                "key_state_tracker": {},
             },
-            # This one is a pure hallucination — no keyword match.
-            {
-                "event": "Iran ceasefire brokered",
-                "previous_state": "war", "new_state": "truce",
-                "market_impact": "oil down",
-                "affected_symbols": ["XOM"], "conviction": "high",
-            },
-        ],
-        "stock_news": {},
-        "pm_briefing": "Fed pause.",
-        "market_sentiment": "neutral",
-        "confidence": "medium",
-    })
+            "state_changes": [
+                # This one is supported by the headlines.
+                {
+                    "event": "Fed signals pause",
+                    "previous_state": "cutting",
+                    "new_state": "paused",
+                    "market_impact": "bearish rate-sensitive",
+                    "affected_symbols": [],
+                    "conviction": "high",
+                },
+                # This one is a pure hallucination — no keyword match.
+                {
+                    "event": "Iran ceasefire brokered",
+                    "previous_state": "war",
+                    "new_state": "truce",
+                    "market_impact": "oil down",
+                    "affected_symbols": ["XOM"],
+                    "conviction": "high",
+                },
+            ],
+            "stock_news": {},
+            "pm_briefing": "Fed pause.",
+            "market_sentiment": "neutral",
+            "confidence": "medium",
+        }
+    )
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text=response_json)]
@@ -589,8 +685,7 @@ def test_news_analyst_analyze_filters_hallucinated_state_change(mock_cls):
 
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     report, _ = agent.analyze(
-        news_text="The Fed today signals a pause on further rate hikes. "
-                  "No other material news.",
+        news_text="The Fed today signals a pause on further rate hikes. No other material news.",
     )
     assert report is not None
     events = [sc.event for sc in report.state_changes]
@@ -619,6 +714,7 @@ def test_news_analyst_bad_response(mock_cls):
 # Per-entry isolation: one bad sub-item must not tank the whole report
 # (audit follow-up to PR #73 — same brittleness pattern, found here too)
 # ---------------------------------------------------------------------------
+
 
 def _valid_news_json() -> dict:
     """Minimum-viable NewsIntelligenceReport JSON shaped like LLM output."""
@@ -698,11 +794,13 @@ def test_state_change_symbol_direction_normalizes_case():
     same discipline as `_normalize_enum_case_fields`."""
     from src.models import StateChange
 
-    sc = StateChange(**{
-        **_valid_state_change(),
-        "affected_symbols": ["spy", "qqq"],
-        "symbol_direction": {"spy": "BULLISH", "qqq": "Bearish"},
-    })
+    sc = StateChange(
+        **{
+            **_valid_state_change(),
+            "affected_symbols": ["spy", "qqq"],
+            "symbol_direction": {"spy": "BULLISH", "qqq": "Bearish"},
+        }
+    )
     assert sc.symbol_direction == {"SPY": "bullish", "QQQ": "bearish"}
 
 
@@ -712,11 +810,13 @@ def test_state_change_symbol_direction_drops_unrecognized_values_not_the_row():
     StateChange the way a bad `conviction` literal would."""
     from src.models import StateChange
 
-    sc = StateChange(**{
-        **_valid_state_change(),
-        "affected_symbols": ["SPY", "QQQ"],
-        "symbol_direction": {"SPY": "bullish", "QQQ": "very_bullish"},
-    })
+    sc = StateChange(
+        **{
+            **_valid_state_change(),
+            "affected_symbols": ["SPY", "QQQ"],
+            "symbol_direction": {"SPY": "bullish", "QQQ": "very_bullish"},
+        }
+    )
     assert sc.symbol_direction == {"SPY": "bullish"}
 
 
@@ -775,9 +875,7 @@ def test_news_report_constructs_after_dropping_bad_subitems():
             {**_valid_stock_news_item(), "headline": ""},
         ],
     }
-    cleaned = NewsAnalystAgent._drop_invalid_stock_news(
-        NewsAnalystAgent._drop_invalid_state_changes(parsed)
-    )
+    cleaned = NewsAnalystAgent._drop_invalid_stock_news(NewsAnalystAgent._drop_invalid_state_changes(parsed))
     report = NewsIntelligenceReport(**cleaned)
     assert report.pm_briefing.startswith("Quiet tape")
     assert len(report.state_changes) == 1
@@ -826,10 +924,9 @@ def test_fetch_news_monday_extends_lookback_to_72h(mock_et_now, caplog):
     with caplog.at_level(logging.INFO):
         provider.fetch_news()
 
-    assert any(
-        "Monday detected" in r.message and "72h" in r.message
-        for r in caplog.records
-    ), "Monday morning fetches must extend lookback and log it"
+    assert any("Monday detected" in r.message and "72h" in r.message for r in caplog.records), (
+        "Monday morning fetches must extend lookback and log it"
+    )
 
 
 @_patch("src.data.news.et_now")
@@ -842,9 +939,9 @@ def test_fetch_news_tuesday_keeps_default_lookback(mock_et_now, caplog):
     with caplog.at_level(logging.INFO):
         provider.fetch_news()
 
-    assert not any(
-        "Monday detected" in r.message for r in caplog.records
-    ), "Tuesday must not trigger the Monday extension"
+    assert not any("Monday detected" in r.message for r in caplog.records), (
+        "Tuesday must not trigger the Monday extension"
+    )
 
 
 @_patch("src.data.news.et_now")
@@ -881,12 +978,12 @@ def test_news_store_prune_removes_old_dated_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(ns_mod, "et_today", lambda: date(2026, 5, 28))
     store = NewsStore(data_dir=str(tmp_path / "news"))
     base = store.data_dir
-    (base / "2026-01-01").mkdir(parents=True)                  # >120d → prune
-    (base / "2026-05-20").mkdir(parents=True)                  # recent → keep
+    (base / "2026-01-01").mkdir(parents=True)  # >120d → prune
+    (base / "2026-05-20").mkdir(parents=True)  # recent → keep
     (base / "macro_narrative_2026-01-01.json").write_text("{}")  # old backup → prune
     (base / "macro_narrative_2026-05-25.json").write_text("{}")  # recent backup → keep
-    (base / "macro_narrative.json").write_text("{}")           # live → always keep
-    (base / "not_a_date_dir").mkdir()                          # non-dated → keep
+    (base / "macro_narrative.json").write_text("{}")  # live → always keep
+    (base / "not_a_date_dir").mkdir()  # non-dated → keep
 
     removed = store.prune(keep_days=120)
 
@@ -905,6 +1002,7 @@ def test_news_store_prune_removes_old_dated_artifacts(tmp_path, monkeypatch):
 # this file — see the PR description / commit body for the live-check
 # evidence gathered for each feed.
 # ===========================================================================
+
 
 def test_rss_feeds_urls_are_well_formed_and_unique():
     """Every configured feed must be a plausible https(s) URL, and no two
@@ -946,8 +1044,7 @@ def test_rss_feeds_sec_gov_urls_use_the_sec_user_agent():
             return False
 
         def read(self):
-            return (b'<?xml version="1.0"?><rss version="2.0"><channel>'
-                    b'<title>t</title></channel></rss>')
+            return b'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title></channel></rss>'
 
     def fake_urlopen(req, timeout=None):
         captured_uas[req.full_url] = req.get_header("User-agent")
@@ -955,13 +1052,13 @@ def test_rss_feeds_sec_gov_urls_use_the_sec_user_agent():
 
     provider = NewsDataProvider(feeds=sec_feeds, sec_user_agent=SEC_USER_AGENT)
     from unittest.mock import patch as _p
+
     with _p("src.data.news.urlopen", fake_urlopen):
         provider.fetch_news()
 
     for name, url in sec_feeds.items():
         assert captured_uas.get(url) == SEC_USER_AGENT, (
-            f"{name} ({url}) fetched with UA {captured_uas.get(url)!r}, "
-            f"expected SEC_USER_AGENT"
+            f"{name} ({url}) fetched with UA {captured_uas.get(url)!r}, expected SEC_USER_AGENT"
         )
     assert SEC_USER_AGENT != USER_AGENT, "SEC UA must actually differ from the generic one"
 
@@ -1002,8 +1099,13 @@ def test_prompt_item_cap_is_read_from_config_not_hardcoded():
 
     provider = NewsDataProvider()
     items = [
-        NewsItem(title=f"Headline {i}", summary="", source="Test",
-                 published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="")
+        NewsItem(
+            title=f"Headline {i}",
+            summary="",
+            source="Test",
+            published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+            link="",
+        )
         for i in range(20)
     ]
 
@@ -1026,6 +1128,7 @@ def test_news_config_default_matches_pre_widening_behavior():
     the feed set does not silently change prompt size for anyone who
     hasn't set news.max_prompt_items in settings.yaml."""
     from src.config import NewsConfig
+
     assert NewsConfig().max_prompt_items == 50
 
 
@@ -1068,6 +1171,7 @@ news:
     config_file.write_text(yaml_content)
 
     from src.config import load_config, NewsConfig
+
     cfg = load_config(config_file)
 
     assert cfg.news.max_prompt_items == 12
@@ -1084,6 +1188,7 @@ news:
 # data/parse_failures/, retrievable by timestamp, and that a capture-side
 # failure never masks or replaces the original error path.
 # ---------------------------------------------------------------------------
+
 
 @patch("anthropic.Anthropic")
 def test_news_analyst_validation_failure_persists_raw_and_parsed(mock_cls, tmp_path, monkeypatch):
@@ -1175,19 +1280,21 @@ def test_news_analyst_non_json_response_recovers_on_heal_retry(mock_cls, tmp_pat
     failure_dir = tmp_path / "parse_failures"
     monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", failure_dir)
 
-    good_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15",
-            "era_themes": ["AI supercycle"],
-            "current_regime": "Risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [],
-        "stock_news": {},
-        "pm_briefing": "Recovered on retry.",
-        "market_sentiment": "neutral",
-        "confidence": "low",
-    })
+    good_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle"],
+                "current_regime": "Risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {},
+            "pm_briefing": "Recovered on retry.",
+            "market_sentiment": "neutral",
+            "confidence": "low",
+        }
+    )
 
     bad_response = MagicMock()
     bad_response.content = [MagicMock(text="I need more context...")]
@@ -1224,14 +1331,21 @@ def test_news_analyst_heal_retry_flag_does_not_leak_across_calls(mock_cls, tmp_p
 
     monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", tmp_path / "parse_failures")
 
-    good_json = json.dumps({
-        "macro_narrative": {
-            "last_updated": "2026-04-15", "era_themes": ["AI supercycle"],
-            "current_regime": "Risk-on", "key_state_tracker": {},
-        },
-        "state_changes": [], "stock_news": {},
-        "pm_briefing": "ok", "market_sentiment": "neutral", "confidence": "low",
-    })
+    good_json = json.dumps(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-15",
+                "era_themes": ["AI supercycle"],
+                "current_regime": "Risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {},
+            "pm_briefing": "ok",
+            "market_sentiment": "neutral",
+            "confidence": "low",
+        }
+    )
     bad_response = MagicMock()
     bad_response.content = [MagicMock(text="I need more context...")]
     bad_response.usage.input_tokens = 100
@@ -1246,7 +1360,10 @@ def test_news_analyst_heal_retry_flag_does_not_leak_across_calls(mock_cls, tmp_p
     # Call 2 (a separate session, same agent instance): bad then good again
     # — this only recovers if the SECOND call also gets its own retry.
     mock_client.messages.create.side_effect = [
-        bad_response, good_response, bad_response, good_response,
+        bad_response,
+        good_response,
+        bad_response,
+        good_response,
     ]
     mock_cls.return_value = mock_client
 
@@ -1274,8 +1391,11 @@ def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monk
 
     with caplog.at_level(logging.WARNING):
         news_analyst_mod._persist_parse_failure(
-            agent_name="news_analyst", session="morning",
-            raw_text="whatever the model said", parsed=None, error="boom",
+            agent_name="news_analyst",
+            session="morning",
+            raw_text="whatever the model said",
+            parsed=None,
+            error="boom",
         )
 
     assert any("parse-failure" in rec.message for rec in caplog.records)
@@ -1283,7 +1403,9 @@ def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monk
 
 @patch("anthropic.Anthropic")
 def test_news_analyst_salvages_report_when_market_sentiment_unreadable(
-    mock_cls, tmp_path, monkeypatch,
+    mock_cls,
+    tmp_path,
+    monkeypatch,
 ):
     """Board item 152, measured on the retained production logs: 5 of the 7
     reproducible news-seat parse failures are `market_sentiment` carrying a
@@ -1300,18 +1422,24 @@ def test_news_analyst_salvages_report_when_market_sentiment_unreadable(
 
     payload = {
         "macro_narrative": {
-            "last_updated": "2026-08-25", "era_themes": ["AI capex"],
+            "last_updated": "2026-08-25",
+            "era_themes": ["AI capex"],
             "current_regime": "risk-on",
         },
         "pm_briefing": "Defensive rotation into discount retail.",
-        "market_sentiment": "mixed",          # the real production value
+        "market_sentiment": "mixed",  # the real production value
         "confidence": "medium",
         "state_changes": [],
-        "stock_news": {"DG": [{
-            "headline": "HSBC upgrade", "sentiment": "bullish",
-            "conviction": "medium",
-            "impact_summary": "Upgraded on defensive demand.",
-        }]},
+        "stock_news": {
+            "DG": [
+                {
+                    "headline": "HSBC upgrade",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "Upgraded on defensive demand.",
+                }
+            ]
+        },
     }
     response_text = json.dumps(payload)
 
@@ -1347,10 +1475,12 @@ def test_unreadable_market_sentiment_reads_absent_never_neutral():
 
     report = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-08-21", era_themes=["AI capex"],
+            last_updated="2026-08-21",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
-        pm_briefing="Quiet tape.", confidence="medium",
+        pm_briefing="Quiet tape.",
+        confidence="medium",
     )
     report.unreadable_fields = {"market_sentiment": "mixed-to-bearish"}
 
@@ -1367,7 +1497,9 @@ def test_unreadable_market_sentiment_reads_absent_never_neutral():
 
 @patch("anthropic.Anthropic")
 def test_news_analyst_unsalvageable_answer_records_affected_names(
-    mock_cls, tmp_path, monkeypatch,
+    mock_cls,
+    tmp_path,
+    monkeypatch,
 ):
     """Board item 152: when nothing can be salvaged, the forensic dump must
     name the stocks that lose this seat, so a later reader can tell WHY the
@@ -1387,7 +1519,8 @@ def test_news_analyst_unsalvageable_answer_records_affected_names(
 
     agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     report, _ = agent.analyze(
-        news_text="Some headlines", session="morning",
+        news_text="Some headlines",
+        session="morning",
         stock_mentions={"nvda": ["a headline"], "DG": ["another"]},
     )
 
@@ -1417,7 +1550,9 @@ def test_drop_invalid_market_sentiment_keeps_every_legal_word():
 
 @patch("anthropic.Anthropic")
 def test_news_analyst_heals_unreadable_sentiment_before_dropping_it(
-    mock_cls, tmp_path, monkeypatch,
+    mock_cls,
+    tmp_path,
+    monkeypatch,
 ):
     """The decisive ordering. An unreadable top-level field must cost the
     seat a second ask FIRST — the desk has already paid for the wire text
@@ -1426,21 +1561,26 @@ def test_news_analyst_heals_unreadable_sentiment_before_dropping_it(
     import src.agents.news_analyst as news_analyst_mod
 
     monkeypatch.setattr(
-        news_analyst_mod, "PARSE_FAILURE_DIR", tmp_path / "parse_failures",
+        news_analyst_mod,
+        "PARSE_FAILURE_DIR",
+        tmp_path / "parse_failures",
     )
 
     def _payload(sentiment):
-        return json.dumps({
-            "macro_narrative": {
-                "last_updated": "2026-08-25", "era_themes": ["AI capex"],
-                "current_regime": "risk-on",
-            },
-            "pm_briefing": "Defensive rotation into discount retail.",
-            "market_sentiment": sentiment,
-            "confidence": "medium",
-            "state_changes": [],
-            "stock_news": {},
-        })
+        return json.dumps(
+            {
+                "macro_narrative": {
+                    "last_updated": "2026-08-25",
+                    "era_themes": ["AI capex"],
+                    "current_regime": "risk-on",
+                },
+                "pm_briefing": "Defensive rotation into discount retail.",
+                "market_sentiment": sentiment,
+                "confidence": "medium",
+                "state_changes": [],
+                "stock_news": {},
+            }
+        )
 
     def _resp(text):
         r = MagicMock()
@@ -1452,7 +1592,8 @@ def test_news_analyst_heals_unreadable_sentiment_before_dropping_it(
     mock_client = MagicMock()
     # First ask: the real production value. Second ask: a legal word.
     mock_client.messages.create.side_effect = [
-        _resp(_payload("mixed")), _resp(_payload("bearish")),
+        _resp(_payload("mixed")),
+        _resp(_payload("bearish")),
     ]
     mock_cls.return_value = mock_client
 

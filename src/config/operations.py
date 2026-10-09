@@ -42,6 +42,7 @@ class EvolutionConfig(BaseModel):
     Every guard below is redundantly enforced in src/evolution/prompt_editor.py;
     this block makes them tunable per deployment.
     """
+
     enabled: bool = False
     """Master switch. PR4 default is False — the editor stays dormant
     until explicitly flipped. Flipping back to False does not retract
@@ -98,8 +99,12 @@ class EvolutionConfig(BaseModel):
 
     prohibited_words: list[str] = Field(
         default_factory=lambda: [
-            "never", "always", "override", "ignore all",
-            "must always", "must never",
+            "never",
+            "always",
+            "override",
+            "ignore all",
+            "must always",
+            "must never",
         ],
     )
     """Case-insensitive word-boundary regex check on learning_text. These
@@ -142,6 +147,7 @@ class ReconciliationConfig(BaseModel):
 
 class DeploymentGapConfig(BaseModel):
     """Settings for the `deployment_gap` advisory (PM facts + pre-trade)."""
+
     band_pct: float = Field(default=1.0, ge=0, le=20)
     """Tolerance band, percentage points under 100% invested. Moved here
     from `cash_sweep.reserve_pct` (board item 190 step 1) so the advisory no

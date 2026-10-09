@@ -6,6 +6,7 @@ whose reason starts with `STALE_PREFIX`; everything that words or counts the
 gap goes through here so no surface can call a held number "missing". The age
 is reported and never compared with any bound, so no number governs a decision.
 """
+
 from __future__ import annotations
 
 import re
@@ -44,5 +45,6 @@ def stale_prompt_text(stale) -> str:
         return ""
     return (
         " STALE (the desk HAS a number, but it is old, not fetched this run): "
-        + stale_names(stale) + ". Weigh each by its age; it is not current."
+        + stale_names(stale)
+        + ". Weigh each by its age; it is not current."
     )

@@ -18,7 +18,10 @@ from src.pipeline_stages import (
 
 
 def _record_queued_earnings_refusals(
-    pipeline, ctx, before: list, after: list,
+    pipeline,
+    ctx,
+    before: list,
+    after: list,
 ) -> None:
     """One durable per-symbol row for every BUY the queued-earnings gate
     REFUSED (`TradingPipeline._refuse_queued_earnings_buys`).
@@ -39,25 +42,24 @@ def _record_queued_earnings_refusals(
     """
     try:
         from src.risk.rules import unread_filing_block_reason
-        after_symbols = {
-            d.symbol.strip().upper()
-            for d in (after or []) if d is not None and d.action == "BUY"
-        }
+
+        after_symbols = {d.symbol.strip().upper() for d in (after or []) if d is not None and d.action == "BUY"}
         for d in before or []:
             if d is None or d.action != "BUY":
                 continue
             if d.symbol.strip().upper() in after_symbols:
                 continue
             _record_pipeline_event(
-                pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
+                pipeline,
+                ctx,
+                d.symbol,
+                "deterministic_gate",
+                "blocked",
                 "queued_earnings_unread_filing",
                 gate="queued_earnings_unread_filing",
                 before_allocation_pct=d.allocation_pct,
                 after_allocation_pct=0.0,
-                detail=(
-                    f"BUY {d.symbol} REFUSED at {d.allocation_pct:.2f}%: "
-                    + unread_filing_block_reason(d.symbol)
-                ),
+                detail=(f"BUY {d.symbol} REFUSED at {d.allocation_pct:.2f}%: " + unread_filing_block_reason(d.symbol)),
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("queued-earnings refusal recording failed: %s", exc)
@@ -78,9 +80,7 @@ def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
     alerts = [v for v in violations if v.rule.startswith("sector_unresolved")]
     if not alerts:
         return
-    status = "degraded" if any(
-        v.rule == "sector_unresolved_lookup_failed" for v in alerts
-    ) else "partial"
+    status = "degraded" if any(v.rule == "sector_unresolved_lookup_failed" for v in alerts) else "partial"
     if data_status.get("sector") == "degraded":
         status = "degraded"
     data_status["sector"] = status
@@ -181,54 +181,52 @@ def _parse_loss_advisories(
     # the symbol. `reasons` is keyed (model, key); re-key to the "Model:KEY"
     # display string `_reconcile_parse_loss` produces so the advisory the RM
     # reads carries the why, matching the row now persisted to the DB.
-    reason_by_name = {
-        f"{model}:{key}": why
-        for (model, key), why in (reasons or {}).items()
-    }
+    reason_by_name = {f"{model}:{key}": why for (model, key), why in (reasons or {}).items()}
 
     def _with_reason(names) -> str:
-        return ", ".join(
-            f"{name} ({reason_by_name[name]})" if name in reason_by_name else name
-            for name in names
-        )
+        return ", ".join(f"{name} ({reason_by_name[name]})" if name in reason_by_name else name for name in names)
 
     out: list = []
     if lost:
         n_lost = sum(lost.values())
-        out.append(_RV(
-            rule="analysis_parse_loss",
-            message=(
-                f"{n_lost} item(s) were discarded at parse this session "
-                f"and are absent from the book below: {_with_reason(lost)} "
-                f"(TechAnalysisResult = a candidate PM never saw; "
-                f"TargetPosition = a position PM asked for and the desk "
-                f"could not read). The plan was therefore built from, or "
-                f"reduced to, a SMALLER set than the seats produced — "
-                f"treat a thin list as possibly truncated rather than as a "
-                f"genuine absence of setups. An entry keyed "
-                f"`{UNIDENTIFIED_DROP_KEY}` is a row whose own symbol could "
-                f"not be read, so it cannot be matched against the book and "
-                f"is counted here."
-            ),
-            value=float(n_lost),
-            limit=0.0,
-        ))
+        out.append(
+            _RV(
+                rule="analysis_parse_loss",
+                message=(
+                    f"{n_lost} item(s) were discarded at parse this session "
+                    f"and are absent from the book below: {_with_reason(lost)} "
+                    f"(TechAnalysisResult = a candidate PM never saw; "
+                    f"TargetPosition = a position PM asked for and the desk "
+                    f"could not read). The plan was therefore built from, or "
+                    f"reduced to, a SMALLER set than the seats produced — "
+                    f"treat a thin list as possibly truncated rather than as a "
+                    f"genuine absence of setups. An entry keyed "
+                    f"`{UNIDENTIFIED_DROP_KEY}` is a row whose own symbol could "
+                    f"not be read, so it cannot be matched against the book and "
+                    f"is counted here."
+                ),
+                value=float(n_lost),
+                limit=0.0,
+            )
+        )
     if recovered:
         n_recovered = sum(recovered.values())
-        out.append(_RV(
-            rule="analysis_parse_loss_recovered",
-            message=(
-                f"{n_recovered} item(s) failed to parse and were RECOVERED by "
-                f"a retry: {', '.join(recovered)}. These names ARE in the book "
-                f"below — this is a cost and data-quality note, not missing "
-                f"coverage, and no name is missing from the book because of "
-                f"it. Do not treat it as degraded input: each one cost an "
-                f"extra paid model round-trip, which is what is worth "
-                f"reporting."
-            ),
-            value=float(n_recovered),
-            limit=0.0,
-        ))
+        out.append(
+            _RV(
+                rule="analysis_parse_loss_recovered",
+                message=(
+                    f"{n_recovered} item(s) failed to parse and were RECOVERED by "
+                    f"a retry: {', '.join(recovered)}. These names ARE in the book "
+                    f"below — this is a cost and data-quality note, not missing "
+                    f"coverage, and no name is missing from the book because of "
+                    f"it. Do not treat it as degraded input: each one cost an "
+                    f"extra paid model round-trip, which is what is worth "
+                    f"reporting."
+                ),
+                value=float(n_recovered),
+                limit=0.0,
+            )
+        )
     return out
 
 
@@ -298,14 +296,18 @@ def _persist_dropped_reasons(
         }
         try:
             db.insert_specialist_evidence(
-                run_id=str(run_id), agent_name="pipeline",
-                kind=ANALYSIS_DROP_KIND, scope="symbol", symbol=symbol,
+                run_id=str(run_id),
+                agent_name="pipeline",
+                kind=ANALYSIS_DROP_KIND,
+                scope="symbol",
+                symbol=symbol,
                 evidence_json=_json.dumps(payload, sort_keys=True, default=str),
             )
             written += 1
         except Exception as exc:  # noqa: BLE001 — a record is never authority
             logger.warning(
                 "analysis-drop record for %s could not be written: %s",
-                symbol, exc,
+                symbol,
+                exc,
             )
     return written

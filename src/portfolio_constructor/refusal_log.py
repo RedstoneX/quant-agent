@@ -4,6 +4,7 @@ Bodies moved verbatim from `PortfolioConstructor`; `owner` is the constructor
 instance, which keeps owning the state dicts (`last_data_faults`,
 `last_refusals`, `last_parity_standdowns`) so their identity never changes.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,7 +27,11 @@ def drain_data_faults(owner) -> dict[str, dict[str, str]]:
 
 
 def _note_data_fault(
-    owner, symbol: str, direction: str, fault: str, detail: str,
+    owner,
+    symbol: str,
+    direction: str,
+    fault: str,
+    detail: str,
 ) -> None:
     """Record and log one UNMEASURABLE symbol. Never raises.
 
@@ -40,16 +45,18 @@ def _note_data_fault(
     try:
         key = str(symbol or "").strip().upper()
         owner.last_data_faults[key] = {
-            "fault": str(fault), "detail": str(detail),
+            "fault": str(fault),
+            "detail": str(detail),
             "direction": str(direction or ""),
         }
     except Exception:  # noqa: BLE001 — a record side-channel must never raise
         pass
     logger.warning(
-        "Constructor: %s %s skipped — UNMEASURABLE, a data fault and "
-        "not a trade judgement [%s]: %s",
+        "Constructor: %s %s skipped — UNMEASURABLE, a data fault and not a trade judgement [%s]: %s",
         "SHORT" if str(direction).lower() == "short" else "BUY",
-        symbol, fault, detail,
+        symbol,
+        fault,
+        detail,
     )
 
 
@@ -98,8 +105,11 @@ def _parity_verdict(owner, entry_price, stop_loss, derivation, is_short):
     if getattr(derivation, "target_inside_noise", False):
         return (False, None, owner.PARITY_STANDDOWN_REWARD_INSIDE_NOISE)
     refuse, ratio = reward_risk_parity_refuses(
-        entry_price, stop_loss, level,
-        is_short=is_short, reward_is_measured_level=True,
+        entry_price,
+        stop_loss,
+        level,
+        is_short=is_short,
+        reward_is_measured_level=True,
     )
     return (refuse, ratio, None)
 
@@ -109,7 +119,8 @@ def _note_parity_standdown(owner, symbol, direction, reason, derivation):
     if not key:
         return
     owner.last_parity_standdowns[key] = {
-        "reason": reason, "direction": direction,
+        "reason": reason,
+        "direction": direction,
         "basis": getattr(derivation, "basis", ""),
         "level_used": getattr(derivation, "level_used", None),
         "horizon_reach": getattr(derivation, "horizon_reach", None),
@@ -117,7 +128,15 @@ def _note_parity_standdown(owner, symbol, direction, reason, derivation):
 
 
 def _record_parity_refusal(
-    owner, symbol, direction, entry, stop, level, ratio, *, stage="construction",
+    owner,
+    symbol,
+    direction,
+    entry,
+    stop,
+    level,
+    ratio,
+    *,
+    stage="construction",
 ):
     """Write ONE parity refusal to the durable table. Never raises.
 
@@ -130,12 +149,21 @@ def _record_parity_refusal(
     if recorder is None:
         return
     recorder.record_parity_refusal(
-        symbol, direction, entry, stop, level, ratio, stage=stage,
+        symbol,
+        direction,
+        entry,
+        stop,
+        level,
+        ratio,
+        stage=stage,
     )
 
 
 def _record_subfloor_risk_target(
-    owner, symbol: str, direction: str | None, requested_pct: float,
+    owner,
+    symbol: str,
+    direction: str | None,
+    requested_pct: float,
 ) -> None:
     """Record a positive sub-floor PM risk request. Never raises.
 
@@ -153,13 +181,22 @@ def _record_subfloor_risk_target(
     if recorder is None:
         return
     recorder.record_subfloor_risk_target(
-        symbol, direction, requested_pct, owner.cfg.min_risk_pct,
+        symbol,
+        direction,
+        requested_pct,
+        owner.cfg.min_risk_pct,
     )
 
 
 def _note_refusal(
-    owner, symbol: str, direction: str, refusal: str, detail: str,
-    *, only_if_unrecorded: bool = False, action: str | None = None,
+    owner,
+    symbol: str,
+    direction: str,
+    refusal: str,
+    detail: str,
+    *,
+    only_if_unrecorded: bool = False,
+    action: str | None = None,
 ) -> None:
     """Record and log one NAMED trade refusal. Never raises.
 
@@ -179,13 +216,12 @@ def _note_refusal(
     worse, not better.
     """
     key = str(symbol or "").strip().upper()
-    if only_if_unrecorded and (
-        key in owner.last_refusals or key in owner.last_data_faults
-    ):
+    if only_if_unrecorded and (key in owner.last_refusals or key in owner.last_data_faults):
         return
     try:
         owner.last_refusals[key] = {
-            "refusal": str(refusal), "detail": str(detail),
+            "refusal": str(refusal),
+            "detail": str(detail),
             "direction": str(direction or ""),
         }
     except Exception:  # noqa: BLE001 — a record side-channel must never raise
@@ -193,5 +229,7 @@ def _note_refusal(
     logger.warning(
         "Constructor: %s %s refused [%s] — %s",
         action or ("SHORT" if str(direction).lower() == "short" else "BUY"),
-        symbol, refusal, detail,
+        symbol,
+        refusal,
+        detail,
     )

@@ -41,6 +41,7 @@ methods, and tests/conftest.py refuses outbound HTTP anyway.
 tests/test_pipeline_new_ratchet.py counts the ``__new__`` sites here and on
 ``origin/main``; that number may only go down.
 """
+
 from __future__ import annotations
 
 import os
@@ -86,9 +87,14 @@ CONSTRUCTOR_SITES = {
 }
 
 _CREDENTIAL_ENV = (
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-    "DEEPSEEK_API_KEY", "GOOGLE_API_KEY", "ALPACA_API_KEY",
-    "ALPACA_SECRET_KEY", "FRED_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GOOGLE_API_KEY",
+    "ALPACA_API_KEY",
+    "ALPACA_SECRET_KEY",
+    "FRED_API_KEY",
 )
 SENTINEL_KEY = "test-sentinel-not-a-credential"
 
@@ -116,24 +122,35 @@ def test_config(**overrides):
         if section in raw and "data_dir" in raw[section]:
             raw[section]["data_dir"] = str(here / section)
     raw.setdefault("execution", {})["fill_stream_enabled"] = False
-    raw.setdefault("macro", {}).update({
-        "max_retries": 0, "retry_backoff_base_s": 0.001,
-        "retry_backoff_max_s": 0.001, "retry_backoff_jitter_s": 0.0,
-    })
+    raw.setdefault("macro", {}).update(
+        {
+            "max_retries": 0,
+            "retry_backoff_base_s": 0.001,
+            "retry_backoff_max_s": 0.001,
+            "retry_backoff_jitter_s": 0.0,
+        }
+    )
     for section, values in overrides.items():
         raw.setdefault(section, {}).update(values)
     env = {name: SENTINEL_KEY for name in _CREDENTIAL_ENV}
     return AppConfig(**_walk_and_substitute(raw, env))
 
 
-ADMISSION_STANDINS = frozenset({
-    "_filter_supported_symbols", "_evaluate_external_admission_gates",
-    "_universe_screen_enabled", "_universe_screen_sources",
-    "_evaluate_screened_admission", "_form4_admission_is_current",
-    "_admit_screened_universe_symbols", "_run_universe_screen",
-    "_attach_universe_changes", "_admit_nominated_external_symbols",
-    "_admit_transient_smart_money_symbols",
-})
+ADMISSION_STANDINS = frozenset(
+    {
+        "_filter_supported_symbols",
+        "_evaluate_external_admission_gates",
+        "_universe_screen_enabled",
+        "_universe_screen_sources",
+        "_evaluate_screened_admission",
+        "_form4_admission_is_current",
+        "_admit_screened_universe_symbols",
+        "_run_universe_screen",
+        "_attach_universe_changes",
+        "_admit_nominated_external_symbols",
+        "_admit_transient_smart_money_symbols",
+    }
+)
 
 
 def build_pipeline(config=None, **stand_ins):
@@ -153,14 +170,17 @@ def build_pipeline(config=None, **stand_ins):
             site = CONSTRUCTOR_SITES.get(attr)
             if site is None or value is None:
                 continue  # None means 'absent': set after, never built
-            stack.enter_context(patch.object(
-                pipeline_module, site, _returning(value),
-            ))
+            stack.enter_context(
+                patch.object(
+                    pipeline_module,
+                    site,
+                    _returning(value),
+                )
+            )
         pipeline = TradingPipeline(cfg)
 
     admission_standins = {
-        attr: value for attr, value in stand_ins.items()
-        if attr in ADMISSION_STANDINS and value is not None
+        attr: value for attr, value in stand_ins.items() if attr in ADMISSION_STANDINS and value is not None
     }
     if admission_standins:
         # The eleven admission names live on `AdmissionService` since the
@@ -190,6 +210,8 @@ def _returning(value):
     """A constructor-site stand-in: whatever the constructor passes, the
     pipeline gets ``value`` (and ``.fail_closed``-style classmethods, if any
     test ever needs them, are not required by __init__)."""
+
     def _factory(*args, **kwargs):
         return value
+
     return _factory

@@ -27,11 +27,11 @@ DAY = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
 
 
 def item(title, summary="", source="X", link="", published=DAY):
-    return NewsItem(title=title, summary=summary, source=source,
-                    published=published, link=link)
+    return NewsItem(title=title, summary=summary, source=source, published=published, link=link)
 
 
 # === normalization helpers ===
+
 
 def test_normalize_text_strips_case_punctuation_and_apostrophes():
     assert normalize_text("Trump's U.S. Deal — 'Done'!") == "trumps u.s. deal done"
@@ -65,6 +65,7 @@ def test_normalize_link_strips_tracking_and_fragment():
 
 # === exact duplicates ===
 
+
 def test_exact_duplicate_titles_collapse_to_one_cluster():
     items = [
         item("Fed holds rates steady", source="CNBC"),
@@ -91,10 +92,8 @@ def test_same_url_across_outlets_collapses_regardless_of_headline():
     plausible similarity threshold."""
     url = "https://apnews.com/article/fed-rate-pause-2026"
     items = [
-        item("Fed pauses rate hikes amid soft data", source="Reuters",
-             link=url + "?utm_source=reuters"),
-        item("Markets cheer as central bank signals hold", source="CNBC",
-             link=url + "?ref=cnbc"),
+        item("Fed pauses rate hikes amid soft data", source="Reuters", link=url + "?utm_source=reuters"),
+        item("Markets cheer as central bank signals hold", source="CNBC", link=url + "?ref=cnbc"),
     ]
     clusters = cluster_news(items)
     assert len(clusters) == 1
@@ -104,16 +103,21 @@ def test_same_url_across_outlets_collapses_regardless_of_headline():
 
 # === near duplicates with different headlines ===
 
+
 def test_near_duplicate_different_headlines_collapse():
     """Real pair from 2026-08-27 BBC Business: the same shop-closure story
     filed twice under different headlines."""
     items = [
-        item("Much-loved ice cream shop to close after 106 years",
-             summary="The family business has served the town since 1920.",
-             source="BBC Business"),
-        item("'End of an era' for ice cream shop open 106 years",
-             summary="Locals mourn the family business that has served the town since 1920.",
-             source="BBC Business"),
+        item(
+            "Much-loved ice cream shop to close after 106 years",
+            summary="The family business has served the town since 1920.",
+            source="BBC Business",
+        ),
+        item(
+            "'End of an era' for ice cream shop open 106 years",
+            summary="Locals mourn the family business that has served the town since 1920.",
+            source="BBC Business",
+        ),
     ]
     clusters = cluster_news(items)
     assert len(clusters) == 1, [c.representative.title for c in clusters]
@@ -123,13 +127,16 @@ def test_near_duplicate_across_outlets_collapses():
     """Real pair from 2026-08-19 (BBC vs CNBC) — one tariff pause, two
     outlets, two headlines."""
     items = [
-        item("Trump pauses new tariffs on Canada for three days, saying deal close",
-             summary="The president said a deal with Ottawa was within reach.",
-             source="BBC Business"),
-        item("Trump pauses 50% scheduled tariffs on Canada for three days, "
-             "announces 'deal' with Ottawa",
-             summary="The president said the two sides were close to a deal.",
-             source="CNBC Top News"),
+        item(
+            "Trump pauses new tariffs on Canada for three days, saying deal close",
+            summary="The president said a deal with Ottawa was within reach.",
+            source="BBC Business",
+        ),
+        item(
+            "Trump pauses 50% scheduled tariffs on Canada for three days, announces 'deal' with Ottawa",
+            summary="The president said the two sides were close to a deal.",
+            source="CNBC Top News",
+        ),
     ]
     clusters = cluster_news(items)
     assert len(clusters) == 1
@@ -138,24 +145,26 @@ def test_near_duplicate_across_outlets_collapses():
 
 # === false-merge guards: distinct same-day events must stay separate ===
 
+
 def test_two_distinct_same_day_events_about_one_company_stay_separate():
     """The failure mode that matters most. Both stories are about NVDA, on
     the same day, sharing the ticker and most topic words — but an earnings
     beat and an export-ban headline are two events and must not merge."""
     items = [
-        item("Nvidia beats on Q2 earnings as data center revenue doubles",
-             summary="Nvidia reported quarterly revenue above analyst estimates, "
-                     "driven by data center demand.",
-             source="CNBC Top News"),
-        item("Nvidia shares slip as U.S. weighs new export curbs on China sales",
-             summary="Washington is considering fresh restrictions on Nvidia chip "
-                     "exports to China.",
-             source="MarketWatch Top"),
+        item(
+            "Nvidia beats on Q2 earnings as data center revenue doubles",
+            summary="Nvidia reported quarterly revenue above analyst estimates, driven by data center demand.",
+            source="CNBC Top News",
+        ),
+        item(
+            "Nvidia shares slip as U.S. weighs new export curbs on China sales",
+            summary="Washington is considering fresh restrictions on Nvidia chip exports to China.",
+            source="MarketWatch Top",
+        ),
     ]
     clusters = cluster_news(items)
     assert len(clusters) == 2, (
-        "distinct same-day events about one company must not merge: "
-        f"{[c.representative.title for c in clusters]}"
+        f"distinct same-day events about one company must not merge: {[c.representative.title for c in clusters]}"
     )
 
 
@@ -164,13 +173,16 @@ def test_same_topic_different_speaker_does_not_merge():
     0.427. Same trade dispute, same day, but different speakers making
     different claims. It is the reason SIMILARITY_THRESHOLD sits at 0.45."""
     items = [
-        item("Trump says U.S., Canada 'should be able' to reach trade deal as "
-             "tariff deadline looms",
-             summary="The president struck an optimistic tone on negotiations.",
-             source="CNBC Top News"),
-        item("Canada 'should fight' as US trade deadline looms, Manitoba premier says",
-             summary="The provincial leader urged Ottawa to resist US pressure.",
-             source="BBC Business"),
+        item(
+            "Trump says U.S., Canada 'should be able' to reach trade deal as tariff deadline looms",
+            summary="The president struck an optimistic tone on negotiations.",
+            source="CNBC Top News",
+        ),
+        item(
+            "Canada 'should fight' as US trade deadline looms, Manitoba premier says",
+            summary="The provincial leader urged Ottawa to resist US pressure.",
+            source="BBC Business",
+        ),
     ]
     assert len(cluster_news(items)) == 2
 
@@ -181,12 +193,11 @@ def test_two_fed_press_releases_on_one_day_stay_separate():
     naive word-overlap rule, but an approval and an enforcement action are
     different events."""
     items = [
-        item("Federal Reserve Board announces approval of application by "
-             "First National Bancorp",
-             source="Fed Press Releases"),
-        item("Federal Reserve Board issues enforcement action with "
-             "Cedar Valley Bank",
-             source="Fed Press Releases"),
+        item(
+            "Federal Reserve Board announces approval of application by First National Bancorp",
+            source="Fed Press Releases",
+        ),
+        item("Federal Reserve Board issues enforcement action with Cedar Valley Bank", source="Fed Press Releases"),
     ]
     assert len(cluster_news(items)) == 2
 
@@ -195,13 +206,18 @@ def test_complete_linkage_prevents_chaining_two_events_together():
     """Single-linkage clustering welds A and C together whenever some B
     resembles both. Complete linkage requires the candidate to match every
     existing member, so the bridge article cannot merge two distinct events."""
-    a = item("Acme raises full-year profit guidance after strong quarter",
-             summary="Acme lifted its outlook following a strong quarter.")
-    bridge = item("Acme raises full-year profit guidance and names new chief "
-                  "executive officer",
-                  summary="Acme lifted its outlook and named a new chief executive.")
-    c = item("Acme names new chief executive officer to lead turnaround",
-             summary="Acme appointed a new chief executive to lead its turnaround.")
+    a = item(
+        "Acme raises full-year profit guidance after strong quarter",
+        summary="Acme lifted its outlook following a strong quarter.",
+    )
+    bridge = item(
+        "Acme raises full-year profit guidance and names new chief executive officer",
+        summary="Acme lifted its outlook and named a new chief executive.",
+    )
+    c = item(
+        "Acme names new chief executive officer to lead turnaround",
+        summary="Acme appointed a new chief executive to lead its turnaround.",
+    )
     clusters = cluster_news([a, bridge, c])
     reps = {cl.representative.title for cl in clusters}
     assert len(clusters) >= 2, reps
@@ -212,6 +228,7 @@ def test_complete_linkage_prevents_chaining_two_events_together():
 
 
 # === collapsed count is preserved ===
+
 
 def test_collapsed_count_and_sources_are_preserved():
     items = [
@@ -278,11 +295,15 @@ def test_format_for_prompt_stays_quiet_for_singletons():
 
 # === representative selection ===
 
+
 def test_representative_is_the_most_informative_member():
     items = [
         item("Fed holds", summary="", source="A"),
-        item("Fed holds", summary="The Federal Open Market Committee left the "
-                                  "target range unchanged at 4.25-4.5%.", source="B"),
+        item(
+            "Fed holds",
+            summary="The Federal Open Market Committee left the target range unchanged at 4.25-4.5%.",
+            source="B",
+        ),
     ]
     (cluster,) = cluster_news(items)
     assert cluster.representative.source == "B"
@@ -300,6 +321,7 @@ def test_representative_tie_breaks_to_the_earliest_report():
 
 
 # === structural / seam ===
+
 
 def test_novelty_seam_is_present_and_unset():
     """Stage 2 (novelty scoring) is deliberately not built. The field exists
@@ -365,7 +387,7 @@ _CALIBRATION_PAIRS = [
         "Why is Selena Gomez being sued?",
         "BBC journalist Ana Guerra-Moore looks at why investors who backed Wondermind Global are claiming the pop star failed to fulfil promises.",
         "Selena Gomez sued for alleged fraud over mental health company",
-        "Investors say the actor and singer did not take an \"active role\" in the company as promised.",
+        'Investors say the actor and singer did not take an "active role" in the company as promised.',
         KNOWN_MISS,
     ),
     (
@@ -421,7 +443,7 @@ _CALIBRATION_PAIRS = [
         "Much-loved ice cream shop to close after 106 years",
         "The family-run shop has been a fixture in Brislington, Bristol since the 1920s.",
         "'End of an era' for ice cream shop open 106 years",
-        "The Tarr family say they are \"devastated\" to announce they will have to close due to rising costs.",
+        'The Tarr family say they are "devastated" to announce they will have to close due to rising costs.',
         True,
     ),
     (
@@ -483,11 +505,8 @@ _CALIBRATION_PAIRS = [
 ]
 
 
-@pytest.mark.parametrize("title_a,summary_a,title_b,summary_b,label",
-                         _CALIBRATION_PAIRS)
-def test_calibration_against_real_archived_headlines(
-    title_a, summary_a, title_b, summary_b, label
-):
+@pytest.mark.parametrize("title_a,summary_a,title_b,summary_b,label", _CALIBRATION_PAIRS)
+def test_calibration_against_real_archived_headlines(title_a, summary_a, title_b, summary_b, label):
     """Every pair here is real: two articles that actually appeared in the
     same day's fetch. The label is a hand judgement of whether they describe
     one underlying event, and what this stage is expected to do about it."""
@@ -496,13 +515,9 @@ def test_calibration_against_real_archived_headlines(
         item(title_b, summary=summary_b, source="B"),
     ]
     merged = len(cluster_news(pair)) == 1
-    expected = (label is True)
-    verdict = {True: "expected merge", False: "FALSE MERGE",
-               KNOWN_MISS: "known miss regressed"}[label]
-    assert merged is expected, (
-        f"{verdict} (score {similarity(pair[0], pair[1]):.3f}): "
-        f"{title_a!r} vs {title_b!r}"
-    )
+    expected = label is True
+    verdict = {True: "expected merge", False: "FALSE MERGE", KNOWN_MISS: "known miss regressed"}[label]
+    assert merged is expected, f"{verdict} (score {similarity(pair[0], pair[1]):.3f}): {title_a!r} vs {title_b!r}"
 
 
 def test_no_false_merges_anywhere_in_the_calibration_set():
@@ -525,9 +540,7 @@ def test_recall_on_the_calibration_set_does_not_silently_regress():
             continue
         pair = [item(title_a, summary=summary_a), item(title_b, summary=summary_b)]
         hits += len(cluster_news(pair)) == 1
-    assert hits == 8, (
-        f"measured recall changed: {hits}/11 same-event pairs merged, expected 8"
-    )
+    assert hits == 8, f"measured recall changed: {hits}/11 same-event pairs merged, expected 8"
 
 
 def test_threshold_sits_above_the_measured_false_pair_ceiling():
@@ -537,14 +550,16 @@ def test_threshold_sits_above_the_measured_false_pair_ceiling():
     assert SIMILARITY_THRESHOLD > 0.429
     assert TITLE_ONLY_THRESHOLD > 0.503
     pair = [
-        item("Trump says U.S., Canada 'should be able' to reach trade deal as "
-             "tariff deadline looms",
-             summary="The president struck an optimistic tone on negotiations.",
-             source="A"),
-        item("Canada 'should fight' as US trade deadline looms, Manitoba "
-             "premier says",
-             summary="The provincial leader urged Ottawa to resist US pressure.",
-             source="B"),
+        item(
+            "Trump says U.S., Canada 'should be able' to reach trade deal as tariff deadline looms",
+            summary="The president struck an optimistic tone on negotiations.",
+            source="A",
+        ),
+        item(
+            "Canada 'should fight' as US trade deadline looms, Manitoba premier says",
+            summary="The provincial leader urged Ottawa to resist US pressure.",
+            source="B",
+        ),
     ]
     assert len(cluster_news(pair)) == 2
     # ... and demonstrate the failure the threshold is protecting against.
@@ -556,8 +571,7 @@ def test_headline_only_pairs_must_clear_the_stricter_bar():
     it needs more similarity. This pair scores 0.503 on titles alone — enough
     to clear SIMILARITY_THRESHOLD, not enough to clear TITLE_ONLY_THRESHOLD."""
     titles = (
-        "Trump says U.S., Canada 'should be able' to reach trade deal as "
-        "tariff deadline looms",
+        "Trump says U.S., Canada 'should be able' to reach trade deal as tariff deadline looms",
         "Canada 'should fight' as US trade deadline looms, Manitoba premier says",
     )
     bare = [item(t, summary="", source=s) for t, s in zip(titles, "AB")]
@@ -568,9 +582,10 @@ def test_headline_only_pairs_must_clear_the_stricter_bar():
 def test_one_summary_present_is_enough_to_use_the_normal_bar():
     """The stricter bar applies only when NEITHER side has a summary. One
     summary is still evidence."""
-    a = item("Household energy bills to hit three-year high as Ofgem announces "
-             "4% rise from October",
-             summary="Regulator confirms the price cap will rise in October.",
-             source="A")
+    a = item(
+        "Household energy bills to hit three-year high as Ofgem announces 4% rise from October",
+        summary="Regulator confirms the price cap will rise in October.",
+        source="A",
+    )
     b = item("Energy prices to rise to three-year high", summary="", source="B")
     assert len(cluster_news([a, b])) == 1

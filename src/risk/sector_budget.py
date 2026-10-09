@@ -9,6 +9,7 @@ part builds and runs alone). `src/risk/rules.py` keeps the engine, every
 ledger-pinned number and the re-export mirror, so every existing
 `from src.risk.rules import X` keeps resolving.
 """
+
 from src.quantities import gross_multiplier as _gross_multiplier
 
 
@@ -66,7 +67,10 @@ def decision_side(action: str) -> str:
 
 
 def sector_side_gross(
-    positions, *, resolve_sector=None, include_unknown: bool = False,
+    positions,
+    *,
+    resolve_sector=None,
+    include_unknown: bool = False,
 ) -> dict[tuple[str, str], float]:
     """Held GROSS (unsigned) exposure in DOLLARS, keyed by `(sector, side)`.
 
@@ -111,7 +115,9 @@ def sector_side_gross(
 
 
 def accumulate_pending_sector(
-    pending: dict[tuple[str, str], float], sector: str, action: str,
+    pending: dict[tuple[str, str], float],
+    sector: str,
+    action: str,
     gross_amount: float,
 ) -> None:
     """Book an approved-but-unexecuted order into the `(sector, side)`
@@ -135,7 +141,10 @@ def accumulate_pending_sector(
 
 
 def sector_side_weights(
-    positions, total_value: float, *, resolve_sector=None,
+    positions,
+    total_value: float,
+    *,
+    resolve_sector=None,
     include_unknown: bool = False,
 ) -> dict[tuple[str, str], float]:
     """`sector_side_gross` expressed as a PERCENT of equity.
@@ -148,7 +157,8 @@ def sector_side_weights(
     return {
         key: value / total_value * 100
         for key, value in sector_side_gross(
-            positions, resolve_sector=resolve_sector,
+            positions,
+            resolve_sector=resolve_sector,
             include_unknown=include_unknown,
         ).items()
     }
@@ -210,7 +220,10 @@ def sector_side_weights(
 
 
 def sector_size_scale(
-    current_sector_pct: float, *, soft_cap_pct: float, hard_cap_pct: float,
+    current_sector_pct: float,
+    *,
+    soft_cap_pct: float,
+    hard_cap_pct: float,
 ) -> float:
     """The dial itself: the fraction of its requested size a trade keeps,
     given how crowded its sector ALREADY is (before this trade).
@@ -231,7 +244,10 @@ def sector_size_scale(
 
 
 def sector_allowance_pct(
-    current_sector_pct: float, *, soft_cap_pct: float, hard_cap_pct: float,
+    current_sector_pct: float,
+    *,
+    soft_cap_pct: float,
+    hard_cap_pct: float,
 ) -> float:
     """The most GROSS exposure (as % of equity) this sector may still take on.
 
@@ -248,5 +264,7 @@ def sector_allowance_pct(
     """
     headroom = max(0.0, hard_cap_pct - current_sector_pct)
     return headroom * sector_size_scale(
-        current_sector_pct, soft_cap_pct=soft_cap_pct, hard_cap_pct=hard_cap_pct,
+        current_sector_pct,
+        soft_cap_pct=soft_cap_pct,
+        hard_cap_pct=hard_cap_pct,
     )

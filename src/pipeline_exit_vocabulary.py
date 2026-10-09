@@ -183,9 +183,9 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
 # second, unverified way to buy the same bypass on the trail path, which runs
 # no chart check at all.
 _HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
-    name for name in _CANONICAL_TRIGGER_NAMES
-    if name not in _HARD_TRIGGER_KEYWORDS
-    and name not in _CHART_VERIFIED_TRIGGER_NAMES
+    name
+    for name in _CANONICAL_TRIGGER_NAMES
+    if name not in _HARD_TRIGGER_KEYWORDS and name not in _CHART_VERIFIED_TRIGGER_NAMES
 )
 
 
@@ -248,7 +248,9 @@ def _actions_with_scan_fallback(items, displaced: dict, orders: list):
             "Alignment scan: the %s it raised for %s was refused downstream "
             "— restoring the %s the review asked for, so the position is not "
             "left unprotected",
-            item.get("action"), item.get("symbol"), fallback.get("action"),
+            item.get("action"),
+            item.get("symbol"),
+            fallback.get("action"),
         )
         queue.append(fallback)
 
@@ -260,6 +262,7 @@ def _reason_claims_alignment_exit(reason: str, exit_trigger: object = None) -> b
     fallback, same precedence the holding-discipline fact-check uses.
     """
     from src.risk.exit_trigger import ExitTrigger
+
     t = getattr(exit_trigger, "value", exit_trigger)
     if isinstance(t, str) and t.strip().lower() == ExitTrigger.TREND_ALIGNMENT_OVER.value:
         return True

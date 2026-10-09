@@ -5,13 +5,19 @@ for the gate as a whole and still exposes `declared_criteria_problems` under
 its own name. The split is mechanical: this module owns the three accounting
 forms a closure may use for a criterion, and nothing else.
 """
+
 from __future__ import annotations
 
 import re
 
 from scripts.board_locator import ReferenceUnavailable, tree_board
 from scripts.definition_of_done import (
-    Change, criteria, item_blocks, items_closed, items_filed, trailer,
+    Change,
+    criteria,
+    item_blocks,
+    items_closed,
+    items_filed,
+    trailer,
 )
 
 
@@ -20,7 +26,9 @@ from scripts.definition_of_done import (
 #: obligation with no date is the silent limbo this check exists to remove.
 DEFERRAL = re.compile(
     r"(\d+)\s*/\s*(\d+)\s*(?:->|→)\s*items?\s*#?(\d+)"
-    r".*?(\d{4}-\d{2}-\d{2})", re.I)
+    r".*?(\d{4}-\d{2}-\d{2})",
+    re.I,
+)
 MET = re.compile(r"(\d+)\s*/\s*(\d+)", re.I)
 
 #: `Done-criteria-withdrawn: 202/9 -> ruling 2026-10-04
@@ -43,15 +51,17 @@ MET = re.compile(r"(\d+)\s*/\s*(\d+)", re.I)
 #: bearing that date is really there. Free text alone withdraws nothing.
 WITHDRAWAL = re.compile(
     r"(\d+)\s*/\s*(\d+)\s*(?:->|\u2192)\s*ruling\s*"
-    r"(\d{4}-\d{2}-\d{2})\s*\(\s*([^)]+?)\s*\)", re.I)
+    r"(\d{4}-\d{2}-\d{2})\s*\(\s*([^)]+?)\s*\)",
+    re.I,
+)
+
 
 #: The shape a recorded ruling already has in this repo's decisions record:
 #: `**RULING 2026-10-01 — ...**`, `OWNER RULING 2026-10-02 (verbatim): ...`,
 #: `2026-09-30 OWNER RULING APPLIED: ...`. Case-SENSITIVE on `RULING` on
 #: purpose, so ordinary prose using the word in lower case is not a ruling.
 def _ruling_line(text: str, date: str) -> bool:
-    return any("RULING" in line and date in line
-               for line in text.splitlines())
+    return any("RULING" in line and date in line for line in text.splitlines())
 
 
 def _ruling_record_problem(change: Change, date: str, cited: str) -> str | None:
@@ -65,24 +75,25 @@ def _ruling_record_problem(change: Change, date: str, cited: str) -> str | None:
         board, notes = tree_board(change.tree)
     except ReferenceUnavailable:
         return None  # same silence the rest of this module keeps when the
-                     # board cannot be located: not evidence of a dropped half
+        # board cannot be located: not evidence of a dropped half
     cited = cited.strip().lstrip("./")
-    if cited != board and not (cited.startswith(notes + "/")
-                               and cited.endswith(".md")):
-        return (f"cites {cited!r}, which is not part of the decisions record "
-                f"(the board file {board!r} or a note under {notes}/). A "
-                f"ruling the board does not carry is not a ruling this gate "
-                f"can check")
+    if cited != board and not (cited.startswith(notes + "/") and cited.endswith(".md")):
+        return (
+            f"cites {cited!r}, which is not part of the decisions record "
+            f"(the board file {board!r} or a note under {notes}/). A "
+            f"ruling the board does not carry is not a ruling this gate "
+            f"can check"
+        )
     path = change.tree / cited
     if ".." in cited.split("/") or not path.is_file():
-        return (f"cites {cited!r}, which does not exist in the tree after "
-                f"this change")
-    if not _ruling_line(path.read_text(encoding="utf-8", errors="replace"),
-                        date):
-        return (f"cites a ruling dated {date} in {cited!r}, and that file "
-                f"carries no RULING line bearing that date. Record the "
-                f"ruling there first — a withdrawal is only as good as the "
-                f"ruling behind it")
+        return f"cites {cited!r}, which does not exist in the tree after this change"
+    if not _ruling_line(path.read_text(encoding="utf-8", errors="replace"), date):
+        return (
+            f"cites a ruling dated {date} in {cited!r}, and that file "
+            f"carries no RULING line bearing that date. Record the "
+            f"ruling there first — a withdrawal is only as good as the "
+            f"ruling behind it"
+        )
     return None
 
 
@@ -123,14 +134,17 @@ def declared_criteria_problems(change: Change) -> list[str]:
                 f"answer, say so with a `NO CRITERIA: <reason>` line instead."
             )
 
-    met = {(m.group(1), m.group(2)) for v in trailer(change.messages, "Done-criteria-met")
-           for m in MET.finditer(v)}
-    deferred = {(m.group(1), m.group(2)): (m.group(3), m.group(4))
-                for v in trailer(change.messages, "Done-criteria-deferred")
-                for m in DEFERRAL.finditer(v)}
-    withdrawn = {(m.group(1), m.group(2)): (m.group(3), m.group(4))
-                 for v in trailer(change.messages, "Done-criteria-withdrawn")
-                 for m in WITHDRAWAL.finditer(v)}
+    met = {(m.group(1), m.group(2)) for v in trailer(change.messages, "Done-criteria-met") for m in MET.finditer(v)}
+    deferred = {
+        (m.group(1), m.group(2)): (m.group(3), m.group(4))
+        for v in trailer(change.messages, "Done-criteria-deferred")
+        for m in DEFERRAL.finditer(v)
+    }
+    withdrawn = {
+        (m.group(1), m.group(2)): (m.group(3), m.group(4))
+        for v in trailer(change.messages, "Done-criteria-withdrawn")
+        for m in WITHDRAWAL.finditer(v)
+    }
 
     for number in sorted(items_closed(change), key=int):
         declared = criteria(before.get(number, ""))

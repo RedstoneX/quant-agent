@@ -2,6 +2,7 @@
 
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
+
 import os
 import threading
 import time
@@ -70,12 +71,8 @@ from src.agents.llm_retry import _RETRY_AFTER_CAP_S
 #
 # The doubling factor of 2 is conventional binary exponential backoff, the
 # same factor `_retry_backoff_seconds` uses.
-_ROUTE_COOLDOWN_S = float(
-    os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_S", _RETRY_AFTER_CAP_S)
-)
-_ROUTE_COOLDOWN_MAX_S = float(
-    os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_MAX_S", 60.0 * 30.0)
-)
+_ROUTE_COOLDOWN_S = float(os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_S", _RETRY_AFTER_CAP_S))
+_ROUTE_COOLDOWN_MAX_S = float(os.environ.get("QUANT_AGENT_ROUTE_COOLDOWN_MAX_S", 60.0 * 30.0))
 
 
 class RouteBreaker:
@@ -128,8 +125,7 @@ class RouteBreaker:
 
     def demoted(self) -> bool:
         with self._lock:
-            return (self._demoted_until is not None
-                    and time.monotonic() < self._demoted_until)
+            return self._demoted_until is not None and time.monotonic() < self._demoted_until
 
     # --- state transitions ------------------------------------------------
 

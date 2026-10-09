@@ -4,6 +4,7 @@ Moved VERBATIM out of `StopRules._reward_risk_at`: same body, same
 docstring, same delegation to the one shared definition of this ratio.
 Nothing about the ratio changed; the method there now calls through.
 """
+
 from __future__ import annotations
 
 from src.models import reward_to_risk
@@ -32,5 +33,8 @@ def reward_risk_at(
     a malformed trade straight through the floor.
     """
     return reward_to_risk(
-        entry_price, stop_price, target_price, is_short=is_short,
+        entry_price,
+        stop_price,
+        target_price,
+        is_short=is_short,
     )

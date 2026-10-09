@@ -11,6 +11,7 @@ The changed set is this branch's own work: everything since it last shared
 history with main. On a pull_request run HEAD is GitHub's test merge, whose
 merge-base with main is main itself.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -36,8 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     base = (argv or sys.argv[1:] or ["origin/main"])[0]
     bad = violation(_changed(base))
     if bad:
-        print(f"::error::this change edits {BOARD} together with code: {', '.join(bad[:10])}. "
-              "Ship the code alone; record the board update in its own docs-only change after it merges.")
+        print(
+            f"::error::this change edits {BOARD} together with code: {', '.join(bad[:10])}. "
+            "Ship the code alone; record the board update in its own docs-only change after it merges."
+        )
         return 1
     print("board edits travel alone: ok")
     return 0

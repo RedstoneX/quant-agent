@@ -31,23 +31,34 @@ def client() -> TestClient:
 
 def _tech_reasoning_chain():
     return {
-        "trend": "uptrend", "momentum": "rsi 62", "volatility": "bb mid",
-        "volume": "confirming", "support_resistance": "200dma support",
+        "trend": "uptrend",
+        "momentum": "rsi 62",
+        "volatility": "bb mid",
+        "volume": "confirming",
+        "support_resistance": "200dma support",
     }
 
 
 def _pm_reasoning_chain():
     return {
-        "macro_filter": "x", "news_check": "x", "earnings_check": "x",
-        "signal_conflicts": "x", "sizing_logic": "x",
-        "portfolio_balance": "x", "cash_target": "x",
+        "macro_filter": "x",
+        "news_check": "x",
+        "earnings_check": "x",
+        "signal_conflicts": "x",
+        "sizing_logic": "x",
+        "portfolio_balance": "x",
+        "cash_target": "x",
     }
 
 
 def _risk_reasoning_chain():
     return {
-        "rr_audit": "x", "signal_fidelity": "x", "correlation_check": "x",
-        "event_risk": "x", "sizing_sanity": "x", "overall": "x",
+        "rr_audit": "x",
+        "signal_fidelity": "x",
+        "correlation_check": "x",
+        "event_risk": "x",
+        "sizing_sanity": "x",
+        "overall": "x",
     }
 
 
@@ -58,99 +69,175 @@ def seeded_evidence_db(tmp_path, monkeypatch):
     db.initialize()
 
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10, price=150.0,
-        reasoning="test buy", run_id=RUN_ID, stop_loss=140.0, take_profit=170.0,
-        broker_order_id="ord-1", fill_status="filled", decision_id=DECISION_ID,
+        symbol="AAPL",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="test buy",
+        run_id=RUN_ID,
+        stop_loss=140.0,
+        take_profit=170.0,
+        broker_order_id="ord-1",
+        fill_status="filled",
+        decision_id=DECISION_ID,
     )
 
     # Run-scoped research evidence — no decision_id.
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="macro_analyst", kind="analysis", scope="run",
-        evidence_json=json.dumps({
-            "reasoning_chain": {
-                "volatility_analysis": "a", "yield_curve_analysis": "b",
-                "monetary_policy_analysis": "c", "inflation_labor_credit": "d",
-                "cross_signal_synthesis": "e", "sector_implications": "f",
-            },
-            "regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
-            "position_guidance": {
-                "target_invested_pct": 70, "cash_recommendation_pct": 30, "reasoning": "y",
-            },
-            "sector_guidance": [
-                {"sector": "Technology", "stance": "overweight", "reason": "AI capex"},
-            ],
-            "summary": "risk-on regime",
-        }),
+        run_id=RUN_ID,
+        agent_name="macro_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json=json.dumps(
+            {
+                "reasoning_chain": {
+                    "volatility_analysis": "a",
+                    "yield_curve_analysis": "b",
+                    "monetary_policy_analysis": "c",
+                    "inflation_labor_credit": "d",
+                    "cross_signal_synthesis": "e",
+                    "sector_implications": "f",
+                },
+                "regime": "risk-on",
+                "confidence": "high",
+                "equity_outlook": "bullish",
+                "position_guidance": {
+                    "target_invested_pct": 70,
+                    "cash_recommendation_pct": 30,
+                    "reasoning": "y",
+                },
+                "sector_guidance": [
+                    {"sector": "Technology", "stance": "overweight", "reason": "AI capex"},
+                ],
+                "summary": "risk-on regime",
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="news_analyst", kind="analysis", scope="run",
-        evidence_json=json.dumps({
-            "macro_narrative": {
-                "last_updated": "2026-08-08", "era_themes": ["AI capex"],
-                "current_regime": "risk-on expansion",
-            },
-            "state_changes": [{
-                "event": "Fed pause", "previous_state": "hiking", "new_state": "paused",
-                "market_impact": "bullish", "affected_symbols": ["AAPL"], "conviction": "high",
-            }],
-            "stock_news": {
-                "AAPL": [{
-                    "headline": "AAPL beats on services growth",
-                    "sentiment": "bullish", "conviction": "high",
-                    "impact_summary": "services margin expansion",
-                }],
-            },
-            "pm_briefing": "Quiet tape, AI capex theme intact.",
-            "market_sentiment": "bullish", "confidence": "medium",
-        }),
+        run_id=RUN_ID,
+        agent_name="news_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json=json.dumps(
+            {
+                "macro_narrative": {
+                    "last_updated": "2026-08-08",
+                    "era_themes": ["AI capex"],
+                    "current_regime": "risk-on expansion",
+                },
+                "state_changes": [
+                    {
+                        "event": "Fed pause",
+                        "previous_state": "hiking",
+                        "new_state": "paused",
+                        "market_impact": "bullish",
+                        "affected_symbols": ["AAPL"],
+                        "conviction": "high",
+                    }
+                ],
+                "stock_news": {
+                    "AAPL": [
+                        {
+                            "headline": "AAPL beats on services growth",
+                            "sentiment": "bullish",
+                            "conviction": "high",
+                            "impact_summary": "services margin expansion",
+                        }
+                    ],
+                },
+                "pm_briefing": "Quiet tape, AI capex theme intact.",
+                "market_sentiment": "bullish",
+                "confidence": "medium",
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
+        run_id=RUN_ID,
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
         symbol="AAPL",
-        evidence_json=json.dumps({
-            "symbol": "AAPL", "rating": "buy", "conviction": "high",
-            "entry_price": 150.0, "reference_target": 170.0, "stop_loss": 140.0,
-            "support_levels": [140.0], "resistance_levels": [170.0],
-            "setup_type": "range", "expected_horizon_sessions": 10,
-            "thesis_invalid_if": "closes below 140",
-            "reasoning_chain": _tech_reasoning_chain(),
-            "reasoning": "Breakout above 200dma with volume confirmation.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "symbol": "AAPL",
+                "rating": "buy",
+                "conviction": "high",
+                "entry_price": 150.0,
+                "reference_target": 170.0,
+                "stop_loss": 140.0,
+                "support_levels": [140.0],
+                "resistance_levels": [170.0],
+                "setup_type": "range",
+                "expected_horizon_sessions": 10,
+                "thesis_invalid_if": "closes below 140",
+                "reasoning_chain": _tech_reasoning_chain(),
+                "reasoning": "Breakout above 200dma with volume confirmation.",
+            }
+        ),
     )
 
     # Decision-phase evidence — correlated to DECISION_ID.
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="portfolio_manager", kind="reasoning", scope="run",
+        run_id=RUN_ID,
+        agent_name="portfolio_manager",
+        kind="reasoning",
+        scope="run",
         decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "portfolio_view": "Deploying into AAPL strength.",
-            "reasoning_chain": _pm_reasoning_chain(),
-        }),
+        evidence_json=json.dumps(
+            {
+                "portfolio_view": "Deploying into AAPL strength.",
+                "reasoning_chain": _pm_reasoning_chain(),
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="portfolio_manager", kind="target", scope="symbol",
-        symbol="AAPL", decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "symbol": "AAPL", "target_weight_pct": 10.0, "conviction": "high",
-            "thesis": "Services growth re-rating.",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="portfolio_manager", kind="proposed_order", scope="symbol",
-        symbol="AAPL", decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "action": "BUY", "symbol": "AAPL", "allocation_pct": 10.0,
-            "entry_price": 150.0, "stop_loss": 140.0, "take_profit": 170.0,
-            "reasoning": "constructed order",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        run_id=RUN_ID,
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="AAPL",
         decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "approved": True, "reasoning_chain": _risk_reasoning_chain(),
-            "reasoning": "Clean approval, no mods.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "symbol": "AAPL",
+                "target_weight_pct": 10.0,
+                "conviction": "high",
+                "thesis": "Services growth re-rating.",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol="AAPL",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "action": "BUY",
+                "symbol": "AAPL",
+                "allocation_pct": 10.0,
+                "entry_price": 150.0,
+                "stop_loss": 140.0,
+                "take_profit": 170.0,
+                "reasoning": "constructed order",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID,
+        agent_name="risk_manager",
+        kind="verdict",
+        scope="run",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "approved": True,
+                "reasoning_chain": _risk_reasoning_chain(),
+                "reasoning": "Clean approval, no mods.",
+            }
+        ),
     )
 
     db.close()
@@ -215,35 +302,56 @@ def test_candidate_detail_consensus_all_neutral_is_not_reported_as_aligned(clien
     db = Database(str(db_path))
     db.initialize()
     db.insert_trade(
-        symbol="AAPL", action="HOLD", qty=0, price=150.0,
-        reasoning="no signal", run_id=RUN_ID,
-    )
-    db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
         symbol="AAPL",
-        evidence_json=json.dumps({
-            "symbol": "AAPL", "rating": "neutral", "conviction": "low",
-            "reasoning_chain": _tech_reasoning_chain(),
-            "reasoning": "No clear trend either way.",
-        }),
+        action="HOLD",
+        qty=0,
+        price=150.0,
+        reasoning="no signal",
+        run_id=RUN_ID,
     )
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="news_analyst", kind="analysis", scope="run",
-        evidence_json=json.dumps({
-            "macro_narrative": {
-                "last_updated": "2026-08-08", "era_themes": ["AI capex"],
-                "current_regime": "risk-on expansion",
-            },
-            "stock_news": {
-                "AAPL": [{
-                    "headline": "AAPL trades in line with sector",
-                    "sentiment": "neutral", "conviction": "low",
-                    "impact_summary": "no notable move",
-                }],
-            },
-            "pm_briefing": "Quiet tape.",
-            "market_sentiment": "neutral", "confidence": "low",
-        }),
+        run_id=RUN_ID,
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
+        symbol="AAPL",
+        evidence_json=json.dumps(
+            {
+                "symbol": "AAPL",
+                "rating": "neutral",
+                "conviction": "low",
+                "reasoning_chain": _tech_reasoning_chain(),
+                "reasoning": "No clear trend either way.",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID,
+        agent_name="news_analyst",
+        kind="analysis",
+        scope="run",
+        evidence_json=json.dumps(
+            {
+                "macro_narrative": {
+                    "last_updated": "2026-08-08",
+                    "era_themes": ["AI capex"],
+                    "current_regime": "risk-on expansion",
+                },
+                "stock_news": {
+                    "AAPL": [
+                        {
+                            "headline": "AAPL trades in line with sector",
+                            "sentiment": "neutral",
+                            "conviction": "low",
+                            "impact_summary": "no notable move",
+                        }
+                    ],
+                },
+                "pm_briefing": "Quiet tape.",
+                "market_sentiment": "neutral",
+                "confidence": "low",
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -265,29 +373,54 @@ def test_candidate_detail_shows_rejected_verdict_and_modification_delta(client, 
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="portfolio_manager", kind="proposed_order",
-        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "action": "BUY", "symbol": "AAPL", "allocation_pct": 15.0,
-            "entry_price": 150.0, "stop_loss": 140.0, "take_profit": 170.0,
-            "reasoning": "constructed order",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="risk_manager", kind="modification",
-        scope="symbol", symbol="AAPL", decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "symbol": "AAPL", "field": "allocation_pct",
-            "original_value": 15.0, "new_value": 5.0, "reason": "oversized",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        run_id=RUN_ID,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol="AAPL",
         decision_id=DECISION_ID,
-        evidence_json=json.dumps({
-            "approved": False, "reasoning_chain": _risk_reasoning_chain(),
-            "reasoning": "Rejected — correlation risk too high after modification.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "action": "BUY",
+                "symbol": "AAPL",
+                "allocation_pct": 15.0,
+                "entry_price": 150.0,
+                "stop_loss": 140.0,
+                "take_profit": 170.0,
+                "reasoning": "constructed order",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID,
+        agent_name="risk_manager",
+        kind="modification",
+        scope="symbol",
+        symbol="AAPL",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "symbol": "AAPL",
+                "field": "allocation_pct",
+                "original_value": 15.0,
+                "new_value": 5.0,
+                "reason": "oversized",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=RUN_ID,
+        agent_name="risk_manager",
+        kind="verdict",
+        scope="run",
+        decision_id=DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "approved": False,
+                "reasoning_chain": _risk_reasoning_chain(),
+                "reasoning": "Rejected — correlation risk too high after modification.",
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -308,13 +441,17 @@ def test_candidate_detail_404_for_symbol_never_considered(client, seeded_evidenc
 
 
 def test_external_research_scope_does_not_become_trading_candidate(
-    client, seeded_evidence_db,
+    client,
+    seeded_evidence_db,
 ):
     db = Database(str(seeded_evidence_db))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="smart_money_analyst", kind="finding",
-        scope="research", symbol="VENU",
+        run_id=RUN_ID,
+        agent_name="smart_money_analyst",
+        kind="finding",
+        scope="research",
+        symbol="VENU",
         evidence_json=json.dumps({"source": "SEC Form 4", "stance": "bullish"}),
     )
     db.close()
@@ -338,8 +475,12 @@ def test_candidate_detail_degrades_gracefully_on_malformed_evidence_row(client, 
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
-        symbol="AAPL", evidence_json='{"not": "a valid TechAnalysisResult"}',
+        run_id=RUN_ID,
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
+        symbol="AAPL",
+        evidence_json='{"not": "a valid TechAnalysisResult"}',
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))

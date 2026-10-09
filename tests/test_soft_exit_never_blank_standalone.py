@@ -4,12 +4,13 @@ Run in a fresh interpreter so the big owner modules are provably never
 loaded: if the module needed them (or closed a cycle through them) the
 subprocess would fail or `sys.modules` would show them.
 """
+
 import pathlib
 import subprocess
 import sys
 import textwrap
 
-_PROBE = textwrap.dedent('''
+_PROBE = textwrap.dedent("""
     import sys
     from src import soft_exit_never_blank as m
 
@@ -42,12 +43,14 @@ _PROBE = textwrap.dedent('''
     for big in ("src.pipeline_stages", "src.stage_decision", "src.agents.portfolio_manager"):
         assert big not in sys.modules, big
     print("OK")
-''')
+""")
 
 
 def test_module_runs_from_stubs_without_the_owner_modules():
     out = subprocess.run(
-        [sys.executable, "-c", _PROBE], capture_output=True, text=True,
+        [sys.executable, "-c", _PROBE],
+        capture_output=True,
+        text=True,
         cwd=pathlib.Path(__file__).resolve().parent.parent,
     )
     assert out.returncode == 0 and "OK" in out.stdout, out.stderr

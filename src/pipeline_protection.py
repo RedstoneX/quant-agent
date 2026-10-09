@@ -72,8 +72,12 @@ from src.protection.coverage_election import _position_notional, _price_is_throu
 from src.protection.fill_reconciler import _finite_float_or_none, _reconciled_exit_action  # noqa: F401
 from src.protection.sell_finalization import _WAL_SELL_SENTINEL  # noqa: F401
 from src.protection.collaborator_builders import (
-    _build_coverage_election, _build_fill_reconciler, _build_owner_alerts,
-    _build_repeg_drain, _build_sell_finalization, _collab_of,
+    _build_coverage_election,
+    _build_fill_reconciler,
+    _build_owner_alerts,
+    _build_repeg_drain,
+    _build_sell_finalization,
+    _collab_of,
 )
 from src.execution.stop_repair import drain_owed_stop_levels
 from src.protection_parts.ex_dividends_repair import CoverageRepair, ExDividends
@@ -119,8 +123,6 @@ def _market_is_open_now(broker) -> bool:
     return market_open_now(broker, et_now)
 
 
-
-
 def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
     """Name the shortfall between held shares and stop-covered shares.
 
@@ -162,9 +164,6 @@ def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
     return ("none" if covered <= 1e-6 else "partial"), 0.0
 
 
-
-
-
 class _HostState:
     """Live get/set view of the host attributes a part reads with a default or assigns (never a copy)."""
 
@@ -178,31 +177,27 @@ class _HostState:
         setattr(self._host, name, value)
 
 
-
 from src.pipeline_protection_exit_relief import ExitRelief  # noqa: E402,F401
-
-
-
 
 
 def _build_coverage_repair(host):
     """Builds the standalone CoverageRepair from the host pipeline's collaborators, read LIVE at each call."""
     return CoverageRepair(
-        broker=_collab_of(host, 'broker'),
-        db=_collab_of(host, 'db'),
-        alert_owner_kill_switch_blocked=_collab_of(host, '_alert_owner_kill_switch_blocked'),
+        broker=_collab_of(host, "broker"),
+        db=_collab_of(host, "db"),
+        alert_owner_kill_switch_blocked=_collab_of(host, "_alert_owner_kill_switch_blocked"),
     )
 
 
 def _build_protected_sell(host):
     """Builds the standalone ProtectedSell from the host pipeline's collaborators, read LIVE at each call."""
     return ProtectedSell(
-        broker=_collab_of(host, 'broker'),
-        db=_collab_of(host, 'db'),
-        alert_owner_exit_declined=_collab_of(host, '_alert_owner_exit_declined'),
-        order_accepted=_collab_of(host, '_order_accepted'),
-        write_ahead_protection_restore=_collab_of(host, '_write_ahead_protection_restore'),
-        cancel_stops_with_write_ahead=_collab_of(host, '_cancel_stops_with_write_ahead'),
+        broker=_collab_of(host, "broker"),
+        db=_collab_of(host, "db"),
+        alert_owner_exit_declined=_collab_of(host, "_alert_owner_exit_declined"),
+        order_accepted=_collab_of(host, "_order_accepted"),
+        write_ahead_protection_restore=_collab_of(host, "_write_ahead_protection_restore"),
+        cancel_stops_with_write_ahead=_collab_of(host, "_cancel_stops_with_write_ahead"),
         state=_HostState(host),
     )
 
@@ -210,7 +205,7 @@ def _build_protected_sell(host):
 def _build_exit_relief(host):
     """Builds the standalone ExitRelief from the host pipeline's collaborators, read LIVE at each call."""
     return ExitRelief(
-        broker=_collab_of(host, 'broker'),
+        broker=_collab_of(host, "broker"),
         state=_HostState(host),
         terminal_states=AlpacaBroker._ORDER_TERMINAL_STATES,
     )
@@ -219,29 +214,29 @@ def _build_exit_relief(host):
 def _build_restore_drain(host):
     """Builds the standalone RestoreDrain from the host pipeline's collaborators, read LIVE at each call."""
     return RestoreDrain(
-        broker=_collab_of(host, 'broker'),
-        db=_collab_of(host, 'db'),
-        terminal_order_statuses=_collab_of(host, '_TERMINAL_ORDER_STATUSES'),
-        finalize_protection_after_sell=_collab_of(host, '_finalize_protection_after_sell'),
-        resolve_wal_row_side=_collab_of(host, '_resolve_wal_row_side'),
-        restore_after_unconfirmed_sell=_collab_of(host, '_restore_after_unconfirmed_sell'),
+        broker=_collab_of(host, "broker"),
+        db=_collab_of(host, "db"),
+        terminal_order_statuses=_collab_of(host, "_TERMINAL_ORDER_STATUSES"),
+        finalize_protection_after_sell=_collab_of(host, "_finalize_protection_after_sell"),
+        resolve_wal_row_side=_collab_of(host, "_resolve_wal_row_side"),
+        restore_after_unconfirmed_sell=_collab_of(host, "_restore_after_unconfirmed_sell"),
     )
 
 
 def _build_reprotect_records(host):
     """Builds the standalone ReprotectRecords from the host pipeline's collaborators, read LIVE at each call."""
     return ReprotectRecords(
-        record_exit_refusal=_collab_of(host, '_record_exit_refusal'),
+        record_exit_refusal=_collab_of(host, "_record_exit_refusal"),
     )
 
 
 def _build_ex_dividends(host):
     """Builds the standalone ExDividends from the host pipeline's collaborators, read LIVE at each call."""
     return ExDividends(
-        broker=_collab_of(host, 'broker'),
-        db=_collab_of(host, 'db'),
-        market=_collab_of(host, 'market'),
-        repair_stop_coverage=_collab_of(host, '_repair_stop_coverage'),
+        broker=_collab_of(host, "broker"),
+        db=_collab_of(host, "db"),
+        market=_collab_of(host, "market"),
+        repair_stop_coverage=_collab_of(host, "_repair_stop_coverage"),
         # Read THIS module's `et_today` at each call, so a patch on src.pipeline_protection.et_today bites.
         today=lambda: et_today(),
     )
@@ -250,15 +245,14 @@ def _build_ex_dividends(host):
 def _build_reprotect_residual(host):
     """Builds the standalone ReprotectResidual from the host pipeline's collaborators, read LIVE at each call."""
     return ReprotectResidual(
-        broker=_collab_of(host, 'broker'),
-        format_qty=_collab_of(host, '_format_qty'),
-        alert_owner_reprotect_left_naked=_collab_of(host, '_alert_owner_reprotect_left_naked'),
-        alert_owner_stop_pending_acceptance=_collab_of(host, '_alert_owner_stop_pending_acceptance'),
-        alert_owner_unreadable_stop=_collab_of(host, '_alert_owner_unreadable_stop'),
-        record_reprotect_identity_gap=_collab_of(host, '_record_reprotect_identity_gap'),
+        broker=_collab_of(host, "broker"),
+        format_qty=_collab_of(host, "_format_qty"),
+        alert_owner_reprotect_left_naked=_collab_of(host, "_alert_owner_reprotect_left_naked"),
+        alert_owner_stop_pending_acceptance=_collab_of(host, "_alert_owner_stop_pending_acceptance"),
+        alert_owner_unreadable_stop=_collab_of(host, "_alert_owner_unreadable_stop"),
+        record_reprotect_identity_gap=_collab_of(host, "_record_reprotect_identity_gap"),
         state=_HostState(host),
     )
-
 
 
 class ProtectionMixin:
@@ -268,13 +262,19 @@ class ProtectionMixin:
     # class attribute so tests can introspect the exact set the
     # finalizer treats as "done".
     _TERMINAL_ORDER_STATUSES = {
-        "filled", "canceled", "cancelled", "expired", "rejected",
-        "done_for_day", "replaced",
+        "filled",
+        "canceled",
+        "cancelled",
+        "expired",
+        "rejected",
+        "done_for_day",
+        "replaced",
     }
 
     def _current_position_qty_for_finalize(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._current_position_qty_for_finalize(_build_sell_finalization(self), *args, **kwargs)
 
     def _reconcile_stop_coverage(self) -> list[dict]:
@@ -340,9 +340,7 @@ class ProtectionMixin:
         separates NO STOP AT ALL from STOP MIS-SIZED (guard 3).
         """
         try:
-            pending_syms = {
-                r.get("symbol") for r in self.db.get_pending_protection_restores()
-            }
+            pending_syms = {r.get("symbol") for r in self.db.get_pending_protection_restores()}
         except Exception as exc:  # noqa: BLE001
             record_protection_fault(self, "coverage.pending_syms", exc)
             pending_syms = set()
@@ -386,10 +384,7 @@ class ProtectionMixin:
         sweeper = self._sweeper()
         # A DISABLED sweep's vehicle is still exempt while it is held: it is
         # awaiting `_release_retired_cash_park`, not naked.
-        sweep_symbol = (
-            sweeper.symbol if sweeper is not None
-            else self._retired_cash_park_symbol()
-        )
+        sweep_symbol = sweeper.symbol if sweeper is not None else self._retired_cash_park_symbol()
         for p in positions:
             symbol = getattr(p, "symbol", None)
             try:
@@ -431,16 +426,22 @@ class ProtectionMixin:
             # other, and aborting would hide the rest of the book behind it.
             try:
                 ok, specs = self.broker.snapshot_protective_stops(
-                    symbol, side=("buy" if is_short else "sell"),
+                    symbol,
+                    side=("buy" if is_short else "sell"),
                 )
             except Exception as exc:  # noqa: BLE001
                 record_protection_fault(self, "coverage.snapshot", exc, symbol=symbol)
-                unreadable.append({
-                    "symbol": symbol, "held_qty": qty,
-                    "covered_qty": None, "coverage": "unreadable",
-                    "repaired": False, "is_short": is_short,
-                    "read_error": f"snapshot_protective_stops raised: {exc}",
-                })
+                unreadable.append(
+                    {
+                        "symbol": symbol,
+                        "held_qty": qty,
+                        "covered_qty": None,
+                        "coverage": "unreadable",
+                        "repaired": False,
+                        "is_short": is_short,
+                        "read_error": f"snapshot_protective_stops raised: {exc}",
+                    }
+                )
                 continue
             # `ok=False` is the COMMON read failure and the reason this
             # whole item exists: the broker's order listing swallows its own
@@ -449,29 +450,36 @@ class ProtectionMixin:
             # Before it was honoured here, an outage read as 'none' — a
             # confirmed naked position — and was repaired against.
             if not ok:
-                unreadable.append({
-                    "symbol": symbol, "held_qty": qty,
-                    "covered_qty": None, "coverage": "unreadable",
-                    "repaired": False, "is_short": is_short,
-                    "read_error": (
-                        "the broker's open-order listing failed, so whether "
-                        "a protective stop exists could not be established"
-                    ),
-                })
+                unreadable.append(
+                    {
+                        "symbol": symbol,
+                        "held_qty": qty,
+                        "covered_qty": None,
+                        "coverage": "unreadable",
+                        "repaired": False,
+                        "is_short": is_short,
+                        "read_error": (
+                            "the broker's open-order listing failed, so whether "
+                            "a protective stop exists could not be established"
+                        ),
+                    }
+                )
                 continue
             if specs is not None and not isinstance(specs, list):
                 # Not iterable in the loop below, and `for s in (specs or [])`
                 # would raise straight out of this method and take the whole
                 # sweep — every other position included — with it.
-                unreadable.append({
-                    "symbol": symbol, "held_qty": qty,
-                    "covered_qty": None, "coverage": "unreadable",
-                    "repaired": False, "is_short": is_short,
-                    "read_error": (
-                        f"protective-stop snapshot in an unusable shape: "
-                        f"{type(specs).__name__}"
-                    ),
-                })
+                unreadable.append(
+                    {
+                        "symbol": symbol,
+                        "held_qty": qty,
+                        "covered_qty": None,
+                        "coverage": "unreadable",
+                        "repaired": False,
+                        "is_short": is_short,
+                        "read_error": (f"protective-stop snapshot in an unusable shape: {type(specs).__name__}"),
+                    }
+                )
                 continue
             # A stop order whose quantity cannot be parsed is a stop nobody
             # can size, and neither possible guess is safe: counting it as
@@ -481,19 +489,24 @@ class ProtectionMixin:
             # included — with it.
             covered = 0.0
             unparsable = ""
-            for s in (specs or []):
+            for s in specs or []:
                 try:
                     covered += float(s.get("qty", 0) or 0)
                 except (TypeError, ValueError, AttributeError) as exc:
                     unparsable = f"protective stop in an unreadable shape: {exc}"
                     break
             if unparsable:
-                unreadable.append({
-                    "symbol": symbol, "held_qty": qty,
-                    "covered_qty": None, "coverage": "unreadable",
-                    "repaired": False, "is_short": is_short,
-                    "read_error": unparsable,
-                })
+                unreadable.append(
+                    {
+                        "symbol": symbol,
+                        "held_qty": qty,
+                        "covered_qty": None,
+                        "coverage": "unreadable",
+                        "repaired": False,
+                        "is_short": is_short,
+                        "read_error": unparsable,
+                    }
+                )
                 continue
             # ---- ELECTED BUT UNFILLED -------------------------------------
             # Runs for EVERY held position, including the ones this sweep is
@@ -517,7 +530,9 @@ class ProtectionMixin:
             # close, and nobody could act on it anyway.
             if market_open:
                 row = self._elected_unfilled_stop_row(
-                    p, specs, is_short=is_short,
+                    p,
+                    specs,
+                    is_short=is_short,
                 )
                 if row is not None:
                     elected_unfilled.append(row)
@@ -531,10 +546,13 @@ class ProtectionMixin:
                 # tape. The second is the state that ends a desk, and it was
                 # being reported in the same sentence as the first.
                 coverage, frac_uncovered = _classify_coverage_gap(
-                    held=held, covered=covered,
+                    held=held,
+                    covered=covered,
                 )
                 gap = {
-                    "symbol": symbol, "held_qty": qty, "covered_qty": covered,
+                    "symbol": symbol,
+                    "held_qty": qty,
+                    "covered_qty": covered,
                     "coverage": coverage,
                 }
                 # ---- Spec §11.1 hybrid fractional stops: case (a) ----
@@ -564,23 +582,23 @@ class ProtectionMixin:
                             session_awaiting_print_symbols,
                         )
 
-                        never_covered = (
-                            symbol.strip().upper()
-                            in session_awaiting_print_symbols()
-                        )
+                        never_covered = symbol.strip().upper() in session_awaiting_print_symbols()
                     except Exception as exc:  # noqa: BLE001
                         record_protection_fault(self, "coverage.awaiting_print_read", exc, symbol=symbol)
                         logger.warning(
                             "coverage sweep: could not read today's "
                             "awaiting-print names (%s) — treating %s as the "
-                            "ordinary overnight lapse.", exc, symbol,
+                            "ordinary overnight lapse.",
+                            exc,
+                            symbol,
                         )
                         never_covered = False
                     if never_covered:
                         gap["coverage"] = "partial" if covered > 1e-6 else "none"
                         gap["uncovered_qty"] = frac_uncovered
                         gap["unprotected_value"] = _position_notional(
-                            p, frac_uncovered,
+                            p,
+                            frac_uncovered,
                         )
                         gap["repaired"] = False
                         gap["is_short"] = is_short
@@ -594,14 +612,17 @@ class ProtectionMixin:
                             "sub-share remainder has now been uncovered "
                             "since the previous close. This is NOT the "
                             "expected overnight lapse and it alerts.",
-                            symbol, qty, covered,
+                            symbol,
+                            qty,
+                            covered,
                         )
                         gaps.append(gap)
                         continue
                     gap["coverage"] = "fractional_overnight"
                     gap["uncovered_qty"] = frac_uncovered
                     gap["unprotected_value"] = _position_notional(
-                        p, frac_uncovered,
+                        p,
+                        frac_uncovered,
                     )
                     gap["repaired"] = False
                     logger.info(
@@ -609,7 +630,10 @@ class ProtectionMixin:
                         "%.4f whole share(s) still covered by the durable GTC "
                         "stop, %s sub-share remainder unprotected until the "
                         "next session re-places its DAY stop.",
-                        symbol, qty, covered, frac_uncovered,
+                        symbol,
+                        qty,
+                        covered,
+                        frac_uncovered,
                     )
                     gaps.append(gap)
                     continue
@@ -623,11 +647,16 @@ class ProtectionMixin:
                         "held=%.4f, %.4f covered — the sub-share DAY stop is "
                         "absent while the market is OPEN, which is a placement "
                         "failure, not the expected overnight lapse. Repairing.",
-                        symbol, qty, covered,
+                        symbol,
+                        qty,
+                        covered,
                     )
                     repaired = self._repair_stop_coverage(
-                        symbol, held - covered, is_short=is_short,
-                        outcome=gap, resting_stops=list(specs or []),
+                        symbol,
+                        held - covered,
+                        is_short=is_short,
+                        outcome=gap,
+                        resting_stops=list(specs or []),
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -650,7 +679,8 @@ class ProtectionMixin:
                         gap["coverage"] = "none" if covered <= 1e-6 else "partial"
                         gap["uncovered_qty"] = held - covered
                         gap["unprotected_value"] = _position_notional(
-                            p, held - covered,
+                            p,
+                            held - covered,
                         )
                         # The marker that makes the log line below TRUE.
                         # It used to be a claim only: a partial fallback
@@ -680,13 +710,12 @@ class ProtectionMixin:
                         # with NO coverage left is never deferred by it.
                         try:
                             from src.coverage_watchdog import (
-                                awaiting_first_print, note_awaiting_first_print,
+                                awaiting_first_print,
+                                note_awaiting_first_print,
                             )
 
                             waiting = awaiting_first_print(
-                                refusal_code=str(
-                                    gap.get("repair_refusal_code") or ""
-                                ),
+                                refusal_code=str(gap.get("repair_refusal_code") or ""),
                                 still_covered=covered > 1e-6,
                                 market_open=True,
                             )
@@ -697,9 +726,9 @@ class ProtectionMixin:
                             # An unreadable marker file errs towards telling
                             # the owner, the same way the claim does.
                             logger.warning(
-                                "coverage sweep: could not classify the "
-                                "stop-repair refusal for %s (%s) — paging.",
-                                symbol, exc,
+                                "coverage sweep: could not classify the stop-repair refusal for %s (%s) — paging.",
+                                symbol,
+                                exc,
                             )
                             waiting = False
                         page_now = not waiting
@@ -709,7 +738,10 @@ class ProtectionMixin:
                                 "FRACTIONAL STOP RE-PLACEMENT FAILED for %s "
                                 "during session hours (held=%.4f, "
                                 "covered=%.4f) — this is case (b) and it "
-                                "alerts.", symbol, qty, covered,
+                                "alerts.",
+                                symbol,
+                                qty,
+                                covered,
                             )
                         else:
                             # NOT a new `coverage` word. The gap stays
@@ -733,7 +765,9 @@ class ProtectionMixin:
                                 "session can still resolve it — the pass "
                                 "that finds the market shut with this still "
                                 "true is the one that pages.",
-                                symbol, qty, covered,
+                                symbol,
+                                qty,
+                                covered,
                                 gap.get("repair_refusal") or "no reason given",
                             )
                     gaps.append(gap)
@@ -748,17 +782,25 @@ class ProtectionMixin:
                         "NO STOP AT ALL: %s held=%.4f with ZERO open "
                         "protective %s-stops — the position is COMPLETELY "
                         "unprotected and has no WAL recovery row.",
-                        symbol, qty, "buy" if is_short else "sell",
+                        symbol,
+                        qty,
+                        "buy" if is_short else "sell",
                     )
                 else:
                     logger.warning(
                         "STOP MIS-SIZED: %s held=%.4f but only %.4f covered by "
                         "open protective %s-stops — partially unprotected with "
-                        "no WAL recovery row.", symbol, qty, covered,
+                        "no WAL recovery row.",
+                        symbol,
+                        qty,
+                        covered,
                         "buy" if is_short else "sell",
                     )
                 gap["repaired"] = self._repair_stop_coverage(
-                    symbol, held - covered, is_short=is_short, outcome=gap,
+                    symbol,
+                    held - covered,
+                    is_short=is_short,
+                    outcome=gap,
                     resting_stops=list(specs or []),
                 )
                 if gap["repaired"]:
@@ -766,8 +808,9 @@ class ProtectionMixin:
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps and not unreadable:
             logger.info(
-                "Stop-coverage reconcile: all %d long / %d short position(s) "
-                "adequately stop-covered", longs_checked, shorts_checked,
+                "Stop-coverage reconcile: all %d long / %d short position(s) adequately stop-covered",
+                longs_checked,
+                shorts_checked,
             )
         elif unreadable and not gaps:
             # Board item 172. The clean line above says every position is
@@ -777,7 +820,8 @@ class ProtectionMixin:
                 "Stop-coverage reconcile: %d of %d position(s) UNREADABLE "
                 "(%s) — every position that COULD be read is adequately "
                 "stop-covered; the rest is unknown.",
-                len(unreadable), longs_checked + shorts_checked,
+                len(unreadable),
+                longs_checked + shorts_checked,
                 ", ".join(str(g.get("symbol")) for g in unreadable),
             )
         # Spec §11.1 hybrid fractional stops, observability half. Total the
@@ -785,19 +829,16 @@ class ProtectionMixin:
         # glance. The individual gap dicts carry it too (the notifier renders
         # them), but a running total is what turns "a bounded remainder" from
         # a promise into a measurement.
-        overnight = [
-            g for g in gaps if g.get("coverage") == "fractional_overnight"
-        ]
+        overnight = [g for g in gaps if g.get("coverage") == "fractional_overnight"]
         if overnight:
-            total_value = sum(
-                float(g.get("unprotected_value") or 0) for g in overnight
-            )
+            total_value = sum(float(g.get("unprotected_value") or 0) for g in overnight)
             logger.warning(
                 "OVERNIGHT FRACTIONAL EXPOSURE: %d position(s) carrying a "
                 "sub-share remainder with no live stop until the next session "
                 "— $%.2f total at risk. Expected and bounded by design; the "
                 "whole-share part of each is still covered by its GTC stop.",
-                len(overnight), total_value,
+                len(overnight),
+                total_value,
             )
         # Spec §11.1 guard 3, escalation half. A gap the auto-repair CLOSED
         # needs no interruption — the belt did its job. A position still
@@ -817,10 +858,7 @@ class ProtectionMixin:
         # SESSION hours falls back to 'none' above and escalates here, which
         # is precisely case (b). The suppression lives in one classifier, not
         # in a growing list of special cases at the escalation site.
-        naked = [
-            g for g in gaps
-            if g.get("coverage") == "none" and not g.get("repaired")
-        ]
+        naked = [g for g in gaps if g.get("coverage") == "none" and not g.get("repaired")]
         if elected_unfilled:
             self._alert_owner_elected_unfilled(elected_unfilled)
         if naked:
@@ -833,8 +871,10 @@ class ProtectionMixin:
         # watchdog so whichever process sees it first is the one that tells
         # him, and neither repeats the other.
         session_failures = [
-            g for g in gaps
-            if g.get("session_repair_failed") and not g.get("repaired")
+            g
+            for g in gaps
+            if g.get("session_repair_failed")
+            and not g.get("repaired")
             # A sub-share failure with zero coverage left already went out
             # as NO STOP AT ALL above; one condition, one message.
             and g not in naked
@@ -847,6 +887,7 @@ class ProtectionMixin:
         if repaired_symbols:
             try:
                 from src.coverage_watchdog import clear_awaiting_first_print
+
                 # The gap is closed, so the name is no longer waiting on a
                 # print and must not be reported after the close as though
                 # it had waited all session.
@@ -854,8 +895,9 @@ class ProtectionMixin:
             except Exception as exc:  # noqa: BLE001
                 record_protection_fault(self, "coverage.clear_marker", exc)
                 logger.warning(
-                    "coverage sweep: could not clear the awaiting-print "
-                    "marker for %s: %s", ", ".join(repaired_symbols), exc,
+                    "coverage sweep: could not clear the awaiting-print marker for %s: %s",
+                    ", ".join(repaired_symbols),
+                    exc,
                 )
             self._alert_owner_repair_resolved(repaired_symbols)
         # Board item 172. Appended AFTER every filter above has been built
@@ -867,20 +909,27 @@ class ProtectionMixin:
             gaps.extend(unreadable)
         try:
             from src.execution.stop_records import (
-                reconcile_recorded_stop_levels, report_stop_level_mismatches,
+                reconcile_recorded_stop_levels,
+                report_stop_level_mismatches,
                 write_back_live_protective_stops,
             )
+
             mismatches = reconcile_recorded_stop_levels(
                 broker=self.broker,
                 last_buy=lambda sym, action="BUY": self.db.get_symbol_last_buy(
-                    sym, include_in_flight=True, action=action,
+                    sym,
+                    include_in_flight=True,
+                    action=action,
                 ),
                 positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=pending_syms, db=self.db,
+                skip_symbols=pending_syms,
+                db=self.db,
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
-            report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
+            report_stop_level_mismatches(
+                record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches)
+            )
         except Exception as exc:  # noqa: BLE001
             record_protection_fault(self, "coverage.stop_level_reconcile", exc)
             logger.error("stop-level reconcile failed: %s", exc)
@@ -889,52 +938,61 @@ class ProtectionMixin:
     def _elected_unfilled_stop_row(self, *args, **kwargs):
         """Thin shim -> CoverageElection (src/protection/coverage_election.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.coverage_election import CoverageElection
+
         return CoverageElection._elected_unfilled_stop_row(_build_coverage_election(self), *args, **kwargs)
 
     @staticmethod
     def _alert_owner_elected_unfilled(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_elected_unfilled (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_elected_unfilled(*args, **kwargs)
 
     def _still_uncovered(self, *args, **kwargs):
         """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._still_uncovered(_build_owner_alerts(self), *args, **kwargs)
 
     def _alert_owner_session_repair_failed(self, *args, **kwargs):
         """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_session_repair_failed(_build_owner_alerts(self), *args, **kwargs)
 
     @staticmethod
     def _alert_owner_repair_resolved(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_repair_resolved (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_repair_resolved(*args, **kwargs)
 
     @staticmethod
     def _alert_owner_no_stop(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_no_stop (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_no_stop(*args, **kwargs)
 
     @staticmethod
     def _alert_owner_stop_pending_acceptance(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_stop_pending_acceptance (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_stop_pending_acceptance(*args, **kwargs)
 
     @staticmethod
     def _alert_owner_unreadable_stop(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_unreadable_stop (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_unreadable_stop(*args, **kwargs)
 
     @staticmethod
     def _alert_owner_exit_declined(*args, **kwargs):
         """Thin shim -> OwnerAlerts._alert_owner_exit_declined (static; src/protection/owner_alerts.py)."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_exit_declined(*args, **kwargs)
 
     def _wire_protective_stop_block_recorder(self, *args, **kwargs):
@@ -979,26 +1037,31 @@ class ProtectionMixin:
     def _finalize_pending_protections(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._finalize_pending_protections(_build_sell_finalization(self), *args, **kwargs)
 
     def _finalize_protection_after_sell(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._finalize_protection_after_sell(_build_sell_finalization(self), *args, **kwargs)
 
     def _finalize_protection_after_sell_core(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._finalize_protection_after_sell_core(_build_sell_finalization(self), *args, **kwargs)
 
     def _cancel_stray_stops_on_flat(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._cancel_stray_stops_on_flat(_build_sell_finalization(self), *args, **kwargs)
 
     def _write_ahead_protection_restore(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._write_ahead_protection_restore(_build_sell_finalization(self), *args, **kwargs)
 
     def _cancel_stops_with_write_ahead(self, *args, **kwargs):
@@ -1008,31 +1071,37 @@ class ProtectionMixin:
     def _restore_after_unconfirmed_sell(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._restore_after_unconfirmed_sell(_build_sell_finalization(self), *args, **kwargs)
 
     def _persist_orphaned_protection_restore(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._persist_orphaned_protection_restore(_build_sell_finalization(self), *args, **kwargs)
 
     def _derive_close_side_for_drain(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._derive_close_side_for_drain(_build_sell_finalization(self), *args, **kwargs)
 
     def _resolve_wal_row_side(self, *args, **kwargs):
         """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.sell_finalization import SellFinalization
+
         return SellFinalization._resolve_wal_row_side(_build_sell_finalization(self), *args, **kwargs)
 
     def _drain_pending_repegs(self, *args, **kwargs):
         """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.repeg_drain import RepegDrain
+
         return RepegDrain._drain_pending_repegs(_build_repeg_drain(self), *args, **kwargs)
 
     def _delete_repeg_row(self, *args, **kwargs):
         """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.repeg_drain import RepegDrain
+
         return RepegDrain._delete_repeg_row(_build_repeg_drain(self), *args, **kwargs)
 
     def _drain_pending_protection_restores(self, *args, **kwargs):
@@ -1041,7 +1110,9 @@ class ProtectionMixin:
 
     def _reprotect_residual_after_partial_sell(self, *args, **kwargs):
         """Thin shim -> ReprotectResidual (this module; body over the 400-line ceiling for a new file); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        return ReprotectResidual._reprotect_residual_after_partial_sell(_build_reprotect_residual(self), *args, **kwargs)
+        return ReprotectResidual._reprotect_residual_after_partial_sell(
+            _build_reprotect_residual(self), *args, **kwargs
+        )
 
     def _record_reprotect_identity_gap(self, *args, **kwargs):
         """Thin shim -> ReprotectRecords (src/protection/reprotect_records.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
@@ -1050,45 +1121,53 @@ class ProtectionMixin:
     def _alert_owner_reprotect_left_naked(self, *args, **kwargs):
         """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.owner_alerts import OwnerAlerts
+
         return OwnerAlerts._alert_owner_reprotect_left_naked(_build_owner_alerts(self), *args, **kwargs)
 
     @staticmethod
     def _order_accepted(*args, **kwargs):
         """Thin shim -> FillReconciler._order_accepted (static; src/protection/fill_reconciler.py)."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._order_accepted(*args, **kwargs)
 
     def _reconcile_fills(self, *args, **kwargs):
         """Thin shim -> FillReconciler (src/protection/fill_reconciler.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._reconcile_fills(_build_fill_reconciler(self), *args, **kwargs)
-            # Any other non-terminal status (new, accepted, pending_new, ...)
-            # has nothing filled yet: stay 'submitted' for the next pass.
+        # Any other non-terminal status (new, accepted, pending_new, ...)
+        # has nothing filled yet: stay 'submitted' for the next pass.
 
     def _reconcile_orphan_pending_submits(self, *args, **kwargs):
         """Thin shim -> FillReconciler (src/protection/fill_reconciler.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._reconcile_orphan_pending_submits(_build_fill_reconciler(self), *args, **kwargs)
 
     @staticmethod
     def _parse_broker_fill_timestamp(*args, **kwargs):
         """Thin shim -> FillReconciler._parse_broker_fill_timestamp (static; src/protection/fill_reconciler.py)."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._parse_broker_fill_timestamp(*args, **kwargs)
 
     def _flag_stop_out_anomaly(self, *args, **kwargs):
         """Thin shim -> FillReconciler (src/protection/fill_reconciler.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._flag_stop_out_anomaly(_build_fill_reconciler(self), *args, **kwargs)
 
     def _reconcile_stop_out_fills(self, *args, **kwargs):
         """Thin shim -> FillReconciler (src/protection/fill_reconciler.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._reconcile_stop_out_fills(_build_fill_reconciler(self), *args, **kwargs)
 
     def _surface_reconcile_outcomes(self, *args, **kwargs):
         """Thin shim -> FillReconciler (src/protection/fill_reconciler.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
         from src.protection.fill_reconciler import FillReconciler
+
         return FillReconciler._surface_reconcile_outcomes(_build_fill_reconciler(self), *args, **kwargs)
 
     def _handle_ex_dividends(self, *args, **kwargs):

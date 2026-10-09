@@ -39,6 +39,7 @@ that is fake. A caller that cannot read the source at all gets an exception,
 never an empty index -- an empty index would wave everything through, which is
 the failure mode this module exists to end.
 """
+
 from __future__ import annotations
 
 import ast
@@ -47,13 +48,9 @@ from pathlib import Path
 
 #: `INSERT INTO <table> (<columns>)`, with the optional `OR REPLACE` /
 #: `OR IGNORE` conflict clause SQLite allows between the two keywords.
-_INSERT = re.compile(
-    r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", re.I | re.S
-)
+_INSERT = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", re.I | re.S)
 #: `UPDATE <table> SET <assignments>` up to the first `WHERE`.
-_UPDATE = re.compile(
-    r"UPDATE\s+([A-Za-z_]\w*)\s+SET\s+(.*?)(?:\bWHERE\b|$)", re.I | re.S
-)
+_UPDATE = re.compile(r"UPDATE\s+([A-Za-z_]\w*)\s+SET\s+(.*?)(?:\bWHERE\b|$)", re.I | re.S)
 #: The upsert tail of an INSERT; its columns belong to the INSERT's table.
 _DO_UPDATE = re.compile(
     r"ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\s+(.*?)(?:\bWHERE\b|$)",
@@ -89,11 +86,7 @@ def _string_sequences(tree: ast.AST) -> dict[str, str]:
             continue
         if not isinstance(value, (ast.Tuple, ast.List)):
             continue
-        items = [
-            e.value
-            for e in value.elts
-            if isinstance(e, ast.Constant) and isinstance(e.value, str)
-        ]
+        items = [e.value for e in value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
         if items and len(items) == len(value.elts):
             found[target.id] = ", ".join(items)
     return found
@@ -178,9 +171,7 @@ def _sql_strings(
                     name = _joined_name(piece.value)
                     if name is not None:
                         parts.append(sequences.get(name, ""))
-                    elif isinstance(piece.value, ast.Name) and (
-                        piece.value.id in (loop_values or {})
-                    ):
+                    elif isinstance(piece.value, ast.Name) and (piece.value.id in (loop_values or {})):
                         parts.append(_HOLE + piece.value.id)
                     else:
                         parts.append("")
@@ -214,9 +205,7 @@ def columns_written_by(source: str) -> frozenset[tuple[str, str]]:
     return frozenset(pairs)
 
 
-def written_columns(
-    source: str | None = None, root: Path | None = None
-) -> frozenset[tuple[str, str]]:
+def written_columns(source: str | None = None, root: Path | None = None) -> frozenset[tuple[str, str]]:
     """Every `(table, column)` real code writes, computed from source, now.
 
     Nothing is stored and no list of storage files is written down anywhere:
@@ -245,9 +234,7 @@ def written_columns(
         try:
             pairs |= columns_written_by(text)
         except SyntaxError as exc:
-            raise SyntaxError(
-                f"cannot parse {path} for the storage-write index: {exc}"
-            ) from exc
+            raise SyntaxError(f"cannot parse {path} for the storage-write index: {exc}") from exc
     if not pairs:
         raise ValueError(
             f"parsed {len(modules)} modules under {base} and found no write "

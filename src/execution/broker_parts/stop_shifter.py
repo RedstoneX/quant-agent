@@ -10,6 +10,7 @@ a collaborator swapped on the placer after construction is what the body sees
 This is the live stop path: a shift is one-way and can tighten a real stop.
 Nothing here alters a number, an ordering or a branch.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,7 +47,8 @@ class StopShifter:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         client,
         list_open_sell_stop_orders,
         snapshot_stop_order,
@@ -108,24 +110,28 @@ class StopShifter:
             if spec is None:
                 logger.warning(
                     "shift_stops_down: cannot snapshot stop %s for %s — aborting",
-                    getattr(order, "id", "<unknown>"), symbol,
+                    getattr(order, "id", "<unknown>"),
+                    symbol,
                 )
                 return None
             specs.append(spec)
             orders.append(order)
         if not specs:
             return None
-        shifted = [{
-            **spec,
-            "stop_price": _quantize_price(spec["stop_price"] - amount),
-            "limit_price": (_quantize_price(spec["limit_price"] - amount)
-                            if spec.get("limit_price") else None),
-        } for spec in specs]
+        shifted = [
+            {
+                **spec,
+                "stop_price": _quantize_price(spec["stop_price"] - amount),
+                "limit_price": (_quantize_price(spec["limit_price"] - amount) if spec.get("limit_price") else None),
+            }
+            for spec in specs
+        ]
         if any(not s.get("stop_price") or s["stop_price"] <= 0 for s in shifted):
             logger.error(
                 "shift_stops_down: shifting %s's stop(s) by %s would put a stop "
                 "at or below zero — aborting, the existing stops stay resting",
-                symbol, amount,
+                symbol,
+                amount,
             )
             return None
 
@@ -145,15 +151,21 @@ class StopShifter:
             legs: list[dict] = []
             for spec, target in zip(specs, shifted):
                 leg = self._amend_one_stop_price(
-                    symbol=symbol, spec=spec, new_price=target["stop_price"],
+                    symbol=symbol,
+                    spec=spec,
+                    new_price=target["stop_price"],
                 )
                 legs.append(leg)
                 if leg["outcome"] == "amended":
                     logger.info(
                         "shift_stops_down: %s stop %s AMENDED IN PLACE $%.4f -> "
                         "$%.4f, qty %s unchanged, new id %s (no cancel)",
-                        symbol, leg["id"], leg["old_stop"], leg["new_stop"],
-                        leg["qty"], leg["new_id"],
+                        symbol,
+                        leg["id"],
+                        leg["old_stop"],
+                        leg["new_stop"],
+                        leg["qty"],
+                        leg["new_id"],
                     )
                 elif leg["outcome"] == "refused":
                     # NOT a conservative outcome: across an ex-dividend open the
@@ -163,14 +175,20 @@ class StopShifter:
                         "shift_stops_down: %s stop %s was REFUSED the shift to "
                         "$%.4f (%s) — it is still resting at $%.4f, which the "
                         "ex-dividend opening gap may trigger on its own; "
-                        "nothing cancelled", symbol, leg["id"], leg["new_stop"],
-                        leg["detail"], leg["old_stop"],
+                        "nothing cancelled",
+                        symbol,
+                        leg["id"],
+                        leg["new_stop"],
+                        leg["detail"],
+                        leg["old_stop"],
                     )
                 elif leg["outcome"] == "flat":
                     logger.info(
                         "shift_stops_down: %s stop %s could not be shifted and "
                         "the position is FLAT (%s) — nothing left to protect",
-                        symbol, leg["id"], leg["detail"],
+                        symbol,
+                        leg["id"],
+                        leg["detail"],
                     )
                 elif leg["outcome"] == "naked":
                     logger.error(
@@ -179,14 +197,19 @@ class StopShifter:
                         "stop for this symbol; the position is UNPROTECTED, "
                         "and this session's coverage repair has already run, "
                         "so the gap persists until the NEXT intra sweep",
-                        symbol, leg["id"], leg["detail"],
+                        symbol,
+                        leg["id"],
+                        leg["detail"],
                     )
                 else:
                     logger.error(
                         "shift_stops_down: %s stop %s amend outcome UNKNOWN (%s) "
                         "— the desk does NOT know whether it rests at $%.4f or "
                         "$%.4f; nothing cancelled, re-read the book",
-                        symbol, leg["id"], leg["detail"], leg["old_stop"],
+                        symbol,
+                        leg["id"],
+                        leg["detail"],
+                        leg["old_stop"],
                         leg["new_stop"],
                     )
             amended = [l for l in legs if l["outcome"] == "amended"]
@@ -204,9 +227,12 @@ class StopShifter:
             else:
                 status = "refused"
             logger.info(
-                "shift_stops_down: %s — %d/%d stop(s) CONFIRMED amended in "
-                "place, %d unknown, 0 cancelled (status=%s)",
-                symbol, len(amended), len(legs), len(unknown), status,
+                "shift_stops_down: %s — %d/%d stop(s) CONFIRMED amended in place, %d unknown, 0 cancelled (status=%s)",
+                symbol,
+                len(amended),
+                len(legs),
+                len(unknown),
+                status,
             )
             return {
                 # Only a CONFIRMED full shift carries an order id. A partial, a
@@ -214,20 +240,25 @@ class StopShifter:
                 # or the caller writes every leg back at the shifted level and
                 # files a trade row for a stop that never moved.
                 "id": amended[0]["new_id"] if status == "accepted" else None,
-                "status": status, "symbol": symbol,
-                "shifted": len(amended), "total": len(legs),
-                "mode": "amend", "legs": legs,
+                "status": status,
+                "symbol": symbol,
+                "shifted": len(amended),
+                "total": len(legs),
+                "mode": "amend",
+                "legs": legs,
             }
 
-        if (deferred := defer_shift_if_closed(self, symbol, specs, shifted, amount)):
+        if deferred := defer_shift_if_closed(self, symbol, specs, shifted, amount):
             return deferred  # out of hours: cancel NOTHING (see stop_clock.py)
         # Item 201: this fallback is the one shift path that still cancels, so
         # its naked window is TIMED and RECORDED exactly like replace_stop_loss's
         # rather than passing silently. Recording only; nothing here changes what
         # is cancelled, restored or returned.
         window = UnprotectedWindow(
-            symbol, fallback_reason(specs, _specs_qty(specs)),
-            self._window_log, path="shift_stops_down",
+            symbol,
+            fallback_reason(specs, _specs_qty(specs)),
+            self._window_log,
+            path="shift_stops_down",
         )
         cancel = self.cancel_snapshotted_stops(symbol, specs)
         for spec in cancel.cancelled:
@@ -240,7 +271,9 @@ class StopShifter:
             # less protection than it started with.
             if cancel.coverage_shrank:
                 self._restore_stop_orders(
-                    symbol, list(cancel.unprotected), check_idempotency=True,
+                    symbol,
+                    list(cancel.unprotected),
+                    check_idempotency=True,
                 )
             window.close("cancel_incomplete")
             return None
@@ -248,18 +281,31 @@ class StopShifter:
         if failed:
             # Put the ORIGINAL levels back for whatever couldn't be shifted —
             # protection at the old level beats no protection.
-            originals = [s for s in specs if any(
-                f.get("qty") == s["qty"] and abs(f.get("stop_price", 0) -
-                (s["stop_price"] - amount)) < 0.02 for f in failed)]
+            originals = [
+                s
+                for s in specs
+                if any(
+                    f.get("qty") == s["qty"] and abs(f.get("stop_price", 0) - (s["stop_price"] - amount)) < 0.02
+                    for f in failed
+                )
+            ]
             if originals:
                 self._restore_stop_orders(symbol, originals)
             logger.error(
-                "shift_stops_down: %d/%d stop(s) failed to shift for %s — "
-                "originals restored where possible", len(failed), len(specs), symbol,
+                "shift_stops_down: %d/%d stop(s) failed to shift for %s — originals restored where possible",
+                len(failed),
+                len(specs),
+                symbol,
             )
         if restored <= 0:
             window.close("not_restored")
             return None
         window.close("partial" if failed else "restored")
-        return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
-                "shifted": restored, "total": len(specs), "mode": "cancel_resubmit"}
+        return {
+            "id": f"shift-{symbol}",
+            "status": "accepted",
+            "symbol": symbol,
+            "shifted": restored,
+            "total": len(specs),
+            "mode": "cancel_resubmit",
+        }

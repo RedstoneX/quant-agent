@@ -18,6 +18,7 @@ visible:
 Nothing here asserts a threshold, a limit or a trading rule: only whether
 a value is READ.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -63,10 +64,8 @@ def test_counts_belong_to_their_run_and_do_not_leak():
 
 def test_no_wrapper_outlives_the_run():
     _run(_build_long_win_series())
-    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
-                          swept_values.CountedFloat)
-    assert not isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE,
-                          swept_values.CountedFloat)
+    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE, swept_values.CountedFloat)
+    assert not isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE, swept_values.CountedFloat)
 
 
 def test_reassigning_the_defining_module_constant_now_reaches_the_finder(monkeypatch):
@@ -77,8 +76,7 @@ def test_reassigning_the_defining_module_constant_now_reaches_the_finder(monkeyp
     monkeypatch.setattr(levels_module, "PIVOT_WINDOW", levels_module.PIVOT_WINDOW + 6)
     monkeypatch.setattr(levels_module, "MIN_TOUCHES", levels_module.MIN_TOUCHES + 1)
     meter = swept_values.SweepMeter()
-    _resolve_structural_stop_and_target(
-        _build_long_win_series(), "long", 105.0, meter=meter)
+    _resolve_structural_stop_and_target(_build_long_win_series(), "long", 105.0, meter=meter)
 
     assert len(seen) == 1
     assert seen[0]["pivot_window"] == levels_module.PIVOT_WINDOW
@@ -91,8 +89,7 @@ def test_a_meter_override_wins_over_the_module_constant(monkeypatch):
     seen = _capture(monkeypatch)
     meter = swept_values.SweepMeter()
     meter.set_override("levels.pivot_window", 9)
-    _resolve_structural_stop_and_target(
-        _build_long_win_series(), "long", 105.0, meter=meter)
+    _resolve_structural_stop_and_target(_build_long_win_series(), "long", 105.0, meter=meter)
     assert seen[0]["pivot_window"] == 9
 
 
@@ -101,15 +98,13 @@ def test_the_trailing_multiples_are_counted_while_a_run_is_in_progress():
     defining module `src/risk/trailing.py` does not."""
     meter = swept_values.SweepMeter()
     with meter.counting():
-        assert isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
-                          swept_values.CountedFloat)
-        assert isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE,
-                          swept_values.CountedFloat)
+        assert isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE, swept_values.CountedFloat)
+        assert isinstance(trail_evaluate.NOISE_BAND_ATR_MULTIPLE, swept_values.CountedFloat)
         # Numerically identical to the constant as written down.
         assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(
-            float(trailing_module.CHANDELIER_ATR_MULTIPLE))
-    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE,
-                          swept_values.CountedFloat)
+            float(trailing_module.CHANDELIER_ATR_MULTIPLE)
+        )
+    assert not isinstance(trail_evaluate.CHANDELIER_ATR_MULTIPLE, swept_values.CountedFloat)
 
 
 def test_an_override_reaches_the_module_that_actually_reads_it():
@@ -118,12 +113,12 @@ def test_an_override_reaches_the_module_that_actually_reads_it():
     with meter.counting():
         assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(7.5)
     assert float(trail_evaluate.CHANDELIER_ATR_MULTIPLE) == pytest.approx(
-        float(trailing_module.CHANDELIER_ATR_MULTIPLE))
+        float(trailing_module.CHANDELIER_ATR_MULTIPLE)
+    )
 
 
 def test_a_counted_float_is_numerically_transparent():
-    counted = swept_values.CountedFloat(
-        2.5, swept_values.SweepMeter(), "levels.pivot_window")
+    counted = swept_values.CountedFloat(2.5, swept_values.SweepMeter(), "levels.pivot_window")
     assert counted == 2.5
     assert counted * 4 == 10.0
     assert 4 * counted == 10.0
@@ -136,8 +131,7 @@ def test_a_counted_float_is_numerically_transparent():
 
 def test_a_use_of_a_counted_float_is_counted():
     meter = swept_values.SweepMeter()
-    counted = swept_values.CountedFloat(
-        2.0, meter, "trailing.chandelier_atr_multiple")
+    counted = swept_values.CountedFloat(2.0, meter, "trailing.chandelier_atr_multiple")
     _ = counted * 3
     _ = 3 * counted
     assert meter.counts()["trailing.chandelier_atr_multiple"] == 2

@@ -60,7 +60,10 @@ class ShortEntryBuilder:
             entry_price, stop_loss = plan.entry_price, plan.stop_price
         else:
             entry_price, stop_loss = self._resolve_entry_and_stop(
-                target, analysis, market_price, regime=regime,
+                target,
+                analysis,
+                market_price,
+                regime=regime,
             )
             if entry_price is None or stop_loss is None:
                 # drop-reason: delegated — every exit from
@@ -75,7 +78,10 @@ class ShortEntryBuilder:
         # has to know which way the trade points beyond passing
         # `target.direction` through.
         derivation = self._derive_target(
-            target.symbol, analysis, entry_price, target.direction,
+            target.symbol,
+            analysis,
+            entry_price,
+            target.direction,
         )
         if derivation.price is None or derivation.price >= entry_price:
             # Mirror of `_build_buy`: a data fault is already recorded and
@@ -84,17 +90,18 @@ class ShortEntryBuilder:
                 # Board item 10 (2026-09-14, second pass) — mirror of
                 # `_build_buy`. See the comment there.
                 self._note_refusal(
-                    target.symbol, target.direction,
+                    target.symbol,
+                    target.direction,
                     derivation.refusal or STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY,
                     f"no take-profit could be computed below the "
                     f"${entry_price:,.2f} entry for this short"
-                    + (f": {derivation.detail}" if derivation.detail else
-                       f" (computed {derivation.price})"),
+                    + (f": {derivation.detail}" if derivation.detail else f" (computed {derivation.price})"),
                 )
             return None
         take_profit = float(derivation.price)
 
         from src.risk.rules import _gross_multiplier
+
         gross_mul = _gross_multiplier(target.symbol)
         # Both current_pct and target_pct are signed and <= 0 here; moving
         # FURTHER from zero (more negative) is what grows the short, so the
@@ -110,15 +117,17 @@ class ShortEntryBuilder:
             # Same ONE definition the long leg and the preview call (item
             # 221), with identical arguments: same math for both sides.
             alloc_cap_by_risk = risk_budget_allocation_pct(
-                entry_price=entry_price, stop_price=stop_loss,
+                entry_price=entry_price,
+                stop_price=stop_loss,
                 total_value=total_value,
                 risk_budget_pct=self.cfg.risk_budget_pct,
             )
             if alloc_cap_by_risk is not None and allocation_pct > alloc_cap_by_risk:
                 logger.info(
-                    "Constructor: SHORT %s alloc capped by risk budget "
-                    "(delta %.2f%% → %.2f%% at %.1f%% risk budget)",
-                    target.symbol, allocation_pct, alloc_cap_by_risk,
+                    "Constructor: SHORT %s alloc capped by risk budget (delta %.2f%% → %.2f%% at %.1f%% risk budget)",
+                    target.symbol,
+                    allocation_pct,
+                    alloc_cap_by_risk,
                     self.cfg.risk_budget_pct,
                 )
                 cap_note = (
@@ -142,8 +151,11 @@ class ShortEntryBuilder:
                 "Constructor: SHORT %s alloc capped by the single-name "
                 "ceiling (delta %.2f%% → %.2f%%; %.1f%% max position, %.2f%% "
                 "already held)",
-                target.symbol, allocation_pct, max(0.0, name_headroom_pct),
-                self.cfg.max_position_pct, current_short_gross_pct,
+                target.symbol,
+                allocation_pct,
+                max(0.0, name_headroom_pct),
+                self.cfg.max_position_pct,
+                current_short_gross_pct,
             )
             cap_note += (
                 f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
@@ -162,8 +174,10 @@ class ShortEntryBuilder:
         # and not one budget.
         if sector_weights is not None:
             allocation_pct, sector_note = self._apply_sector_dial(
-                target.symbol, allocation_pct,
-                sector_weights=sector_weights, total_value=total_value,
+                target.symbol,
+                allocation_pct,
+                sector_weights=sector_weights,
+                total_value=total_value,
                 action="SHORT",
             )
             cap_note += sector_note
@@ -180,12 +194,17 @@ class ShortEntryBuilder:
             # without saying rejected/refused/skipped, so nothing here would
             # otherwise reach `_DropReasonCapture` or `last_refusals`.
             self._note_refusal(
-                target.symbol, target.direction, STOP_REFUSAL_SIZED_TO_ZERO,
-                (cap_note.strip() or (
-                    "the position sizing chain (risk budget, single-name "
-                    "ceiling, sector crowding) left nothing to round to "
-                    "above zero"
-                )),
+                target.symbol,
+                target.direction,
+                STOP_REFUSAL_SIZED_TO_ZERO,
+                (
+                    cap_note.strip()
+                    or (
+                        "the position sizing chain (risk budget, single-name "
+                        "ceiling, sector crowding) left nothing to round to "
+                        "above zero"
+                    )
+                ),
             )
             return None
 
@@ -202,11 +221,12 @@ class ShortEntryBuilder:
             symbol=target.symbol,
             allocation_pct=allocation_pct,
             entry_price=entry_price,
-            stop_loss=stop_loss,   # already rounded + validated above
+            stop_loss=stop_loss,  # already rounded + validated above
             take_profit=take_profit,
-            reasoning=reasoning[:500] + cap_note + (
-                f" {plan.note}" if plan is not None and plan.note else ""
-            ) + self._target_note(derivation),
+            reasoning=reasoning[:500]
+            + cap_note
+            + (f" {plan.note}" if plan is not None and plan.note else "")
+            + self._target_note(derivation),
             # Conviction ledger (spec §7.2) — mirrors _build_buy's entry
             # pinning; see its comment for what each field means.
             conviction=target.conviction,
@@ -215,22 +235,26 @@ class ShortEntryBuilder:
             # Carried so the execution stage does not re-widen a stop this
             # constructor deliberately honoured at a computed level.
             stop_rule=self.shipped_stop_rule(
-                analysis, entry_price, stop_loss, target.direction,
+                analysis,
+                entry_price,
+                stop_loss,
+                target.direction,
             ),
             # Item 55 RECORDING, no behaviour: the same answer as stop_rule
             # above, with the ingredients that produced it, so the desk can
             # later ask what its levels actually did. See
             # TradeDecision.stop_level_basis.
             stop_level_basis=self.shipped_stop_level_basis(
-                analysis, entry_price, stop_loss, target.direction,
+                analysis,
+                entry_price,
+                stop_loss,
+                target.direction,
             ),
             # Carried for the SAME reason as stop_rule: so the execution
             # stage's own reward:risk belt does not kill an order that was
             # deliberately permitted below the floor. See
             # TradeDecision.subfloor_catalyst_exception.
-            subfloor_catalyst_exception=bool(
-                getattr(target, "subfloor_catalyst_verified", False)
-            ),
+            subfloor_catalyst_exception=bool(getattr(target, "subfloor_catalyst_verified", False)),
             # Carried for the SAME reason as stop_rule: how this position is
             # MANAGED decides whether a reward:risk figure means anything at
             # all downstream. See TradeDecision.setup_type.

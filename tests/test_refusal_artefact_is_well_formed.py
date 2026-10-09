@@ -71,9 +71,7 @@ def test_every_conflict_region_has_exactly_one_terminator(monkeypatch):
     # exactly the posture the block is written for: a belt-and-braces check
     # against a merge that misbehaved.
     monkeypatch.setattr(rdc, "_lines_lost", lambda *a, **k: ["kept-by-ours"])
-    text = rdc.build_refusal_artefact(
-        BASE, "kept-by-ours\n", "kept-by-theirs\n", "x.merge-refusal"
-    )
+    text = rdc.build_refusal_artefact(BASE, "kept-by-ours\n", "kept-by-theirs\n", "x.merge-refusal")
     assert "CONTENT NOT ACCOUNTED FOR" in text, "the block under test did not fire"
     # Both sides must still be present in full.
     assert "kept-by-ours" in text and "kept-by-theirs" in text

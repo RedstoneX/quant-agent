@@ -25,6 +25,7 @@ OBSERVABILITY ONLY. Nothing in the trading path reads these rows. Every
 writer here swallows its own failure: a record that cannot be written must
 never change whether a stop trails, is repaired, or is blocked.
 """
+
 from __future__ import annotations
 
 import json
@@ -69,8 +70,7 @@ RECORD_AGENT = "pipeline"
 UNATTRIBUTED_RUN_ID = "unattributed"
 
 
-def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
-            payload: dict) -> bool:
+def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str, payload: dict) -> bool:
     if db is None:
         return False
     symbol_u = str(symbol or "").strip().upper()
@@ -78,8 +78,11 @@ def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
         return False
     try:
         db.insert_specialist_evidence(
-            run_id=str(run_id or UNATTRIBUTED_RUN_ID), agent_name=RECORD_AGENT,
-            kind=kind, scope="symbol", symbol=symbol_u,
+            run_id=str(run_id or UNATTRIBUTED_RUN_ID),
+            agent_name=RECORD_AGENT,
+            kind=kind,
+            scope="symbol",
+            symbol=symbol_u,
             evidence_json=json.dumps(payload, sort_keys=True, default=str),
         )
         record_guarded_pass(db, "exit_path_records.insert", context={"kind": kind})
@@ -92,6 +95,7 @@ def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
 # ---------------------------------------------------------------------------
 # 1. trailing stop: why it did or did not trail, on a change only
 # ---------------------------------------------------------------------------
+
 
 def _state_key(code: str, structural_code: Any = None) -> str:
     """The dedupe identity of a trail state: its code plus the structural
@@ -125,26 +129,37 @@ def last_trail_states(db: Any, symbols) -> dict[str, str]:
             # changed structural reason under an unchanged `code` would
             # otherwise never be written at all.
             out[str(symbol).upper()] = _state_key(
-                str(payload["code"]), payload.get("structural_code"),
+                str(payload["code"]),
+                payload.get("structural_code"),
             )
     return out
 
 
 def record_trail_state(
-    db: Any, *, run_id: str, symbol: str, code: str, detail: str = "",
-    previous_code: str | None = None, **facts: Any,
+    db: Any,
+    *,
+    run_id: str,
+    symbol: str,
+    code: str,
+    detail: str = "",
+    previous_code: str | None = None,
+    **facts: Any,
 ) -> bool:
     """Write one trail-state row. The caller decides it is a change."""
     payload = {
-        "code": str(code), "detail": str(detail or ""),
-        "previous_code": previous_code, **facts,
+        "code": str(code),
+        "detail": str(detail or ""),
+        "previous_code": previous_code,
+        **facts,
     }
-    return _insert(db, run_id=run_id, kind=TRAIL_STATE_KIND, symbol=symbol,
-                   payload=payload)
+    return _insert(db, run_id=run_id, kind=TRAIL_STATE_KIND, symbol=symbol, payload=payload)
 
 
 def record_trail_code_census(
-    db: Any, *, run_id: str, counts: dict[str, int],
+    db: Any,
+    *,
+    run_id: str,
+    counts: dict[str, int],
 ) -> bool:
     """Write one row counting every trail outcome this run produced.
 
@@ -156,14 +171,23 @@ def record_trail_code_census(
     if not tally:
         return False
     return _insert(
-        db, run_id=run_id, kind=TRAIL_CENSUS_KIND, symbol=CENSUS_SYMBOL,
+        db,
+        run_id=run_id,
+        kind=TRAIL_CENSUS_KIND,
+        symbol=CENSUS_SYMBOL,
         payload={"counts": tally, "evaluations": sum(tally.values())},
     )
 
 
 def record_trail_state_if_changed(
-    db: Any, last_codes: dict[str, str], *, run_id: str, symbol: str,
-    code: str, detail: str = "", structural_code: str | None = None,
+    db: Any,
+    last_codes: dict[str, str],
+    *,
+    run_id: str,
+    symbol: str,
+    code: str,
+    detail: str = "",
+    structural_code: str | None = None,
     **facts: Any,
 ) -> bool:
     """Record `code` for `symbol` only when it differs from the last one on
@@ -178,7 +202,11 @@ def record_trail_state_if_changed(
     if previous == key:
         return False
     written = record_trail_state(
-        db, run_id=run_id, symbol=symbol_u, code=code, detail=detail,
+        db,
+        run_id=run_id,
+        symbol=symbol_u,
+        code=code,
+        detail=detail,
         previous_code=(previous.split("|")[0] if previous else None),
         structural_code=(str(structural_code) if structural_code else None),
         **facts,
@@ -192,11 +220,21 @@ def record_trail_state_if_changed(
 # 2. stop repair that did not close its gap
 # ---------------------------------------------------------------------------
 
+
 def record_stop_repair_refusal(
-    db: Any, *, symbol: str, code: str, reason: str, uncovered_qty: float,
-    is_short: bool, caller: str = "", run_id: str | None = None,
-    held_qty: float | None = None, covered_qty: float | None = None,
-    resting_stops: list | None = None, stop_price: float | None = None,
+    db: Any,
+    *,
+    symbol: str,
+    code: str,
+    reason: str,
+    uncovered_qty: float,
+    is_short: bool,
+    caller: str = "",
+    run_id: str | None = None,
+    held_qty: float | None = None,
+    covered_qty: float | None = None,
+    resting_stops: list | None = None,
+    stop_price: float | None = None,
     placed: dict | None = None,
 ) -> bool:
     """One row per repair that left shares uncovered, naming why and what
@@ -213,13 +251,13 @@ def record_stop_repair_refusal(
         "stop_price": stop_price,
         "placed": placed,
     }
-    return _insert(db, run_id=run_id, kind=STOP_REPAIR_REFUSAL_KIND,
-                   symbol=symbol, payload=payload)
+    return _insert(db, run_id=run_id, kind=STOP_REPAIR_REFUSAL_KIND, symbol=symbol, payload=payload)
 
 
 # ---------------------------------------------------------------------------
 # 3. the kill switch refusing a protective stop
 # ---------------------------------------------------------------------------
+
 
 def kill_switch_blocked_text(symbol: str) -> str:
     """The plain sentence the owner reads. Never 'the broker rejected'."""
@@ -236,8 +274,14 @@ def is_kill_switch_block(result: Any) -> bool:
 
 
 def record_protective_stop_blocked(
-    db: Any, *, symbol: str, qty: float, stop_price: float, side: str,
-    kill_switch_path: str = "", run_id: str | None = None,
+    db: Any,
+    *,
+    symbol: str,
+    qty: float,
+    stop_price: float,
+    side: str,
+    kill_switch_path: str = "",
+    run_id: str | None = None,
 ) -> bool:
     """One row per protective stop the kill switch refused."""
     payload = {
@@ -248,17 +292,24 @@ def record_protective_stop_blocked(
         "side": str(side or ""),
         "kill_switch_path": str(kill_switch_path or ""),
     }
-    return _insert(db, run_id=run_id, kind=PROTECTIVE_STOP_BLOCKED_KIND,
-                   symbol=symbol, payload=payload)
+    return _insert(db, run_id=run_id, kind=PROTECTIVE_STOP_BLOCKED_KIND, symbol=symbol, payload=payload)
 
 
 # ---------------------------------------------------------------------------
 # 4. the ex-dividend stop shift, leg by leg
 # ---------------------------------------------------------------------------
 
+
 def record_stop_shift_legs(
-    db: Any, *, symbol: str, amount: float, mode: str, status: str,
-    shifted: int, total: int, legs: list | None = None,
+    db: Any,
+    *,
+    symbol: str,
+    amount: float,
+    mode: str,
+    status: str,
+    shifted: int,
+    total: int,
+    legs: list | None = None,
     run_id: str | None = None,
 ) -> bool:
     """One row per ex-dividend stop shift, naming every leg's own outcome.
@@ -278,21 +329,30 @@ def record_stop_shift_legs(
         "total": int(total),
         "legs": list(legs or []),
     }
-    return _insert(db, run_id=run_id, kind=STOP_SHIFT_KIND,
-                   symbol=symbol, payload=payload)
+    return _insert(db, run_id=run_id, kind=STOP_SHIFT_KIND, symbol=symbol, payload=payload)
 
 
 def record_stop_read_unreadable(
-    db: Any, *, symbol: str, reason: str, action: str = "",
-    context: str = "", run_id: str | None = None,
+    db: Any,
+    *,
+    symbol: str,
+    reason: str,
+    action: str = "",
+    context: str = "",
+    run_id: str | None = None,
 ) -> bool:
     """A live stop the broker would not read: not the same as having none."""
-    return _insert(db, run_id=run_id, kind=STOP_READ_UNREADABLE_KIND,
-                   symbol=symbol, payload={"code": "stop_read_unreadable",
-                                           "reason": reason, "action": action,
-                                           "context": context})
+    return _insert(
+        db,
+        run_id=run_id,
+        kind=STOP_READ_UNREADABLE_KIND,
+        symbol=symbol,
+        payload={"code": "stop_read_unreadable", "reason": reason, "action": action, "context": context},
+    )
+
 
 # Lifted out; re-exported (bottom, after `_insert`/`STOP_SHIFT_KIND` exist).
 from src.execution.exdiv_shift_outcome import (  # noqa: E402,F401
-    record_shift_outcome, stop_shift_incomplete_text,
+    record_shift_outcome,
+    stop_shift_incomplete_text,
 )

@@ -33,6 +33,7 @@ reader lived in `src.coverage_watchdog`, which lazily imports repair/scale-in
 code) was cut at the cause: the reader now lives in the stdlib-only
 `src.drift_state`. `test_drift_reader_closure_is_read_only` pins that module.
 """
+
 import ast
 import re
 from pathlib import Path
@@ -42,17 +43,39 @@ SRC = ROOT / "src"
 API = SRC / "api"
 
 WRITE_PREFIXES = (
-    "submit_", "place_", "replace_", "cancel_", "close_", "shift_", "insert_", "save_",
-    "update_", "delete_", "record_", "mark_", "persist_", "upsert_", "write_", "purge_",
-    "clear_", "append_", "liquidate_",
+    "submit_",
+    "place_",
+    "replace_",
+    "cancel_",
+    "close_",
+    "shift_",
+    "insert_",
+    "save_",
+    "update_",
+    "delete_",
+    "record_",
+    "mark_",
+    "persist_",
+    "upsert_",
+    "write_",
+    "purge_",
+    "clear_",
+    "append_",
+    "liquidate_",
 )
 SDK_WRITE_CALLS = {
-    "submit_order", "cancel_order_by_id", "cancel_orders", "replace_order_by_id",
-    "close_position", "close_all_positions",
+    "submit_order",
+    "cancel_order_by_id",
+    "cancel_orders",
+    "replace_order_by_id",
+    "close_position",
+    "close_all_positions",
 }
 SQL_WRITE = re.compile(
     r"^\s*(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM"
-    r"|CREATE\s+(UNIQUE\s+)?(TABLE|INDEX|VIEW|TRIGGER)|DROP\s+(TABLE|INDEX|VIEW|TRIGGER)|ALTER\s+TABLE)\b", re.I)
+    r"|CREATE\s+(UNIQUE\s+)?(TABLE|INDEX|VIEW|TRIGGER)|DROP\s+(TABLE|INDEX|VIEW|TRIGGER)|ALTER\s+TABLE)\b",
+    re.I,
+)
 HTTP_WRITE = {"post", "put", "patch", "delete", "api_route", "route", "websocket", "add_api_route"}
 # Names with a write-looking prefix that are read-only (verified by body inspection).
 # `ensure_diary_dir`-style local helpers are not broker/db methods, so only
@@ -162,8 +185,12 @@ def _sql_hits(tree):
             yield f"SQL write string {n.value[:30]!r}", n.lineno
         elif isinstance(n, ast.Attribute) and n.attr in {"commit", "executescript"}:
             yield f".{n.attr}()", n.lineno
-        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-              and n.func.attr == "connect" and getattr(n.func.value, "id", "") == "sqlite3"):
+        elif (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "connect"
+            and getattr(n.func.value, "id", "") == "sqlite3"
+        ):
             src = ast.unparse(n)
             if "mode=ro" not in src:
                 yield "sqlite3.connect without mode=ro", n.lineno
@@ -181,8 +208,14 @@ def _rel(p: Path) -> str:
 
 def test_write_set_is_derived_and_nonempty():
     names = derive_write_names()
-    for must in ("submit_order", "cancel_entry_order", "close_position", "replace_stop_loss",
-                 "insert_trade", "update_open_stop_loss"):
+    for must in (
+        "submit_order",
+        "cancel_entry_order",
+        "close_position",
+        "replace_stop_loss",
+        "insert_trade",
+        "update_open_stop_loss",
+    ):
         assert must in names, f"derivation missed known write method {must}"
 
 
@@ -197,14 +230,17 @@ def test_api_cannot_reach_write_capable_names():
 
 
 def test_api_has_no_database_write():
-    bad = [f"{_rel(f)}:{ln} {what}" for f in reachable_files() if f.is_relative_to(API)
-           for what, ln in _sql_hits(_parse(f))]
+    bad = [
+        f"{_rel(f)}:{ln} {what}"
+        for f in reachable_files()
+        if f.is_relative_to(API)
+        for what, ln in _sql_hits(_parse(f))
+    ]
     assert not bad, "src/api can write to the database:\n" + "\n".join(bad)
 
 
 def test_api_registers_no_http_write_verb():
-    bad = [f"{_rel(f)}:{ln} {what}" for f in sorted(API.rglob("*.py"))
-           for what, ln in _http_hits(_parse(f))]
+    bad = [f"{_rel(f)}:{ln} {what}" for f in sorted(API.rglob("*.py")) for what, ln in _http_hits(_parse(f))]
     assert not bad, "src/api registers a write route:\n" + "\n".join(bad)
 
 
@@ -226,8 +262,7 @@ def test_drift_reader_closure_is_read_only():
 
     for mod in (ds, td):
         seen = _closure(Path(mod.__file__).resolve())
-        bad = sorted(_rel(f) for f in seen if f.is_relative_to(SRC / "execution")
-                     or f.name == "coverage_watchdog.py")
+        bad = sorted(_rel(f) for f in seen if f.is_relative_to(SRC / "execution") or f.name == "coverage_watchdog.py")
         assert not bad, f"{mod.__name__} reaches the money path:\n" + "\n".join(bad)
 
 
@@ -245,8 +280,13 @@ def tainted_doors() -> set[str]:
             if f not in tainted and outs & tainted:
                 tainted.add(f)
                 grew = True
-    return {f"{_rel(f)} -> {_rel(n)}" for f in edges if f.is_relative_to(API)
-            for n in edges[f] if n in tainted and not n.is_relative_to(API)}
+    return {
+        f"{_rel(f)} -> {_rel(n)}"
+        for f in edges
+        if f.is_relative_to(API)
+        for n in edges[f]
+        if n in tainted and not n.is_relative_to(API)
+    }
 
 
 def test_api_has_no_new_door_into_the_money_path():

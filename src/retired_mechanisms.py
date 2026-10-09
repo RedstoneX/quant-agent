@@ -50,6 +50,7 @@ did:
     facts are known and the diff is open, which is the best available
     trade; it is not enforcement.
 """
+
 from __future__ import annotations
 
 import ast
@@ -114,7 +115,7 @@ class Finding:
     line: int
     mechanism: str
     matched: str
-    kind: str          # "phrase" | "symbol"
+    kind: str  # "phrase" | "symbol"
     text: str
     why: str
 
@@ -143,20 +144,17 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Retired]:
         for required in ("name", "retired", "why", "allowed_in"):
             if required not in item:
                 raise RegistryError(
-                    f"{path}: entry #{i} ({item.get('name', '?')}) has no "
-                    f"`{required}`",
+                    f"{path}: entry #{i} ({item.get('name', '?')}) has no `{required}`",
                 )
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(item["retired"])):
             raise RegistryError(
-                f"{path}: entry `{item['name']}` has retired="
-                f"{item['retired']!r}; use YYYY-MM-DD, taken from git",
+                f"{path}: entry `{item['name']}` has retired={item['retired']!r}; use YYYY-MM-DD, taken from git",
             )
         symbols = tuple(str(s) for s in (item.get("symbols") or ()))
         phrases = tuple(str(s).lower() for s in (item.get("phrases") or ()))
         if not symbols and not phrases:
             raise RegistryError(
-                f"{path}: entry `{item['name']}` lists neither a symbol nor a "
-                f"phrase, so it checks nothing",
+                f"{path}: entry `{item['name']}` lists neither a symbol nor a phrase, so it checks nothing",
             )
         for phrase in phrases:
             if len(phrase) < 8:
@@ -165,14 +163,16 @@ def load_registry(path: Path | str = REGISTRY_PATH) -> list[Retired]:
                     f"short to be specific — a broad phrase turns this check "
                     f"into noise and noise gets it switched off",
                 )
-        out.append(Retired(
-            name=str(item["name"]),
-            retired=str(item["retired"]),
-            why=str(item["why"]),
-            symbols=symbols,
-            phrases=phrases,
-            allowed_in=tuple(str(s) for s in item["allowed_in"]),
-        ))
+        out.append(
+            Retired(
+                name=str(item["name"]),
+                retired=str(item["retired"]),
+                why=str(item["why"]),
+                symbols=symbols,
+                phrases=phrases,
+                allowed_in=tuple(str(s) for s in item["allowed_in"]),
+            )
+        )
     return out
 
 
@@ -229,9 +229,7 @@ def scan(
         prose: list[tuple[int, str]] | None = None
         source: list[str] | None = None
         for entry in entries:
-            if rel in entry.allowed_in or any(
-                    a.endswith("/") and rel.startswith(a)
-                    for a in entry.allowed_in):
+            if rel in entry.allowed_in or any(a.endswith("/") and rel.startswith(a) for a in entry.allowed_in):
                 continue
             if prose is None:
                 prose = _prose_lines(path)
@@ -243,22 +241,35 @@ def scan(
                 # string-literal line is invisible here.
                 if OPT_OUT_MARKER in line:
                     continue
-                if source is not None and 1 <= lineno <= len(source) \
-                        and OPT_OUT_MARKER in source[lineno - 1]:
+                if source is not None and 1 <= lineno <= len(source) and OPT_OUT_MARKER in source[lineno - 1]:
                     continue
                 low = line.lower()
                 for phrase in entry.phrases:
                     if phrase in low:
-                        findings.append(Finding(
-                            rel, lineno, f"{entry.retired} ({entry.name})",
-                            phrase, "phrase", line, entry.why,
-                        ))
+                        findings.append(
+                            Finding(
+                                rel,
+                                lineno,
+                                f"{entry.retired} ({entry.name})",
+                                phrase,
+                                "phrase",
+                                line,
+                                entry.why,
+                            )
+                        )
                 for symbol in entry.symbols:
                     if symbol in line:
-                        findings.append(Finding(
-                            rel, lineno, f"{entry.retired} ({entry.name})",
-                            symbol, "symbol", line, entry.why,
-                        ))
+                        findings.append(
+                            Finding(
+                                rel,
+                                lineno,
+                                f"{entry.retired} ({entry.name})",
+                                symbol,
+                                "symbol",
+                                line,
+                                entry.why,
+                            )
+                        )
     return findings
 
 
@@ -283,9 +294,13 @@ def resurrected_symbols(
         except SyntaxError:  # pragma: no cover
             continue
         for node in ast.walk(tree):
-            if isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-            ) and node.name in wanted:
+            if (
+                isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
+                and node.name in wanted
+            ):
                 back.append(
                     f"{path.relative_to(root).as_posix()}:{node.lineno} "
                     f"defines `{node.name}`, retired as part of "
@@ -378,9 +393,13 @@ def _resolve_symbol(tree: ast.AST, dotted: str) -> ast.AST | None:
     for part in dotted.split("."):
         found: ast.AST | None = None
         for child in ast.iter_child_nodes(node):  # type: ignore[arg-type]
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-            ) and child.name == part:
+            if (
+                isinstance(
+                    child,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
+                and child.name == part
+            ):
                 found = child
                 break
         if found is None:
@@ -410,8 +429,7 @@ def load_described(path: Path | str = REGISTRY_PATH) -> list[Described]:
         for required in ("name", "why", "symbols", "described_in"):
             if required not in item:
                 raise RegistryError(
-                    f"{path}: described entry #{i} "
-                    f"({item.get('name', '?')}) has no `{required}`",
+                    f"{path}: described entry #{i} ({item.get('name', '?')}) has no `{required}`",
                 )
         name = str(item["name"])
         if name in seen:
@@ -435,8 +453,7 @@ def load_described(path: Path | str = REGISTRY_PATH) -> list[Described]:
             symbols.append(DescribedSymbol(str(s["file"]), dotted))
         if not symbols:
             raise RegistryError(
-                f"{path}: `{name}` names no live symbol, so deleting "
-                f"anything could never make it fire",
+                f"{path}: `{name}` names no live symbol, so deleting anything could never make it fire",
             )
 
         anchors: list[DescribedIn] = []
@@ -462,12 +479,14 @@ def load_described(path: Path | str = REGISTRY_PATH) -> list[Described]:
             raise RegistryError(
                 f"{path}: `{name}` records no place the description lives",
             )
-        out.append(Described(
-            name=name,
-            why=str(item["why"]),
-            symbols=tuple(symbols),
-            described_in=tuple(anchors),
-        ))
+        out.append(
+            Described(
+                name=name,
+                why=str(item["why"]),
+                symbols=tuple(symbols),
+                described_in=tuple(anchors),
+            )
+        )
     return out
 
 
@@ -492,10 +511,7 @@ def described_gaps(
     problems: list[str] = []
     trees: dict[str, ast.AST | None] = {}
     for entry in entries:
-        where = "; ".join(
-            f"{a.file} ({', '.join(repr(n) for n in a.contains)})"
-            for a in entry.described_in
-        )
+        where = "; ".join(f"{a.file} ({', '.join(repr(n) for n in a.contains)})" for a in entry.described_in)
         why = " ".join(entry.why.split())[:260]
         for sym in entry.symbols:
             path = root / sym.file
@@ -514,7 +530,8 @@ def described_gaps(
             if sym.file not in trees:
                 try:
                     trees[sym.file] = ast.parse(
-                        path.read_text(), filename=str(path),
+                        path.read_text(),
+                        filename=str(path),
                     )
                 except SyntaxError as exc:
                     raise RegistryError(f"cannot parse {sym.file}: {exc}") from exc
@@ -535,8 +552,7 @@ def described_gaps(
             apath = root / anchor.file
             if not apath.exists():
                 problems.append(
-                    f"`{entry.name}`: described_in points at {anchor.file}, "
-                    f"which does not exist.",
+                    f"`{entry.name}`: described_in points at {anchor.file}, which does not exist.",
                 )
                 continue
             text = apath.read_text()

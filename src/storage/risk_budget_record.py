@@ -26,6 +26,7 @@ be read and the allocator never ran — the state in which the ceilings go
 UNENFORCED — which is not the same fact as a book carrying no risk. Every
 measurement is then None and `allocator_ran` is 0.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -56,10 +57,7 @@ CREATE TABLE IF NOT EXISTS realised_risk_budget (
     UNIQUE (run_id)
 )
 """
-_INDEX = (
-    "CREATE INDEX IF NOT EXISTS idx_realised_risk_budget_date "
-    "ON realised_risk_budget (session_date)"
-)
+_INDEX = "CREATE INDEX IF NOT EXISTS idx_realised_risk_budget_date ON realised_risk_budget (session_date)"
 
 
 def _num(x):
@@ -83,8 +81,7 @@ def _held_only_pct(committed, granted_total):
     return round(committed - granted_total, 6)
 
 
-def shape_risk_budget_row(*, allocation, equity,
-                          cluster_share_pct=None) -> dict:
+def shape_risk_budget_row(*, allocation, equity, cluster_share_pct=None) -> dict:
     """Pure. Turn the allocator's output into the values the row stores."""
     ran = allocation is not None
     row = {
@@ -109,11 +106,13 @@ def shape_risk_budget_row(*, allocation, equity,
         share = None
         if at_risk is not None and committed:
             share = round(at_risk / committed * 100.0, 6)
-        clusters.append({
-            "members": sorted(str(m) for m in (members or ())),
-            "at_risk_pct": None if at_risk is None else round(at_risk, 6),
-            "share_of_committed_pct": share,
-        })
+        clusters.append(
+            {
+                "members": sorted(str(m) for m in (members or ())),
+                "at_risk_pct": None if at_risk is None else round(at_risk, 6),
+                "share_of_committed_pct": share,
+            }
+        )
     clusters.sort(key=lambda r: r["members"])
     row["cluster_shares_json"] = json.dumps(clusters)
     grants = []
@@ -122,16 +121,19 @@ def shape_risk_budget_row(*, allocation, equity,
         limited_by = getattr(g, "limited_by", None)
         if limited_by:
             rationed += 1
-        grants.append({
-            "symbol": str(sym),
-            "requested_pct": _num(getattr(g, "requested_pct", None)),
-            "granted_pct": _num(getattr(g, "granted_pct", None)),
-            "limited_by": limited_by,
-        })
+        grants.append(
+            {
+                "symbol": str(sym),
+                "requested_pct": _num(getattr(g, "requested_pct", None)),
+                "granted_pct": _num(getattr(g, "granted_pct", None)),
+                "limited_by": limited_by,
+            }
+        )
     row["grants_json"] = json.dumps(grants)
     row["rationed_names"] = rationed
     row["held_only_pct"] = _held_only_pct(
-        committed, sum(g["granted_pct"] or 0.0 for g in grants),
+        committed,
+        sum(g["granted_pct"] or 0.0 for g in grants),
     )
     return row
 
@@ -143,8 +145,13 @@ def ensure_table(conn) -> None:
 
 
 def record_realised_risk_budget(
-    db, *, allocation, equity, cluster_share_pct=None,
-    run_id: str | None = None, session_date: str | None = None,
+    db,
+    *,
+    allocation,
+    equity,
+    cluster_share_pct=None,
+    run_id: str | None = None,
+    session_date: str | None = None,
 ) -> bool:
     """Write one row for this run. Idempotent per run (UNIQUE on `run_id`).
 
@@ -153,7 +160,8 @@ def record_realised_risk_budget(
     a recording that failed must not stop a session.
     """
     row = shape_risk_budget_row(
-        allocation=allocation, equity=equity,
+        allocation=allocation,
+        equity=equity,
         cluster_share_pct=cluster_share_pct,
     )
     try:
@@ -171,16 +179,23 @@ def record_realised_risk_budget(
                     datetime.now(UTC).isoformat(sep=" ", timespec="seconds"),
                     run_id or None,
                     session_date or str(et_today()),
-                    row["allocator_ran"], row["equity"], row["committed_pct"],
-                    row["ceiling_pct"], row["cluster_share_pct"],
-                    row["held_only_pct"], row["cluster_shares_json"],
-                    row["grants_json"], row["rationed_names"],
+                    row["allocator_ran"],
+                    row["equity"],
+                    row["committed_pct"],
+                    row["ceiling_pct"],
+                    row["cluster_share_pct"],
+                    row["held_only_pct"],
+                    row["cluster_shares_json"],
+                    row["grants_json"],
+                    row["rationed_names"],
                 ),
             )
             db.conn.commit()
         return True
     except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
         logger.warning(
-            "realised risk budget for run %s was not recorded (%s)", run_id, e,
+            "realised risk budget for run %s was not recorded (%s)",
+            run_id,
+            e,
         )
         return False

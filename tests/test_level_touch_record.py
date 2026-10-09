@@ -28,9 +28,7 @@ def tally() -> LevelTouchTally:
 
 
 def test_a_level_at_the_bar_is_admitted(tally: LevelTouchTally) -> None:
-    assert level_clears_touch_bar(
-        5, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally
-    )
+    assert level_clears_touch_bar(5, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally)
     assert tally.count(outcome=OUTCOME_ADMITTED) == 1
     assert tally.refusals == 0
     assert tally.bound() is False
@@ -39,21 +37,15 @@ def test_a_level_at_the_bar_is_admitted(tally: LevelTouchTally) -> None:
 def test_a_level_below_the_bar_is_refused_and_counted(
     tally: LevelTouchTally,
 ) -> None:
-    assert not level_clears_touch_bar(
-        4, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally
-    )
+    assert not level_clears_touch_bar(4, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally)
     assert tally.count(outcome=OUTCOME_UNDER_TOUCHED) == 1
     assert tally.bound() is True
 
 
 @pytest.mark.parametrize("unrecorded", [None, "", "many"])
-def test_an_unrecorded_touch_count_fails_closed(
-    tally: LevelTouchTally, unrecorded: object
-) -> None:
+def test_an_unrecorded_touch_count_fails_closed(tally: LevelTouchTally, unrecorded: object) -> None:
     """Parity with both inline checks: unverified is treated as below the bar."""
-    assert not level_clears_touch_bar(
-        unrecorded, 5, site=SITE_NO_ATR_STRUCTURAL_ANCHOR, tally=tally
-    )
+    assert not level_clears_touch_bar(unrecorded, 5, site=SITE_NO_ATR_STRUCTURAL_ANCHOR, tally=tally)
     assert tally.count(outcome=OUTCOME_UNVERIFIED) == 1
     # An unrecorded count is not binned as a touch count, because it is not one.
     assert tally.touches_seen == {}
@@ -73,9 +65,7 @@ def test_the_bar_is_read_from_the_argument_not_stored(
     tally: LevelTouchTally,
 ) -> None:
     """Nothing here remembers a threshold, so nothing can go stale against config."""
-    assert not level_clears_touch_bar(
-        3, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally
-    )
+    assert not level_clears_touch_bar(3, 5, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally)
     assert level_clears_touch_bar(3, 2, site=SITE_TIGHT_STOP_EXEMPTION, tally=tally)
 
 

@@ -1,4 +1,5 @@
 """A failed naked-position alert logs a traceback and, given the pipeline, leaves a counted row."""
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,8 +14,7 @@ def _db(tmp_path):
 
 
 def _rows(db):
-    return [r[0] for r in db.conn.execute(
-        "SELECT kind FROM reconciliation_runs WHERE agreed = 0").fetchall()]
+    return [r[0] for r in db.conn.execute("SELECT kind FROM reconciliation_runs WHERE agreed = 0").fetchall()]
 
 
 def test_alert_failure_with_owner_is_recorded(tmp_path, caplog):

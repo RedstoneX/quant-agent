@@ -100,6 +100,7 @@ def noise_band_anchor(
         return entry
     return min(entry, ext) if is_short else max(entry, ext)
 
+
 def anchored_adverse_move(
     entry: float,
     current_price: float,

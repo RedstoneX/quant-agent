@@ -25,6 +25,7 @@ own output compared with itself:
 No network, no broker, no live provider, no production database:
 `tmp_path/desk.db` is the whole world.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,10 +33,12 @@ import sqlite3
 from pathlib import Path
 
 from src.trader_feed.stored import (
-    read_stored_session_report, render_stored_session_report,
+    read_stored_session_report,
+    render_stored_session_report,
 )
 from tests.test_e2e_morning_protection import (
-    _assert_decision_and_protection, _seed_company_profile_cache,
+    _assert_decision_and_protection,
+    _seed_company_profile_cache,
 )
 from tests.test_e2e_morning_session import _assert_full_shape, _run_session
 
@@ -58,10 +61,13 @@ def _opening_rows(tmp_path: Path) -> list[tuple]:
 def _seat_rows(tmp_path: Path, run_id: str) -> list[str]:
     con = _ro(tmp_path)
     try:
-        return [r[0] for r in con.execute(
-            "SELECT agent_name FROM agent_logs WHERE run_id=? ORDER BY id",
-            (run_id,),
-        ).fetchall()]
+        return [
+            r[0]
+            for r in con.execute(
+                "SELECT agent_name FROM agent_logs WHERE run_id=? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        ]
     finally:
         con.close()
 
@@ -78,9 +84,15 @@ def _stored_morning_row(tmp_path: Path) -> dict:
 
 
 def _money_visible(payload: dict) -> dict:
-    return {k: payload.get(k) for k in (
-        "status", "orders", "run_id", "stop_coverage_gaps",
-    )}
+    return {
+        k: payload.get(k)
+        for k in (
+            "status",
+            "orders",
+            "run_id",
+            "stop_coverage_gaps",
+        )
+    }
 
 
 def _run(tmp_path, monkeypatch):
@@ -103,8 +115,7 @@ def _the_buy_and_its_stop(trading):
     return buys[0], stops[0]
 
 
-def test_the_buy_is_in_the_ledger_with_the_stop_that_rests_at_the_broker(
-        tmp_path, monkeypatch):
+def test_the_buy_is_in_the_ledger_with_the_stop_that_rests_at_the_broker(tmp_path, monkeypatch):
     result, _trace, trading = _run(tmp_path, monkeypatch)
     buy, stop = _the_buy_and_its_stop(trading)
 
@@ -116,22 +127,20 @@ def test_the_buy_is_in_the_ledger_with_the_stop_that_rests_at_the_broker(
     assert run_id == result["run_id"] and run_id, rows[0]
     assert fill_status == "filled", rows[0]
     assert stop_loss is not None and float(stop_loss) == float(stop.stop_price), (
-        f"ledger carries stop_loss={stop_loss} but the stop resting at the "
-        f"broker is {stop.stop_price}: {rows[0]}"
+        f"ledger carries stop_loss={stop_loss} but the stop resting at the broker is {stop.stop_price}: {rows[0]}"
     )
 
 
-def test_the_morning_report_is_stored_rereadable_and_renders_the_name(
-        tmp_path, monkeypatch):
+def test_the_morning_report_is_stored_rereadable_and_renders_the_name(tmp_path, monkeypatch):
     result, _trace, trading = _run(tmp_path, monkeypatch)
     buy, _stop = _the_buy_and_its_stop(trading)
 
     record = _stored_morning_row(tmp_path)
     payload = record["payload"]
     assert record.get("mode", "morning") == "morning", record
-    assert _money_visible(payload) == _money_visible(
-        json.loads(json.dumps(result, default=str))), (
-        _money_visible(payload), _money_visible(result),
+    assert _money_visible(payload) == _money_visible(json.loads(json.dumps(result, default=str))), (
+        _money_visible(payload),
+        _money_visible(result),
     )
     assert payload["status"] == "executed", payload["status"]
     assert payload["run_id"] == result["run_id"] and payload["run_id"]
@@ -147,8 +156,7 @@ def test_the_morning_report_is_stored_rereadable_and_renders_the_name(
     assert buy.symbol in text and "BOUGHT" in text, text
 
 
-def test_every_seat_that_answered_left_a_spend_row_under_this_run(
-        tmp_path, monkeypatch):
+def test_every_seat_that_answered_left_a_spend_row_under_this_run(tmp_path, monkeypatch):
     result, trace, _trading = _run(tmp_path, monkeypatch)
     asked = [seat for kind, seat in trace if kind == "llm"]
     assert asked, trace
@@ -156,10 +164,8 @@ def test_every_seat_that_answered_left_a_spend_row_under_this_run(
     # The script keys its seats by short name ('macro', 'tech', ...); the
     # ledger stores the agent's full name ('macro_analyst', ...).
     logged = _seat_rows(tmp_path, result["run_id"])
-    missing = sorted(seat for seat in set(asked)
-                     if not any(seat in name for name in logged))
+    missing = sorted(seat for seat in set(asked) if not any(seat in name for name in logged))
     assert missing == [], (
-        f"seats answered but left no agent_logs row under {result['run_id']}: "
-        f"{missing}; logged={logged}"
+        f"seats answered but left no agent_logs row under {result['run_id']}: {missing}; logged={logged}"
     )
     assert len(logged) >= len(asked), (asked, logged)

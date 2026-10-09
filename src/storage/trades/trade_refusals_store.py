@@ -14,28 +14,58 @@ target comparison lands the same way, with the signed gap in `observed_gap_pct` 
 threshold in `threshold`. Read `refusal` and `stage` together before counting anything here
 as a declined trade.
 """
+
 from __future__ import annotations
 
 _COLUMNS = (
-    "run_id", "symbol", "direction", "refusal", "stage", "entry_price", "stop_price",
-    "level_used", "reward_risk", "threshold", "level_was_measured", "requested_risk_pct",
+    "run_id",
+    "symbol",
+    "direction",
+    "refusal",
+    "stage",
+    "entry_price",
+    "stop_price",
+    "level_used",
+    "reward_risk",
+    "threshold",
+    "level_was_measured",
+    "requested_risk_pct",
     "observed_gap_pct",
 )
 
 
-def insert(ledger, *, symbol: str, direction: str | None, refusal: str,
-           entry_price: float | None = None, stop_price: float | None = None,
-           level_used: float | None = None, reward_risk: float | None = None,
-           threshold: float | None = None, level_was_measured: bool | None = None,
-           stage: str | None = None, run_id: str | None = None,
-           requested_risk_pct: float | None = None,
-           observed_gap_pct: float | None = None) -> int | None:
+def insert(
+    ledger,
+    *,
+    symbol: str,
+    direction: str | None,
+    refusal: str,
+    entry_price: float | None = None,
+    stop_price: float | None = None,
+    level_used: float | None = None,
+    reward_risk: float | None = None,
+    threshold: float | None = None,
+    level_was_measured: bool | None = None,
+    stage: str | None = None,
+    run_id: str | None = None,
+    requested_risk_pct: float | None = None,
+    observed_gap_pct: float | None = None,
+) -> int | None:
     """Record one NAMED refusal, or one named OBSERVATION, by its numbers."""
     values = (
-        run_id, str(symbol or "").strip().upper(), direction, refusal, stage, entry_price,
-        stop_price, level_used, reward_risk, threshold,
+        run_id,
+        str(symbol or "").strip().upper(),
+        direction,
+        refusal,
+        stage,
+        entry_price,
+        stop_price,
+        level_used,
+        reward_risk,
+        threshold,
         None if level_was_measured is None else int(bool(level_was_measured)),
-        requested_risk_pct, observed_gap_pct,
+        requested_risk_pct,
+        observed_gap_pct,
     )
     sql = (
         f"INSERT INTO trade_refusals (timestamp, {', '.join(_COLUMNS)}) "
@@ -46,6 +76,7 @@ def insert(ledger, *, symbol: str, direction: str | None, refusal: str,
         cur = ledger.conn.execute(sql, values)
         ledger.conn.commit()
         return cur.lastrowid
+
     return ledger._locked_write(_do, label="insert_trade_refusal")
 
 

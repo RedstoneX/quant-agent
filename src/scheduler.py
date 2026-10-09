@@ -79,7 +79,8 @@ class TradingScheduler:
         # Pre-market earnings ingestion so morning sees confirmed analyses.
         h, m = self._parse_time(schedule.earnings_preprocess)
         self.scheduler.add_job(
-            self._run_safe, CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
+            self._run_safe,
+            CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
             args=[self.pipeline.run_earnings_preprocess, "earnings_preprocess"],
             id="earnings_preprocess",
         )
@@ -87,7 +88,8 @@ class TradingScheduler:
         # Morning run — pre-market analysis + trading
         h, m = self._parse_time(schedule.morning)
         self.scheduler.add_job(
-            self._run_safe, CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
+            self._run_safe,
+            CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
             args=[self.pipeline.run_morning, "morning"],
             id="morning_run",
         )
@@ -115,7 +117,8 @@ class TradingScheduler:
         # Midday check (position reviewer, patient disposition)
         h, m = self._parse_time(schedule.midday)
         self.scheduler.add_job(
-            self._run_safe, CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
+            self._run_safe,
+            CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
             args=[self.pipeline.run_midday, "midday"],
             id="midday_check",
         )
@@ -125,7 +128,8 @@ class TradingScheduler:
         # rather than waiting for tomorrow morning).
         h, m = self._parse_time(schedule.close)
         self.scheduler.add_job(
-            self._run_safe, CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
+            self._run_safe,
+            CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
             args=[self.pipeline.run_close, "close"],
             id="close_check",
         )
@@ -133,14 +137,14 @@ class TradingScheduler:
         # Evening report
         h, m = self._parse_time(schedule.evening)
         self.scheduler.add_job(
-            self._run_safe, CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
+            self._run_safe,
+            CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=ET),
             args=[self.pipeline.run_evening, "evening"],
             id="evening_report",
         )
 
         logger.info(
-            "Scheduler configured: earnings_preprocess=%s, morning=%s, "
-            "intra_check=%s, midday=%s, close=%s, evening=%s",
+            "Scheduler configured: earnings_preprocess=%s, morning=%s, intra_check=%s, midday=%s, close=%s, evening=%s",
             schedule.earnings_preprocess,
             schedule.morning,
             schedule.intra_check,
@@ -159,6 +163,7 @@ class TradingScheduler:
                 return
             try:
                 from src.owner_intents import intake
+
                 intake(getattr(getattr(self.config, "storage", None), "db_path", None))
             except Exception as exc:  # noqa: BLE001 - a failed pickup never stops a session
                 logger.error("[%s] owner intent pickup failed: %s", name, exc)
@@ -178,7 +183,10 @@ class TradingScheduler:
                 try:
                     elapsed = time.monotonic() - start
                     message = format_session_result(
-                        name, result, elapsed, error=error,
+                        name,
+                        result,
+                        elapsed,
+                        error=error,
                     )
                     # Parity with main.py's finally: every session proves
                     # the alert path it is about to shout over and records
@@ -188,18 +196,27 @@ class TradingScheduler:
                         from src import alert_watchdog
 
                         db_path = getattr(
-                            getattr(self.config, "storage", None), "db_path", None,
+                            getattr(self.config, "storage", None),
+                            "db_path",
+                            None,
                         )
                         before = alert_watchdog.read_health(db_path)
                         verdict = alert_watchdog.verify_alert_channel(
-                            self.notifier, source=name, db_path=db_path,
+                            self.notifier,
+                            source=name,
+                            db_path=db_path,
                         )
                         message = alert_watchdog.annotate_session_message(
-                            message, mode=name, before=before, result=verdict,
+                            message,
+                            mode=name,
+                            before=before,
+                            result=verdict,
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
-                            "[%s] alert watchdog failed in _run_safe: %s", name, exc,
+                            "[%s] alert watchdog failed in _run_safe: %s",
+                            name,
+                            exc,
                         )
                     # Parity with main.py: a bad analyst seat gets its OWN
                     # Telegram message, never a line buried inside the
@@ -211,7 +228,9 @@ class TradingScheduler:
                         maybe_alert_data_quality(result, mode=name)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
-                            "[%s] data-quality alert failed in _run_safe: %s", name, exc,
+                            "[%s] data-quality alert failed in _run_safe: %s",
+                            name,
+                            exc,
                         )
                     # Defect 1 (PR #978). The naked-position banner lives
                     # inside the session summary, which is operational and
@@ -229,7 +248,8 @@ class TradingScheduler:
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "[%s] naked-position alert failed in _run_safe: %s",
-                            name, exc,
+                            name,
+                            exc,
                         )
                     if message:
                         symbols = None
@@ -238,11 +258,14 @@ class TradingScheduler:
 
                             run_id = result.get("run_id") if isinstance(result, dict) else None
                             symbols = extract_alert_symbols(
-                                run_id, result if isinstance(result, dict) else None,
+                                run_id,
+                                result if isinstance(result, dict) else None,
                             )
                         except Exception as exc:  # noqa: BLE001
                             logger.warning(
-                                "[%s] extract_alert_symbols failed in _run_safe: %s", name, exc,
+                                "[%s] extract_alert_symbols failed in _run_safe: %s",
+                                name,
+                                exc,
                             )
                         # preserve_structural_markup=True: `message` is
                         # `format_session_result`'s output
@@ -250,7 +273,9 @@ class TradingScheduler:
                         # <b>/<blockquote expandable> tags on purpose — see
                         # TelegramNotifier.send()'s docstring.
                         self.notifier.send(
-                            message, symbols=symbols, preserve_structural_markup=True,
+                            message,
+                            symbols=symbols,
+                            preserve_structural_markup=True,
                             # A scheduled session summary is a routine
                             # report, not a money-at-risk alarm: the
                             # alarms inside a session (a missing stop, a
@@ -260,7 +285,9 @@ class TradingScheduler:
                         )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "[%s] notifier failed in _run_safe: %s", name, exc,
+                        "[%s] notifier failed in _run_safe: %s",
+                        name,
+                        exc,
                     )
 
     def start(self):

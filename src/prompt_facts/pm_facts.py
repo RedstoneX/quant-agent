@@ -25,12 +25,12 @@ logger = logging.getLogger("src.pipeline")
 _PM_PROFILE_SYMBOL_CAP = 40
 
 
-
 class PromptPMFacts:
     """The PM facts block and the conviction-outcome operator log; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         config=None,
         parse_logged_agent_response=None,
@@ -81,7 +81,8 @@ class PromptPMFacts:
         # RM discipline
         try:
             rm_rows = self.db.get_recent_agent_outputs(
-                agent_name="risk_manager", limit=5,
+                agent_name="risk_manager",
+                limit=5,
                 before_date=session_date_key(),
             )
         except Exception as e:
@@ -115,6 +116,7 @@ class PromptPMFacts:
         # deployment answers "is the money at work", direction answers "which
         # way does the book lean", and one number cannot be both.
         from src.risk.rules import book_exposure
+
         if total_value > 0:
             exposure = book_exposure(positions, total_value)
             f.invested_pct = round(exposure.deployed_pct, 1)
@@ -139,18 +141,17 @@ class PromptPMFacts:
         # "Unknown" is rendered rather than dropped so the PM can see that a
         # slice of the book is unclassified.
         from src.risk.rules import (
-            SECTOR_SIDE_SHORT, sector_side_weights,
+            SECTOR_SIDE_SHORT,
+            sector_side_weights,
         )
+
         for (sector, side), weight in sector_side_weights(
             positions,
             total_value,
             resolve_sector=lambda p: p.sector or _sector_of(p.symbol) or "Unknown",
             include_unknown=True,
         ).items():
-            bucket = (
-                f.sector_weights_short if side == SECTOR_SIDE_SHORT
-                else f.sector_weights_long
-            )
+            bucket = f.sector_weights_short if side == SECTOR_SIDE_SHORT else f.sector_weights_long
             bucket[sector] = round(bucket.get(sector, 0.0) + weight, 1)
 
         # Age buckets + drift flag
@@ -196,14 +197,14 @@ class PromptPMFacts:
         # (2026-09-17), not a macro output — macro no longer sets or lowers
         # it. Only rendered when there is a book to measure.
         from src.risk.rules import DESK_INVESTED_TARGET_PCT, deployment_gap_band_pct
+
         if total_value > 0:
             f.invested_target_pct = DESK_INVESTED_TARGET_PCT
             f.deployment_gap_pp = round(
-                f.invested_pct - DESK_INVESTED_TARGET_PCT, 1,
+                f.invested_pct - DESK_INVESTED_TARGET_PCT,
+                1,
             )
-            f.deployment_gap_band_pct = deployment_gap_band_pct(
-                getattr(self, "config", None)
-            )
+            f.deployment_gap_band_pct = deployment_gap_band_pct(getattr(self, "config", None))
 
         # Audit §1.3/§1.4 — the book's real risk, and each position's
         # R-multiple. None on failure; PMFacts.render() then says "unknown"
@@ -226,11 +227,13 @@ class PromptPMFacts:
         # the deterministic check already builds, BEFORE it chooses.
         try:
             from src.data.correlation import correlation_clusters
+
             universe = {p.symbol for p in positions if p.qty > 0}
             universe |= {a.symbol for a in analyses}
             f.correlation_coverage = bool(correlation_matrix)
             f.correlation_clusters = correlation_clusters(
-                universe, correlation_matrix or {},
+                universe,
+                correlation_matrix or {},
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("pm_facts: correlation clusters failed: %s", e)
@@ -249,15 +252,11 @@ class PromptPMFacts:
         # PMFacts.render() drops; this except is the belt to that suspenders.
         try:
             from src.data.company import CompanyProfileStore
-            profile_symbols = sorted(
-                {p.symbol for p in positions if p.qty > 0}
-                | {a.symbol for a in analyses}
-            )[:_PM_PROFILE_SYMBOL_CAP]
-            f.company_profiles = list(
-                CompanyProfileStore()
-                .get_many(profile_symbols, allow_fetch=True)
-                .values()
-            )
+
+            profile_symbols = sorted({p.symbol for p in positions if p.qty > 0} | {a.symbol for a in analyses})[
+                :_PM_PROFILE_SYMBOL_CAP
+            ]
+            f.company_profiles = list(CompanyProfileStore().get_many(profile_symbols, allow_fetch=True).values())
         except Exception as e:  # noqa: BLE001 — identity is nice-to-have
             logger.warning("pm_facts: company profiles failed: %s", e)
             f.company_profiles = []
@@ -287,8 +286,7 @@ class PromptPMFacts:
                         bucket_strs.append(f"{label}: n={s.get('n', 0)} (below floor)")
                     else:
                         bucket_strs.append(
-                            f"{label}: n={s.get('n')} win={s.get('win_rate_pct')}% "
-                            f"avg={s.get('avg_return_pct')}%"
+                            f"{label}: n={s.get('n')} win={s.get('win_rate_pct')}% avg={s.get('avg_return_pct')}%"
                         )
                 if bucket_strs:
                     parts.append(f"{grouping_key}=[{'; '.join(bucket_strs)}]")

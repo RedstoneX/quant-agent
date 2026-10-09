@@ -122,6 +122,7 @@ class GrossCeiling:
     that depended on a parseable book would leave the desk fully levered at
     exactly the moment it should be shedding exposure.
     """
+
     ceiling_x: float
     base_x: float
     drawdown_pct: float | None
@@ -136,7 +137,9 @@ class GrossCeiling:
 
 
 def resolve_gross_ceiling(
-    drawdown_pct: float | None, *, base_x: float,
+    drawdown_pct: float | None,
+    *,
+    base_x: float,
 ) -> GrossCeiling:
     """The de-levering ladder. A pure function of drawdown — apply it twice
     and you get the same answer, because a ceiling is a LEVEL, not a
@@ -178,7 +181,10 @@ def resolve_gross_ceiling(
         base = 0.0
     if drawdown_pct is None or not math.isfinite(drawdown_pct):
         return GrossCeiling(
-            ceiling_x=base, base_x=base, drawdown_pct=None, alert_owner=True,
+            ceiling_x=base,
+            base_x=base,
+            drawdown_pct=None,
+            alert_owner=True,
             rung="unknown",
             reason=(
                 f"No measured equity history, so no drawdown could be "
@@ -214,12 +220,8 @@ def resolve_gross_ceiling(
         # today; if a deeper rung is ever added, this sentence must not go on
         # claiming the floor at a drawdown that is merely past the alert.
         deepest = min(threshold for threshold, _ in GROSS_LADDER)
-        reason += (
-            f" Past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% owner-alert level."
-        )
-        floor_x = min(
-            rung_x for threshold, rung_x in GROSS_LADDER if threshold == deepest
-        )
+        reason += f" Past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% owner-alert level."
+        floor_x = min(rung_x for threshold, rung_x in GROSS_LADDER if threshold == deepest)
         if drawdown <= deepest:
             reason += (
                 f" The book is on the ladder's deepest {abs(deepest):.0f}% "
@@ -239,6 +241,10 @@ def resolve_gross_ceiling(
                 f"below this."
             )
     return GrossCeiling(
-        ceiling_x=ceiling, base_x=base, drawdown_pct=drawdown,
-        alert_owner=alert, rung=rung, reason=reason,
+        ceiling_x=ceiling,
+        base_x=base,
+        drawdown_pct=drawdown,
+        alert_owner=alert,
+        rung=rung,
+        reason=reason,
     )

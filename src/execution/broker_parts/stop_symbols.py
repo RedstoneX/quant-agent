@@ -5,6 +5,7 @@ may not grow) so the stop-leg recorder could be wired in. Two pure functions
 with no collaborators; ``stop_place`` and ``src.execution.broker`` re-export
 both, so every existing importer and patch target still resolves here.
 """
+
 from __future__ import annotations
 
 import re

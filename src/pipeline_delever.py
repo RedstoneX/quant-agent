@@ -63,8 +63,7 @@ class DeleverMixin:
         )
 
     def _delever_conviction(self) -> DeleverConviction:
-        return DeleverConviction(
-        )
+        return DeleverConviction()
 
     def _delever_enforce(self) -> DeleverEnforce:
         return DeleverEnforce(
@@ -151,7 +150,10 @@ class DeleverMixin:
         return self._delever_trims()._discharge_deferred_gross_ceiling(*args, **kwargs)
 
     def _alert_owner_force_delever_incomplete(
-        self, *, deficit: float, projected_proceeds: float,
+        self,
+        *,
+        deficit: float,
+        projected_proceeds: float,
         failed_symbols: list[str],
     ) -> None:
         """Page the owner when the cash-only forced de-lever could NOT clear
@@ -240,7 +242,8 @@ class DeleverMixin:
             was_over = None
         try:
             self.db.save_delever_ceiling_state(
-                run_id=run_id or "", over_ceiling=still_over,
+                run_id=run_id or "",
+                over_ceiling=still_over,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("delever ceiling-state write failed: %s", exc)
@@ -253,7 +256,8 @@ class DeleverMixin:
         logger.warning(
             "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
             "— gross exposure %.2fx equity vs a %.2fx ceiling.",
-            gross_x, ceiling_x,
+            gross_x,
+            ceiling_x,
         )
 
         if was_over:

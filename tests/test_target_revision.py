@@ -155,8 +155,9 @@ def test_pipeline_measures_progress_against_the_pinned_target():
     `take_profit`. A regression here reintroduces the defect silently."""
     from src.pipeline_prompt_facts import PromptPositionFacts
     from src.pipeline import TradingPipeline
+
     src = inspect.getsource(PromptPositionFacts._build_position_facts)
-    assert 'progress_target = float(' in src
+    assert "progress_target = float(" in src
     assert '"initial_take_profit"' in src
     assert "(cur - entry) / (progress_target - entry)" in src
     assert "(cur - entry) / (take_profit - entry)" not in src, (
@@ -181,7 +182,6 @@ def test_pinned_target_column_is_never_written_by_a_revision():
     )
 
 
-
 def _code_without_docstrings(module) -> str:
     """The module's CODE, with every docstring removed, resolved by IMPORT.
 
@@ -197,12 +197,10 @@ def _code_without_docstrings(module) -> str:
         body = getattr(node, "body", None)
         if not isinstance(body, list) or not body:
             continue
-        if not isinstance(node, (ast.Module, ast.ClassDef,
-                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         first = body[0]
-        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
-                and isinstance(first.value.value, str)):
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
             if len(body) == 1:
                 body[0] = ast.Pass()
             else:
@@ -215,10 +213,9 @@ def test_the_docstring_stripper_actually_strips_and_keeps_the_code():
     """Canary: a stripper that returned nothing would make the guards green."""
     body = _code_without_docstrings(tr)
     assert len(body) > 500, f"the module body came back near-empty: {body!r}"
-    assert "def assess_target_revision" in body, (
-        "the stripped body no longer contains the module's own functions"
-    )
+    assert "def assess_target_revision" in body, "the stripped body no longer contains the module's own functions"
     assert "Honest limitation" not in body
+
 
 # ---------------------------------------------------------------------------
 # 2. No automatic exit at the target
@@ -234,9 +231,9 @@ def test_revision_module_places_no_orders_and_triggers_no_exit():
     # matters is whether the CODE names an exit.
     tree = ast.parse(inspect.getsource(tr))
     docstrings = {
-        id(node.value) for node in ast.walk(tree)
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
     }
     identifiers: set[str] = set()
     literals: set[str] = set()
@@ -250,30 +247,26 @@ def test_revision_module_places_no_orders_and_triggers_no_exit():
                 literals.add(node.value)
 
     forbidden_calls = {
-        "submit_order", "place_order", "close_position", "liquidate",
-        "_auto_take_profit", "update_open_take_profit",
-        "record_target_revision", "get_ohlcv",
+        "submit_order",
+        "place_order",
+        "close_position",
+        "liquidate",
+        "_auto_take_profit",
+        "update_open_take_profit",
+        "record_target_revision",
+        "get_ohlcv",
     }
-    assert not (identifiers & forbidden_calls), (
-        f"the revision module reaches out: {identifiers & forbidden_calls}"
-    )
+    assert not (identifiers & forbidden_calls), f"the revision module reaches out: {identifiers & forbidden_calls}"
     # No exit ACTION word appears as a live string constant anywhere.
     exit_words = re.compile(r"\b(SELL|REDUCE|COVER|TARGET_BREACH|TAKE_PROFIT)\b")
     offending = sorted(lit for lit in literals if exit_words.search(lit))
     assert offending == [], f"exit action word(s) in live code: {offending}"
     # Pure: no broker, DB, market-data or LLM dependency is even imported.
     imported = {
-        alias.name for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
-    } | {
-        node.module or "" for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
+        alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names
+    } | {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     for banned in ("broker", "storage", "db", "anthropic", "openai", "agents"):
-        assert not any(banned in name for name in imported), (
-            f"{banned!r} reached by {sorted(imported)}"
-        )
+        assert not any(banned in name for name in imported), f"{banned!r} reached by {sorted(imported)}"
 
 
 def test_flag_schema_cannot_carry_a_typed_target_price():
@@ -283,11 +276,15 @@ def test_flag_schema_cannot_carry_a_typed_target_price():
     assert set(TargetRevisionFlag.model_fields) == {"symbol", "evidence"}
     # A price typed anyway is dropped, not stored, and is unreachable.
     flag = TargetRevisionFlag(
-        symbol="aapl", evidence="gapped through and closed above 214",
-        target_price=999.0, take_profit=999.0, new_target=999.0,
+        symbol="aapl",
+        evidence="gapped through and closed above 214",
+        target_price=999.0,
+        take_profit=999.0,
+        new_target=999.0,
     )
     assert flag.model_dump() == {
-        "symbol": "AAPL", "evidence": "gapped through and closed above 214",
+        "symbol": "AAPL",
+        "evidence": "gapped through and closed above 214",
     }
     for attr in ("target_price", "take_profit", "new_target"):
         assert getattr(flag, attr, "ABSENT") == "ABSENT"
@@ -312,8 +309,13 @@ def test_an_opinion_is_refused_by_name_not_silently_ignored():
     # target at 110 is exactly what the derivation produces, and today's
     # bars change nothing. Price is up but the ceiling is intact.
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0, 95.0],
-        atr=2.5, close_price=104.0, break_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 95.0],
+        atr=2.5,
+        close_price=104.0,
+        break_seen_prior_close=False,
+        **_COMMON,
     )
     assert not out.revised
     assert out.code == tr.REVISION_NO_TRIGGER
@@ -326,12 +328,15 @@ def test_a_one_day_break_is_pending_confirmation_not_a_revision():
     `exit_guard.check_structural_protection` — a one-day spring is not a
     break."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0, 95.0],
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 128.0, 95.0],
         # The gap expands ATR, as a real one does.
         atr=6.0,
         # A close more than one noise band above the broken level.
         close_price=118.0,
-        break_seen_prior_close=False, **_COMMON,
+        break_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_BREAK_PENDING_CONFIRMATION
     assert out.new_price is None
@@ -343,9 +348,13 @@ def test_a_confirmed_level_break_re_derives_on_todays_bars():
     # with ATR expanded 2.5 -> 6.0, which widens `horizon_reach` from 11.86
     # to 28.46 and brings the next level up, 128, into reach.
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0,
-        levels=[110.0, 128.0, 95.0], atr=6.0, close_price=118.0,
-        break_seen_prior_close=True, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 128.0, 95.0],
+        atr=6.0,
+        close_price=118.0,
+        break_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.revised
     assert out.trigger == tr.TRIGGER_LEVEL_BROKEN
@@ -360,8 +369,13 @@ def test_the_re_derivation_reuses_the_pinned_horizon_and_never_recomputes():
     args = dict(_COMMON)
     args["pinned_horizon_sessions"] = None
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0, 128.0],
-        atr=6.0, close_price=118.0, break_seen_prior_close=True, **args,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 128.0],
+        atr=6.0,
+        close_price=118.0,
+        break_seen_prior_close=True,
+        **args,
     )
     assert out.code == tr.REVISION_NO_PINNED_HORIZON
     assert out.new_price is None
@@ -376,24 +390,25 @@ def test_the_re_derivation_reuses_the_pinned_horizon_and_never_recomputes():
     assert "trading_sessions_held(" not in body
     assert "trading_calendar" not in body
     assert "days_held" not in body
-    assert "sessions_held" in inspect.signature(
-        tr.assess_target_revision,
-    ).parameters
+    assert (
+        "sessions_held"
+        in inspect.signature(
+            tr.assess_target_revision,
+        ).parameters
+    )
 
 
 def test_the_atr_trigger_introduces_no_new_constant():
-    """"ATR changed enough" is read off the derivation's OWN acceptance
+    """ "ATR changed enough" is read off the derivation's OWN acceptance
     bounds — the noise floor and `horizon_reach`. A bare numeric literal
     used as a threshold here would be an arbitrary number on the live risk
     path (docs/WORK.md, no-arbitrary-numbers)."""
     body = _code_without_docstrings(tr)
     signature = inspect.signature(tr.stale_reach_trigger)
-    defaults = {
-        name: p.default for name, p in signature.parameters.items()
-        if p.default is not inspect.Parameter.empty
-    }
+    defaults = {name: p.default for name, p in signature.parameters.items() if p.default is not inspect.Parameter.empty}
     # Every bound comes from src.data.levels, not from a literal here.
     from src.data import levels as lv
+
     assert defaults["min_target_atr_multiple"] == lv.MIN_TARGET_ATR_MULTIPLE
     assert defaults["max_reach_atr_multiple"] == lv.MAX_REACH_ATR_MULTIPLE
     assert defaults["max_horizon_sessions"] == lv.MAX_HORIZON_SESSIONS
@@ -410,7 +425,10 @@ def test_a_target_now_beyond_todays_reach_is_a_trigger():
     """Volatility collapsed, so the stored target is no longer reachable
     inside the pinned horizon — the derivation would not accept it today."""
     trigger = tr.stale_reach_trigger(
-        entry_price=100.0, stored_target=140.0, atr=0.5, horizon_sessions=10,
+        entry_price=100.0,
+        stored_target=140.0,
+        atr=0.5,
+        horizon_sessions=10,
     )
     assert trigger == tr.TRIGGER_TARGET_BEYOND_REACH
 
@@ -426,26 +444,43 @@ def test_a_target_inside_todays_noise_floor_is_no_longer_a_trigger():
     here returned the identical price and the outcome was
     `REVISION_NO_CHANGE` every session — a trigger whose premise was always
     false. Reach is the one remaining test and is unaffected."""
-    assert tr.stale_reach_trigger(
-        entry_price=100.0, stored_target=101.0, atr=8.0, horizon_sessions=10,
-    ) == ""
+    assert (
+        tr.stale_reach_trigger(
+            entry_price=100.0,
+            stored_target=101.0,
+            atr=8.0,
+            horizon_sessions=10,
+        )
+        == ""
+    )
 
 
 def test_an_unchanged_target_under_unchanged_volatility_is_not_a_trigger():
     # ATR 2.5 over 10 sessions: noise floor 2.50, reach 11.86. A target 10
     # away from entry sits inside both, which is why the derivation picked
     # it in the first place.
-    assert tr.stale_reach_trigger(
-        entry_price=100.0, stored_target=110.0, atr=2.5, horizon_sessions=10,
-    ) == ""
+    assert (
+        tr.stale_reach_trigger(
+            entry_price=100.0,
+            stored_target=110.0,
+            atr=2.5,
+            horizon_sessions=10,
+        )
+        == ""
+    )
 
 
 def test_a_data_fault_is_recorded_as_a_fault_not_a_refusal():
     """The desk's own split: a missing measurable input is a FAULT, a real
     geometry judgement is a REFUSAL. They must never be confused."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0],
-        atr=None, close_price=None, break_seen_prior_close=True, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0],
+        atr=None,
+        close_price=None,
+        break_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_UNMEASURABLE_INPUTS
     assert out.fault and not out.refusal
@@ -456,9 +491,13 @@ def test_a_refused_re_derivation_leaves_the_old_target_standing():
     so today's bars hold nothing left in the trade's direction. The old
     target stands, under a code that does not claim the chart is empty."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0,
-        levels=[110.0, 95.0, 90.0], atr=6.0, close_price=118.0,
-        break_seen_prior_close=True, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 95.0, 90.0],
+        atr=6.0,
+        close_price=118.0,
+        break_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.new_price is None
     assert out.prior_price == pytest.approx(110.0)
@@ -474,19 +513,25 @@ def test_a_broken_level_is_never_handed_back_as_the_new_target():
     level that just broke and the revision is a no-op in exactly the case
     it exists for."""
     surviving = tr.levels_still_in_the_way(
-        computed_levels=[110.0, 128.0, 95.0], close_price=118.0, atr=6.0,
+        computed_levels=[110.0, 128.0, 95.0],
+        close_price=118.0,
+        atr=6.0,
         is_short=False,
     )
     assert surviving == [128.0]
     # A short's cleared floors drop the other way: with a close of 88 and a
     # 6.0 band, 95 has been fallen through (88 <= 89) and 90 has not.
     assert tr.levels_still_in_the_way(
-        computed_levels=[95.0, 90.0], close_price=88.0, atr=6.0,
+        computed_levels=[95.0, 90.0],
+        close_price=88.0,
+        atr=6.0,
         is_short=True,
     ) == [90.0]
     # Missing inputs must not silently empty the set.
     assert tr.levels_still_in_the_way(
-        computed_levels=[110.0, 95.0], close_price=None, atr=6.0,
+        computed_levels=[110.0, 95.0],
+        close_price=None,
+        atr=6.0,
         is_short=False,
     ) == [110.0, 95.0]
 
@@ -496,12 +541,16 @@ def test_a_target_the_price_has_already_passed_is_refused_not_stored():
     from entry, so after a run the only derivable target can be behind the
     price. Refused by name; the old target stands."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0,
+        stored_target=110.0,
+        target_level=110.0,
         # The 110 ceiling is broken (close 117 is a full 6.0 noise band
         # above it) so the trigger fires; 116 survives the filter and is
         # well inside reach of entry — but the close is already past it.
-        levels=[110.0, 116.0], atr=6.0, close_price=117.0,
-        break_seen_prior_close=True, **_COMMON,
+        levels=[110.0, 116.0],
+        atr=6.0,
+        close_price=117.0,
+        break_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_BEHIND_PRICE
     assert out.new_price is None
@@ -510,30 +559,51 @@ def test_a_target_the_price_has_already_passed_is_refused_not_stored():
 
 def test_shorts_break_their_target_level_downward():
     """Direction is the mirror image, not a long-only rule with a patch."""
-    assert tr.target_level_broken(
-        target_level=90.0, close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
-        atr=2.5, is_short=True,
-    ) is True
-    assert tr.target_level_broken(
-        target_level=90.0, close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
-        atr=2.5, is_short=False,
-    ) is False
+    assert (
+        tr.target_level_broken(
+            target_level=90.0,
+            close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
+            atr=2.5,
+            is_short=True,
+        )
+        is True
+    )
+    assert (
+        tr.target_level_broken(
+            target_level=90.0,
+            close_price=90.0 - 2.5 * BREAK_CONFIRMATION_ATR_MULTIPLE,
+            atr=2.5,
+            is_short=False,
+        )
+        is False
+    )
     # Unanswerable rather than "not broken" when an input is missing.
-    assert tr.target_level_broken(
-        target_level=None, close_price=100.0, atr=2.5, is_short=False,
-    ) is None
+    assert (
+        tr.target_level_broken(
+            target_level=None,
+            close_price=100.0,
+            atr=2.5,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_a_measured_move_target_has_no_level_to_break():
     """`level_backing_target` returns None when nothing sits in the stored
     target's own cluster zone — correct for a measured-move target, which
     was never measured against a level."""
+    assert (
+        tr.level_backing_target(
+            stored_target=110.0,
+            computed_levels=[95.0, 128.0],
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+        )
+        is None
+    )
     assert tr.level_backing_target(
-        stored_target=110.0, computed_levels=[95.0, 128.0],
-        level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-    ) is None
-    assert tr.level_backing_target(
-        stored_target=110.0, computed_levels=[95.0, 110.2, 128.0],
+        stored_target=110.0,
+        computed_levels=[95.0, 110.2, 128.0],
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
     ) == pytest.approx(110.2)
 
@@ -541,15 +611,11 @@ def test_a_measured_move_target_has_no_level_to_break():
 def test_every_outcome_carries_a_machine_code():
     """A refusal is a first-class outcome. No path returns a blank."""
     for kwargs in (
-        dict(stored_target=None, target_level=None, levels=[], atr=2.5,
-             close_price=104.0),
-        dict(stored_target=110.0, target_level=110.0, levels=[110.0],
-             atr=2.5, close_price=104.0),
-        dict(stored_target=110.0, target_level=110.0, levels=[110.0],
-             atr=None, close_price=None),
+        dict(stored_target=None, target_level=None, levels=[], atr=2.5, close_price=104.0),
+        dict(stored_target=110.0, target_level=110.0, levels=[110.0], atr=2.5, close_price=104.0),
+        dict(stored_target=110.0, target_level=110.0, levels=[110.0], atr=None, close_price=None),
     ):
-        out = tr.assess_target_revision(break_seen_prior_close=False,
-                                        **kwargs, **_COMMON)
+        out = tr.assess_target_revision(break_seen_prior_close=False, **kwargs, **_COMMON)
         assert out.code, f"blank outcome for {kwargs}"
         assert out.detail, f"blank detail for {kwargs}"
 
@@ -571,6 +637,7 @@ def test_every_outcome_carries_a_machine_code():
 # label again, one of these fails and the drift is caught.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("setup_type", ["range", "breakout", None])
 def test_item82_revision_outcome_is_independent_of_the_setup_type_label(setup_type):
     """A confirmed level break re-derives to the next level (128) regardless of
@@ -579,9 +646,13 @@ def test_item82_revision_outcome_is_independent_of_the_setup_type_label(setup_ty
     args = dict(_COMMON)
     args["setup_type"] = setup_type
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0,
-        levels=[110.0, 128.0, 95.0], atr=6.0, close_price=118.0,
-        break_seen_prior_close=True, **args,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 128.0, 95.0],
+        atr=6.0,
+        close_price=118.0,
+        break_seen_prior_close=True,
+        **args,
     )
     assert out.revised
     assert out.trigger == tr.TRIGGER_LEVEL_BROKEN
@@ -597,9 +668,13 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
     args = dict(_COMMON)
     args["setup_type"] = setup_type
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0,
-        levels=[95.0, 90.0], atr=6.0, close_price=118.0,
-        break_seen_prior_close=True, **args,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[95.0, 90.0],
+        atr=6.0,
+        close_price=118.0,
+        break_seen_prior_close=True,
+        **args,
     )
     assert not out.revised
     assert out.new_price is None
@@ -619,8 +694,11 @@ def test_item82_refusal_is_independent_of_the_setup_type_label(setup_type):
 # ---------------------------------------------------------------------------
 
 _RUNNER = dict(
-    stored_target=110.0, target_level=110.0,
-    levels=[110.0, 116.0, 130.0], atr=6.0, close_price=117.0,
+    stored_target=110.0,
+    target_level=110.0,
+    levels=[110.0, 116.0, 130.0],
+    atr=6.0,
+    close_price=117.0,
     break_seen_prior_close=True,
 )
 
@@ -634,20 +712,30 @@ def _runner(**overrides):
 
 def test_remaining_horizon_is_read_from_the_pin_and_the_sessions_used():
     """No new number: pinned horizon minus holiday-aware sessions held."""
-    assert tr.remaining_horizon_sessions(
-        pinned_horizon_sessions=10, sessions_held=4,
-    ) == 6
+    assert (
+        tr.remaining_horizon_sessions(
+            pinned_horizon_sessions=10,
+            sessions_held=4,
+        )
+        == 6
+    )
     # Spent, and floored at zero — a position past its horizon has no reach
     # left, not negative reach.
-    assert tr.remaining_horizon_sessions(
-        pinned_horizon_sessions=10, sessions_held=14,
-    ) == 0
+    assert (
+        tr.remaining_horizon_sessions(
+            pinned_horizon_sessions=10,
+            sessions_held=14,
+        )
+        == 0
+    )
     # Unreadable inputs return None so the caller refuses rather than
     # inventing a remaining horizon.
-    for bad in ({"pinned_horizon_sessions": None, "sessions_held": 4},
-                {"pinned_horizon_sessions": 10, "sessions_held": None},
-                {"pinned_horizon_sessions": "x", "sessions_held": 4},
-                {"pinned_horizon_sessions": 0, "sessions_held": 4}):
+    for bad in (
+        {"pinned_horizon_sessions": None, "sessions_held": 4},
+        {"pinned_horizon_sessions": 10, "sessions_held": None},
+        {"pinned_horizon_sessions": "x", "sessions_held": 4},
+        {"pinned_horizon_sessions": 0, "sessions_held": 4},
+    ):
         assert tr.remaining_horizon_sessions(**bad) is None
 
 
@@ -711,14 +799,19 @@ def test_the_reanchor_never_pulls_the_target_back_toward_entry():
     args["direction"] = "short"
     args["entry_price"] = 100.0
     out = tr.assess_target_revision(
-        stored_target=90.0, target_level=90.0,
+        stored_target=90.0,
+        target_level=90.0,
         # Mirror image: the 90 floor is broken downward (close 83 is a full
         # noise band below it), and the only level left below the close is
         # 82.5 — ahead of the close but NOT further from entry than a stored
         # target of 90 would... it is, so use a level that is not: none
         # below the close at all leaves the measured-move path.
-        levels=[90.0, 82.5], atr=6.0, close_price=83.0,
-        break_seen_prior_close=True, sessions_held=5, **args,
+        levels=[90.0, 82.5],
+        atr=6.0,
+        close_price=83.0,
+        break_seen_prior_close=True,
+        sessions_held=5,
+        **args,
     )
     assert out.new_price is None or out.new_price < 83.0
 
@@ -732,8 +825,13 @@ def test_the_structural_level_basis_string_still_matches_the_derivation():
     from src.data.levels import derive_structural_target
 
     derived = derive_structural_target(
-        entry_price=100.0, direction="long", levels=[110.0], atr=2.5,
-        horizon_sessions=10, setup_type=None, levels_coverage=_COV,
+        entry_price=100.0,
+        direction="long",
+        levels=[110.0],
+        atr=2.5,
+        horizon_sessions=10,
+        setup_type=None,
+        levels_coverage=_COV,
     )
     assert derived.price == pytest.approx(110.0)
     assert derived.basis == tr.STRUCTURAL_LEVEL_BASIS
@@ -744,8 +842,12 @@ def test_the_reanchor_cannot_fire_without_a_structural_trigger():
     opinion with no structural event behind it is still refused up front,
     however much horizon is left."""
     out = _runner(
-        sessions_held=1, atr=2.5, close_price=104.0, target_level=110.0,
-        break_seen_prior_close=False, levels=[110.0, 95.0],
+        sessions_held=1,
+        atr=2.5,
+        close_price=104.0,
+        target_level=110.0,
+        break_seen_prior_close=False,
+        levels=[110.0, 95.0],
     )
     assert out.code == tr.REVISION_NO_TRIGGER
     assert out.new_price is None
@@ -765,12 +867,17 @@ def test_a_wall_in_front_of_the_stored_target_is_a_trigger():
     that the 101 close has not cleared. The target aims past a standing
     wall, and the re-derivation returns the wall."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[105.0, 110.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
         # The wall was already in the way on the PRIOR close (item 194's
         # brake); without that this is a one-session reading, which the
         # dedicated test below pins as a refusal.
-        wall_seen_prior_close=True, **_COMMON,
+        wall_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.revised
@@ -782,20 +889,37 @@ def test_the_old_triggers_alone_would_have_missed_that_chart():
     """The load-bearing claim. On the identical inputs neither existing
     trigger can see the new wall: the level the target sat on is intact, and
     a pivot forming mid-way moves no ATR, so reach is unchanged."""
-    assert tr.target_level_broken(
-        target_level=110.0, close_price=101.0, atr=2.5, is_short=False,
-    ) is False
-    assert tr.stale_reach_trigger(
-        entry_price=100.0, stored_target=110.0, atr=2.5, horizon_sessions=10,
-    ) == ""
+    assert (
+        tr.target_level_broken(
+            target_level=110.0,
+            close_price=101.0,
+            atr=2.5,
+            is_short=False,
+        )
+        is False
+    )
+    assert (
+        tr.stale_reach_trigger(
+            entry_price=100.0,
+            stored_target=110.0,
+            atr=2.5,
+            horizon_sessions=10,
+        )
+        == ""
+    )
 
 
 def test_a_target_sitting_on_its_own_wall_is_not_a_finding():
     """Strict inequality. The level AT the target is the target's own wall,
     which is the correct derivation, not something to revise."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0, 95.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0, 95.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_NO_TRIGGER
     assert out.new_price is None
@@ -806,8 +930,13 @@ def test_a_wall_the_close_has_broken_through_is_not_a_wall():
     cleared by a noise band cannot manufacture a trigger. Close 109 with
     ATR 2.5 clears 105 by a full BREAK_CONFIRMATION_ATR_MULTIPLE."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=108.0, break_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[105.0, 110.0],
+        atr=2.5,
+        close_price=108.0,
+        break_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_NO_TRIGGER
 
@@ -816,13 +945,20 @@ def test_the_wall_test_is_anchored_on_entry_not_on_the_current_price():
     """A target must never become a function of the price move. A level
     BELOW the entry is behind the position, not in front of the target, and
     no amount of price movement makes it a wall."""
+    assert (
+        tr.walls_between(
+            stored_target=110.0,
+            reference_price=100.0,
+            surviving_levels=[95.0, 99.9],
+            is_short=False,
+        )
+        == []
+    )
     assert tr.walls_between(
-        stored_target=110.0, reference_price=100.0,
-        surviving_levels=[95.0, 99.9], is_short=False,
-    ) == []
-    assert tr.walls_between(
-        stored_target=110.0, reference_price=100.0,
-        surviving_levels=[102.0, 107.0, 110.0, 115.0], is_short=False,
+        stored_target=110.0,
+        reference_price=100.0,
+        surviving_levels=[102.0, 107.0, 110.0, 115.0],
+        is_short=False,
     ) == [102.0, 107.0]
 
 
@@ -830,8 +966,10 @@ def test_the_wall_test_mirrors_for_a_short():
     """A short's target sits below entry, so its wall is a floor between
     the two, and the nearest one comes first."""
     assert tr.walls_between(
-        stored_target=90.0, reference_price=100.0,
-        surviving_levels=[85.0, 93.0, 97.0, 100.0], is_short=True,
+        stored_target=90.0,
+        reference_price=100.0,
+        surviving_levels=[85.0, 93.0, 97.0, 100.0],
+        is_short=True,
     ) == [97.0, 93.0]
 
 
@@ -842,9 +980,15 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
     close has passed — and the horizon is spent, so there is nothing to
     re-anchor on either."""
     out = tr.assess_target_revision(
-        stored_target=120.0, target_level=120.0, levels=[110.0, 120.0],
-        atr=5.0, close_price=113.0, break_seen_prior_close=False,
-        wall_seen_prior_close=True, sessions_held=10, **_COMMON,
+        stored_target=120.0,
+        target_level=120.0,
+        levels=[110.0, 120.0],
+        atr=5.0,
+        close_price=113.0,
+        break_seen_prior_close=False,
+        wall_seen_prior_close=True,
+        sessions_held=10,
+        **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.new_price is None
@@ -859,6 +1003,7 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
 # a seat flag now only supplies the seat label and the prose evidence.
 # ---------------------------------------------------------------------------
 
+
 class _SweepPos:
     def __init__(self, symbol, qty, avg_entry):
         self.symbol = symbol
@@ -872,8 +1017,12 @@ class _SweepDB:
         self.take_profit_writes = []
 
     def get_symbol_last_buy(self, symbol, action=None):
-        return {"take_profit": 100.0, "expected_horizon_sessions": 20,
-                "setup_type": "range", "timestamp": "2026-09-01T00:00:00"}
+        return {
+            "take_profit": 100.0,
+            "expected_horizon_sessions": 20,
+            "setup_type": "range",
+            "timestamp": "2026-09-01T00:00:00",
+        }
 
     def get_prior_target_level_break(self, symbols, **kwargs):
         return {}
@@ -891,7 +1040,8 @@ class _SweepDB:
 
 
 class _SweepMarket:
-    def set_fallback_bars(self, fn): pass  # the real constructor wires broker bars in
+    def set_fallback_bars(self, fn):
+        pass  # the real constructor wires broker bars in
 
     def get_ohlcv_batch(self, symbols, lookback_days):
         # Batches fine, carries nothing — the normal, non-degraded shape
@@ -907,9 +1057,11 @@ class _SweepMarket:
 
 
 class _SweepBroker:
-    def get_bars(self, *args, **kwargs): return []  # handed to the market as its fallback
+    def get_bars(self, *args, **kwargs):
+        return []  # handed to the market as its fallback
 
-    def trading_sessions_held(self, start, end): return 10
+    def trading_sessions_held(self, start, end):
+        return 10
 
 
 def _sweep_pipeline():
@@ -932,8 +1084,7 @@ def test_every_open_position_is_adjudicated_with_no_seat_flag():
     outcomes — both attributed to the unconditional sweep, not to a seat."""
     p = _sweep_pipeline()
     positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    out = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
     assert [o["symbol"] for o in out] == ["AAA", "BBB"]
     assert {o["seat"] for o in out} == {tr.SEAT_STRUCTURAL_SWEEP}
     # Every outcome is persisted: the sweep can never produce a blank.
@@ -947,8 +1098,7 @@ def test_seat_flag_is_not_duplicated_by_the_sweep():
     p = _sweep_pipeline()
     positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
     flag = TargetRevisionFlag(symbol="aaa", evidence="the seat's words")
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview([flag]), positions, run_id="r1", seat="position_reviewer")
+    out = p._adjudicate_target_revision_flags(_SweepReview([flag]), positions, run_id="r1", seat="position_reviewer")
     by_sym = {o["symbol"]: o for o in out}
     assert sorted(by_sym) == ["AAA", "BBB"]
     assert by_sym["AAA"]["seat"] == "position_reviewer"
@@ -961,8 +1111,7 @@ def test_flag_on_an_unheld_symbol_still_files_not_held():
     flagged something the broker does not show as held."""
     p = _sweep_pipeline()
     flag = TargetRevisionFlag(symbol="ZZZ", evidence="not in the book")
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview([flag]), [], run_id="r1", seat="position_reviewer")
+    out = p._adjudicate_target_revision_flags(_SweepReview([flag]), [], run_id="r1", seat="position_reviewer")
     assert len(out) == 1
     assert out[0]["code"] == "REFUSAL_NOT_HELD"
     assert out[0]["seat"] == "position_reviewer"
@@ -970,8 +1119,7 @@ def test_flag_on_an_unheld_symbol_still_files_not_held():
 
 def test_no_open_positions_and_no_flags_is_still_a_no_op():
     p = _sweep_pipeline()
-    assert p._adjudicate_target_revision_flags(
-        _SweepReview(), [], run_id="r1", seat="position_reviewer") == []
+    assert p._adjudicate_target_revision_flags(_SweepReview(), [], run_id="r1", seat="position_reviewer") == []
     assert p.db.recorded == []
 
 
@@ -985,6 +1133,7 @@ def test_no_open_positions_and_no_flags_is_still_a_no_op():
 # regime now reads the PINNED entry target, so a revision cannot ratchet a
 # stop the desk would not otherwise have moved.
 # ---------------------------------------------------------------------------
+
 
 def test_trailing_regime_reads_the_pinned_entry_target_not_the_live_one():
     import ast
@@ -1022,6 +1171,7 @@ def test_update_open_take_profit_is_not_the_trail_reference():
 
 # --- round 2 faults 3, 4 and 6 --------------------------------------------
 
+
 class _BatchMarket(_SweepMarket):
     def __init__(self):
         self.batch_calls = []
@@ -1042,10 +1192,8 @@ def test_the_sweep_reads_bars_in_one_batch():
     per held name."""
     p = _sweep_pipeline()
     p.market = _BatchMarket()
-    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0),
-                 _SweepPos("CCC", 7, 20.0)]
-    p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0), _SweepPos("CCC", 7, 20.0)]
+    p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
     assert p.market.batch_calls == [["AAA", "BBB", "CCC"]]
 
 
@@ -1063,17 +1211,13 @@ def test_one_bad_name_does_not_truncate_the_rest_of_the_book():
         _SweepPos("BBB", "not-a-number", 40.0),
         _SweepPos("CCC", 7, 20.0),
     ]
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
-    assert [o["symbol"] for o in out] == ["AAA", "BBB", "CCC"], (
-        "every held name must get a row, fault or not"
-    )
+    out = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB", "CCC"], "every held name must get a row, fault or not"
     bad = [o for o in out if o["symbol"] == "BBB"][0]
     assert bad["code"] == "FAULT_POSITION_NOT_MEASURED"
     assert bad["applied"] is False
     # And it is durable: an unmeasured position is a recorded finding.
-    assert any(r["code"] == "FAULT_POSITION_NOT_MEASURED"
-               for r in p.db.recorded)
+    assert any(r["code"] == "FAULT_POSITION_NOT_MEASURED" for r in p.db.recorded)
 
 
 def test_an_unchanged_refusal_is_not_refiled_every_session():
@@ -1082,19 +1226,18 @@ def test_an_unchanged_refusal_is_not_refiled_every_session():
     way."""
     p = _sweep_pipeline()
     positions = [_SweepPos("AAA", 10, 90.0)]
-    first = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    first = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
     code = first[0]["code"]
     p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
     before = len(p.db.recorded)
-    second = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    second = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r2", seat="position_reviewer")
     assert second[0]["code"] == code
     assert second[0].get("unchanged_since_last_session") is True
     assert len(p.db.recorded) == before, "the identical refusal was re-filed"
 
 
 # --- round 3 faults 4 and 5 ------------------------------------------------
+
 
 def test_a_failure_to_file_the_fault_row_still_does_not_truncate_the_book():
     """The per-name guard was right, but the call that files the
@@ -1110,11 +1253,8 @@ def test_a_failure_to_file_the_fault_row_still_does_not_truncate_the_book():
         return real_file(code=code, **kw)
 
     p._file_target_revision = _file
-    positions = [_SweepPos("AAA", 10, 90.0),
-                 _SweepPos("BBB", "not-a-number", 40.0),
-                 _SweepPos("CCC", 7, 20.0)]
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", "not-a-number", 40.0), _SweepPos("CCC", 7, 20.0)]
+    out = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
     assert [o["symbol"] for o in out] == ["AAA", "CCC"], (
         "the tail of the book was truncated by the fault-filing failure"
     )
@@ -1132,8 +1272,7 @@ def test_a_serial_bar_read_is_recorded_not_merely_logged():
     p = _sweep_pipeline()
     p.market = _NoBatchMarket()
     positions = [_SweepPos("AAA", 10, 90.0)]
-    out = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    out = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r1", seat="position_reviewer")
     assert "one name at a time" in out[0]["detail"]
     assert p.db.recorded and "one name at a time" in p.db.recorded[0]["detail"]
     # Same outcome next session, but still written, because the session was
@@ -1141,8 +1280,7 @@ def test_a_serial_bar_read_is_recorded_not_merely_logged():
     code = out[0]["code"]
     p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
     before = len(p.db.recorded)
-    again = p._adjudicate_target_revision_flags(
-        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    again = p._adjudicate_target_revision_flags(_SweepReview(), positions, run_id="r2", seat="position_reviewer")
     assert again[0].get("unchanged_since_last_session") is not True
     assert len(p.db.recorded) == before + 1
 
@@ -1161,9 +1299,14 @@ def test_a_wall_seen_only_today_is_refused_by_name():
     """Identical inputs to the wall trigger's own test, minus the prior
     day's agreement. The target stands, and the refusal says why."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False,
-        wall_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[105.0, 110.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        wall_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
     assert out.new_price is None
@@ -1176,9 +1319,14 @@ def test_a_reach_breach_seen_only_today_is_refused_by_name():
     to agree. One session's ATR is not a structural change."""
     args = dict(_COMMON)
     out = tr.assess_target_revision(
-        stored_target=200.0, target_level=None, levels=[200.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False,
-        reach_seen_prior_close=False, **args,
+        stored_target=200.0,
+        target_level=None,
+        levels=[200.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        reach_seen_prior_close=False,
+        **args,
     )
     assert out.code == tr.REVISION_REACH_PENDING_CONFIRMATION
     assert out.new_price is None
@@ -1188,9 +1336,14 @@ def test_the_same_reach_breach_confirmed_is_a_trigger():
     """The brake is a brake, not a block: the prior day's agreement lets
     exactly the same reading through."""
     out = tr.assess_target_revision(
-        stored_target=200.0, target_level=None, levels=[200.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False,
-        reach_seen_prior_close=True, **_COMMON,
+        stored_target=200.0,
+        target_level=None,
+        levels=[200.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        reach_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_TARGET_BEYOND_REACH
 
@@ -1201,9 +1354,14 @@ def test_all_three_brakes_are_the_same_mechanism_not_three():
     bar_date, re-read on a strictly later one. No trigger carries a count
     of closes or a margin of its own."""
     flags = tr.raw_trigger_flags(
-        entry_price=100.0, stored_target=110.0, target_level=110.0,
-        atr=2.5, close_price=101.0, horizon_sessions=10,
-        levels=[105.0, 110.0], is_short=False,
+        entry_price=100.0,
+        stored_target=110.0,
+        target_level=110.0,
+        atr=2.5,
+        close_price=101.0,
+        horizon_sessions=10,
+        levels=[105.0, 110.0],
+        is_short=False,
     )
     assert set(flags) == {"raw_broken", "raw_reach", "raw_wall"}
     assert flags["raw_broken"] is False
@@ -1218,9 +1376,14 @@ def test_an_unmeasurable_input_is_never_half_a_confirmation():
     """A question that cannot be asked is None, not False — a None is
     never persisted, so it can neither confirm nor deny tomorrow."""
     flags = tr.raw_trigger_flags(
-        entry_price=100.0, stored_target=110.0, target_level=110.0,
-        atr=None, close_price=None, horizon_sessions=10,
-        levels=[105.0], is_short=False,
+        entry_price=100.0,
+        stored_target=110.0,
+        target_level=110.0,
+        atr=None,
+        close_price=None,
+        horizon_sessions=10,
+        levels=[105.0],
+        is_short=False,
     )
     assert flags == {"raw_broken": None, "raw_reach": None, "raw_wall": None}
 
@@ -1229,13 +1392,15 @@ def test_the_brake_adds_no_number():
     """No new constant may be introduced by a brake. The module's constant
     set is unchanged from the three bars it already held."""
     consts = {
-        n for n in dir(tr)
-        if n.isupper() and isinstance(getattr(tr, n), (int, float))
-        and not isinstance(getattr(tr, n), bool)
+        n
+        for n in dir(tr)
+        if n.isupper() and isinstance(getattr(tr, n), (int, float)) and not isinstance(getattr(tr, n), bool)
     }
     assert consts == {
-        "MIN_TARGET_ATR_MULTIPLE", "BREAKOUT_PROJECTION_ATR_MULTIPLE",
-        "MAX_REACH_ATR_MULTIPLE", "MAX_HORIZON_SESSIONS",
+        "MIN_TARGET_ATR_MULTIPLE",
+        "BREAKOUT_PROJECTION_ATR_MULTIPLE",
+        "MAX_REACH_ATR_MULTIPLE",
+        "MAX_HORIZON_SESSIONS",
         "BREAK_CONFIRMATION_ATR_MULTIPLE",
     }
 
@@ -1248,14 +1413,24 @@ def test_the_brake_adds_no_number():
 
 def test_a_revision_is_voiced_with_its_reason_not_just_a_number():
     from src import notifier
-    lines = notifier.describe_target_revisions({"target_revisions": [{
-        "symbol": "TEST", "applied": True, "prior_price": 110.0,
-        "new_price": 105.0, "basis": tr.STRUCTURAL_LEVEL_BASIS,
-        "trigger": tr.TRIGGER_WALL_IN_FRONT_OF_TARGET,
-    }]})
+
+    lines = notifier.describe_target_revisions(
+        {
+            "target_revisions": [
+                {
+                    "symbol": "TEST",
+                    "applied": True,
+                    "prior_price": 110.0,
+                    "new_price": 105.0,
+                    "basis": tr.STRUCTURAL_LEVEL_BASIS,
+                    "trigger": tr.TRIGGER_WALL_IN_FRONT_OF_TARGET,
+                }
+            ]
+        }
+    )
     body = "\n".join(lines)
     assert "TEST" in body
-    assert "ceiling" in body          # the REASON, in plain words
+    assert "ceiling" in body  # the REASON, in plain words
     assert "$110.00" in body and "$105.00" in body
     assert "down" in body
     assert "not a sell order" in body
@@ -1265,9 +1440,12 @@ def test_every_trigger_the_module_can_emit_has_owner_words():
     """A revision the owner cannot read a reason for is the defect this
     fixes, so no trigger may fall through to its raw code."""
     from src.notifier import _target_revision_reason
+
     for code in (
-        tr.TRIGGER_LEVEL_BROKEN, tr.TRIGGER_TARGET_BEYOND_REACH,
-        tr.TRIGGER_WALL_IN_FRONT_OF_TARGET, tr.TRIGGER_DERIVATION_CORRECTED,
+        tr.TRIGGER_LEVEL_BROKEN,
+        tr.TRIGGER_TARGET_BEYOND_REACH,
+        tr.TRIGGER_WALL_IN_FRONT_OF_TARGET,
+        tr.TRIGGER_DERIVATION_CORRECTED,
     ):
         words = _target_revision_reason(code)
         assert words and not words.startswith("trigger ")
@@ -1277,9 +1455,17 @@ def test_a_session_with_no_applied_revision_says_nothing():
     """Refusals are the normal outcome on most held names every session;
     voicing them all would bury the one that moved."""
     from src import notifier
-    assert notifier.describe_target_revisions({"target_revisions": [
-        {"symbol": "TEST", "applied": False, "code": tr.REVISION_NO_TRIGGER},
-    ]}) == []
+
+    assert (
+        notifier.describe_target_revisions(
+            {
+                "target_revisions": [
+                    {"symbol": "TEST", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+                ]
+            }
+        )
+        == []
+    )
     assert notifier.describe_target_revisions({}) == []
 
 
@@ -1295,22 +1481,43 @@ def test_a_missing_level_set_cannot_persist_no_wall_as_a_fact():
     absent reading must never produce an action."""
     for levels in (None, []):
         flags = tr.raw_trigger_flags(
-            entry_price=100.0, stored_target=110.0, target_level=110.0,
-            atr=2.5, close_price=101.0, horizon_sessions=10,
-            levels=levels, is_short=False,
+            entry_price=100.0,
+            stored_target=110.0,
+            target_level=110.0,
+            atr=2.5,
+            close_price=101.0,
+            horizon_sessions=10,
+            levels=levels,
+            is_short=False,
         )
         assert flags["raw_wall"] is None, levels
     # A real level set still answers the question both ways.
-    assert tr.raw_trigger_flags(
-        entry_price=100.0, stored_target=110.0, target_level=110.0,
-        atr=2.5, close_price=101.0, horizon_sessions=10,
-        levels=[105.0, 110.0], is_short=False,
-    )["raw_wall"] is True
-    assert tr.raw_trigger_flags(
-        entry_price=100.0, stored_target=110.0, target_level=110.0,
-        atr=2.5, close_price=101.0, horizon_sessions=10,
-        levels=[110.0], is_short=False,
-    )["raw_wall"] is False
+    assert (
+        tr.raw_trigger_flags(
+            entry_price=100.0,
+            stored_target=110.0,
+            target_level=110.0,
+            atr=2.5,
+            close_price=101.0,
+            horizon_sessions=10,
+            levels=[105.0, 110.0],
+            is_short=False,
+        )["raw_wall"]
+        is True
+    )
+    assert (
+        tr.raw_trigger_flags(
+            entry_price=100.0,
+            stored_target=110.0,
+            target_level=110.0,
+            atr=2.5,
+            close_price=101.0,
+            horizon_sessions=10,
+            levels=[110.0],
+            is_short=False,
+        )["raw_wall"]
+        is False
+    )
 
 
 def test_an_unconfirmed_trigger_cannot_suppress_a_confirmed_one():
@@ -1319,10 +1526,15 @@ def test_an_unconfirmed_trigger_cannot_suppress_a_confirmed_one():
     trigger — so the owner was handed the reach reason for a change the
     wall caused."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[105.0, 110.0],
+        atr=2.5,
+        close_price=101.0,
         break_seen_prior_close=False,
-        reach_seen_prior_close=False, wall_seen_prior_close=True, **_COMMON,
+        reach_seen_prior_close=False,
+        wall_seen_prior_close=True,
+        **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.revised
@@ -1333,14 +1545,24 @@ def test_a_pending_trigger_is_reported_as_pending_not_as_no_trigger():
     """A hold on a number the desk has stopped believing is not a clean
     bill of health, and only a chart with no trigger at all may say so."""
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False,
-        wall_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[105.0, 110.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        wall_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
     out = tr.assess_target_revision(
-        stored_target=110.0, target_level=110.0, levels=[110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+        stored_target=110.0,
+        target_level=110.0,
+        levels=[110.0],
+        atr=2.5,
+        close_price=101.0,
+        break_seen_prior_close=False,
+        **_COMMON,
     )
     assert out.code == tr.REVISION_NO_TRIGGER
 
@@ -1357,31 +1579,52 @@ def test_the_confirmation_is_keyed_on_the_close_not_on_the_last_row(tmp_path):
     # Two cycles re-read the SAME prior close and disagree. The first
     # reading of that close wins, whichever ran last.
     db.save_target_level_break(
-        run_id="r1", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=True, raw_wall=True,
+        run_id="r1",
+        symbol="TEST",
+        bar_date="2026-09-29",
+        raw_broken=True,
+        raw_wall=True,
     )
     db.save_target_level_break(
-        run_id="r2", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=False, raw_wall=False,
+        run_id="r2",
+        symbol="TEST",
+        bar_date="2026-09-29",
+        raw_broken=False,
+        raw_wall=False,
     )
     for flag in ("raw_broken", "raw_wall"):
         got = db.get_prior_target_level_break(
-            ["TEST"], today_bar_date="2026-09-30", flag=flag,
+            ["TEST"],
+            today_bar_date="2026-09-30",
+            flag=flag,
         )
         assert got.get("TEST") is True, flag
     # A degraded later cycle that could not answer the wall question must
     # not erase the answer already given for that close.
     db.save_target_level_break(
-        run_id="r3", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=False, raw_wall=None,
+        run_id="r3",
+        symbol="TEST",
+        bar_date="2026-09-29",
+        raw_broken=False,
+        raw_wall=None,
     )
-    assert db.get_prior_target_level_break(
-        ["TEST"], today_bar_date="2026-09-30", flag="raw_wall",
-    ).get("TEST") is True
+    assert (
+        db.get_prior_target_level_break(
+            ["TEST"],
+            today_bar_date="2026-09-30",
+            flag="raw_wall",
+        ).get("TEST")
+        is True
+    )
     # Today's own close never confirms itself.
-    assert db.get_prior_target_level_break(
-        ["TEST"], today_bar_date="2026-09-29", flag="raw_wall",
-    ) == {}
+    assert (
+        db.get_prior_target_level_break(
+            ["TEST"],
+            today_bar_date="2026-09-29",
+            flag="raw_wall",
+        )
+        == {}
+    )
 
 
 def test_a_session_that_applied_nothing_still_names_a_held_target():
@@ -1390,16 +1633,24 @@ def test_a_session_that_applied_nothing_still_names_a_held_target():
     targets the desk had stopped believing."""
     from src import notifier
 
-    lines = notifier.describe_target_revisions({"target_revisions": [
-        {"symbol": "TEST", "applied": False, "prior_price": 110.0,
-         "code": tr.REVISION_WALL_PENDING_CONFIRMATION},
-        {"symbol": "OTHR", "applied": False, "code": tr.REVISION_NO_TRIGGER},
-    ]})
+    lines = notifier.describe_target_revisions(
+        {
+            "target_revisions": [
+                {
+                    "symbol": "TEST",
+                    "applied": False,
+                    "prior_price": 110.0,
+                    "code": tr.REVISION_WALL_PENDING_CONFIRMATION,
+                },
+                {"symbol": "OTHR", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+            ]
+        }
+    )
     body = "\n".join(lines)
-    assert "TEST" in body                      # named, not counted
-    assert "$110.00" in body                   # the number he is still quoted
-    assert "second day's close" in body        # why it is being held
-    assert "OTHR" not in body                  # a clean name is not noise
+    assert "TEST" in body  # named, not counted
+    assert "$110.00" in body  # the number he is still quoted
+    assert "second day's close" in body  # why it is being held
+    assert "OTHR" not in body  # a clean name is not noise
     assert "1 other position(s) measured" in body
 
 

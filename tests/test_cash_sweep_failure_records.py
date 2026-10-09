@@ -5,11 +5,13 @@ used to log a broker position-read failure and return None — indistinguishable
 from "nothing held". The silent-swallow ratchet flagged it; now it records a
 `pipeline_event` row before returning.
 """
+
 from tests.test_cash_sweep import _retired_pipeline
 
 
 def test_retired_release_position_read_failure_is_recorded_durably(tmp_path):
     from src.storage.db import Database
+
     p = _retired_pipeline()
     p.db = Database(str(tmp_path / "t.db"))
     p.db.initialize()
@@ -18,8 +20,7 @@ def test_retired_release_position_read_failure_is_recorded_durably(tmp_path):
     assert p.cash_sweeper.release_retired_vehicle(run_id="run-fail") is None
 
     rows = p.db.conn.execute(
-        "SELECT run_id, symbol, evidence_json FROM specialist_evidence "
-        "WHERE kind = 'pipeline_event'"
+        "SELECT run_id, symbol, evidence_json FROM specialist_evidence WHERE kind = 'pipeline_event'"
     ).fetchall()
     assert len(rows) == 1
     run_id, symbol, evidence = rows[0]

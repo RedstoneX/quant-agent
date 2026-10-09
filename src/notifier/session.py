@@ -53,6 +53,7 @@ from src.notifier.costs import (
 # easy to unit-test without the network stub and so main.py can
 # compute the message before deciding to send.
 
+
 def _pnl_lines_for(result: dict | None, mode: str = "") -> list[str]:
     """`trader_feed._pnl_section_lines` for whatever this message knows.
 
@@ -72,6 +73,7 @@ def _pnl_lines_for(result: dict | None, mode: str = "") -> list[str]:
             logger.warning("evening P&L block could not be rendered: %s", exc)
     try:
         from src.trader_feed import _pnl_section_lines
+
         return _pnl_section_lines(result if isinstance(result, dict) else {})
     except Exception as exc:  # noqa: BLE001
         logger.warning("P&L block could not be rendered: %s", exc)
@@ -144,7 +146,9 @@ def format_session_result(
         if not _actionable_coverage_gaps(result.get("stop_coverage_gaps")):
             return None
     if mode == "earnings_preprocess" and status in (
-        "market_holiday", "nothing_new", "fetch_error",
+        "market_holiday",
+        "nothing_new",
+        "fetch_error",
     ):
         # nothing_new is the common case (most pre-market days have
         # no fresh 10-Q to analyze). fetch_error suppresses occasional
@@ -183,8 +187,7 @@ def format_session_result(
     #     underscores taken out is still an internal status code. Board
     #     item 89 clarity defect "internal status codes shown as-is".
     lines: list[str] = [
-        f"{emoji} {severity_prefix}{mode_label(mode)} — "
-        f"{humanize_status(status)}  ({timestamp})",
+        f"{emoji} {severity_prefix}{mode_label(mode)} — {humanize_status(status)}  ({timestamp})",
     ]
 
     # P&L FIRST, directly under the heading — owner, 2026-09-18, verbatim:

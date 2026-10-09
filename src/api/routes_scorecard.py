@@ -94,7 +94,7 @@ def _sort_key(credit: dict) -> tuple:
 
 
 def _month_of(resolved_at: str) -> str:
-    """"YYYY-MM" from a stored timestamp, or "" when it is unusable.
+    """ "YYYY-MM" from a stored timestamp, or "" when it is unusable.
 
     The ledger stores whatever the closing trade row carried, which is a naive
     UTC "YYYY-MM-DD HH:MM:SS" string today. Taking the first seven characters
@@ -131,14 +131,16 @@ def _monthly(ordered: list[dict]) -> list[ScorecardMonthPoint]:
         running += step
         calls_so_far += len(rows)
         right_so_far += sum(1 for row in rows if row["credit"] > 0)
-        points.append(ScorecardMonthPoint(
-            month=month,
-            credit=round(step, 4),
-            cumulative=round(running, 4),
-            resolved_calls=len(rows),
-            calls_right=sum(1 for row in rows if row["credit"] > 0),
-            hit_rate_pct=_hit_rate(right_so_far, calls_so_far),
-        ))
+        points.append(
+            ScorecardMonthPoint(
+                month=month,
+                credit=round(step, 4),
+                cumulative=round(running, 4),
+                resolved_calls=len(rows),
+                calls_right=sum(1 for row in rows if row["credit"] > 0),
+                hit_rate_pct=_hit_rate(right_so_far, calls_so_far),
+            )
+        )
     return points
 
 
@@ -165,15 +167,17 @@ def _by_confidence(ordered: list[dict]) -> list[ScorecardConfidenceBreakdown]:
         rows = grouped[conviction]
         wins = [row["credit"] for row in rows if row["credit"] > 0]
         losses = [row["credit"] for row in rows if row["credit"] < 0]
-        out.append(ScorecardConfidenceBreakdown(
-            conviction=conviction,
-            resolved_calls=len(rows),
-            calls_right=len(wins),
-            hit_rate_pct=_hit_rate(len(wins), len(rows)),
-            avg_win=round(sum(wins) / len(wins), 4) if wins else None,
-            avg_loss=round(sum(losses) / len(losses), 4) if losses else None,
-            cumulative_credit=round(sum(row["credit"] for row in rows), 4),
-        ))
+        out.append(
+            ScorecardConfidenceBreakdown(
+                conviction=conviction,
+                resolved_calls=len(rows),
+                calls_right=len(wins),
+                hit_rate_pct=_hit_rate(len(wins), len(rows)),
+                avg_win=round(sum(wins) / len(wins), 4) if wins else None,
+                avg_loss=round(sum(losses) / len(losses), 4) if losses else None,
+                cumulative_credit=round(sum(row["credit"] for row in rows), 4),
+            )
+        )
     return out
 
 
@@ -197,12 +201,14 @@ def _analyst_item(analyst: str, credits: list[dict]) -> AnalystScorecardItem:
             calls_since_peak = 0
         else:
             calls_since_peak += 1
-        series.append(ScorecardPoint(
-            resolved_at=row.get("resolved_at") or "",
-            cumulative=round(running, 4),
-            peak=round(peak, 4),
-            below_best=round(max(0.0, peak - running), 4),
-        ))
+        series.append(
+            ScorecardPoint(
+                resolved_at=row.get("resolved_at") or "",
+                cumulative=round(running, 4),
+                peak=round(peak, 4),
+                below_best=round(max(0.0, peak - running), 4),
+            )
+        )
 
     below_best = round(max(0.0, peak - running), 4)
     return AnalystScorecardItem(
@@ -252,11 +258,13 @@ def _ideas(credits: list[dict], stances: list[dict], limit: int) -> list[Scoreca
     reasons = _stance_reasons(stances)
     grouped: dict[tuple, list[dict]] = defaultdict(list)
     for credit in credits:
-        grouped[(
-            credit.get("position_id") or "",
-            credit.get("decision_id") or "",
-            credit.get("symbol") or "",
-        )].append(credit)
+        grouped[
+            (
+                credit.get("position_id") or "",
+                credit.get("decision_id") or "",
+                credit.get("symbol") or "",
+            )
+        ].append(credit)
 
     ideas: list[ScorecardIdea] = []
     for (position_id, decision_id, symbol), rows in grouped.items():
@@ -270,21 +278,21 @@ def _ideas(credits: list[dict], stances: list[dict], limit: int) -> list[Scoreca
                 conviction=row["conviction"],
                 credit=row["credit"],
                 nominated=row["nominated"],
-                reason=reasons.get(
-                    (decision_id, symbol.upper(), row["analyst"]), ""
-                ),
+                reason=reasons.get((decision_id, symbol.upper(), row["analyst"]), ""),
             )
 
-        ideas.append(ScorecardIdea(
-            symbol=symbol,
-            direction=first.get("direction") or "long",
-            position_id=position_id or None,
-            decision_id=decision_id or None,
-            resolved_at=first.get("resolved_at") or "",
-            r_multiple=first.get("r_multiple", 0.0),
-            supported=[_participant(r) for r in rows if r["side"] == "supported"],
-            opposed=[_participant(r) for r in rows if r["side"] == "opposed"],
-        ))
+        ideas.append(
+            ScorecardIdea(
+                symbol=symbol,
+                direction=first.get("direction") or "long",
+                position_id=position_id or None,
+                decision_id=decision_id or None,
+                resolved_at=first.get("resolved_at") or "",
+                r_multiple=first.get("r_multiple", 0.0),
+                supported=[_participant(r) for r in rows if r["side"] == "supported"],
+                opposed=[_participant(r) for r in rows if r["side"] == "opposed"],
+            )
+        )
 
     ideas.sort(key=lambda idea: (idea.resolved_at, idea.symbol), reverse=True)
     return ideas[:limit]
@@ -324,9 +332,7 @@ def build_scorecard(ledger: dict, idea_limit: int = DEFAULT_IDEA_LIMIT) -> Analy
     # in. Name breaks ties so equal totals never reorder between polls.
     analysts.sort(key=lambda a: (-a.cumulative_credit, a.analyst))
 
-    months = sorted({
-        month for month in (_month_of(c.get("resolved_at", "")) for c in credits) if month
-    })
+    months = sorted({month for month in (_month_of(c.get("resolved_at", "")) for c in credits) if month})
 
     return AnalystScorecardResponse(
         as_of=as_of,

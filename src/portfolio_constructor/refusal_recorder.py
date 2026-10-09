@@ -6,6 +6,7 @@ name just because a module imported a sibling from the package. The
 constructor never imports this module; the composition root builds one
 recorder around its database and hands it in (`recorder=`).
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,7 +35,15 @@ class TradeRefusalRecorder:
         self.db = db
 
     def record_parity_refusal(
-        self, symbol, direction, entry, stop, level, ratio, *, stage="construction",
+        self,
+        symbol,
+        direction,
+        entry,
+        stop,
+        level,
+        ratio,
+        *,
+        stage="construction",
     ):
         """Write ONE parity refusal to the durable table. Never raises."""
         db = self.db
@@ -42,21 +51,29 @@ class TradeRefusalRecorder:
             return
         try:
             db.insert_trade_refusal(
-                symbol=symbol, direction=direction,
+                symbol=symbol,
+                direction=direction,
                 refusal=STOP_REFUSAL_REWARD_BELOW_RISK,
-                entry_price=float(entry), stop_price=float(stop),
-                level_used=float(level), reward_risk=float(ratio),
+                entry_price=float(entry),
+                stop_price=float(stop),
+                level_used=float(level),
+                reward_risk=float(ratio),
                 threshold=float(REWARD_RISK_PARITY),
-                level_was_measured=True, stage=stage,
+                level_was_measured=True,
+                stage=stage,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Constructor: parity refusal row write failed for %s: %s",
-                symbol, e,
+                symbol,
+                e,
             )
 
     def record_subfloor_risk_target(
-        self, symbol: str, direction: str | None, requested_pct: float,
+        self,
+        symbol: str,
+        direction: str | None,
+        requested_pct: float,
         min_risk_pct: float,
     ) -> None:
         """Record a positive sub-floor PM risk request. Never raises."""
@@ -65,7 +82,8 @@ class TradeRefusalRecorder:
             return
         try:
             db.insert_trade_refusal(
-                symbol=symbol, direction=direction,
+                symbol=symbol,
+                direction=direction,
                 refusal=SUBFLOOR_RISK_OBSERVED,
                 stage=_SUBFLOOR_RISK_STAGE,
                 requested_risk_pct=float(requested_pct),
@@ -73,12 +91,16 @@ class TradeRefusalRecorder:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "Constructor: sub-floor risk observation write failed "
-                "for %s: %s", symbol, e,
+                "Constructor: sub-floor risk observation write failed for %s: %s",
+                symbol,
+                e,
             )
 
     def record_target_divergence(
-        self, symbol: str, gap_pct: float, threshold_pct: float,
+        self,
+        symbol: str,
+        gap_pct: float,
+        threshold_pct: float,
     ) -> None:
         """Record ONE computed-vs-analyst target comparison. Never raises."""
         db = self.db
@@ -86,7 +108,8 @@ class TradeRefusalRecorder:
             return
         try:
             db.insert_trade_refusal(
-                symbol=symbol, direction=None,
+                symbol=symbol,
+                direction=None,
                 refusal=TARGET_DIVERGENCE_OBSERVED,
                 stage=_SUBFLOOR_RISK_STAGE,
                 observed_gap_pct=float(gap_pct),
@@ -95,5 +118,6 @@ class TradeRefusalRecorder:
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Constructor: target divergence row write failed for %s: %s",
-                symbol, e,
+                symbol,
+                e,
             )

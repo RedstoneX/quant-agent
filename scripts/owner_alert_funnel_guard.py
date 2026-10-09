@@ -62,6 +62,7 @@ guard that returns "clean" when it could not look is decoration.
 
 Run it directly: ``python -m scripts.owner_alert_funnel_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -100,13 +101,9 @@ TELEGRAM_URL_MARKER = "api.telegram.org/bot"
 #: An entry that stops matching a call is itself a failure.
 EXEMPT_DIRECT_SEND_SITES = {
     "scripts/telegram_test.py": (
-        "DELIBERATE: the operator's manual raw-path check; it must report the "
-        "unretried truth of one send."
+        "DELIBERATE: the operator's manual raw-path check; it must report the unretried truth of one send."
     ),
-    "src/scheduler.py": (
-        "A routine session report, not an alert: it has its own record and "
-        "is not an owner warning."
-    ),
+    "src/scheduler.py": ("A routine session report, not an alert: it has its own record and is not an owner warning."),
 }
 
 #: Files allowed to build the Bot API URL themselves. Keep this at two.
@@ -147,13 +144,14 @@ def scanned_paths() -> list[str]:
     patterns += list(ROOT_PATTERNS)
     out = subprocess.run(
         ["git", "ls-files", "-z", "--", *patterns],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
     if out.returncode != 0:
         raise TreeUnreadable(
             "`git ls-files` failed, so this guard measured nothing and REFUSES "
-            "rather than report a clean tree. git said: "
-            + (out.stderr.strip() or "no stderr")
+            "rather than report a clean tree. git said: " + (out.stderr.strip() or "no stderr")
         )
     paths = [p for p in out.stdout.split("\0") if p]
     if not paths:
@@ -303,8 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if bad:
         print(
-            "Owner-alert send path(s) outside the funnel:\n"
-            + "\n".join(f"  - {b}" for b in bad) + "\n" + FIX_ADVICE,
+            "Owner-alert send path(s) outside the funnel:\n" + "\n".join(f"  - {b}" for b in bad) + "\n" + FIX_ADVICE,
             file=sys.stderr,
         )
         return 1

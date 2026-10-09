@@ -1,4 +1,5 @@
 """Coverage-watchdog catch-alls write a counted row when a handle is in reach."""
+
 import logging
 import sqlite3
 from datetime import datetime, timezone

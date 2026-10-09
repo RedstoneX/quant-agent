@@ -1,4 +1,5 @@
 """The unscoped-number guard compares with a fixed, committed allow-list, never the trunk."""
+
 from __future__ import annotations
 
 from scripts import check_allowlist, unscoped_number_guard
@@ -67,15 +68,18 @@ def _repo_with(tmp_path, files, scoped=True):
 def test_the_sentinel_reaches_root_ops_and_scripts_not_only_src(tmp_path):
     from src import number_sources
 
-    root = _repo_with(tmp_path, {
-        "main.py": "STALE_PCT = 7.5\n",
-        "ops/x.py": "LIMIT = 11\n",
-        "scripts/s.py": "CAP = 13\n",
-        "src/a.py": "Z = 17\n",
-        "tests/t.py": "T = 19\n",
-        ".venv/v.py": "V = 23\n",
-        "src/config/__init__.py": "",
-    })
+    root = _repo_with(
+        tmp_path,
+        {
+            "main.py": "STALE_PCT = 7.5\n",
+            "ops/x.py": "LIMIT = 11\n",
+            "scripts/s.py": "CAP = 13\n",
+            "src/a.py": "Z = 17\n",
+            "tests/t.py": "T = 19\n",
+            ".venv/v.py": "V = 23\n",
+            "src/config/__init__.py": "",
+        },
+    )
     seen = [s.site_id for s in number_sources.collect_unscoped_sites(root)]
     for module in ("main.", "ops.x.", "scripts.s.", "src.a."):
         assert any(i.startswith(module) for i in seen), (module, seen)

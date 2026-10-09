@@ -1,4 +1,5 @@
 """Broker-read catch-alls are loud: fault, clean pass, never-reached."""
+
 import logging
 
 from unittest import mock

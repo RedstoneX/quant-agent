@@ -90,7 +90,7 @@ def split_entries(text: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for index, mark in enumerate(marks):
         end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
-        entries.append((mark.group(1).strip(), text[mark.end():end]))
+        entries.append((mark.group(1).strip(), text[mark.end() : end]))
     return entries
 
 

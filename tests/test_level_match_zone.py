@@ -62,11 +62,10 @@ REPO = Path(__file__).resolve().parents[1]
 #    and for EVERY volatility, because volatility is no longer an input.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("price", [1.0, 7.5, 42.37, 100.0, 1234.56, 9999.0])
 def test_tolerance_is_exactly_the_zone_width(price):
-    assert level_zone_halfwidth(price) == pytest.approx(
-        price * CLUSTER_TOLERANCE_PCT / 100.0
-    )
+    assert level_zone_halfwidth(price) == pytest.approx(price * CLUSTER_TOLERANCE_PCT / 100.0)
 
 
 def test_tolerance_tracks_the_cluster_constant_not_a_copy_of_it():
@@ -76,9 +75,7 @@ def test_tolerance_tracks_the_cluster_constant_not_a_copy_of_it():
     the clustering zone would have silently left the matcher behind.
     """
     widened = CLUSTER_TOLERANCE_PCT * 3
-    assert level_zone_halfwidth(200.0, widened) == pytest.approx(
-        level_zone_halfwidth(200.0) * 3
-    )
+    assert level_zone_halfwidth(200.0, widened) == pytest.approx(level_zone_halfwidth(200.0) * 3)
 
 
 def test_tolerance_covers_every_pivot_the_clusterer_would_have_merged():
@@ -117,9 +114,7 @@ def test_tolerance_covers_every_pivot_the_clusterer_would_have_merged():
 
     level_price = sum(p[1] for p in clusters[0]) / len(clusters[0])
     zone_low, zone_high = cluster_span(clusters[0])
-    tolerance = level_zone_halfwidth(
-        level_price, zone_low=zone_low, zone_high=zone_high
-    )
+    tolerance = level_zone_halfwidth(level_price, zone_low=zone_low, zone_high=zone_high)
     for pivot in clusters[0]:
         assert abs(pivot[1] - level_price) <= tolerance
 
@@ -183,7 +178,9 @@ def test_new_tolerance_is_independent_of_volatility():
     bars = {level_price: [(99.4, 100.2)]}
     for atr in (0.5, 1.5, 2.56, 4.0, 9.0):  # 0.5%..9% of price
         matched = _structural_level_backing_stop(
-            entry_price=105.0, stop_loss=stop, is_short=False,
+            entry_price=105.0,
+            stop_loss=stop,
+            is_short=False,
             computed_levels=[level_price],
             computed_level_touches={level_price: 5},
             computed_level_bars=bars,
@@ -198,6 +195,7 @@ def test_new_tolerance_is_independent_of_volatility():
 #    rule because it is deliberately stdlib-only; a copy is only safe if
 #    something checks it.
 # ---------------------------------------------------------------------------
+
 
 def _constructor():
     return PortfolioConstructor(ConstructorConfig(min_level_touches_for_stop_honor=5))
@@ -219,13 +217,13 @@ class _Analysis:
 # became true by construction, so the test could no longer fail if the
 # matcher's rule changed underneath it.
 _MATCH_TRUTH_TABLE = {
-    0.0: 100.0,    # stop 100.00 — inside the bar
-    0.5: 100.0,    # stop  99.50 — inside the bar
-    0.99: 100.0,   # stop  99.01 — inside the bar, a cent above its low
-    1.0: 100.0,    # stop  99.00 — exactly ON the bar's low, inclusive
-    1.01: None,    # stop  98.99 — a cent BELOW the bar's low
-    1.5: None,     # stop  98.50 — outside
-    5.0: None,     # stop  95.00 — far outside
+    0.0: 100.0,  # stop 100.00 — inside the bar
+    0.5: 100.0,  # stop  99.50 — inside the bar
+    0.99: 100.0,  # stop  99.01 — inside the bar, a cent above its low
+    1.0: 100.0,  # stop  99.00 — exactly ON the bar's low, inclusive
+    1.01: None,  # stop  98.99 — a cent BELOW the bar's low
+    1.5: None,  # stop  98.50 — outside
+    5.0: None,  # stop  95.00 — far outside
 }
 
 
@@ -249,11 +247,17 @@ def test_constructor_and_exit_guard_match_identically(gap):
     bars = {level_price: [(bar_low, bar_high)]}
 
     from_constructor = _constructor()._level_backing_stop(
-        _Analysis([level_price], touches, bars), entry, stop, False,
+        _Analysis([level_price], touches, bars),
+        entry,
+        stop,
+        False,
     )
     from_exit_guard = _structural_level_backing_stop(
-        entry_price=entry, stop_loss=stop, is_short=False,
-        computed_levels=[level_price], computed_level_touches=touches,
+        entry_price=entry,
+        stop_loss=stop,
+        is_short=False,
+        computed_levels=[level_price],
+        computed_level_touches=touches,
         computed_level_bars=bars,
         min_level_touches=5,
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
@@ -279,9 +283,9 @@ def test_boundary_scales_with_price_in_both_implementations():
     `src/risk/exit_guard.py` keeps a hand-copy of the rule.
     """
     cases = {
-        10.0: (9.93, 10.02),      # 0.7% below the level
-        100.0: (98.10, 100.40),   # 1.9% below
-        1000.0: (996.00, 1002.0), # 0.4% below
+        10.0: (9.93, 10.02),  # 0.7% below the level
+        100.0: (98.10, 100.40),  # 1.9% below
+        1000.0: (996.00, 1002.0),  # 0.4% below
     }
     observed: list[tuple[float, float, bool]] = []
     for level_price, (bar_low, bar_high) in cases.items():
@@ -294,29 +298,31 @@ def test_boundary_scales_with_price_in_both_implementations():
             (bar_low - (bar_high - bar_low) * 0.01, False),
         ):
             from_ctor = c._level_backing_stop(
-                _Analysis([level_price], touches, bars), entry, stop, False,
+                _Analysis([level_price], touches, bars),
+                entry,
+                stop,
+                False,
             )
             from_guard = _structural_level_backing_stop(
-                entry_price=entry, stop_loss=stop, is_short=False,
-                computed_levels=[level_price], computed_level_touches=touches,
-                computed_level_bars=bars, min_level_touches=5,
+                entry_price=entry,
+                stop_loss=stop,
+                is_short=False,
+                computed_levels=[level_price],
+                computed_level_touches=touches,
+                computed_level_bars=bars,
+                min_level_touches=5,
                 level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
             )
             assert from_ctor == from_guard, (level_price, stop)
             assert (from_ctor == level_price) is inside, (level_price, stop)
-            observed.append(
-                (abs(stop - level_price) / level_price * 100.0, level_price, inside)
-            )
+            observed.append((abs(stop - level_price) / level_price * 100.0, level_price, inside))
 
     # The search. A constant-fraction rule would accept exactly the cases
     # whose gap is at or under some single percentage; sweep every candidate
     # boundary the observations themselves offer and require all of them to
     # misclassify something.
     candidates = sorted({round(g, 10) for g, _, _ in observed})
-    reproducing = [
-        pct for pct in candidates
-        if all((gap <= pct + 1e-12) is inside for gap, _, inside in observed)
-    ]
+    reproducing = [pct for pct in candidates if all((gap <= pct + 1e-12) is inside for gap, _, inside in observed)]
     assert not reproducing, (
         "the matcher is reproducible by a constant %-of-price tolerance "
         f"{reproducing} — the price-scaling property is gone"
@@ -343,12 +349,19 @@ def test_stop_to_level_distance_is_bounded_by_the_trade_own_risk():
     def match(bar, stop):
         bars = {level_price: [bar]}
         from_ctor = c._level_backing_stop(
-            _Analysis([level_price], touches, bars), entry, stop, False,
+            _Analysis([level_price], touches, bars),
+            entry,
+            stop,
+            False,
         )
         from_guard = _structural_level_backing_stop(
-            entry_price=entry, stop_loss=stop, is_short=False,
-            computed_levels=[level_price], computed_level_touches=touches,
-            computed_level_bars=bars, min_level_touches=5,
+            entry_price=entry,
+            stop_loss=stop,
+            is_short=False,
+            computed_levels=[level_price],
+            computed_level_touches=touches,
+            computed_level_bars=bars,
+            min_level_touches=5,
             level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
         )
         assert from_ctor == from_guard, (bar, stop)
@@ -374,10 +387,12 @@ def test_stop_to_level_distance_is_bounded_by_the_trade_own_risk():
         else:
             assert 2 * half >= abs(entry - stop), half
 
+
 # ---------------------------------------------------------------------------
 # 4. Mechanical guards — the rules in section 1 only hold if nobody quietly
 #    reintroduces the deleted setting or a private copy of the constant.
 # ---------------------------------------------------------------------------
+
 
 def test_deleted_setting_is_refused_loudly_not_ignored():
     """`extra="ignore"` would let a stale settings.yaml load in silence."""
@@ -398,15 +413,12 @@ def test_no_atr_multiple_survives_anywhere():
         for path in root.rglob("*"):
             if path.suffix not in {".py", ".yaml", ".yml"} or not path.is_file():
                 continue
-            for lineno, line in enumerate(
-                path.read_text(errors="replace").splitlines(), 1
-            ):
+            for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
                 stripped = line.strip()
                 if stripped.startswith("#") or "level_match_atr_tolerance" not in line:
                     continue
                 if "level_match_atr_tolerance=" in line or (
-                    "level_match_atr_tolerance:" in line
-                    and not stripped.startswith("#")
+                    "level_match_atr_tolerance:" in line and not stripped.startswith("#")
                 ):
                     # The deletion guard in `RiskConfig` and this test's own
                     # assertion both legitimately name the key.
@@ -463,22 +475,29 @@ def test_min_touches_is_two_and_that_one_is_sourced():
 #    not only against a hand-written price.
 # ---------------------------------------------------------------------------
 
+
 def _bars_with_a_double_bottom() -> list[OHLCV]:
     """Enough clean bars for the scan, with two clear pivot lows near 95."""
     bars: list[OHLCV] = []
     closes = (
         [105, 104, 103, 102, 101, 100, 99, 98, 97, 96]
-        + [95.0]                       # pivot low 1
+        + [95.0]  # pivot low 1
         + [96, 97, 98, 99, 100, 101, 102, 103, 104, 105]
-        + [95.4]                       # pivot low 2 — inside 1% of 95.0
+        + [95.4]  # pivot low 2 — inside 1% of 95.0
         + [96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107]
     )
     start = date(2026, 1, 5)
     for i, close in enumerate(closes):
-        bars.append(OHLCV(
-            date=start + timedelta(days=i), open=close, high=close + 0.4,
-            low=close - 0.4, close=close, volume=1_000_000,
-        ))
+        bars.append(
+            OHLCV(
+                date=start + timedelta(days=i),
+                open=close,
+                high=close + 0.4,
+                low=close - 0.4,
+                close=close,
+                volume=1_000_000,
+            )
+        )
     return bars
 
 
@@ -503,12 +522,24 @@ def test_a_stop_on_a_bar_that_drew_a_real_computed_level_is_recognised():
     # made it — the case item 215 exists to refuse.
     off_every_bar = lowest - (highest - lowest)
 
-    assert c._level_backing_stop(
-        _Analysis([level.price], touches, bars), entry, on_a_bar, False,
-    ) == level.price
-    assert c._level_backing_stop(
-        _Analysis([level.price], touches, bars), entry, off_every_bar, False,
-    ) is None
+    assert (
+        c._level_backing_stop(
+            _Analysis([level.price], touches, bars),
+            entry,
+            on_a_bar,
+            False,
+        )
+        == level.price
+    )
+    assert (
+        c._level_backing_stop(
+            _Analysis([level.price], touches, bars),
+            entry,
+            off_every_bar,
+            False,
+        )
+        is None
+    )
 
 
 def test_a_stop_inside_the_zone_but_on_no_forming_bar_is_not_backed():
@@ -527,31 +558,55 @@ def test_a_stop_inside_the_zone_but_on_no_forming_bar_is_not_backed():
     # the bars do not.
     bars = {level_price: [(94.0, 95.0), (104.0, 105.0)]}
     entry = 120.0
-    in_the_gap = 99.0          # inside the zone, on neither bar
-    on_the_lower_bar = 94.5    # on a bar that actually traded
+    in_the_gap = 99.0  # inside the zone, on neither bar
+    on_the_lower_bar = 94.5  # on a bar that actually traded
 
     c = _constructor()
-    assert c._level_backing_stop(
-        _Analysis([level_price], touches, bars), entry, in_the_gap, False,
-    ) is None
-    assert c._level_backing_stop(
-        _Analysis([level_price], touches, bars), entry, on_the_lower_bar, False,
-    ) == level_price
+    assert (
+        c._level_backing_stop(
+            _Analysis([level_price], touches, bars),
+            entry,
+            in_the_gap,
+            False,
+        )
+        is None
+    )
+    assert (
+        c._level_backing_stop(
+            _Analysis([level_price], touches, bars),
+            entry,
+            on_the_lower_bar,
+            False,
+        )
+        == level_price
+    )
 
     for stop, expected in ((in_the_gap, None), (on_the_lower_bar, level_price)):
-        assert _structural_level_backing_stop(
-            entry_price=entry, stop_loss=stop, is_short=False,
-            computed_levels=[level_price], computed_level_touches=touches,
-            computed_level_bars=bars,
-            min_level_touches=5,
-            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-        ) == expected
+        assert (
+            _structural_level_backing_stop(
+                entry_price=entry,
+                stop_loss=stop,
+                is_short=False,
+                computed_levels=[level_price],
+                computed_level_touches=touches,
+                computed_level_bars=bars,
+                min_level_touches=5,
+                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+            )
+            == expected
+        )
 
 
 def test_no_bar_ranges_recorded_fails_closed_to_not_backed():
     """Item 215 fails closed. An older stored analysis carries no forming
     bars, and an unknown is never an exemption."""
     level_price = 100.0
-    assert _constructor()._level_backing_stop(
-        _Analysis([level_price], {level_price: 5}), 110.0, 99.9, False,
-    ) is None
+    assert (
+        _constructor()._level_backing_stop(
+            _Analysis([level_price], {level_price: 5}),
+            110.0,
+            99.9,
+            False,
+        )
+        is None
+    )

@@ -42,10 +42,13 @@ from dataclasses import dataclass
 from typing import Literal
 from src.risk.noise_band_record import fallback_outcome as noise_band_fallback_outcome
 from src.risk.exit_guard_structural import (  # noqa: F401 -- lifted verbatim, re-exported
-    _consecutive_prior_break_count, _structural_level_backing_stop,
+    _consecutive_prior_break_count,
+    _structural_level_backing_stop,
 )
 from src.risk.noise_band_anchor import (  # noqa: F401 -- noise_band_anchor re-exported
-    anchored_adverse_move, band_width_atr, noise_band_anchor,
+    anchored_adverse_move,
+    band_width_atr,
+    noise_band_anchor,
 )
 from src.risk.exit_guard_claims import (  # noqa: F401 -- re-exported, lifted verbatim
     _REGIME_FLIP_CLAIM_RE,
@@ -347,10 +350,13 @@ def adverse_move_is_noise(
     if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
         return False
     adverse = anchored_adverse_move(
-        ent, cur, extreme_since_entry, is_short=str(side).lower() == "buy",
+        ent,
+        cur,
+        extreme_since_entry,
+        is_short=str(side).lower() == "buy",
     )[1]
     if adverse <= 0:
-        return False   # flat or winning — not this guard's business
+        return False  # flat or winning — not this guard's business
     return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
 
 
@@ -444,7 +450,7 @@ def level_zone_span_phrase(
             low = high = None
     if low is None or high is None:
         lows, highs = [], []
-        for rng in ((computed_level_bars or {}).get(level) or ()):
+        for rng in (computed_level_bars or {}).get(level) or ():
             try:
                 b_low, b_high = float(rng[0]), float(rng[1])
             except (TypeError, ValueError, IndexError):
@@ -455,19 +461,11 @@ def level_zone_span_phrase(
             highs.append(b_high)
         if lows and highs:
             low, high = min(lows), max(highs)
-    if (
-        low is None or high is None
-        or not (math.isfinite(low) and math.isfinite(high)) or high < low
-    ):
+    if low is None or high is None or not (math.isfinite(low) and math.isfinite(high)) or high < low:
         return "measured zone span NOT RECORDED for this level"
     span = high - low
-    pct = (
-        f", {span / level * 100:.2f}% of the level price"
-        if math.isfinite(level) and level > 0 else ""
-    )
-    return (
-        f"measured zone {low:.4g}-{high:.4g}, span {span:.4g}{pct}"
-    )
+    pct = f", {span / level * 100:.2f}% of the level price" if math.isfinite(level) and level > 0 else ""
+    return f"measured zone {low:.4g}-{high:.4g}, span {span:.4g}{pct}"
 
 
 @dataclass(frozen=True)
@@ -535,8 +533,6 @@ class StructuralProtectionCheck:
     #: composes the symbol and action verb around it for the Telegram/board
     #: surfaces; this field is the reusable clause.
     owner_reason: str = ""
-
-
 
 
 def check_structural_protection(
@@ -647,8 +643,12 @@ def check_structural_protection(
     # structural swing-low must also break come from the sourced regime; the
     # break margin is always `BREAK_CONFIRMATION_ATR_MULTIPLE`.
     trend_context = classify_trend_context(
-        is_short=is_short, current_price=current_price,
-        ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior, adx=adx,
+        is_short=is_short,
+        current_price=current_price,
+        ma_50=ma_50,
+        ma_200=ma_200,
+        ma_200_prior=ma_200_prior,
+        adx=adx,
     )
     needed_closes, requires_prior_low = _break_confirmation_settings(
         trend_context,
@@ -660,7 +660,9 @@ def check_structural_protection(
         shorthands when no records were supplied."""
         if prior_break_records and prior_session_dates:
             return _consecutive_prior_break_count(
-                prior_break_records, prior_session_dates, clears=clears,
+                prior_break_records,
+                prior_session_dates,
+                clears=clears,
             )
         if prior_break_streak is not None:
             return max(0, int(prior_break_streak))
@@ -679,12 +681,17 @@ def check_structural_protection(
     text = (thesis_invalid_if or "").strip()
     if text:
         check = check_thesis_invalid_if(
-            text, current_price, ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
+            text,
+            current_price,
+            ma_20=ma_20,
+            ma_50=ma_50,
+            ma_200=ma_200,
         )
         if check.status == "TRIGGERED":
             if confirmed:
                 return StructuralProtectionCheck(
-                    protected=False, basis="thesis_invalid_if_triggered",
+                    protected=False,
+                    basis="thesis_invalid_if_triggered",
                     detail=(
                         f"thesis_invalid_if triggered on {closes_seen} "
                         f"confirming trading-day close(s) "
@@ -695,13 +702,15 @@ def check_structural_protection(
                     confirming_closes_needed=needed_closes,
                     confirming_closes_seen=closes_seen,
                     owner_reason=_compose_owner_break_reason(
-                        is_short=is_short, trigger_desc="its stated exit "
-                        "condition was met on the close",
-                        trend_context=trend_context, confirmed=True,
+                        is_short=is_short,
+                        trigger_desc="its stated exit condition was met on the close",
+                        trend_context=trend_context,
+                        confirmed=True,
                     ),
                 )
             return StructuralProtectionCheck(
-                protected=True, basis="thesis_invalid_if_pending_confirmation",
+                protected=True,
+                basis="thesis_invalid_if_pending_confirmation",
                 detail=(
                     f"thesis_invalid_if triggered on today's close "
                     f"({closes_seen} of {needed_closes} confirming closes, "
@@ -714,14 +723,16 @@ def check_structural_protection(
                 confirming_closes_needed=needed_closes,
                 confirming_closes_seen=closes_seen,
                 owner_reason=_compose_owner_break_reason(
-                    is_short=is_short, trigger_desc="its stated exit "
-                    "condition was met on the close",
-                    trend_context=trend_context, confirmed=False,
+                    is_short=is_short,
+                    trigger_desc="its stated exit condition was met on the close",
+                    trend_context=trend_context,
+                    confirmed=False,
                 ),
             )
         if check.status == "NOT_TRIGGERED":
             return StructuralProtectionCheck(
-                protected=True, basis="thesis_invalid_if_intact",
+                protected=True,
+                basis="thesis_invalid_if_intact",
                 detail=f"thesis_invalid_if not triggered: {check.detail}",
                 raw_broken=False,
             )
@@ -733,7 +744,9 @@ def check_structural_protection(
     atr_f = _finite(atr)
     if ent is not None and stop is not None and atr_f is not None and atr_f > 0:
         level = _structural_level_backing_stop(
-            entry_price=ent, stop_loss=stop, is_short=is_short,
+            entry_price=ent,
+            stop_loss=stop,
+            is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             computed_level_zones=computed_level_zones,
@@ -758,6 +771,7 @@ def check_structural_protection(
             # 2026-09-24, trend-scaled exit): the regime changes how many closes
             # and the prior-low condition, NEVER the margin.
             break_margin = BREAK_CONFIRMATION_ATR_MULTIPLE * atr_f
+
             # MARGIN-CONSISTENCY GUARD (#4). Now that this branch's break margin
             # is known, recompute the prior streak counting a prior close only
             # if it cleared THIS margin — a close that only cleared a looser
@@ -771,9 +785,7 @@ def check_structural_protection(
                 rc = _finite(r.get("close"))
                 if rc is None:
                     return False
-                return (rc >= level + break_margin) if is_short else (
-                    rc <= level - break_margin
-                )
+                return (rc >= level + break_margin) if is_short else (rc <= level - break_margin)
 
             level_prior_streak = _prior_streak(clears=_cleared_current_margin)
             closes_seen = min(level_prior_streak + 1, needed_closes)
@@ -789,13 +801,16 @@ def check_structural_protection(
                 # ship a false 'safe to sell'" posture as
                 # `_level_backing_stop` itself uses for touch counts).
                 return StructuralProtectionCheck(
-                    protected=True, basis="structural_level_intact",
+                    protected=True,
+                    basis="structural_level_intact",
                     detail=(
                         f"structural level {level} backs the stop but no "
                         f"current_price (closing price) supplied — treated "
                         f"as intact ("
                         + level_zone_span_phrase(
-                            level, computed_level_zones, computed_level_bars,
+                            level,
+                            computed_level_zones,
+                            computed_level_bars,
                         )
                         + ")"
                     ),
@@ -834,10 +849,7 @@ def check_structural_protection(
             else:
                 broken = cur <= level - break_margin
             if broken:
-                level_desc = (
-                    f"its {level:g} resistance" if is_short
-                    else f"its {level:g} support"
-                )
+                level_desc = f"its {level:g} resistance" if is_short else f"its {level:g} support"
                 # REGIME-3 STRUCTURAL PATIENCE. For a strong-with-trend break the
                 # close streak alone is not enough: the PRIOR structural
                 # swing-low (long) / swing-high (short) must ALSO have closed
@@ -848,7 +860,10 @@ def check_structural_protection(
                 awaiting_prior_low = False
                 if requires_prior_low and streak_confirmed:
                     prior_low_broken = _prior_structural_level_broken(
-                        computed_levels, level, cur, break_margin,
+                        computed_levels,
+                        level,
+                        cur,
+                        break_margin,
                         is_short=is_short,
                     )
                     confirmed = prior_low_broken
@@ -857,11 +872,11 @@ def check_structural_protection(
                     confirmed = streak_confirmed
                 if confirmed:
                     return StructuralProtectionCheck(
-                        protected=False, basis="structural_level_broken",
+                        protected=False,
+                        basis="structural_level_broken",
                         broken_level=_finite(level),
                         detail=(
-                            break_margin_payload +
-                            f"structural level {level} backing the stop has "
+                            break_margin_payload + f"structural level {level} backing the stop has "
                             f"closed beyond it on {closes_seen} confirming "
                             f"trading-day close(s) (regime: {trend_context}"
                             f"{'; prior swing-low also broken' if requires_prior_low else ''}): "
@@ -874,24 +889,21 @@ def check_structural_protection(
                         confirming_closes_seen=closes_seen,
                         owner_reason=_compose_owner_break_reason(
                             is_short=is_short,
-                            trigger_desc=(
-                                f"closed decisively "
-                                f"{'above' if is_short else 'below'} "
-                                f"{level_desc}"
-                            ),
-                            trend_context=trend_context, confirmed=True,
+                            trigger_desc=(f"closed decisively {'above' if is_short else 'below'} {level_desc}"),
+                            trend_context=trend_context,
+                            confirmed=True,
                         ),
                     )
                 pending_reason = (
-                    "awaiting prior swing-low break" if awaiting_prior_low
+                    "awaiting prior swing-low break"
+                    if awaiting_prior_low
                     else f"{closes_seen} of {needed_closes} confirming closes"
                 )
                 return StructuralProtectionCheck(
                     protected=True,
                     basis="structural_level_pending_confirmation",
                     detail=(
-                        break_margin_payload +
-                        f"structural level {level} backing the stop closed "
+                        break_margin_payload + f"structural level {level} backing the stop closed "
                         f"beyond it today ({pending_reason}, regime: "
                         f"{trend_context}) — still protected pending "
                         f"confirmation (guards against a one-day "
@@ -904,23 +916,23 @@ def check_structural_protection(
                     confirming_closes_seen=closes_seen,
                     owner_reason=_compose_owner_break_reason(
                         is_short=is_short,
-                        trigger_desc=(
-                            f"{'rose above' if is_short else 'dipped below'} "
-                            f"{level_desc}"
-                        ),
-                        trend_context=trend_context, confirmed=False,
+                        trigger_desc=(f"{'rose above' if is_short else 'dipped below'} {level_desc}"),
+                        trend_context=trend_context,
+                        confirmed=False,
                         awaiting_prior_low=awaiting_prior_low,
                     ),
                 )
             return StructuralProtectionCheck(
-                protected=True, basis="structural_level_intact",
+                protected=True,
+                basis="structural_level_intact",
                 detail=(
-                    break_margin_payload +
-                    f"structural level {level} backing the stop is intact: "
+                    break_margin_payload + f"structural level {level} backing the stop is intact: "
                     f"close {cur} vs level {level} (break margin "
                     f"{break_margin:.4g}; "
                     + level_zone_span_phrase(
-                        level, computed_level_zones, computed_level_bars,
+                        level,
+                        computed_level_zones,
+                        computed_level_bars,
                     )
                     + ")"
                 ),
@@ -945,13 +957,13 @@ def check_structural_protection(
     if ent is not None and atr_f is not None and atr_f > 0 and cur is not None:
         # Re-anchored on the running extreme since entry; why this home may
         # (and the midday reviewer may not): `noise_band_anchor` docstring.
-        _anchor, adverse = anchored_adverse_move(
-            ent, cur, extreme_since_entry, is_short=is_short)
+        _anchor, adverse = anchored_adverse_move(ent, cur, extreme_since_entry, is_short=is_short)
         _anchor_kind = "extreme_since_entry" if _anchor != ent else "entry"
         if adverse <= 0:
             # Flat or in profit — never this fallback's business.
             return StructuralProtectionCheck(
-                protected=True, basis="no_adverse_move_from_entry",
+                protected=True,
+                basis="no_adverse_move_from_entry",
                 detail=(
                     "no thesis_invalid_if and no verified structural level "
                     "under the stop, but price is flat/favourable versus "
@@ -968,7 +980,10 @@ def check_structural_protection(
         # move the other. No `days_held` is passed here and that is
         # deliberate and unchanged -- this home's band is FLAT.
         is_noise = adverse_move_is_noise(
-            ent, cur, atr_f, side=("buy" if is_short else "sell"),
+            ent,
+            cur,
+            atr_f,
+            side=("buy" if is_short else "sell"),
             multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
             extreme_since_entry=extreme_since_entry,
         )
@@ -977,13 +992,19 @@ def check_structural_protection(
         # two homes write one comparable shape. RECORDING ONLY — `is_noise`
         # above is the unchanged decision.
         _protected, _basis, _detail = noise_band_fallback_outcome(
-            ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
+            ent=ent,
+            cur=cur,
+            atr_f=atr_f,
+            is_short=is_short,
             is_noise=bool(is_noise),
             band_multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
-            anchor=_anchor, anchor_kind=_anchor_kind,
+            anchor=_anchor,
+            anchor_kind=_anchor_kind,
         )
         return StructuralProtectionCheck(
-            protected=_protected, basis=_basis, detail=_detail,
+            protected=_protected,
+            basis=_basis,
+            detail=_detail,
             raw_broken=False,
         )
 
@@ -992,7 +1013,8 @@ def check_structural_protection(
     # protection rather than manufacture a block out of missing data (same
     # posture `adverse_move_is_noise` itself takes).
     return StructuralProtectionCheck(
-        protected=True, basis="noise_band_unevaluable_no_data",
+        protected=True,
+        basis="noise_band_unevaluable_no_data",
         detail=(
             "no thesis_invalid_if, no verified structural level under the "
             "stop, and insufficient price/ATR data to evaluate the noise "
@@ -1052,11 +1074,13 @@ def structural_protection_broken(
         computed_level_bars=computed_level_bars,
         min_level_touches=min_level_touches,
         level_cluster_tolerance_pct=level_cluster_tolerance_pct,
-        ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,
+        ma_20=ma_20,
+        ma_50=ma_50,
+        ma_200=ma_200,
+        ma_200_prior=ma_200_prior,
         adx=adx,
         break_seen_prior_close=break_seen_prior_close,
         prior_break_streak=prior_break_streak,
         prior_break_records=prior_break_records,
         prior_session_dates=prior_session_dates,
     ).protected
-

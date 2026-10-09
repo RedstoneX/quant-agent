@@ -1,4 +1,5 @@
 """The evening session's catch-alls log a traceback and count a row."""
+
 import logging
 import sqlite3
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from src.sessions.evening_record import record_evening_pass, run_evening_houseke
 def _session():
     conn = sqlite3.connect(":memory:")
     from src.storage.schema.sentinel_tables import ensure_sentinel_tables
+
     ensure_sentinel_tables(conn=conn)
     return SimpleNamespace(_db=SimpleNamespace(conn=conn))
 
@@ -50,10 +52,11 @@ def test_no_ledger_handle_still_logs_and_does_not_raise(caplog):
 def test_housekeeping_fault_is_loud_and_other_prunes_still_run(caplog):
     s = _session()
     ok = lambda **k: 0
+
     def bad(**k):
         raise RuntimeError("locked")
-    for n in ("prune_trades", "prune_specialist_evidence", "prune_pending_protection_restores",
-              "prune_pending_repegs"):
+
+    for n in ("prune_trades", "prune_specialist_evidence", "prune_pending_protection_restores", "prune_pending_repegs"):
         setattr(s._db, n, ok)
     s._db.prune_agent_logs = bad
     s._news_store = SimpleNamespace(prune=ok)

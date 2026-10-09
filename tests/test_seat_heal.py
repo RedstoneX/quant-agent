@@ -1,4 +1,5 @@
 """Mechanical heal first, then at most one paid retry. Never invent text."""
+
 import pytest
 from src.seat_heal import (
     HEAL_CAP_BLOCKED,
@@ -61,14 +62,16 @@ def test_merge_retry_falsifiers_copies_stated_only_never_invents():
 
     original = [
         {"symbol": "AAPL", "risk_allocation_pct": 1.0, "thesis_invalid_if": ""},
-        {"symbol": "MSFT", "risk_allocation_pct": 1.0,
-         "thesis_invalid_if": "closes below 400"},
+        {"symbol": "MSFT", "risk_allocation_pct": 1.0, "thesis_invalid_if": "closes below 400"},
         {"symbol": "NVDA", "risk_allocation_pct": 0.0, "thesis_invalid_if": ""},
     ]
     retry = [
-        {"symbol": "AAPL", "risk_allocation_pct": 9.0,
-         "thesis_invalid_if": "daily close below 191.5",
-         "catalyst": "invented 8-K"},
+        {
+            "symbol": "AAPL",
+            "risk_allocation_pct": 9.0,
+            "thesis_invalid_if": "daily close below 191.5",
+            "catalyst": "invented 8-K",
+        },
         {"symbol": "MSFT", "thesis_invalid_if": "retry must not overwrite"},
         {"symbol": "NVDA", "thesis_invalid_if": "close needs no fill"},
     ]
@@ -88,8 +91,7 @@ def test_merge_retry_falsifiers_does_not_invent_when_retry_also_blank():
     original = [{"symbol": "MRVL", "risk_allocation_pct": 1.0, "thesis_invalid_if": "unknown"}]
     merged, filled = merge_retry_falsifiers(
         original,
-        [{"symbol": "MRVL", "thesis_invalid_if": ""},
-         {"symbol": "MRVL", "thesis_invalid_if": "unknown"}],
+        [{"symbol": "MRVL", "thesis_invalid_if": ""}, {"symbol": "MRVL", "thesis_invalid_if": "unknown"}],
     )
     assert merged[0]["thesis_invalid_if"] == "unknown"
     assert filled == []
@@ -102,13 +104,15 @@ def test_macro_parse_failure_names_missing_chain_and_does_not_invent_one():
         "equity_outlook": "bullish",
         "summary": "stay long",
         "position_guidance": {
-            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "target_invested_pct": 70,
+            "cash_recommendation_pct": 30,
             "reasoning": "stay invested",
         },
         "sector_guidance": {"Technology": "bullish"},
     }
     coerced, _fixes = coerce_macro_shape(payload)
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError) as exc:
         MacroAnalysis.model_validate(coerced)
     reason = describe_macro_parse_failure(coerced, exc.value)
@@ -132,7 +136,8 @@ def test_macro_dict_shape_coerces_then_validates_when_chain_present():
         "confidence": "medium",
         "equity_outlook": "bullish",
         "position_guidance": {
-            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "target_invested_pct": 70,
+            "cash_recommendation_pct": 30,
             "reasoning": "stay invested",
         },
         "summary": "risk on",
@@ -205,15 +210,21 @@ def test_pipeline_paid_retry_is_one_shot_and_requires_inputs():
     from src.pipeline_context import RunContext
 
     chain = MacroReasoningChain(
-        volatility_analysis="vix ok", yield_curve_analysis="curve ok",
-        monetary_policy_analysis="fed ok", inflation_labor_credit="cpi ok",
-        cross_signal_synthesis="together ok", sector_implications="tech ow",
+        volatility_analysis="vix ok",
+        yield_curve_analysis="curve ok",
+        monetary_policy_analysis="fed ok",
+        inflation_labor_credit="cpi ok",
+        cross_signal_synthesis="together ok",
+        sector_implications="tech ow",
     )
     analysis = MacroAnalysis(
-        reasoning_chain=chain, regime="risk-on", confidence="medium",
+        reasoning_chain=chain,
+        regime="risk-on",
+        confidence="medium",
         equity_outlook="bullish",
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=70, cash_recommendation_pct=30,
+            target_invested_pct=70,
+            cash_recommendation_pct=30,
             reasoning="stay invested",
         ),
         summary="risk on",
@@ -257,7 +268,8 @@ def test_broken_macro_dict_is_not_passed_to_pm():
         "equity_outlook": "bullish",
         "summary": "stay long",
         "position_guidance": {
-            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "target_invested_pct": 70,
+            "cash_recommendation_pct": 30,
             "reasoning": "stay invested",
         },
         "sector_guidance": {"Technology": "bullish"},

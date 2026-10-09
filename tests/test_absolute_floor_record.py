@@ -7,6 +7,7 @@ never once bound and its multiple of 1 cannot be re-derived from anything.
 These tests pin the counting, not a number. The module stores nothing, so
 there is no reset and no test can inherit another test's tallies.
 """
+
 from __future__ import annotations
 
 import ast
@@ -25,9 +26,16 @@ from src.portfolio_constructor.config import (
 def _call(inside, stop=95.0, atr=10.0):
     return rec.noted(
         inside_hard_floor=inside,
-        symbol="AAA", side_label="LONG", side_word="below",
-        entry_price=100.0, stop_loss=stop, atr=atr, level=stop,
-        hard_floor=90.0, floor_multiple=1.0, multiple=2.5,
+        symbol="AAA",
+        side_label="LONG",
+        side_word="below",
+        entry_price=100.0,
+        stop_loss=stop,
+        atr=atr,
+        level=stop,
+        hard_floor=90.0,
+        floor_multiple=1.0,
+        multiple=2.5,
         band_edge=75.0,
     )
 
@@ -35,10 +43,7 @@ def _call(inside, stop=95.0, atr=10.0):
 def test_the_module_holds_no_state_at_all():
     """The stored-bookkeeping mandate: no tally, no reset, nothing to clear."""
     assert not hasattr(rec, "reset")
-    held = [
-        n for n, v in vars(rec).items()
-        if isinstance(v, (list, dict, set)) and not n.startswith("__")
-    ]
+    held = [n for n, v in vars(rec).items() if isinstance(v, (list, dict, set)) and not n.startswith("__")]
     assert held == [], held
 
 
@@ -63,15 +68,16 @@ def test_one_row_is_written_per_placement(caplog):
     assert len(rows) == 2
     assert [r["floor_bound"] for r in rows] == [False, True]
     assert [r["rule"] for r in rows] == [
-        STOP_RULE_LEVEL_HONOURED, STOP_RULE_ABSOLUTE_FLOOR,
+        STOP_RULE_LEVEL_HONOURED,
+        STOP_RULE_ABSOLUTE_FLOOR,
     ]
 
 
 def test_the_spread_is_derived_from_the_rows_not_from_a_tally(caplog):
     with caplog.at_level("INFO"):
-        _call(False, stop=88.0)   # 1.2 ATRs
-        _call(False, stop=70.0)   # 3.0 ATRs
-        _call(True, stop=95.0)    # 0.5 ATRs
+        _call(False, stop=88.0)  # 1.2 ATRs
+        _call(False, stop=70.0)  # 3.0 ATRs
+        _call(True, stop=95.0)  # 0.5 ATRs
     summary = rec.summarise(rec.rows_from(caplog.messages))
     assert summary["level_backed_total"] == 3
     assert summary["floor_binds"] == 1
@@ -100,8 +106,7 @@ def test_an_unreadable_atr_yields_no_reading_rather_than_zero(atr):
 
 
 def test_a_row_with_no_distance_still_counts_as_a_placement():
-    rows = [{"symbol": "AAA", "rule": "r", "floor_bound": False,
-             "distance_atr": None}]
+    rows = [{"symbol": "AAA", "rule": "r", "floor_bound": False, "distance_atr": None}]
     summary = rec.summarise(rows)
     assert summary["level_backed_total"] == 1
     assert summary["distance_readings"] == 0
@@ -119,18 +124,19 @@ def test_the_resolver_routes_its_level_backed_branch_through_the_recorder():
 def _logger_info_calls(src):
     found = {}
     for node in ast.walk(ast.parse(src)):
-        if (isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "info"
-                and getattr(node.func.value, "id", "") == "logger"
-                and node.args and isinstance(node.args[0], ast.Constant)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "info"
+            and getattr(node.func.value, "id", "") == "logger"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
             found[ast.literal_eval(node.args[0])] = node
     return found
 
 
-FIXTURE = (
-    pathlib.Path(__file__).parent / "fixtures" / "resolver_log_bodies_pre_move.py"
-)
+FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "resolver_log_bodies_pre_move.py"
 # The pre-move text is a FACT OF HISTORY, so its digest is pinned here: editing
 # the fixture to make a drifted body pass fails this line first.
 FIXTURE_SHA256 = "c3b1ff36a73da7596bb7df01d2eb2c133af6f709b853f5fa2354a0151e8c3e48"
@@ -152,9 +158,7 @@ def test_both_moved_log_bodies_are_ast_identical_to_the_pre_move_original():
     change, so this form cannot go red on a clean trunk tomorrow.
     """
     before = _logger_info_calls(FIXTURE.read_text(encoding="utf-8"))
-    after = _logger_info_calls(
-        open(rec.__file__, encoding="utf-8").read()
-    )
+    after = _logger_info_calls(open(rec.__file__, encoding="utf-8").read())
     moved = [k for k in after if k.startswith("Constructor:")]
     assert len(moved) == 2, moved
     assert sorted(before) == sorted(moved), (sorted(before), sorted(moved))

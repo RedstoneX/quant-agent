@@ -34,7 +34,8 @@ def _mk_db(tmp_path) -> Database:
 
 def _insert(db, symbol, sentinel, qty, side):
     return db.insert_pending_protection_restore(
-        symbol=symbol, sell_order_id=sentinel,
+        symbol=symbol,
+        sell_order_id=sentinel,
         position_qty_before_sell=qty,
         specs_json=json.dumps([{"stop_price": 1.0}]),
         side=side,
@@ -83,14 +84,8 @@ def test_gap_between_ceiling_and_scale_in_cancels_is_explained(tmp_path):
 
     audit = db.get_protection_restore_wal_audit()
     ceiling = max(r["row_id"] for r in audit)
-    scale_ids = [
-        r["row_id"] for r in audit
-        if r["sell_order_id"] == WAL_SCALE_IN_SENTINEL
-    ]
-    other_ids = [
-        r["row_id"] for r in audit
-        if r["sell_order_id"] != WAL_SCALE_IN_SENTINEL
-    ]
+    scale_ids = [r["row_id"] for r in audit if r["sell_order_id"] == WAL_SCALE_IN_SENTINEL]
+    other_ids = [r["row_id"] for r in audit if r["sell_order_id"] != WAL_SCALE_IN_SENTINEL]
     # Ceiling exceeds the scale-in count, and every missing id is named.
     assert ceiling > len(scale_ids)
     assert sorted(scale_ids + other_ids) == sorted(r["row_id"] for r in audit)

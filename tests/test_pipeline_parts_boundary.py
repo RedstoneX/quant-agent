@@ -1,4 +1,5 @@
 """Boundary witness: every lifted pipeline part passes the repo boundary check."""
+
 from __future__ import annotations
 
 import pytest

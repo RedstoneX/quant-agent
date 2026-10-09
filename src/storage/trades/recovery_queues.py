@@ -2,6 +2,7 @@
 
 `ledger` is the TradeLedger (`self` before the move).
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,9 +29,14 @@ def get_protection_restore_wal_audit(ledger) -> list[dict]:
 
 
 def insert_pending_protection_restore(
-    ledger, *, symbol: str, sell_order_id: str,
-    position_qty_before_sell: float, specs_json: str,
-    run_id: str | None = None, side: str | None = None,
+    ledger,
+    *,
+    symbol: str,
+    sell_order_id: str,
+    position_qty_before_sell: float,
+    specs_json: str,
+    run_id: str | None = None,
+    side: str | None = None,
 ) -> int:
     """Persist an orphaned protection-restore intent.
 
@@ -62,14 +68,14 @@ def insert_pending_protection_restore(
     of `position_qty_before_sell` rather than this column — so a scale-in
     row is never interpreted with a generic reader's meaning either way.
     """
+
     def _do():
         cur = ledger.conn.execute(
             "INSERT INTO pending_protection_restores "
             "(symbol, sell_order_id, position_qty_before_sell, specs_json, "
             "run_id, side) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (symbol, sell_order_id, position_qty_before_sell, specs_json,
-             run_id, side),
+            (symbol, sell_order_id, position_qty_before_sell, specs_json, run_id, side),
         )
         row_id = cur.lastrowid or 0
         # Item 193: attribute the id before it can be forgotten. Best
@@ -81,16 +87,17 @@ def insert_pending_protection_restore(
                 "(row_id, symbol, sell_order_id, "
                 "position_qty_before_sell, side, run_id) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (row_id, symbol, sell_order_id,
-                 position_qty_before_sell, side, run_id),
+                (row_id, symbol, sell_order_id, position_qty_before_sell, side, run_id),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "protection-restore WAL audit row %s not written: %s",
-                row_id, exc,
+                row_id,
+                exc,
             )
         ledger.conn.commit()
         return row_id
+
     return ledger._locked_write(_do, label="insert_pending_protection_restore")
 
 
@@ -107,6 +114,7 @@ def get_pending_protection_restores(ledger) -> list[dict]:
 
 def delete_pending_protection_restore(ledger, row_id: int) -> int:
     """Remove a row by its primary key (after successful drain)."""
+
     def _do():
         cur = ledger.conn.execute(
             "DELETE FROM pending_protection_restores WHERE id = ?",
@@ -114,11 +122,14 @@ def delete_pending_protection_restore(ledger, row_id: int) -> int:
         )
         ledger.conn.commit()
         return cur.rowcount or 0
+
     return ledger._locked_write(_do, label="delete_pending_protection_restore")
 
 
 def update_pending_protection_restore(
-    ledger, row_id: int, *,
+    ledger,
+    row_id: int,
+    *,
     sell_order_id: str | None = None,
     position_qty_before_sell: float | None = None,
     specs_json: str | None = None,
@@ -155,8 +166,7 @@ def update_pending_protection_restore(
     params.append(row_id)
     with ledger._lock:
         cur = ledger.conn.execute(
-            f"UPDATE pending_protection_restores SET {', '.join(sets)} "
-            "WHERE id = ?",
+            f"UPDATE pending_protection_restores SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
         ledger.conn.commit()
@@ -164,7 +174,9 @@ def update_pending_protection_restore(
 
 
 def update_pending_protection_restore_specs(
-    ledger, row_id: int, specs_json: str,
+    ledger,
+    row_id: int,
+    specs_json: str,
 ) -> int:
     """Replace the specs_json of an existing recovery row.
 
@@ -184,13 +196,19 @@ def update_pending_protection_restore_specs(
 
 
 def insert_pending_repeg(
-    ledger, *, trade_row_id: int | None, symbol: str, old_order_id: str,
-    new_order_id: str, run_id: str | None = None,
+    ledger,
+    *,
+    trade_row_id: int | None,
+    symbol: str,
+    old_order_id: str,
+    new_order_id: str,
+    run_id: str | None = None,
 ) -> int:
     """Persist the intent to replace `old_order_id`.
 
     `new_order_id` is the caller's sentinel until the broker answers.
     """
+
     def _do():
         cur = ledger.conn.execute(
             "INSERT INTO pending_repegs "
@@ -200,6 +218,7 @@ def insert_pending_repeg(
         )
         ledger.conn.commit()
         return cur.lastrowid or 0
+
     return ledger._locked_write(_do, label="insert_pending_repeg")
 
 
@@ -215,6 +234,7 @@ def get_pending_repegs(ledger) -> list[dict]:
 
 def resolve_pending_repeg(ledger, row_id: int, new_order_id: str) -> int:
     """Record the id the broker actually minted for a pending re-peg."""
+
     def _do():
         cur = ledger.conn.execute(
             "UPDATE pending_repegs SET new_order_id = ? WHERE id = ?",
@@ -222,17 +242,21 @@ def resolve_pending_repeg(ledger, row_id: int, new_order_id: str) -> int:
         )
         ledger.conn.commit()
         return cur.rowcount or 0
+
     return ledger._locked_write(_do, label="resolve_pending_repeg")
 
 
 def delete_pending_repeg(ledger, row_id: int) -> int:
     """Remove a re-peg WAL row once the trades row is authoritative."""
+
     def _do():
         cur = ledger.conn.execute(
-            "DELETE FROM pending_repegs WHERE id = ?", (row_id,),
+            "DELETE FROM pending_repegs WHERE id = ?",
+            (row_id,),
         )
         ledger.conn.commit()
         return cur.rowcount or 0
+
     return ledger._locked_write(_do, label="delete_pending_repeg")
 
 
@@ -245,23 +269,22 @@ def prune_pending_repegs(ledger, keep_days: int = 30) -> int:
     keep_days <= 0 rather than wiping a recovery queue.
     """
     if keep_days <= 0:
-        raise ValueError(
-            f"prune_pending_repegs: keep_days must be > 0, got {keep_days}"
-        )
+        raise ValueError(f"prune_pending_repegs: keep_days must be > 0, got {keep_days}")
     with ledger._lock:
         stale = ledger.conn.execute(
-            "SELECT id, symbol, old_order_id, created_at FROM pending_repegs "
-            "WHERE created_at < datetime('now', ?)",
+            "SELECT id, symbol, old_order_id, created_at FROM pending_repegs WHERE created_at < datetime('now', ?)",
             (f"-{keep_days} days",),
         ).fetchall()
         if not stale:
             return 0
         for row in stale:
             logger.info(
-                "Pruning stale pending_repeg row %d: symbol=%s "
-                "old_order_id=%s created_at=%s (>%dd old)",
-                row["id"], row["symbol"], row["old_order_id"],
-                row["created_at"], keep_days,
+                "Pruning stale pending_repeg row %d: symbol=%s old_order_id=%s created_at=%s (>%dd old)",
+                row["id"],
+                row["symbol"],
+                row["old_order_id"],
+                row["created_at"],
+                keep_days,
             )
         cursor = ledger.conn.execute(
             "DELETE FROM pending_repegs WHERE created_at < datetime('now', ?)",
@@ -289,9 +312,7 @@ def prune_pending_protection_restores(ledger, keep_days: int = 30) -> int:
         # `datetime('now', '-0 days')` == 'now' → deletes EVERYTHING.
         # Caller almost certainly passed a typo / config bug. Refuse
         # rather than silently wipe a recovery queue.
-        raise ValueError(
-            f"prune_pending_protection_restores: keep_days must be > 0, got {keep_days}"
-        )
+        raise ValueError(f"prune_pending_protection_restores: keep_days must be > 0, got {keep_days}")
     with ledger._lock:
         stale = ledger.conn.execute(
             "SELECT id, symbol, sell_order_id, created_at "
@@ -303,14 +324,15 @@ def prune_pending_protection_restores(ledger, keep_days: int = 30) -> int:
             return 0
         for row in stale:
             logger.info(
-                "Pruning stale pending_protection_restore row %d: "
-                "symbol=%s sell_order_id=%s created_at=%s (>%dd old)",
-                row["id"], row["symbol"], row["sell_order_id"],
-                row["created_at"], keep_days,
+                "Pruning stale pending_protection_restore row %d: symbol=%s sell_order_id=%s created_at=%s (>%dd old)",
+                row["id"],
+                row["symbol"],
+                row["sell_order_id"],
+                row["created_at"],
+                keep_days,
             )
         cursor = ledger.conn.execute(
-            "DELETE FROM pending_protection_restores "
-            "WHERE created_at < datetime('now', ?)",
+            "DELETE FROM pending_protection_restores WHERE created_at < datetime('now', ?)",
             (f"-{keep_days} days",),
         )
         ledger.conn.commit()

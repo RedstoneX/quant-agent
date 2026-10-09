@@ -10,8 +10,12 @@ from src.pipeline_intraday import IntradayScanBody
 
 #: Parts come FIRST so a by-name search meets a body, not a shim.
 PART_MODULES = (
-    "pipeline.py", "intraday/safety.py", "intraday/session.py",
-    "intraday/candidates.py", "intraday/gating.py", "pipeline_intraday.py",
+    "pipeline.py",
+    "intraday/safety.py",
+    "intraday/session.py",
+    "intraday/candidates.py",
+    "intraday/gating.py",
+    "pipeline_intraday.py",
 )
 
 

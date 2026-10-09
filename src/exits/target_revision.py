@@ -18,13 +18,7 @@ logger = logging.getLogger("src.pipeline")
 class TargetRevision:
     """Target-revision adjudication for a held position: the ratification of a seat's target-revision flags against the chart and the record it files."""
 
-    def __init__(self, *,
-                 file_target_revision,
-                 broker,
-                 config,
-                 db,
-                 market,
-                 risk_engine) -> None:
+    def __init__(self, *, file_target_revision, broker, config, db, market, risk_engine) -> None:
         self._file_target_revision = file_target_revision
         self.broker = broker
         self.config = config
@@ -33,7 +27,12 @@ class TargetRevision:
         self.risk_engine = risk_engine
 
     def _adjudicate_target_revision_flags(
-        self, review, positions, *, run_id: str, seat: str,
+        self,
+        review,
+        positions,
+        *,
+        run_id: str,
+        seat: str,
     ) -> list[dict]:
         """Re-measure every open position's take-profit, every session.
 
@@ -139,15 +138,18 @@ class TargetRevision:
         batched_bars: dict[str, list] = {}
         serial_bar_read = False
         try:
-            batched_bars = dict(self.market.get_ohlcv_batch(
-                [sym for sym, _, _ in work],
-                self.config.trading.lookback_days,
-            ) or {})
+            batched_bars = dict(
+                self.market.get_ohlcv_batch(
+                    [sym for sym, _, _ in work],
+                    self.config.trading.lookback_days,
+                )
+                or {}
+            )
         except Exception as exc:  # noqa: BLE001
             serial_bar_read = True
             logger.warning(
-                "target revision: batched bar read failed (%s) — falling "
-                "back to a per-name fetch", exc,
+                "target revision: batched bar read failed (%s) — falling back to a per-name fetch",
+                exc,
             )
 
         # FAULT 6: an unchanged, unapplied, fully recomputable outcome is
@@ -157,37 +159,36 @@ class TargetRevision:
         # no-pinned-horizon refusal daily is storage of recomputable state.
         prior_codes: dict[str, str] = {}
         try:
-            for _sym, _rows in (self.db.get_target_revisions(
-                    [sym for sym, _, _ in work]) or {}).items():
+            for _sym, _rows in (self.db.get_target_revisions([sym for sym, _, _ in work]) or {}).items():
                 if _rows:
-                    prior_codes[str(_sym).upper()] = str(
-                        _rows[0].get("code") or "")
+                    prior_codes[str(_sym).upper()] = str(_rows[0].get("code") or "")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "target revision: prior-outcome read failed (%s) — every "
-                "outcome is filed this session", exc,
+                "target revision: prior-outcome read failed (%s) — every outcome is filed this session",
+                exc,
             )
 
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
-            "min_target_atr_multiple": getattr(
-                risk_cfg, "min_target_atr_multiple", MIN_TARGET_ATR_MULTIPLE),
+            "min_target_atr_multiple": getattr(risk_cfg, "min_target_atr_multiple", MIN_TARGET_ATR_MULTIPLE),
             "breakout_projection_atr_multiple": getattr(
-                risk_cfg, "breakout_projection_atr_multiple",
-                BREAKOUT_PROJECTION_ATR_MULTIPLE),
-            "max_reach_atr_multiple": getattr(
-                risk_cfg, "max_target_reach_atr_multiple", MAX_REACH_ATR_MULTIPLE),
-            "max_horizon_sessions": getattr(
-                risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
+                risk_cfg, "breakout_projection_atr_multiple", BREAKOUT_PROJECTION_ATR_MULTIPLE
+            ),
+            "max_reach_atr_multiple": getattr(risk_cfg, "max_target_reach_atr_multiple", MAX_REACH_ATR_MULTIPLE),
+            "max_horizon_sessions": getattr(risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
         }
 
         # FAULT 5 (item 194): the batch fallback must not degrade
         # silently. When the batched read failed, every outcome this
         # session carries the fact in its durable detail text.
         _serial_note = (
-            " [the batched bar read was unavailable this session, so this "
-            "position's bars were fetched one name at a time]"
-        ) if serial_bar_read else ""
+            (
+                " [the batched bar read was unavailable this session, so this "
+                "position's bars were fetched one name at a time]"
+            )
+            if serial_bar_read
+            else ""
+        )
 
         outcomes: list[dict] = []
         for sym, flag_seat, evidence in work:
@@ -205,25 +206,36 @@ class TargetRevision:
                     # The seat flagged something not held. Filed, not silently
                     # dropped, because a flag on a symbol that is not in the
                     # book is itself a finding about the seat's view of the book.
-                    outcomes.append(self._file_target_revision(
-                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                        code="REFUSAL_NOT_HELD", applied=False,
-                        detail=(
-                            "the seat flagged a take-profit revision for a symbol "
-                            "the broker does not show as held"
-                        ),
-                    ))
+                    outcomes.append(
+                        self._file_target_revision(
+                            run_id=run_id,
+                            symbol=sym,
+                            seat=flag_seat,
+                            evidence=evidence,
+                            code="REFUSAL_NOT_HELD",
+                            applied=False,
+                            detail=(
+                                "the seat flagged a take-profit revision for a symbol the broker does not show as held"
+                            ),
+                        )
+                    )
                     continue
 
                 is_short = float(getattr(position, "qty", 0) or 0) < 0
                 try:
-                    buy = self.db.get_symbol_last_buy(
-                        sym, action="SHORT" if is_short else None,
-                    ) if is_short else self.db.get_symbol_last_buy(sym)
+                    buy = (
+                        self.db.get_symbol_last_buy(
+                            sym,
+                            action="SHORT" if is_short else None,
+                        )
+                        if is_short
+                        else self.db.get_symbol_last_buy(sym)
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "target revision: opening-row lookup failed for %s (%s)",
-                        sym, exc,
+                        sym,
+                        exc,
                     )
                     buy = None
                 buy = buy or {}
@@ -238,14 +250,19 @@ class TargetRevision:
                 try:
                     bars = batched_bars.get(sym)
                     if bars is None:
-                        bars = self.market.get_ohlcv(
-                            sym, self.config.trading.lookback_days,
-                        ) or []
+                        bars = (
+                            self.market.get_ohlcv(
+                                sym,
+                                self.config.trading.lookback_days,
+                            )
+                            or []
+                        )
                     from src.data.levels import (
                         find_structural_levels,
                         structure_coverage,
                     )
                     from src.data.technical import compute_indicators
+
                     # What the bar history behind `levels` was, so an empty list
                     # from a dead feed is a DATA fault and one from a measured,
                     # structureless chart is a refusal — the same distinction
@@ -262,7 +279,8 @@ class TargetRevision:
                     logger.warning(
                         "target revision: bars/indicator fetch failed for %s (%s) "
                         "— the flag is filed as a data fault, not judged",
-                        sym, exc,
+                        sym,
+                        exc,
                     )
 
                 stored_target = None
@@ -304,8 +322,10 @@ class TargetRevision:
                         ("raw_wall", "wall_seen_prior_close"),
                     ):
                         _prior = self.db.get_prior_target_level_break(
-                            [sym], today_bar_date=effective_bar_date,
-                            exclude_run_id=run_id, flag=_flag,
+                            [sym],
+                            today_bar_date=effective_bar_date,
+                            exclude_run_id=run_id,
+                            flag=_flag,
                         )
                         if _name == "break_seen_prior_close":
                             break_seen_prior_close = bool(_prior.get(sym, False))
@@ -316,7 +336,9 @@ class TargetRevision:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "target revision: prior-close read failed for %s (%s) — "
-                        "today's triggers, if any, start unconfirmed", sym, exc,
+                        "today's triggers, if any, start unconfirmed",
+                        sym,
+                        exc,
                     )
 
                 # Sessions this position has already spent out of its pinned
@@ -332,14 +354,18 @@ class TargetRevision:
                 if entry_ts:
                     try:
                         from datetime import date as _date
+
                         sessions_held = self.broker.trading_sessions_held(
-                            _date.fromisoformat(entry_ts), et_today(),
+                            _date.fromisoformat(entry_ts),
+                            et_today(),
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "target revision: sessions-held read failed for %s "
                             "(%s) — no remaining horizon, so a target behind "
-                            "price is refused rather than re-anchored", sym, exc,
+                            "price is refused rather than re-anchored",
+                            sym,
+                            exc,
                         )
                         sessions_held = None
 
@@ -375,24 +401,26 @@ class TargetRevision:
                 # test means the question could not be asked; nothing is filed,
                 # so a missing input can never become half of a confirmation.
                 raw_flags = raw_trigger_flags(
-                    entry_price=float(
-                        getattr(position, "avg_entry", 0) or 0
-                    ) or None,
-                    stored_target=stored_target, target_level=target_level,
-                    atr=atr, close_price=close_price,
+                    entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
+                    stored_target=stored_target,
+                    target_level=target_level,
+                    atr=atr,
+                    close_price=close_price,
                     horizon_sessions=buy.get("expected_horizon_sessions"),
-                    levels=levels, is_short=is_short,
+                    levels=levels,
+                    is_short=is_short,
                     # Every bar `raw_trigger_flags` reads EXCEPT the
                     # breakout projection, which is a derivation input and
                     # not a trigger test.
-                    **{k: v for k, v in target_cfg.items()
-                       if k != "breakout_projection_atr_multiple"},
+                    **{k: v for k, v in target_cfg.items() if k != "breakout_projection_atr_multiple"},
                 )
                 raw_broken = raw_flags["raw_broken"]
                 if bar_date and any(v is not None for v in raw_flags.values()):
                     try:
                         self.db.save_target_level_break(
-                            run_id=run_id, symbol=sym, bar_date=bar_date,
+                            run_id=run_id,
+                            symbol=sym,
+                            bar_date=bar_date,
                             raw_broken=raw_broken,
                             raw_reach=raw_flags["raw_reach"],
                             raw_wall=raw_flags["raw_wall"],
@@ -400,20 +428,26 @@ class TargetRevision:
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "target revision: failed to persist %s break state "
-                            "(%s) — tomorrow's read starts unconfirmed", sym, exc,
+                            "(%s) — tomorrow's read starts unconfirmed",
+                            sym,
+                            exc,
                         )
 
                 applied = False
                 if outcome.revised and outcome.new_price:
                     try:
-                        applied = bool(self.db.update_open_take_profit(
-                            sym, outcome.new_price,
-                            action="SHORT" if is_short else "BUY",
-                        ))
+                        applied = bool(
+                            self.db.update_open_take_profit(
+                                sym,
+                                outcome.new_price,
+                                action="SHORT" if is_short else "BUY",
+                            )
+                        )
                     except Exception as exc:  # noqa: BLE001
                         logger.error(
-                            "target revision: write-back failed for %s (%s) — "
-                            "the stored target stands", sym, exc,
+                            "target revision: write-back failed for %s (%s) — the stored target stands",
+                            sym,
+                            exc,
                         )
                         applied = False
                     if applied:
@@ -421,60 +455,84 @@ class TargetRevision:
                             "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
                             "progress/pace stay measured against the pinned "
                             "entry target",
-                            sym, outcome.prior_price or 0.0, outcome.new_price,
-                            outcome.basis, outcome.trigger,
+                            sym,
+                            outcome.prior_price or 0.0,
+                            outcome.new_price,
+                            outcome.basis,
+                            outcome.trigger,
                         )
                 if not applied and outcome.revised:
                     # The derivation succeeded but the row did not move. Recorded
                     # as its own outcome so the record can never claim a revision
                     # the trade row does not carry.
-                    outcomes.append(self._file_target_revision(
-                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                        code="FAULT_REVISION_WRITE_FAILED", applied=False,
-                        trigger=outcome.trigger, prior_price=outcome.prior_price,
-                        detail=(
-                            f"{outcome.trigger} fired and re-derived "
-                            f"${outcome.new_price:,.2f}, but the opening row could "
-                            f"not be updated — the stored target stands"
-                        ),
-                    ))
+                    outcomes.append(
+                        self._file_target_revision(
+                            run_id=run_id,
+                            symbol=sym,
+                            seat=flag_seat,
+                            evidence=evidence,
+                            code="FAULT_REVISION_WRITE_FAILED",
+                            applied=False,
+                            trigger=outcome.trigger,
+                            prior_price=outcome.prior_price,
+                            detail=(
+                                f"{outcome.trigger} fired and re-derived "
+                                f"${outcome.new_price:,.2f}, but the opening row could "
+                                f"not be updated — the stored target stands"
+                            ),
+                        )
+                    )
                     continue
 
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                    code=outcome.code, applied=applied, trigger=outcome.trigger,
-                    prior_price=outcome.prior_price, new_price=outcome.new_price,
-                    basis=outcome.basis, level_used=outcome.level_used,
-                    detail=(
-                        outcome.detail + _serial_note
-                    ) if _serial_note else outcome.detail,
-                    # A degraded session is never deduped away: the whole
-                    # point of recording it is that somebody measuring a
-                    # slow session later can see WHY it was slow.
-                    prior_code=None if serial_bar_read else prior_codes.get(sym),
-                ))
+                outcomes.append(
+                    self._file_target_revision(
+                        run_id=run_id,
+                        symbol=sym,
+                        seat=flag_seat,
+                        evidence=evidence,
+                        code=outcome.code,
+                        applied=applied,
+                        trigger=outcome.trigger,
+                        prior_price=outcome.prior_price,
+                        new_price=outcome.new_price,
+                        basis=outcome.basis,
+                        level_used=outcome.level_used,
+                        detail=(outcome.detail + _serial_note) if _serial_note else outcome.detail,
+                        # A degraded session is never deduped away: the whole
+                        # point of recording it is that somebody measuring a
+                        # slow session later can see WHY it was slow.
+                        prior_code=None if serial_bar_read else prior_codes.get(sym),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error(
-                    "target revision: %s could not be adjudicated (%s) — "
-                    "filed as unmeasured; the stored target stands", sym, exc,
+                    "target revision: %s could not be adjudicated (%s) — filed as unmeasured; the stored target stands",
+                    sym,
+                    exc,
                 )
                 try:
-                    outcomes.append(self._file_target_revision(
-                        run_id=run_id, symbol=sym, seat=flag_seat,
-                        evidence=evidence, code="FAULT_POSITION_NOT_MEASURED",
-                        applied=False,
-                        detail=(
-                            "this position could not be adjudicated this "
-                            "session, so its stored target is unverified "
-                            "rather than confirmed" + _serial_note
-                        ),
-                    ))
+                    outcomes.append(
+                        self._file_target_revision(
+                            run_id=run_id,
+                            symbol=sym,
+                            seat=flag_seat,
+                            evidence=evidence,
+                            code="FAULT_POSITION_NOT_MEASURED",
+                            applied=False,
+                            detail=(
+                                "this position could not be adjudicated this "
+                                "session, so its stored target is unverified "
+                                "rather than confirmed" + _serial_note
+                            ),
+                        )
+                    )
                 except Exception as exc2:  # noqa: BLE001
                     # The filing itself sat unguarded inside this handler,
                     # so a failure HERE unwound the remaining names after
                     # all — the sorted-tail truncation, one layer deeper.
                     logger.error(
-                        "target revision: could not even file %s as "
-                        "unmeasured (%s); the sweep continues", sym, exc2,
+                        "target revision: could not even file %s as unmeasured (%s); the sweep continues",
+                        sym,
+                        exc2,
                     )
         return outcomes

@@ -3,6 +3,7 @@
 Takes a bare sqlite connection, so an in-memory database is enough to
 construct and exercise it without the schema manager.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,8 +31,6 @@ def ensure_prune_indexes(conn: sqlite3.Connection) -> None:
         ("specialist_evidence", "decision_id"),
     ):
         try:
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})"
-            )
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})")
         except Exception as e:
             _log.warning("Index creation failed for %s.%s: %s", table, col, e)

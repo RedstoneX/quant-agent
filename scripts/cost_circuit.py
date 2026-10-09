@@ -91,14 +91,17 @@ def main() -> int:
             # instead of losing the fact that the reset succeeded behind an
             # uncaught traceback -- the second half of the same 2026-08-28
             # failure mode.
-            print(json.dumps(
-                {
-                    "reset": True,
-                    "reset_reason": args.reason,
-                    "status_error": f"{type(exc).__name__}: {exc}",
-                },
-                indent=2, sort_keys=True,
-            ))
+            print(
+                json.dumps(
+                    {
+                        "reset": True,
+                        "reset_reason": args.reason,
+                        "status_error": f"{type(exc).__name__}: {exc}",
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
         print(json.dumps(status, indent=2, sort_keys=True, default=str))
         return 0

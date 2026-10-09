@@ -18,10 +18,17 @@ _HOLDER = "_rotation_section"
 _BODIES = "src/agents/portfolio_manager/rotation_rendering.py"
 
 #: Every name the agent exposes for the rotation section, delegated to the held part.
-DELEGATED = ('rotation_precheck', '_rotation_constraint_line', '_render_rotation_section',)
+DELEGATED = (
+    "rotation_precheck",
+    "_rotation_constraint_line",
+    "_render_rotation_section",
+)
 
 #: Bodies the part owns that it also reads through `self.` — handed in live.
-LIVE_BODIES = ('_rotation_constraint_line', 'rotation_precheck',)
+LIVE_BODIES = (
+    "_rotation_constraint_line",
+    "rotation_precheck",
+)
 
 
 def build_rotation_section(agent_cls) -> RotationSection:

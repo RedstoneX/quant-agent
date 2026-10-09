@@ -1,4 +1,5 @@
 """Package for scripts/measure_trend_alignment.py (split to stay under the file-size ceiling)."""
+
 import os
 import sys
 

@@ -24,9 +24,7 @@ from src.storage import db as write_db
 def test_reader_exit_actions_cover_writer_exit_actions() -> None:
     """Every action the writer treats as a chain-closing exit must also be
     recognised by the reader, or get_position_history leaves the chain open."""
-    missing = set(write_db._POSITION_EXIT_ACTIONS) - set(
-        db_reads._POSITION_EXIT_ACTIONS
-    )
+    missing = set(write_db._POSITION_EXIT_ACTIONS) - set(db_reads._POSITION_EXIT_ACTIONS)
     assert not missing, (
         "src/api/db_reads.py._POSITION_EXIT_ACTIONS is missing exit actions "
         f"the writer counts: {sorted(missing)}. The reader will under-count "
@@ -37,24 +35,18 @@ def test_reader_exit_actions_cover_writer_exit_actions() -> None:
 
 def test_reader_exit_prefixes_cover_writer_exit_prefixes() -> None:
     """Same invariant for the prefix families (SELL/COVER/etc.)."""
-    missing = set(write_db._POSITION_EXIT_PREFIXES) - set(
-        db_reads._POSITION_EXIT_PREFIXES
-    )
+    missing = set(write_db._POSITION_EXIT_PREFIXES) - set(db_reads._POSITION_EXIT_PREFIXES)
     assert not missing, (
-        "src/api/db_reads.py._POSITION_EXIT_PREFIXES is missing exit prefixes "
-        f"the writer counts: {sorted(missing)}."
+        f"src/api/db_reads.py._POSITION_EXIT_PREFIXES is missing exit prefixes the writer counts: {sorted(missing)}."
     )
 
 
 def test_reader_open_actions_cover_writer_open_actions() -> None:
     """Open-side vocabulary must mirror too: a missing open action would make
     the reader mis-count the entry leg of the same chain."""
-    missing = set(write_db._POSITION_OPEN_ACTIONS) - set(
-        db_reads._POSITION_OPEN_ACTIONS
-    )
+    missing = set(write_db._POSITION_OPEN_ACTIONS) - set(db_reads._POSITION_OPEN_ACTIONS)
     assert not missing, (
-        "src/api/db_reads.py._POSITION_OPEN_ACTIONS is missing open actions "
-        f"the writer recognises: {sorted(missing)}."
+        f"src/api/db_reads.py._POSITION_OPEN_ACTIONS is missing open actions the writer recognises: {sorted(missing)}."
     )
 
 

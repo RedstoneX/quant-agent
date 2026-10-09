@@ -34,6 +34,7 @@ def audit() -> audit_mod.Audit:
 # The guard itself
 # ---------------------------------------------------------------------------
 
+
 def test_no_new_real_desk_output(audit: audit_mod.Audit) -> None:
     """No committed file carries real desk output unless it is allow-listed."""
     if not audit.new_files:
@@ -76,8 +77,12 @@ def test_allow_listed_files_have_not_grown_new_desk_output(audit: audit_mod.Audi
     """
     if not audit.grown:
         return
-    lines = ["", "These files are allow-listed, but they now carry real desk output",
-             "the fixed list struct_desk_output.txt does not name:", ""]
+    lines = [
+        "",
+        "These files are allow-listed, but they now carry real desk output",
+        "the fixed list struct_desk_output.txt does not name:",
+        "",
+    ]
     for path, (then, now) in sorted(audit.grown.items()):
         lines.append(f"  {path}: {then} finding(s) listed, now {now}")
     lines.append("")
@@ -139,7 +144,7 @@ def test_allow_list_entries_all_carry_a_reason() -> None:
 # Proof the guard is load-bearing: it fires on the REAL offenders
 # ---------------------------------------------------------------------------
 
-_INVENTED_OFFENDER = '''{
+_INVENTED_OFFENDER = """{
   "symbol": "NVDA",
   "rating": "buy",
   "conviction": "high",
@@ -152,7 +157,7 @@ _INVENTED_OFFENDER = '''{
   "account_number": "PA7QXM4KT9",
   "log": "2026-09-22 14:31:55,689 [ERROR] src.execution.broker: stop rejected for NVDA at 176.12",
   "pm_note": "Trimming NVDA and AAPL into strength while adding MSFT and AVGO on the pullback, and holding XOM as the energy hedge because the macro read still calls crude bid. The book is 62% invested and the cash drag is acceptable here, so no further deployment is warranted before the close."
-}'''
+}"""
 
 
 def _live_signals_by_allowed_file() -> dict[str, set[str]]:
@@ -164,7 +169,7 @@ def _live_signals_by_allowed_file() -> dict[str, set[str]]:
         text = guard.read_text(PROJECT_ROOT / relpath)
         if text is None:
             continue
-        found = guard.scan_text(text[:audit_mod.SCAN_BYTE_CAP], relpath)
+        found = guard.scan_text(text[: audit_mod.SCAN_BYTE_CAP], relpath)
         out[relpath] = {f.signal for f in found}
     return out
 
@@ -192,8 +197,7 @@ def test_detector_fires_on_the_real_offenders() -> None:
     must_have_real = invented - {"broker-account-id"}
     seen = set().union(*live.values())
     assert must_have_real <= seen, (
-        f"signals with no real specimen tripping any allow-listed file: "
-        f"{sorted(must_have_real - seen)}"
+        f"signals with no real specimen tripping any allow-listed file: {sorted(must_have_real - seen)}"
     )
 
 
@@ -208,7 +212,11 @@ def test_detector_fires_on_a_freshly_invented_offender() -> None:
     new_fixture = _INVENTED_OFFENDER
     signals = {f.signal for f in guard.scan_text(new_fixture, "tests/fixtures/new.json")}
     assert signals == {
-        "broker-order-id", "broker-account-id", "production-log", "desk-decision", "desk-prose",
+        "broker-order-id",
+        "broker-account-id",
+        "production-log",
+        "desk-decision",
+        "desk-prose",
     }, signals
 
     findings = guard.scan_text(new_fixture, "tests/fixtures/new.json")
@@ -223,8 +231,7 @@ def test_the_guard_would_catch_this_fixture_if_it_were_committed() -> None:
     because it sits in a directory full of listed ones.
     """
     allowed = guard.allow_list()
-    for neighbour in ("tests/fixtures/brand_new.json",
-                      "ops/model_policy/results/brand-new.json"):
+    for neighbour in ("tests/fixtures/brand_new.json", "ops/model_policy/results/brand-new.json"):
         assert neighbour not in allowed
 
 
@@ -235,16 +242,16 @@ def test_the_guard_would_catch_this_fixture_if_it_were_committed() -> None:
 #: Real files in this repo that use real ticker strings and prices for good
 #: reasons. A guard that fires on these gets switched off within a week.
 LEGITIMATE_SYNTHETIC = [
-    "tests/book_fixtures.py",                       # SGOV/SQQQ adversarial books
-    "tests/test_analyst_verdict.py",                # a full SPY TechAnalysisResult
-    "tests/test_api_evidence.py",                   # a full AAPL evidence record
-    "tests/test_llm_output_null_tolerance.py",      # a deliberately broken SPY record
-    "tests/test_notifier.py",                       # BA/MP orders with cent prices
-    "tests/test_risk_based_sizing.py",              # dense cent-precision sizing maths
-    "tests/test_phase3_exit_rework.py",             # OKLO exits at cent precision
-    "tests/test_risk_verdict_per_symbol.py",        # XLE verdicts at cent precision
+    "tests/book_fixtures.py",  # SGOV/SQQQ adversarial books
+    "tests/test_analyst_verdict.py",  # a full SPY TechAnalysisResult
+    "tests/test_api_evidence.py",  # a full AAPL evidence record
+    "tests/test_llm_output_null_tolerance.py",  # a deliberately broken SPY record
+    "tests/test_notifier.py",  # BA/MP orders with cent prices
+    "tests/test_risk_based_sizing.py",  # dense cent-precision sizing maths
+    "tests/test_phase3_exit_rework.py",  # OKLO exits at cent precision
+    "tests/test_risk_verdict_per_symbol.py",  # XLE verdicts at cent precision
     "frontend/scripts/dashboard-visual-acceptance.mjs",  # a demo book for screenshots
-    "src/api/static_cockpit/assets/index-Dx3KfNcH.js",   # a minified frontend bundle
+    "src/api/static_cockpit/assets/index-Dx3KfNcH.js",  # a minified frontend bundle
 ]
 
 
@@ -254,15 +261,14 @@ def test_detector_is_silent_on_legitimate_synthetic_fixtures(relpath: str) -> No
     if not path.exists():
         pytest.skip(f"{relpath} no longer exists")
     findings = guard.scan_text(guard.read_text(path) or "", relpath)
-    assert not findings, (
-        f"{relpath} is legitimate synthetic data but the guard fired:\n"
-        + "\n".join(f.render() for f in findings[:3])
+    assert not findings, f"{relpath} is legitimate synthetic data but the guard fired:\n" + "\n".join(
+        f.render() for f in findings[:3]
     )
 
 
 def test_a_hand_written_fixture_in_the_recommended_style_is_silent() -> None:
     """The style the failure message tells authors to use must actually pass."""
-    clean = '''{
+    clean = """{
   "symbol": "NVDA",
   "rating": "buy",
   "conviction": "high",
@@ -272,7 +278,7 @@ def test_a_hand_written_fixture_in_the_recommended_style_is_silent() -> None:
   "setup_type": "breakout",
   "thesis_invalid_if": "closes below 170",
   "broker_order_id": "00000000-0000-4000-8000-000000000000"
-}'''
+}"""
     assert guard.scan_text(clean, "tests/fixtures/clean.json") == []
 
 
@@ -311,6 +317,7 @@ def test_documenting_the_log_format_is_not_a_paste() -> None:
 # Hard to fool: the payload is checked, not the wrapper
 # ---------------------------------------------------------------------------
 
+
 def test_desk_output_hidden_inside_an_escaped_json_string_is_still_caught() -> None:
     """A model answer stored inside another JSON document is one escaped line.
 
@@ -335,8 +342,12 @@ def test_desk_output_in_single_line_json_is_still_caught() -> None:
     import json as _json
 
     record = {
-        "symbol": "ORCL", "entry_price": 150.65, "stop_loss": 142.02,
-        "reference_target": 159.52, "conviction": "medium", "setup_type": "range",
+        "symbol": "ORCL",
+        "entry_price": 150.65,
+        "stop_loss": 142.02,
+        "reference_target": 159.52,
+        "conviction": "medium",
+        "setup_type": "range",
     }
     one_line = _json.dumps(record, separators=(",", ":"))
     assert "\n" not in one_line
@@ -347,10 +358,7 @@ def test_desk_output_in_a_gzipped_fixture_is_still_caught(tmp_path) -> None:
     """`ops/model_policy/fixtures` commits nine gzipped blobs."""
     import gzip as _gzip
 
-    payload = (
-        '{"broker_order_id": "3f81c0aa-91b4-4d02-ae15-7c9d2e6f08b3", '
-        '"status": "filled", "symbol": "RSG"}'
-    )
+    payload = '{"broker_order_id": "3f81c0aa-91b4-4d02-ae15-7c9d2e6f08b3", "status": "filled", "symbol": "RSG"}'
     blob = tmp_path / "snapshot.json.gz"
     blob.write_bytes(_gzip.compress(payload.encode()))
     text = guard.read_text(blob)
@@ -367,9 +375,11 @@ def test_the_guard_does_not_key_off_filenames() -> None:
 
 
 def test_placeholder_identifiers_are_not_flagged() -> None:
-    for fake in (guard.PLACEHOLDER_UUID,
-                 "11111111-1111-1111-1111-111111111111",
-                 "deadbeef-0000-4000-8000-000000000000"):
+    for fake in (
+        guard.PLACEHOLDER_UUID,
+        "11111111-1111-1111-1111-111111111111",
+        "deadbeef-0000-4000-8000-000000000000",
+    ):
         payload = f'{{"broker_order_id": "{fake}", "status": "filled"}}'
         assert guard.scan_text(payload, "x.json") == [], fake
 

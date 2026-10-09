@@ -12,6 +12,7 @@ NOTHING the desk does: the two constants are equal today, and the fallback
 decides exactly as it did before. Hermetic -- no network, no broker, no
 database.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -34,7 +35,7 @@ def _fallback_call(src: str) -> str:
         elif src[i] == ")":
             depth -= 1
             if depth == 0:
-                return src[start: i + 1]
+                return src[start : i + 1]
     raise AssertionError("unbalanced call site")
 
 
@@ -79,11 +80,17 @@ def test_the_fallback_decision_is_unchanged_at_the_boundary() -> None:
     """Behaviour proof: inside the band stays protected, outside lifts."""
     atr = 2.0
     width = FALLBACK_PROTECTION_ATR_MULTIPLE * atr
+
     def _check(price: float):
         return check_structural_protection(
-            thesis_invalid_if=None, current_price=price, entry_price=100.0,
-            stop_loss=90.0, atr=atr, computed_levels=[],
-            min_level_touches=2, level_cluster_tolerance_pct=0.5,
+            thesis_invalid_if=None,
+            current_price=price,
+            entry_price=100.0,
+            stop_loss=90.0,
+            atr=atr,
+            computed_levels=[],
+            min_level_touches=2,
+            level_cluster_tolerance_pct=0.5,
         )
 
     inside = _check(100.0 - width * 0.5)
@@ -91,6 +98,4 @@ def test_the_fallback_decision_is_unchanged_at_the_boundary() -> None:
     assert inside.protected is True
     assert outside.protected is False
     # And the mechanism agrees with the same multiple read directly.
-    assert adverse_move_is_noise(
-        100.0, 100.0 - width * 0.5, atr,
-        multiple=FALLBACK_PROTECTION_ATR_MULTIPLE) is True
+    assert adverse_move_is_noise(100.0, 100.0 - width * 0.5, atr, multiple=FALLBACK_PROTECTION_ATR_MULTIPLE) is True

@@ -4,6 +4,7 @@ breaker (and no pipeline) behind them.
 Every collaborator is an explicit keyword-only constructor argument, so each
 class is built from stubs alone (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import functools
@@ -37,8 +38,19 @@ def _build(cls, **overrides):
     return cls(**kwargs)
 
 
-LIFTED = [AlertFormats, EpisodeWording, OwnerNotify, CircuitState, QuotaHolds, Admission,
-          Settlement, EmergencyLatch, InfraRetry, OperatorControls, SessionLifecycle]
+LIFTED = [
+    AlertFormats,
+    EpisodeWording,
+    OwnerNotify,
+    CircuitState,
+    QuotaHolds,
+    Admission,
+    Settlement,
+    EmergencyLatch,
+    InfraRetry,
+    OperatorControls,
+    SessionLifecycle,
+]
 
 
 @pytest.mark.parametrize("cls", LIFTED)
@@ -48,20 +60,23 @@ def test_every_lifted_piece_is_constructible_from_stubs(cls):
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
 
 
-@pytest.mark.parametrize("module", [
-    "src.cost_circuit.parts.alert_formats",
-    "src.cost_circuit.parts.episode_wording",
-    "src.cost_circuit.parts.owner_notify",
-    "src.cost_circuit.parts.circuit_state",
-    "src.cost_circuit.parts.quota_holds",
-    "src.cost_circuit.parts.admission",
-    "src.cost_circuit.parts.settlement",
-    "src.cost_circuit.parts.emergency_latch",
-    "src.cost_circuit.parts.infra_retry",
-    "src.cost_circuit.parts.operator_controls",
-    "src.cost_circuit.parts.session_lifecycle",
-    "src.cost_circuit.assembly",
-])
+@pytest.mark.parametrize(
+    "module",
+    [
+        "src.cost_circuit.parts.alert_formats",
+        "src.cost_circuit.parts.episode_wording",
+        "src.cost_circuit.parts.owner_notify",
+        "src.cost_circuit.parts.circuit_state",
+        "src.cost_circuit.parts.quota_holds",
+        "src.cost_circuit.parts.admission",
+        "src.cost_circuit.parts.settlement",
+        "src.cost_circuit.parts.emergency_latch",
+        "src.cost_circuit.parts.infra_retry",
+        "src.cost_circuit.parts.operator_controls",
+        "src.cost_circuit.parts.session_lifecycle",
+        "src.cost_circuit.assembly",
+    ],
+)
 def test_every_lifted_module_passes_the_boundary_check(module):
     verdict = check_boundary(module)
     assert verdict.passed, verdict.failures
@@ -96,6 +111,7 @@ def test_owner_notify_uses_its_own_scans_unless_swapped():
 def test_shim_guard_sees_through_bound_methods_and_partials():
     """The guard is still used by other seams (the PM seat); it no longer has a
     cost-circuit shim to test against, so a local host stands in."""
+
     class Host:
         def _notify_quota_holds_if_needed(self):
             return None
@@ -109,8 +125,9 @@ def test_shim_guard_sees_through_bound_methods_and_partials():
 
 
 def test_state_statics_run_with_nothing_behind_them():
-    assert CircuitState._scope_key("day", day="d", run_id="r", mode="m") == \
-        LLMCostCircuitBreaker._scope_key("day", day="d", run_id="r", mode="m")
+    assert CircuitState._scope_key("day", day="d", run_id="r", mode="m") == LLMCostCircuitBreaker._scope_key(
+        "day", day="d", run_id="r", mode="m"
+    )
     assert LLMCostCircuitBreaker._totals is CircuitState._totals
 
 
@@ -133,10 +150,13 @@ def test_admission_reads_the_sentinel_live_not_snapshotted():
         host["sentinel"] = sentinel
 
     adm = _build(
-        Admission, enabled=True, sync_emergency_latch=sync,
+        Admission,
+        enabled=True,
+        sync_emergency_latch=sync,
         read_unavailable_sentinel=lambda: host["sentinel"],
         infrastructure_lock=threading.Lock(),
-        enforce_settled_limits_locked=None, enforce_current_limits=None,
+        enforce_settled_limits_locked=None,
+        enforce_current_limits=None,
     )
     assert adm.enforce_current_limits("preflight") == {"suspended": True}
     sentinel.enforce_current_limits.assert_called_once_with("preflight")
@@ -153,23 +173,42 @@ def _real_breaker():
             return True
 
     cfg = SimpleNamespace(
-        enabled=True, session_cost_limit_usd=10.0, daily_cost_limit_usd=20.0,
-        max_calls_per_session=1000, max_provider_attempts_per_call=2,
+        enabled=True,
+        session_cost_limit_usd=10.0,
+        daily_cost_limit_usd=20.0,
+        max_calls_per_session=1000,
+        max_provider_attempts_per_call=2,
         input_chars_per_token=3.5,
     )
     return LLMCostCircuitBreaker(":memory:", cfg, _Notifier())
 
 
 HELD = {
-    "_alert_formats": AlertFormats, "_episode_wording": EpisodeWording,
-    "_circuit_state": CircuitState, "_quota_holds": QuotaHolds,
-    "_emergency_latch": EmergencyLatch, "_infra_retry": InfraRetry,
-    "_session_lifecycle": SessionLifecycle, "_owner_notify": OwnerNotify,
-    "_admission": Admission, "_settlement": Settlement,
+    "_alert_formats": AlertFormats,
+    "_episode_wording": EpisodeWording,
+    "_circuit_state": CircuitState,
+    "_quota_holds": QuotaHolds,
+    "_emergency_latch": EmergencyLatch,
+    "_infra_retry": InfraRetry,
+    "_session_lifecycle": SessionLifecycle,
+    "_owner_notify": OwnerNotify,
+    "_admission": Admission,
+    "_settlement": Settlement,
     "_operator_controls": OperatorControls,
 }
-GONE_SHIMS = ("formats", "wording", "state", "holds", "latch", "retry", "session",
-              "notify", "admission", "settlement", "operator")
+GONE_SHIMS = (
+    "formats",
+    "wording",
+    "state",
+    "holds",
+    "latch",
+    "retry",
+    "session",
+    "notify",
+    "admission",
+    "settlement",
+    "operator",
+)
 
 
 def test_breaker_holds_every_part_instead_of_inheriting_any():
@@ -212,6 +251,7 @@ def test_assembly_wires_every_part_onto_a_stub_with_no_breaker_behind_it():
     any object carrying the breaker's slots -- here a bare stub, no breaker,
     no pipeline -- and the breaker's `_hold_parts` is a two-line call to it."""
     import inspect
+
     stub = MagicMock(name="breaker_stub")
     stub.config = object()
     hold_parts(stub)
@@ -259,8 +299,11 @@ def test_held_parts_see_collaborators_that_change_after_construction():
 
 def test_fail_closed_sentinel_still_holds_every_part():
     from types import SimpleNamespace
+
     breaker = LLMCostCircuitBreaker.fail_closed(
-        ":memory:", SimpleNamespace(enabled=True), RuntimeError("boom"),
+        ":memory:",
+        SimpleNamespace(enabled=True),
+        RuntimeError("boom"),
         notifier=MagicMock(enabled=True),
     )
     assert breaker._unavailable_sentinel is not None
@@ -282,13 +325,16 @@ def test_latch_sync_writes_the_sentinel_through_to_the_host_under_its_own_lock()
         host["sentinel"] = value
 
     latch = _build(
-        EmergencyLatch, infrastructure_lock=lock,
+        EmergencyLatch,
+        infrastructure_lock=lock,
         read_unavailable_sentinel=lambda: host["sentinel"],
         write_unavailable_sentinel=write_sentinel,
         read_infrastructure_error=lambda: host["error"],
         write_infrastructure_error=lambda v: host.__setitem__("error", v),
         read_emergency_latch=lambda: (RuntimeError("latched"), {"attempts": "3"}),
-        emergency_file_lock=None, emergency_latch_path=None, emergency_lock_path=None,
+        emergency_file_lock=None,
+        emergency_latch_path=None,
+        emergency_lock_path=None,
     )
     latch._sync_emergency_latch()
     assert seen_locked == [True]
@@ -302,7 +348,8 @@ def test_latch_sync_writes_the_sentinel_through_to_the_host_under_its_own_lock()
 def test_retry_mark_unavailable_writes_both_fields_through_and_returns_the_sentinel_answer():
     host = {"sentinel": None, "error": None}
     retry = _build(
-        InfraRetry, infrastructure_lock=threading.Lock(),
+        InfraRetry,
+        infrastructure_lock=threading.Lock(),
         context=lambda: ("run", "mode"),
         best_effort_emergency_snapshot=lambda run_id: {},
         write_emergency_latch=MagicMock(name="write_latch"),
@@ -310,8 +357,10 @@ def test_retry_mark_unavailable_writes_both_fields_through_and_returns_the_senti
         write_unavailable_sentinel=lambda v: host.__setitem__("sentinel", v),
         read_infrastructure_error=lambda: host["error"],
         write_infrastructure_error=lambda v: host.__setitem__("error", v),
-        emergency_latch_path=None, emergency_lock_path=None,
-        infra_retry_backoff_s=None, mark_unavailable=None,
+        emergency_latch_path=None,
+        emergency_lock_path=None,
+        infra_retry_backoff_s=None,
+        mark_unavailable=None,
     )
     assert retry._run_with_infra_retry.__func__ is InfraRetry._run_with_infra_retry
     answer = retry.mark_unavailable(OSError("disk"), agent_name="pricing_preflight", attempts=0)

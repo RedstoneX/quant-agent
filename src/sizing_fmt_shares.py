@@ -1,4 +1,5 @@
 """Share-quantity formatting (lifted from pipeline_sizing)."""
+
 from __future__ import annotations
 
 import math

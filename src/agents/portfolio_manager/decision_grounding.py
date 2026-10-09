@@ -10,7 +10,16 @@ import re
 from datetime import date
 from pydantic import ValidationError
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
-from src.models import (CandidateRejection, NewsIntelligenceReport, PortfolioDecision, Position, SmartMoneyFinding, TargetPosition, TechAnalysisResult, parse_telemetry)
+from src.models import (
+    CandidateRejection,
+    NewsIntelligenceReport,
+    PortfolioDecision,
+    Position,
+    SmartMoneyFinding,
+    TargetPosition,
+    TechAnalysisResult,
+    parse_telemetry,
+)
 from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import stance_is_aligned, weight_pct_of
 from src.trading_calendar import et_today
@@ -51,9 +60,6 @@ _SYMBOL_DIRECTION_RE = re.compile(r"^([A-Z0-9.\-]+)\((\w+)\)$")
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-
-
-
 class DecisionGrounding:
     """Decision grounding: validation of the model reply, conflict/catalyst/rejection/target drops, canonical targets.
 
@@ -63,7 +69,8 @@ class DecisionGrounding:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         build_evidence_registry,
         conflict_source_aliases,
         target_intent=None,
@@ -82,10 +89,13 @@ class DecisionGrounding:
             self._conflict_is_named = conflict_is_named
 
     def _target_intent(
-        self, target: TargetPosition, held: dict[str, Position], total_value: float,
+        self,
+        target: TargetPosition,
+        held: dict[str, Position],
+        total_value: float,
         existing_risk_pct: dict[str, float] | None = None,
     ) -> str:
-        """"buy" / "short" (opens or increases exposure) vs "sell" (exits or
+        """ "buy" / "short" (opens or increases exposure) vs "sell" (exits or
         reduces it).
 
         The single definition both `validate_grounding` (does this claim's
@@ -128,19 +138,23 @@ class DecisionGrounding:
             held_side = "short" if pos.qty < 0 else "long"
             if held_side != target.direction:
                 return increase
-            current_risk = {
-                str(k).upper(): v for k, v in existing_risk_pct.items()
-            }.get(symbol)
+            current_risk = {str(k).upper(): v for k, v in existing_risk_pct.items()}.get(symbol)
             if current_risk is None:
                 return increase
             return "sell" if target.risk_allocation_pct < current_risk else increase
         return "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
 
     def validate_grounding(
-        self, decision: PortfolioDecision, *, analyses: list[TechAnalysisResult],
-        positions: list[Position], news_intel: NewsIntelligenceReport | None,
-        earnings_analyses: list[dict], macro_analysis: dict | None,
-        total_value: float, symbol_sectors: dict[str, str] | None = None,
+        self,
+        decision: PortfolioDecision,
+        *,
+        analyses: list[TechAnalysisResult],
+        positions: list[Position],
+        news_intel: NewsIntelligenceReport | None,
+        earnings_analyses: list[dict],
+        macro_analysis: dict | None,
+        total_value: float,
+        symbol_sectors: dict[str, str] | None = None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         allowed_buy_symbols: set[str] | None = None,
         existing_risk_pct: dict[str, float] | None = None,
@@ -157,13 +171,15 @@ class DecisionGrounding:
         errors: list[str] = []
         if decision.decisions:
             errors.append(
-                "portfolio manager supplied concrete decisions; only grounded targets "
-                "may cross the PM boundary"
+                "portfolio manager supplied concrete decisions; only grounded targets may cross the PM boundary"
             )
         held = {p.symbol.upper(): p for p in positions}
         registry = self.build_evidence_registry(
-            analyses=analyses, positions=positions, news_intel=news_intel,
-            earnings_analyses=earnings_analyses, macro_analysis=macro_analysis,
+            analyses=analyses,
+            positions=positions,
+            news_intel=news_intel,
+            earnings_analyses=earnings_analyses,
+            macro_analysis=macro_analysis,
             smart_money_findings=smart_money_findings or [],
             symbol_sectors=symbol_sectors or {},
         )
@@ -179,12 +195,9 @@ class DecisionGrounding:
         for finding in smart_money_findings or []:
             symbol = finding.symbol.upper()
             smart_money_structurally_eligible[symbol] = (
-                smart_money_structurally_eligible.get(symbol, False)
-                or finding.support_eligible
+                smart_money_structurally_eligible.get(symbol, False) or finding.support_eligible
             )
-        reasoning_text = "\n".join(
-            str(value) for value in decision.reasoning_chain.model_dump().values()
-        )
+        reasoning_text = "\n".join(str(value) for value in decision.reasoning_chain.model_dump().values())
 
         for target in decision.targets:
             symbol = target.symbol.upper()
@@ -207,7 +220,10 @@ class DecisionGrounding:
             # classification for its own "opens or increases" scope, so the
             # two never disagree about what counts as an increase.
             intent = self._target_intent(
-                target, held, total_value, existing_risk_pct=existing_risk_pct,
+                target,
+                held,
+                total_value,
+                existing_risk_pct=existing_risk_pct,
             )
             if intent in ("buy", "short"):
                 if allowed_buy_symbols is not None and symbol not in {
@@ -222,9 +238,7 @@ class DecisionGrounding:
                 # include held names in the paid batch), not a reason to
                 # drop the name here and keep the rest of the book.
                 if symbol not in {analysis.symbol.upper() for analysis in analyses}:
-                    errors.append(
-                        f"{symbol}: increase lacks a current-run Technical analysis"
-                    )
+                    errors.append(f"{symbol}: increase lacks a current-run Technical analysis")
             expected_sources = registry.get(symbol, {})
             # Correlation, not calendar age: smart_money may support THIS
             # target only if it is structurally real evidence AND at least
@@ -235,10 +249,13 @@ class DecisionGrounding:
             # doesn't get to count as support on its own, regardless of
             # whether it happened yesterday or three months ago.
             smart_money_correlates = smart_money_structurally_eligible.get(
-                symbol, False,
+                symbol,
+                False,
             ) and any(
                 stance_is_aligned(
-                    other_source, symbol, other_stance,
+                    other_source,
+                    symbol,
+                    other_stance,
                     wants_bullish=(intent == "buy"),
                 )
                 for other_source, other_stance in expected_sources.items()
@@ -254,10 +271,7 @@ class DecisionGrounding:
                     errors.append(f"{symbol}: claims {source} coverage that does not exist")
                     continue
                 if stance != expected:
-                    errors.append(
-                        f"{symbol}: claims {source} stance {stance!r}; canonical "
-                        f"stance is {expected!r}"
-                    )
+                    errors.append(f"{symbol}: claims {source} stance {stance!r}; canonical stance is {expected!r}")
                     continue
                 if source in seen_sources:
                     errors.append(f"{symbol}: duplicate {source} provenance claim")
@@ -273,7 +287,10 @@ class DecisionGrounding:
                 # one definition, not a second one that could quietly drift
                 # from this one.
                 polarity_supports = stance_is_aligned(
-                    source, symbol, stance, wants_bullish=(intent == "buy"),
+                    source,
+                    symbol,
+                    stance,
+                    wants_bullish=(intent == "buy"),
                 )
                 # A PARTIAL trim keeps a position. Evidence aligned with the
                 # side still held supports HOLDING that remainder — trimming
@@ -285,10 +302,15 @@ class DecisionGrounding:
                 # increases are untouched, and the `conflicts` check below
                 # still reads the reduction's own polarity.
                 supports_retained = (
-                    intent == "sell" and pos is not None and not target.is_close
+                    intent == "sell"
+                    and pos is not None
+                    and not target.is_close
                     and pos.qty != 0
                     and stance_is_aligned(
-                        source, symbol, stance, wants_bullish=pos.qty > 0,
+                        source,
+                        symbol,
+                        stance,
+                        wants_bullish=pos.qty > 0,
                     )
                 )
                 if claim.relationship == "supports":
@@ -315,10 +337,7 @@ class DecisionGrounding:
                     claim.relationship == "context"
                     and stance not in {"neutral", "mixed"}
                     and source != "macro"
-                    and not (
-                        source == "smart_money"
-                        and not smart_money_correlates
-                    )
+                    and not (source == "smart_money" and not smart_money_correlates)
                 ):
                     errors.append(
                         f"{symbol}: directional {source} stance {stance!r} must be "
@@ -331,9 +350,11 @@ class DecisionGrounding:
             # technical/news/earnings/macro denominator.
             texts = [target.thesis]
             texts.extend(
-                m.group(0) for m in re.finditer(
+                m.group(0)
+                for m in re.finditer(
                     rf"\b{re.escape(symbol)}\b[^.\n]{{0,240}}\b\d+/\d+\b",
-                    reasoning_text, flags=re.IGNORECASE,
+                    reasoning_text,
+                    flags=re.IGNORECASE,
                 )
             )
             for text in texts:
@@ -386,7 +407,11 @@ class DecisionGrounding:
         return any(alias in text_lower for alias in aliases)
 
     def _drop_unadjudicated_conflicts(
-        self, decision: PortfolioDecision, *, positions: list[Position], total_value: float,
+        self,
+        decision: PortfolioDecision,
+        *,
+        positions: list[Position],
+        total_value: float,
         existing_risk_pct: dict[str, float] | None = None,
         dropped: list[dict] | None = None,
     ) -> PortfolioDecision:
@@ -422,17 +447,20 @@ class DecisionGrounding:
         kept: list[TargetPosition] = []
         for target in decision.targets:
             intent = self._target_intent(
-                target, held, total_value, existing_risk_pct=existing_risk_pct,
+                target,
+                held,
+                total_value,
+                existing_risk_pct=existing_risk_pct,
             )
             if intent not in ("buy", "short"):
                 kept.append(target)  # exits/reductions are exempt on purpose
                 continue
-            conflicting_sources = sorted({
-                claim.source for claim in target.provenance
-                if claim.relationship == "conflicts"
-            })
+            conflicting_sources = sorted(
+                {claim.source for claim in target.provenance if claim.relationship == "conflicts"}
+            )
             unaddressed = [
-                source for source in conflicting_sources
+                source
+                for source in conflicting_sources
                 if not self._conflict_is_named(signal_conflicts, target.symbol, source)
             ]
             if unaddressed:
@@ -443,27 +471,32 @@ class DecisionGrounding:
                     "in signal_conflicts (symbol + source) or the target is "
                     "dropped, not traded; the rest of this session's "
                     "decision is unaffected. signal_conflicts was: %r",
-                    CONFLICT_UNADJUDICATED_STATUS, target.symbol, intent,
-                    unaddressed, signal_conflicts[:300],
+                    CONFLICT_UNADJUDICATED_STATUS,
+                    target.symbol,
+                    intent,
+                    unaddressed,
+                    signal_conflicts[:300],
                 )
                 # Board item 164: `dropped` is the optional per-symbol sink
                 # `decide()` hands in so the drop is persisted, not only
                 # logged. Recording only — the drop above is unchanged.
                 if dropped is not None:
-                    dropped.append({
-                        "symbol": target.symbol,
-                        "gate": CONFLICT_UNADJUDICATED_STATUS,
-                        "intent": intent,
-                        "unaddressed_sources": list(unaddressed),
-                        "reason": (
-                            f"{target.symbol} target ({intent}) DROPPED: the "
-                            f"target records a conflict from "
-                            f"{', '.join(unaddressed)} that signal_conflicts "
-                            f"does not address by naming both the symbol and "
-                            f"the source; a name being opened or increased "
-                            f"must address every recorded conflict."
-                        ),
-                    })
+                    dropped.append(
+                        {
+                            "symbol": target.symbol,
+                            "gate": CONFLICT_UNADJUDICATED_STATUS,
+                            "intent": intent,
+                            "unaddressed_sources": list(unaddressed),
+                            "reason": (
+                                f"{target.symbol} target ({intent}) DROPPED: the "
+                                f"target records a conflict from "
+                                f"{', '.join(unaddressed)} that signal_conflicts "
+                                f"does not address by naming both the symbol and "
+                                f"the source; a name being opened or increased "
+                                f"must address every recorded conflict."
+                            ),
+                        }
+                    )
                 continue
             kept.append(target)
         decision.targets = kept
@@ -501,7 +534,9 @@ class DecisionGrounding:
     # decorative.
 
     def _state_change_symbols_by_date(
-        self, active_state_changes: str, asof: date | None = None,
+        self,
+        active_state_changes: str,
+        asof: date | None = None,
     ) -> dict[str, dict[str, set[str]]]:
         """Parse the rendered `active_state_changes` block into
         `{iso_date: {SYMBOL: {direction, ...}, ...}}`.
@@ -550,7 +585,8 @@ class DecisionGrounding:
                 logger.warning(
                     "%s: cannot read today's date (%s) — no catalyst citation "
                     "can be aged, so none is honoured this session.",
-                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, exc,
+                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS,
+                    exc,
                 )
                 return {}
         by_date: dict[str, dict[str, set[str]]] = {}
@@ -599,7 +635,10 @@ class DecisionGrounding:
         return by_date
 
     def _catalyst_cites_state_change(
-        self, catalyst: str, symbol: str, required_direction: str,
+        self,
+        catalyst: str,
+        symbol: str,
+        required_direction: str,
         by_date: dict[str, dict[str, set[str]]],
     ) -> bool:
         """Does `catalyst` resolve to a state-change row that names `symbol`
@@ -637,12 +676,13 @@ class DecisionGrounding:
             return False
         symbol = symbol.strip().upper()
         return any(
-            required_direction in by_date.get(cited, {}).get(symbol, set())
-            for cited in _ISO_DATE_RE.findall(text)
+            required_direction in by_date.get(cited, {}).get(symbol, set()) for cited in _ISO_DATE_RE.findall(text)
         )
 
     def _apply_subfloor_catalyst_rule(
-        self, decision: PortfolioDecision, *,
+        self,
+        decision: PortfolioDecision,
+        *,
         analyses: list[TechAnalysisResult],
         positions: list[Position],
         total_value: float,
@@ -673,17 +713,17 @@ class DecisionGrounding:
         """
         _ = (rr_floor, starter_risk_pct, asof, active_state_changes)
         if real_reward_risk_by_symbol is not None:
-            rr_by_symbol = {
-                a.symbol.upper(): real_reward_risk_by_symbol.get(a.symbol.upper())
-                for a in analyses
-            }
+            rr_by_symbol = {a.symbol.upper(): real_reward_risk_by_symbol.get(a.symbol.upper()) for a in analyses}
         else:
             rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
         setup_by_symbol = {a.symbol.upper(): a.setup_type for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
         for target in decision.targets:
             intent = self._target_intent(
-                target, held, total_value, existing_risk_pct=existing_risk_pct,
+                target,
+                held,
+                total_value,
+                existing_risk_pct=existing_risk_pct,
             )
             if intent not in ("buy", "short"):
                 continue
@@ -696,7 +736,9 @@ class DecisionGrounding:
                     "recorded as unknown ranking hint, not dropped and "
                     "not size-capped. Invented reward:risk floors are "
                     "retired.",
-                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
+                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS,
+                    target.symbol,
+                    intent,
                 )
         return decision
 
@@ -718,8 +760,8 @@ class DecisionGrounding:
             return parsed
         if not isinstance(raw, list):
             logger.warning(
-                "Portfolio manager: rejections is %s, not list — replacing "
-                "with []", type(raw).__name__,
+                "Portfolio manager: rejections is %s, not list — replacing with []",
+                type(raw).__name__,
             )
             parsed["rejections"] = []
             return parsed
@@ -731,7 +773,10 @@ class DecisionGrounding:
                 logger.warning(
                     "Portfolio manager: dropping unusable rejections entry at "
                     "index %d (%s) — the symbol it named will be re-asked "
-                    "for, not silently omitted: %r", i, e, item,
+                    "for, not silently omitted: %r",
+                    i,
+                    e,
+                    item,
                 )
                 continue
             valid.append(item)
@@ -766,19 +811,23 @@ class DecisionGrounding:
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "Portfolio manager: dropping non-dict targets entry "
-                    "at index %d: %r", i, item,
+                    "Portfolio manager: dropping non-dict targets entry at index %d: %r",
+                    i,
+                    item,
                 )
                 if dropped is not None:
-                    dropped.append({
-                        "symbol": None, "index": i,
-                        "gate": "pm_target_malformed",
-                        "reason": (
-                            f"targets entry at index {i} DROPPED: it is a "
-                            f"{type(item).__name__}, not an object, so it "
-                            f"names no symbol: {item!r}"
-                        ),
-                    })
+                    dropped.append(
+                        {
+                            "symbol": None,
+                            "index": i,
+                            "gate": "pm_target_malformed",
+                            "reason": (
+                                f"targets entry at index {i} DROPPED: it is a "
+                                f"{type(item).__name__}, not an object, so it "
+                                f"names no symbol: {item!r}"
+                            ),
+                        }
+                    )
                 continue
             try:
                 # Dry run: the surviving dicts are validated again by
@@ -794,29 +843,30 @@ class DecisionGrounding:
                 parse_telemetry.record_dropped_item("TargetPosition", str(sym))
                 logger.warning(
                     "Portfolio manager: dropping malformed target for %s: %s",
-                    sym, e,
+                    sym,
+                    e,
                 )
                 if dropped is not None:
                     errors = "; ".join(
-                        f"{'.'.join(str(p) for p in err.get('loc', ()))}: "
-                        f"{err.get('msg', '')}"
-                        for err in e.errors()
+                        f"{'.'.join(str(p) for p in err.get('loc', ()))}: {err.get('msg', '')}" for err in e.errors()
                     )
                     raw_symbol = item.get("symbol")
-                    dropped.append({
-                        "symbol": (
-                            str(raw_symbol).strip().upper()
-                            if isinstance(raw_symbol, str) and raw_symbol.strip()
-                            else None
-                        ),
-                        "index": i,
-                        "gate": "pm_target_malformed",
-                        "reason": (
-                            f"{sym} target DROPPED at parse: it fails the "
-                            f"target schema ({errors}), so no position is "
-                            f"built from it; the rest of the decision stands."
-                        ),
-                    })
+                    dropped.append(
+                        {
+                            "symbol": (
+                                str(raw_symbol).strip().upper()
+                                if isinstance(raw_symbol, str) and raw_symbol.strip()
+                                else None
+                            ),
+                            "index": i,
+                            "gate": "pm_target_malformed",
+                            "reason": (
+                                f"{sym} target DROPPED at parse: it fails the "
+                                f"target schema ({errors}), so no position is "
+                                f"built from it; the rest of the decision stands."
+                            ),
+                        }
+                    )
                 continue
             valid.append(item)
         parsed["targets"] = valid
@@ -852,9 +902,15 @@ class DecisionGrounding:
         return sorted(
             (
                 (
-                    m.symbol, m.target_weight_pct, m.risk_allocation_pct,
-                    m.direction, m.conviction, m.thesis,
-                    m.thesis_invalid_if, m.suggested_stop_price, m.catalyst,
+                    m.symbol,
+                    m.target_weight_pct,
+                    m.risk_allocation_pct,
+                    m.direction,
+                    m.conviction,
+                    m.thesis,
+                    m.thesis_invalid_if,
+                    m.suggested_stop_price,
+                    m.catalyst,
                 )
                 for m in models
             ),

@@ -4,6 +4,7 @@ Same shape as the other `_migrate` steps in `manager.py`: CREATE ... IF NOT
 EXISTS, own try/except so a hiccup here can never stop the desk starting.
 Never reordered or altered once shipped (production databases apply it).
 """
+
 import logging
 
 logger = logging.getLogger(__name__)

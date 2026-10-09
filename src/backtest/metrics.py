@@ -48,10 +48,18 @@ def compute_metrics(trades: list[Trade], initial_equity: float) -> Metrics:
     in (and is therefore safe to call twice and diff byte-for-byte)."""
     if not trades:
         return Metrics(
-            trade_count=0, win_rate_pct=0.0, avg_win=0.0, avg_loss=0.0,
-            avg_win_loss_ratio=None, expectancy_dollars=0.0, expectancy_r=0.0,
-            avg_hold_days=0.0, max_drawdown_pct=0.0, max_drawdown_dollars=0.0,
-            total_return_pct=0.0, final_equity=round(initial_equity, 2),
+            trade_count=0,
+            win_rate_pct=0.0,
+            avg_win=0.0,
+            avg_loss=0.0,
+            avg_win_loss_ratio=None,
+            expectancy_dollars=0.0,
+            expectancy_r=0.0,
+            avg_hold_days=0.0,
+            max_drawdown_pct=0.0,
+            max_drawdown_dollars=0.0,
+            total_return_pct=0.0,
+            final_equity=round(initial_equity, 2),
         )
 
     ordered = sorted(trades, key=lambda t: (t.exit_date, t.symbol, t.entry_date))
@@ -80,9 +88,7 @@ def compute_metrics(trades: list[Trade], initial_equity: float) -> Metrics:
         max_dd_dollars = max(max_dd_dollars, dd_dollars)
         max_dd_pct = max(max_dd_pct, dd_pct)
 
-    total_return_pct = (
-        (equity - initial_equity) / initial_equity * 100.0 if initial_equity else 0.0
-    )
+    total_return_pct = (equity - initial_equity) / initial_equity * 100.0 if initial_equity else 0.0
 
     return Metrics(
         trade_count=len(ordered),
@@ -151,7 +157,10 @@ WHAT THIS MEASURES — read before trusting the numbers above
 
 
 def format_settleability_verdict(
-    *, contested_budget_days: int, binding_budget_days: int, entry_days: int,
+    *,
+    contested_budget_days: int,
+    binding_budget_days: int,
+    entry_days: int,
     label: str = "this run",
 ) -> str:
     """The tool's own verdict on whether a parameter conclusion may be
@@ -165,10 +174,7 @@ def format_settleability_verdict(
     decided by spelling moves every later size and every later outcome,
     and there is no share small enough to treat as noise.
     """
-    share = (
-        f"{100.0 * contested_budget_days / entry_days:.1f}%"
-        if entry_days > 0 else "n/a"
-    )
+    share = f"{100.0 * contested_budget_days / entry_days:.1f}%" if entry_days > 0 else "n/a"
     head = (
         f"Budget binding: {binding_budget_days} of {entry_days} entry day(s); "
         f"of those, {contested_budget_days} were CONTESTED "
@@ -193,30 +199,44 @@ def format_settleability_verdict(
     )
 
 
-def format_caveats(*, slippage_bps: float, slippage_source: str, skipped: int,
-                    min_bars: int, symbols_with_no_data: list[str],
-                    binding_budget_days: int, entry_days: int) -> str:
+def format_caveats(
+    *,
+    slippage_bps: float,
+    slippage_source: str,
+    skipped: int,
+    min_bars: int,
+    symbols_with_no_data: list[str],
+    binding_budget_days: int,
+    entry_days: int,
+) -> str:
     missing_line = ""
     if symbols_with_no_data:
         missing_line = (
-            "\n  - NO DATA AT ALL for: " + ", ".join(symbols_with_no_data)
+            "\n  - NO DATA AT ALL for: "
+            + ", ".join(symbols_with_no_data)
             + " -- excluded from the universe entirely, not counted above."
         )
     return CAVEAT_TEMPLATE.format(
-        slippage_bps=slippage_bps, slippage_source=slippage_source,
-        skipped=skipped, min_bars=min_bars, missing_line=missing_line,
-        binding=binding_budget_days, entry=entry_days,
+        slippage_bps=slippage_bps,
+        slippage_source=slippage_source,
+        skipped=skipped,
+        min_bars=min_bars,
+        missing_line=missing_line,
+        binding=binding_budget_days,
+        entry=entry_days,
     )
 
 
 def format_metrics_report(
-    label: str, metrics: Metrics, meta: dict, *,
-    binding_budget_days: int, entry_days: int, contested_budget_days: int = 0,
+    label: str,
+    metrics: Metrics,
+    meta: dict,
+    *,
+    binding_budget_days: int,
+    entry_days: int,
+    contested_budget_days: int = 0,
 ) -> str:
-    ratio = (
-        f"{metrics.avg_win_loss_ratio:.3f}"
-        if metrics.avg_win_loss_ratio is not None else "n/a"
-    )
+    ratio = f"{metrics.avg_win_loss_ratio:.3f}" if metrics.avg_win_loss_ratio is not None else "n/a"
     lines = [
         f"Backtest: {label}",
         f"  Period: {meta['start']} .. {meta['end']}  |  "
@@ -227,13 +247,10 @@ def format_metrics_report(
         f"  Contested days: {contested_budget_days}"
         f"  ({'NON-RESULT — spelling decided a funding call' if contested_budget_days else 'none — settleable'})",
         f"  Win rate: {metrics.win_rate_pct:.2f}%",
-        f"  Avg win: ${metrics.avg_win:,.2f}   Avg loss: ${metrics.avg_loss:,.2f}   "
-        f"Win/loss ratio: {ratio}",
-        f"  Expectancy: ${metrics.expectancy_dollars:,.2f}/trade "
-        f"({metrics.expectancy_r:+.3f}R)",
+        f"  Avg win: ${metrics.avg_win:,.2f}   Avg loss: ${metrics.avg_loss:,.2f}   Win/loss ratio: {ratio}",
+        f"  Expectancy: ${metrics.expectancy_dollars:,.2f}/trade ({metrics.expectancy_r:+.3f}R)",
         f"  Avg hold: {metrics.avg_hold_days:.1f} session(s)",
-        f"  Max drawdown: {metrics.max_drawdown_pct:.2f}% "
-        f"(${metrics.max_drawdown_dollars:,.2f})",
+        f"  Max drawdown: {metrics.max_drawdown_pct:.2f}% (${metrics.max_drawdown_dollars:,.2f})",
         f"  Total return: {metrics.total_return_pct:+.2f}%   "
         f"Final equity: ${metrics.final_equity:,.2f} "
         f"(from ${meta['initial_equity']:,.2f})",
@@ -274,10 +291,17 @@ def _fmt(value, kind: str, signed: bool = False) -> str:
 
 
 def format_ab_table(
-    label_a: str, metrics_a: Metrics, label_b: str, metrics_b: Metrics, *,
-    binding_budget_days_a: int, binding_budget_days_b: int,
-    entry_days_a: int, entry_days_b: int,
-    contested_budget_days_a: int = 0, contested_budget_days_b: int = 0,
+    label_a: str,
+    metrics_a: Metrics,
+    label_b: str,
+    metrics_b: Metrics,
+    *,
+    binding_budget_days_a: int,
+    binding_budget_days_b: int,
+    entry_days_a: int,
+    entry_days_b: int,
+    contested_budget_days_a: int = 0,
+    contested_budget_days_b: int = 0,
 ) -> str:
     """Side-by-side comparison with a delta column (B - A). This is the
     tool's real purpose: "did this parameter change help?" """
@@ -288,28 +312,21 @@ def format_ab_table(
         a = getattr(metrics_a, attr)
         b = getattr(metrics_b, attr)
         delta = (b - a) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else None
-        lines.append(
-            f"{name:<22} {_fmt(a, kind):>20} {_fmt(b, kind):>20} "
-            f"{_fmt(delta, kind, signed=True):>16}"
-        )
+        lines.append(f"{name:<22} {_fmt(a, kind):>20} {_fmt(b, kind):>20} {_fmt(delta, kind, signed=True):>16}")
     # Binding-day count is on the run, not on trade-list Metrics. It still
     # belongs on the comparison: this table is where a reader treats a
     # parameter change as evidence about how the desk picks among trades.
     bind_a = f"{binding_budget_days_a} of {entry_days_a}"
     bind_b = f"{binding_budget_days_b} of {entry_days_b}"
     bind_delta = binding_budget_days_b - binding_budget_days_a
-    lines.append(
-        f"{'Binding-budget days':<22} {bind_a:>20} {bind_b:>20} "
-        f"{_fmt(bind_delta, 'int', signed=True):>16}"
-    )
+    lines.append(f"{'Binding-budget days':<22} {bind_a:>20} {bind_b:>20} {_fmt(bind_delta, 'int', signed=True):>16}")
     lines.append(
         f"{'Contested days':<22} {contested_budget_days_a:>20} "
         f"{contested_budget_days_b:>20} "
         f"{_fmt(contested_budget_days_b - contested_budget_days_a, 'int', signed=True):>16}"
     )
     lines.append(
-        "On binding days this engine serves equal-size requests "
-        "alphabetically (ticker spelling), not a ranking."
+        "On binding days this engine serves equal-size requests alphabetically (ticker spelling), not a ranking."
     )
     if contested_budget_days_a or contested_budget_days_b:
         lines.append(
@@ -321,8 +338,5 @@ def format_ab_table(
             "zero on BOTH arms, then re-run. ***"
         )
     else:
-        lines.append(
-            "Neither arm had a contested day: the delta column is "
-            "attributable to the parameter change."
-        )
+        lines.append("Neither arm had a contested day: the delta column is attributable to the parameter change.")
     return "\n".join(lines)

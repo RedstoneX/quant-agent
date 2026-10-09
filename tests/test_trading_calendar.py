@@ -62,21 +62,21 @@ def test_session_date_key_accepts_none_for_now():
 
 
 def test_is_weekday_weekday_vs_weekend():
-    assert is_weekday(date(2026, 4, 17)) is True   # Friday
+    assert is_weekday(date(2026, 4, 17)) is True  # Friday
     assert is_weekday(date(2026, 4, 18)) is False  # Saturday
     assert is_weekday(date(2026, 4, 19)) is False  # Sunday
-    assert is_weekday(date(2026, 4, 20)) is True   # Monday
+    assert is_weekday(date(2026, 4, 20)) is True  # Monday
 
 
 @pytest.mark.parametrize(
     "mode, lo_min, hi_min",
     [
         ("earnings_preprocess", 480, 555),
-        ("morning",             570, 720),
-        ("intra_check",         570, 960),
-        ("midday",              780, 870),
-        ("close",               930, 960),
-        ("evening",            1200, 1320),
+        ("morning", 570, 720),
+        ("intra_check", 570, 960),
+        ("midday", 780, 870),
+        ("close", 930, 960),
+        ("evening", 1200, 1320),
     ],
 )
 def test_session_windows_cover_documented_ranges(mode, lo_min, hi_min):
@@ -144,17 +144,13 @@ def test_bash_wrapper_windows_match_python():
     wrapper = Path(__file__).resolve().parent.parent / "scripts" / "run_if_et_window.sh"
     text = wrapper.read_text()
 
-    pattern = re.compile(
-        r"^\s*(\w+)\)\s+LO=(\d+);\s*HI=(\d+)", re.MULTILINE
-    )
+    pattern = re.compile(r"^\s*(\w+)\)\s+LO=(\d+);\s*HI=(\d+)", re.MULTILINE)
     seen = {m.group(1): (int(m.group(2)), int(m.group(3))) for m in pattern.finditer(text)}
 
     # Every mode in SESSION_WINDOWS must appear in the wrapper with matching bounds
     for mode, (lo, hi) in SESSION_WINDOWS.items():
         assert mode in seen, f"{mode} missing from bash wrapper"
-        assert seen[mode] == (lo, hi), (
-            f"Window drift for {mode}: python={lo}-{hi}, bash={seen[mode]}"
-        )
+        assert seen[mode] == (lo, hi), f"Window drift for {mode}: python={lo}-{hi}, bash={seen[mode]}"
 
 
 def test_quarter_of_maps_months_correctly():

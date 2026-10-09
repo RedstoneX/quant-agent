@@ -13,6 +13,7 @@ subprocess that reaching the service never imports `src.pipeline`.
 the money path is already best-effort, so a caller with no database still gets
 a service whose read-only gates work.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -23,7 +24,12 @@ from src.storage.event_journal import DatabaseEventJournal
 
 
 def build_admission_service(
-    *, config, broker=None, market=None, db=None, sec_form4_provider=None,
+    *,
+    config,
+    broker=None,
+    market=None,
+    db=None,
+    sec_form4_provider=None,
     constructor_cfg_fn: Callable[[], object | None] | None = None,
     portfolio_constructor=None,
 ) -> AdmissionService:
@@ -35,10 +41,14 @@ def build_admission_service(
     ceiling is 1 / the widest stop that object can produce).
     """
     if constructor_cfg_fn is None:
+
         def constructor_cfg_fn() -> object | None:
             return live_constructor_cfg_or_none(portfolio_constructor)
+
     return AdmissionService(
-        config=config, broker=broker, market=market,
+        config=config,
+        broker=broker,
+        market=market,
         journal=DatabaseEventJournal(db),
         sec_form4_provider=sec_form4_provider,
         constructor_cfg_fn=constructor_cfg_fn,

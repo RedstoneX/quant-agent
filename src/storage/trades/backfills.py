@@ -2,6 +2,7 @@
 
 `ledger` is the TradeLedger (`self` before the move).
 """
+
 from __future__ import annotations
 
 from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS
@@ -13,7 +14,6 @@ from src.storage.trades.exit_reasons import (
     _find_pm_target_for_symbol,
     _resolve_decision_id_status,
 )
-
 
 
 def backfill_position_ids(ledger, *, dry_run: bool = False) -> dict:
@@ -54,6 +54,7 @@ def backfill_position_ids(ledger, *, dry_run: bool = False) -> dict:
                                    # anything not part of a position
                                    # chain by design, not by ambiguity
     """
+
     def _do():
         rows = ledger.conn.execute(
             "SELECT id, symbol, action, qty, fill_qty, fill_status, "
@@ -77,10 +78,7 @@ def backfill_position_ids(ledger, *, dry_run: bool = False) -> dict:
                 if r.get("position_id"):
                     continue  # ground truth — never reassigned
                 action = (r.get("action") or "").upper()
-                is_positionable = (
-                    action in _POSITION_OPEN_ACTIONS
-                    or _is_position_exit_action(action)
-                )
+                is_positionable = action in _POSITION_OPEN_ACTIONS or _is_position_exit_action(action)
                 new_id = new_assignments.get(r["id"])
                 if new_id:
                     assigned += 1
@@ -92,7 +90,8 @@ def backfill_position_ids(ledger, *, dry_run: bool = False) -> dict:
 
         if not dry_run and updates:
             ledger.conn.executemany(
-                "UPDATE trades SET position_id = ? WHERE id = ?", updates,
+                "UPDATE trades SET position_id = ? WHERE id = ?",
+                updates,
             )
             ledger.conn.commit()
         return {
@@ -102,6 +101,7 @@ def backfill_position_ids(ledger, *, dry_run: bool = False) -> dict:
             "left_null_ambiguous": left_null_ambiguous,
             "not_applicable": not_applicable,
         }
+
     return ledger._locked_write(_do, label="backfill_position_ids")
 
 
@@ -149,11 +149,11 @@ def backfill_conviction_ledger(ledger, *, dry_run: bool = False) -> dict:
     reprocessed). `dry_run=True` (default) computes and returns counts
     without writing.
     """
+
     def _do():
         # ---- 1. exit rows: decision_id_status (fully recoverable) ----
         exit_rows = ledger.conn.execute(
-            "SELECT id, action, decision_id FROM trades "
-            "WHERE decision_id_status IS NULL",
+            "SELECT id, action, decision_id FROM trades WHERE decision_id_status IS NULL",
         ).fetchall()
         exit_updates: list[tuple[str, int]] = []
         exit_linked = 0
@@ -203,12 +203,14 @@ def backfill_conviction_ledger(ledger, *, dry_run: bool = False) -> dict:
             if target is None:
                 entry_unrecoverable_no_matching_target += 1
                 continue
-            entry_updates.append((
-                target.get("conviction"),
-                target.get("risk_allocation_pct"),
-                log_row.get("model"),
-                r["id"],
-            ))
+            entry_updates.append(
+                (
+                    target.get("conviction"),
+                    target.get("risk_allocation_pct"),
+                    log_row.get("model"),
+                    r["id"],
+                )
+            )
             entry_recovered += 1
 
         if not dry_run:
@@ -219,8 +221,7 @@ def backfill_conviction_ledger(ledger, *, dry_run: bool = False) -> dict:
                 )
             if entry_updates:
                 ledger.conn.executemany(
-                    "UPDATE trades SET conviction = ?, requested_risk_pct = ?, "
-                    "decision_model = ? WHERE id = ?",
+                    "UPDATE trades SET conviction = ?, requested_risk_pct = ?, decision_model = ? WHERE id = ?",
                     entry_updates,
                 )
             ledger.conn.commit()
@@ -240,4 +241,5 @@ def backfill_conviction_ledger(ledger, *, dry_run: bool = False) -> dict:
             # require a NEW data source, not a smarter backfill.
             "allocated_risk_pct_recoverable": 0,
         }
+
     return ledger._locked_write(_do, label="backfill_conviction_ledger")

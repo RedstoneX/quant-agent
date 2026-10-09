@@ -49,7 +49,10 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg, current_price=current,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg,
+        current_price=current,
         market_value=qty * current,
         unrealized_pnl=(current - avg) * qty,
         sector=sector,
@@ -61,6 +64,7 @@ def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
 # inline recomputation, so a second definition is caught wherever it is
 # written and whatever it is named — not only at the call sites fixed today.
 # --------------------------------------------------------------------------
+
 
 @functools.lru_cache(maxsize=1)
 def _binops_cached() -> tuple[tuple[pathlib.Path, int, ast.BinOp, str], ...]:
@@ -100,7 +104,7 @@ def _report(hits, quantity, single_source):
 
 
 def test_no_second_definition_of_book_exposure():
-    """"How invested is the book" is `book_exposure`, and nothing else.
+    """ "How invested is the book" is `book_exposure`, and nothing else.
 
     Catches both historical forms: the PM's `total_value - cash` subtraction
     and the gate's `abs(<signed net>) / total_value * 100`.
@@ -136,7 +140,9 @@ def test_no_second_definition_of_position_weight():
         if "market_value" in flat or "gross_mul" in flat or "_gross_multiplier" in flat:
             hits.append((path, lineno, flat))
     assert not hits, _report(
-        hits, "position weight", "src.risk.rules.weight_pct_of",
+        hits,
+        "position weight",
+        "src.risk.rules.weight_pct_of",
     )
 
 
@@ -154,13 +160,16 @@ def test_no_second_definition_of_unrealized_pnl_pct():
         if "unrealized_pnl" in ast.dump(node.left):
             hits.append((path, lineno, flat))
     assert not hits, _report(
-        hits, "unrealized P&L percent", "src.risk.metrics.unrealized_pnl_pct",
+        hits,
+        "unrealized P&L percent",
+        "src.risk.metrics.unrealized_pnl_pct",
     )
 
 
 # --------------------------------------------------------------------------
 # (1) Book exposure — both consumers, one number.
 # --------------------------------------------------------------------------
+
 
 def _pipeline_for_facts():
     pipeline = build_pipeline(db=MagicMock(), tech_store=MagicMock())
@@ -179,14 +188,19 @@ def _gate_projected_pct(positions, total_value, target):
     """
     pipeline = build_pipeline(_sweeper=lambda: None, risk_engine=MagicMock(check=MagicMock(return_value=[])))
     _allowed, violations, _blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        decisions=[], positions=positions, total_value=total_value, cash=0.0, invested_target_pct=target,)
+        decisions=[],
+        positions=positions,
+        total_value=total_value,
+        cash=0.0,
+        invested_target_pct=target,
+    )
     gap = [v for v in violations if v.rule == "deployment_gap"]
     return gap[0].value if gap else None
 
 
 THE_MEASURED_BOOK = [
-    _pos("AAPL", 500, 90.0, 100.0),           # $50k long
-    _pos("SQQQ", 1000, 22.0, 20.0),           # $20k of a -3x inverse ETF
+    _pos("AAPL", 500, 90.0, 100.0),  # $50k long
+    _pos("SQQQ", 1000, 22.0, 20.0),  # $20k of a -3x inverse ETF
 ]
 
 
@@ -202,16 +216,17 @@ def test_pm_and_risk_gate_report_the_same_invested_pct():
     """
     total_value = 100_000.0
     facts = _pipeline_for_facts()._build_pm_facts(
-        positions=THE_MEASURED_BOOK, analyses=[],
-        total_value=total_value, cash=30_000.0,
+        positions=THE_MEASURED_BOOK,
+        analyses=[],
+        total_value=total_value,
+        cash=30_000.0,
         recent_performance={},
     )
     gate_pct = _gate_projected_pct(THE_MEASURED_BOOK, total_value, target=100.0)
 
     assert facts.invested_pct == pytest.approx(70.0)
     assert gate_pct == pytest.approx(facts.invested_pct), (
-        "PM and the pre-trade gate are describing the same book with two "
-        "different numbers again"
+        "PM and the pre-trade gate are describing the same book with two different numbers again"
     )
     # And the direction is reported rather than erased: 50k long - 60k of
     # effective short exposure = -10k net on 100k of equity.
@@ -232,8 +247,11 @@ def test_pm_account_status_and_pm_facts_agree_within_one_prompt():
     """`Invested:` in Account Status vs `invested=` in the facts block."""
     total_value = 100_000.0
     facts = _pipeline_for_facts()._build_pm_facts(
-        positions=THE_MEASURED_BOOK, analyses=[],
-        total_value=total_value, cash=30_000.0, recent_performance={},
+        positions=THE_MEASURED_BOOK,
+        analyses=[],
+        total_value=total_value,
+        cash=30_000.0,
+        recent_performance={},
     )
     exposure = book_exposure(THE_MEASURED_BOOK, total_value)
     assert exposure.deployed_pct == pytest.approx(facts.invested_pct)
@@ -248,17 +266,17 @@ def test_a_net_short_book_is_not_reported_as_positively_invested():
     negative here.
     """
     net_short = [
-        _pos("AAPL", 100, 90.0, 100.0),        # $10k long
-        _pos("TSLA", -300, 110.0, 100.0),      # $30k short
+        _pos("AAPL", 100, 90.0, 100.0),  # $10k long
+        _pos("TSLA", -300, 110.0, 100.0),  # $30k short
     ]
     exposure = book_exposure(net_short, 100_000.0)
-    assert exposure.deployed_pct == pytest.approx(40.0)   # 10k + |−30k|
-    assert exposure.net_pct == pytest.approx(-20.0)       # 10k − 30k
+    assert exposure.deployed_pct == pytest.approx(40.0)  # 10k + |−30k|
+    assert exposure.net_pct == pytest.approx(-20.0)  # 10k − 30k
     assert exposure.net_pct < 0, "a net-short book must not read as net long"
 
     mirror_long = [
         _pos("AAPL", 100, 90.0, 100.0),
-        _pos("TSLA", 300, 90.0, 100.0),        # $30k LONG instead
+        _pos("TSLA", 300, 90.0, 100.0),  # $30k LONG instead
     ]
     mirrored = book_exposure(mirror_long, 100_000.0)
     assert mirrored.deployed_pct == pytest.approx(exposure.deployed_pct)
@@ -294,7 +312,10 @@ def test_the_cash_park_is_not_exposure():
 def test_pending_orders_count_toward_deployment_for_both_sides():
     """A SHORT commits capital; deployment counts it, direction subtracts it."""
     exposure = book_exposure(
-        [], 100_000.0, pending_deployed_usd=25_000.0, pending_net_usd=-25_000.0,
+        [],
+        100_000.0,
+        pending_deployed_usd=25_000.0,
+        pending_net_usd=-25_000.0,
     )
     assert exposure.deployed_pct == pytest.approx(25.0)
     assert exposure.net_pct == pytest.approx(-25.0)
@@ -303,6 +324,7 @@ def test_pending_orders_count_toward_deployment_for_both_sides():
 # --------------------------------------------------------------------------
 # (2) Position weight — gross everywhere.
 # --------------------------------------------------------------------------
+
 
 def test_pm_position_line_and_pm_facts_drift_flag_agree():
     """`Weight: 18.0% DRIFT` in the line vs `drift-flagged: 0` in the facts."""
@@ -315,21 +337,26 @@ def test_pm_position_line_and_pm_facts_drift_flag_agree():
         "SQQQ": {"days_held": 20},
     }
     facts = pipeline._build_pm_facts(
-        positions=[position], analyses=[], total_value=total_value,
-        cash=94_000.0, recent_performance={},
+        positions=[position],
+        analyses=[],
+        total_value=total_value,
+        cash=94_000.0,
+        recent_performance={},
     )
 
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     line = PortfolioManagerAgent.build_user_message(
-        agent, analyses=[], positions=[position], cash_balance=94_000.0,
-        total_value=total_value, macro_analysis=None,
+        agent,
+        analyses=[],
+        positions=[position],
+        cash_balance=94_000.0,
+        total_value=total_value,
+        macro_analysis=None,
     )
 
     assert "Weight: 18.0%" in line
     assert "DRIFT" in line
-    assert facts.positions_drift_flagged == 1, (
-        "the PM's own facts block contradicts the position line it renders"
-    )
+    assert facts.positions_drift_flagged == 1, "the PM's own facts block contradicts the position line it renders"
 
 
 def test_every_weight_consumer_uses_the_gross_multiplier():
@@ -345,12 +372,17 @@ def test_every_weight_consumer_uses_the_gross_multiplier():
     # a target BELOW the held gross weight must classify as a trim. At 18%
     # gross a 10% target is a sell; read raw (6%) it would look like a buy.
     from src.models import TargetPosition
+
     target = TargetPosition(
-        symbol="SQQQ", target_weight_pct=10.0, direction="long",
+        symbol="SQQQ",
+        target_weight_pct=10.0,
+        direction="long",
         thesis="trim the leveraged sleeve",
     )
     intent = PortfolioManagerAgent._target_intent(
-        target, {"SQQQ": position}, total_value,
+        target,
+        {"SQQQ": position},
+        total_value,
     )
     assert intent == "sell"
     # `_build_position_facts` (the position reviewer's metric line)
@@ -373,7 +405,7 @@ def test_position_weight_is_signed_so_a_short_is_not_a_long():
 # (3) Unrealized P&L percent — absolute cost basis everywhere.
 # --------------------------------------------------------------------------
 
-WINNING_SHORT = _pos("TSLA", -100, 110.0, 100.0)   # +$1,000 profit
+WINNING_SHORT = _pos("TSLA", -100, 110.0, 100.0)  # +$1,000 profit
 
 
 def test_a_winning_short_reports_a_positive_pnl_percent():
@@ -384,26 +416,33 @@ def test_a_winning_short_reports_a_positive_pnl_percent():
 
 
 def test_a_losing_short_reports_a_negative_pnl_percent():
-    losing = _pos("TSLA", -100, 100.0, 110.0)   # -$1,000
+    losing = _pos("TSLA", -100, 100.0, 110.0)  # -$1,000
     assert unrealized_pnl_pct(losing) == pytest.approx(-1000 / 10000 * 100)
 
 
 def test_every_pnl_pct_consumer_renders_the_same_number():
-    expected = 1000 / 11000 * 100   # +9.09%
+    expected = 1000 / 11000 * 100  # +9.09%
     total_value = 100_000.0
 
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     pm_line = PortfolioManagerAgent.build_user_message(
-        agent, analyses=[], positions=[WINNING_SHORT], cash_balance=50_000.0,
-        total_value=total_value, macro_analysis=None,
+        agent,
+        analyses=[],
+        positions=[WINNING_SHORT],
+        cash_balance=50_000.0,
+        total_value=total_value,
+        macro_analysis=None,
     )
     assert f"({expected:+.1f}%)" in pm_line
     assert "(+0.0%)" not in pm_line
 
     reviewer = PositionReviewerAgent.__new__(PositionReviewerAgent)
     review_prompt = PositionReviewerAgent.build_user_message(
-        reviewer, positions=[WINNING_SHORT], macro_summary={},
-        cash_balance=50_000.0, total_value=total_value,
+        reviewer,
+        positions=[WINNING_SHORT],
+        macro_summary={},
+        cash_balance=50_000.0,
+        total_value=total_value,
     )
     assert f"({expected:.1f}%)" in review_prompt
 
@@ -412,12 +451,13 @@ def test_every_pnl_pct_consumer_renders_the_same_number():
     # sign-flipped denominator it reads as -9% and never flags.
     pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = {
-        "timestamp": "2999-01-01 10:00:00", "stop_loss": 0,
+        "timestamp": "2999-01-01 10:00:00",
+        "stop_loss": 0,
     }
     pipeline.db.get_trades.return_value = []
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = lambda symbol: None
-    big_winner = _pos("TSLA", -100, 200.0, 100.0)   # +$10,000, +50%
+    big_winner = _pos("TSLA", -100, 200.0, 100.0)  # +$10,000, +50%
     facts = pipeline._build_position_facts([big_winner], [], total_value)
     assert facts["TSLA"]["parabolic_flag"] is True
 
@@ -464,9 +504,7 @@ def _multiplies_by_the_haircut(node) -> bool:
             return True
         if isinstance(operand, ast.Name) and operand.id in _HAIRCUT_NAMES:
             return True
-        if isinstance(operand, ast.Name) and operand.id == (
-            "SHORT_GAP_RISK_MULTIPLE_DEFAULT"
-        ):
+        if isinstance(operand, ast.Name) and operand.id == ("SHORT_GAP_RISK_MULTIPLE_DEFAULT"):
             return True
     return False
 

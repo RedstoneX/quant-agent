@@ -19,10 +19,16 @@ from tests.pipeline_factory import build_pipeline
 
 from tests.sector_run_helper import prun, tech_buy_analyses as _tech_buy_analyses  # noqa: E402
 
+
 def _pos(symbol="NVDA"):
     return Position(
-        symbol=symbol, qty=10, avg_entry=195, current_price=200,
-        market_value=2000, unrealized_pnl=50, sector="Technology",
+        symbol=symbol,
+        qty=10,
+        avg_entry=195,
+        current_price=200,
+        market_value=2000,
+        unrealized_pnl=50,
+        sector="Technology",
     )
 
 
@@ -33,7 +39,8 @@ def test_pm_user_message_renders_position_history_block():
             analyses=[],
             positions=[_pos("NVDA")],
             macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            cash_balance=5000.0,
+            total_value=10000.0,
             position_history={
                 "NVDA": {
                     "entry_date": "2026-04-15",
@@ -61,8 +68,11 @@ def test_pm_user_message_renders_weekly_narrative_and_trajectory():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             weekly_narrative="- 2026-04-11: +0.8% (moderate) — Risk-on confirmed",
             macro_trajectory="- 2026-04-11: risk-on (medium) → target 75%",
             active_state_changes="- [2026-04-12] Iran ceasefire holds → XOM, CVX",
@@ -80,8 +90,11 @@ def test_pm_gracefully_handles_missing_memory_layers():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=0.0, total_value=0.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=0.0,
+            total_value=0.0,
         )
         # The sections still appear but with fallback messages
         assert "No prior narrative yet" in msg
@@ -98,8 +111,11 @@ def test_pm_renders_rm_verdicts_and_own_history():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             rm_recent_verdicts=(
                 "- 2026-04-16: APPROVED [scale_all_buys=0.50] — trimmed exposure: macro uncertain\n"
                 "- 2026-04-17: APPROVED [scale_all_buys=0.50; mods on NVDA] — still oversized"
@@ -125,8 +141,11 @@ def test_pm_renders_projected_book_preview():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             projected_portfolio=(
                 "- Current: 60% net invested · sectors: Technology 30%, Financial Services 20%\n"
                 "- If you allocate 5% to each of 3 BUY-rated candidate(s) (NVDA, AMD, JPM):\n"
@@ -142,6 +161,7 @@ def test_pm_renders_projected_book_preview():
 
 # === Pipeline builder smoke tests ===
 
+
 def test_rm_verdicts_builder_parses_agent_logs(tmp_path):
     """_build_rm_recent_verdicts parses stored full_response JSON correctly."""
     import json
@@ -152,41 +172,52 @@ def test_rm_verdicts_builder_parses_agent_logs(tmp_path):
     db.initialize()
     # Insert 2 RM logs with backdated timestamps so today's PM sees them
     db.insert_agent_log(
-        agent_name="risk_manager", run_id="r1",
-        input_summary="", input_message="",
+        agent_name="risk_manager",
+        run_id="r1",
+        input_summary="",
+        input_message="",
         output_summary="Approved: True",
-        full_response=json.dumps({
-            "approved": True,
-            "scale_all_buys": 0.5,
-            "reason_category": "oversized",
-            "modifications": [{"symbol": "NVDA", "field": "allocation_pct",
-                                "original_value": 12, "new_value": 6, "reason": "R/R low"}],
-            "reasoning": "Oversized tech bets; cut in half.",
-        }),
-        model="gpt-5.4", tokens_used=100,
+        full_response=json.dumps(
+            {
+                "approved": True,
+                "scale_all_buys": 0.5,
+                "reason_category": "oversized",
+                "modifications": [
+                    {
+                        "symbol": "NVDA",
+                        "field": "allocation_pct",
+                        "original_value": 12,
+                        "new_value": 6,
+                        "reason": "R/R low",
+                    }
+                ],
+                "reasoning": "Oversized tech bets; cut in half.",
+            }
+        ),
+        model="gpt-5.4",
+        tokens_used=100,
     )
-    db.conn.execute(
-        "UPDATE agent_logs SET timestamp = datetime('now', '-2 days') "
-        "WHERE agent_name = 'risk_manager'"
-    )
+    db.conn.execute("UPDATE agent_logs SET timestamp = datetime('now', '-2 days') WHERE agent_name = 'risk_manager'")
     db.conn.commit()
     db.insert_agent_log(
-        agent_name="risk_manager", run_id="r2",
-        input_summary="", input_message="",
+        agent_name="risk_manager",
+        run_id="r2",
+        input_summary="",
+        input_message="",
         output_summary="Approved: True",
-        full_response=json.dumps({
-            "approved": True,
-            "scale_all_buys": 1.0,
-            "reason_category": "clean",
-            "modifications": [],
-            "reasoning": "All trades pass.",
-        }),
-        model="gpt-5.4", tokens_used=100,
+        full_response=json.dumps(
+            {
+                "approved": True,
+                "scale_all_buys": 1.0,
+                "reason_category": "clean",
+                "modifications": [],
+                "reasoning": "All trades pass.",
+            }
+        ),
+        model="gpt-5.4",
+        tokens_used=100,
     )
-    db.conn.execute(
-        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') "
-        "WHERE run_id = 'r2'"
-    )
+    db.conn.execute("UPDATE agent_logs SET timestamp = datetime('now', '-1 day') WHERE run_id = 'r2'")
     db.conn.commit()
 
     pipeline = build_pipeline(db=db)
@@ -218,8 +249,13 @@ def test_handle_ex_dividends_lowers_stop_day_before(tmp_path):
 
     # Position: held JPM, current price $200, existing stop at $185
     jpm = Position(
-        symbol="JPM", qty=50, avg_entry=180, current_price=200,
-        market_value=10000, unrealized_pnl=1000, sector="Financial Services",
+        symbol="JPM",
+        qty=50,
+        avg_entry=180,
+        current_price=200,
+        market_value=10000,
+        unrealized_pnl=1000,
+        sector="Financial Services",
     )
     pipeline.market.get_upcoming_ex_dividend.return_value = {
         "date": et_today() + timedelta(days=1),  # tomorrow → adjust
@@ -229,8 +265,11 @@ def test_handle_ex_dividends_lowers_stop_day_before(tmp_path):
     # audit round 2: ex-div shifts EVERY stop down (preserving per-lot
     # levels) instead of a consolidating replace.
     pipeline.broker.shift_stops_down.return_value = {
-        "id": "shift-JPM", "status": "accepted", "symbol": "JPM",
-        "shifted": 1, "total": 1,
+        "id": "shift-JPM",
+        "status": "accepted",
+        "symbol": "JPM",
+        "shifted": 1,
+        "total": 1,
     }
     pipeline.broker.is_trading_day.side_effect = lambda d: d.weekday() < 5
 
@@ -260,8 +299,13 @@ def test_handle_ex_dividends_skips_when_ex_div_is_today(tmp_path):
     pipeline = build_pipeline(db=db, market=MagicMock(), broker=MagicMock())
 
     p = Position(
-        symbol="JPM", qty=50, avg_entry=180, current_price=200,
-        market_value=10000, unrealized_pnl=1000, sector="Financial Services",
+        symbol="JPM",
+        qty=50,
+        avg_entry=180,
+        current_price=200,
+        market_value=10000,
+        unrealized_pnl=1000,
+        sector="Financial Services",
     )
     pipeline.market.get_upcoming_ex_dividend.return_value = {
         "date": et_today(),  # today → no action
@@ -283,21 +327,33 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    pipeline = build_pipeline(db=db, risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, require_stop_loss=False, )), broker=MagicMock())
+    pipeline = build_pipeline(
+        db=db,
+        risk_engine=RiskRuleEngine(
+            RiskConfig(
+                max_position_pct=20,
+                max_total_position_pct=90,
+                max_sector_pct=40,
+                require_stop_loss=False,
+            )
+        ),
+        broker=MagicMock(),
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
-        "portfolio_value": 99_000.0, "last_equity": 100_000.0, "cash": 10_000.0,
+        "portfolio_value": 99_000.0,
+        "last_equity": 100_000.0,
+        "cash": 10_000.0,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
-        "prelatched", {"suspended": True},
+        "prelatched",
+        {"suspended": True},
     )
     pipeline._run_intraday_opportunity_scan = MagicMock(
-        side_effect=lambda _ctx: pipeline._require_paid_analysis(
-            "intraday_tech_analyst"
-        )
+        side_effect=lambda _ctx: pipeline._require_paid_analysis("intraday_tech_analyst")
     )
 
     result = pipeline.run_intra_check()
@@ -305,9 +361,7 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
     assert result["intraday_scan"]["status"] == "paid_analysis_suspended"
     pipeline.broker.submit_order.assert_not_called()
     pipeline.cost_circuit.activate_session.assert_called_once()
-    pipeline.cost_circuit.require_paid_analysis.assert_called_once_with(
-        "intraday_tech_analyst"
-    )
+    pipeline.cost_circuit.require_paid_analysis.assert_called_once_with("intraday_tech_analyst")
 
 
 def test_vol_adjusted_sizing_caps_qty_on_wide_stops():
@@ -335,8 +389,12 @@ def test_vol_adjusted_sizing_caps_qty_on_wide_stops():
 
     def qty_by_risk(stop_price):
         return _qty_by_risk_budget(
-            pipeline, total_value=total_value, sizing_price=entry,
-            stop_price=stop_price, is_short=False, fractional=False,
+            pipeline,
+            total_value=total_value,
+            sizing_price=entry,
+            stop_price=stop_price,
+            is_short=False,
+            fractional=False,
         )
 
     # Pre-fix regression case: an 8% stop used to sit right at the edge of
@@ -365,9 +423,13 @@ def test_vol_adjusted_sizing_caps_qty_on_wide_stops():
     # recheck still caps it below what allocation alone would buy.
     large_alloc_qty = int((total_value * 20.0 / 100) / entry)  # 400
     wide_stop_for_large_alloc = entry - 20.0  # $20/share risk
-    assert min(
-        large_alloc_qty, qty_by_risk(wide_stop_for_large_alloc),
-    ) == 250
+    assert (
+        min(
+            large_alloc_qty,
+            qty_by_risk(wide_stop_for_large_alloc),
+        )
+        == 250
+    )
 
 
 def test_pm_memory_builders_warn_on_corrupt_json(caplog):
@@ -422,17 +484,11 @@ def test_build_recent_sells_joins_current_prices(tmp_path):
     db.initialize()
     # Insert a SELL trade 1 day ago
     db.insert_trade("NVDA", "SELL", 10, 500.0, "thesis break", "r1")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-1 day') "
-        "WHERE symbol='NVDA'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-1 day') WHERE symbol='NVDA'")
     db.conn.commit()
     # Old trade (5 days) — should NOT appear (outside 2d window)
     db.insert_trade("AAPL", "SELL", 10, 200.0, "old", "r2")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-5 days') "
-        "WHERE symbol='AAPL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-5 days') WHERE symbol='AAPL'")
     db.conn.commit()
 
     # Mock broker to return a specific current price
@@ -460,10 +516,7 @@ def test_build_recent_sells_includes_reduce_action(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade("GOOGL", "REDUCE", 5, 320.0, "trim half", "r1")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-1 day') "
-        "WHERE symbol='GOOGL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-1 day') WHERE symbol='GOOGL'")
     db.conn.commit()
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
@@ -478,11 +531,15 @@ def test_build_recent_sells_includes_reduce_action(tmp_path):
 def test_pm_renders_structured_evening_tilt():
     """PM surfaces tomorrow_bias + conviction + key_risks from evening insights."""
     import json
+
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             yesterday_insights={
                 "date": "2026-04-17",
                 "tomorrow_outlook": "Defensive bias; FOMC minutes risk.",
@@ -505,15 +562,20 @@ def test_evening_report_parses_structured_fields():
     from src.models import EveningReport, EveningReasoningChain
 
     rc = EveningReasoningChain(
-        performance_attribution="x", outlook_retrospection="x",
+        performance_attribution="x",
+        outlook_retrospection="x",
         thesis_health_review="x",
-        decision_quality_review="x", calibration_meta="x",
-        market_regime_read="x", tomorrow_preparation="x",
+        decision_quality_review="x",
+        calibration_meta="x",
+        market_regime_read="x",
+        tomorrow_preparation="x",
     )
     # Defaults kick in when optional fields are omitted
     r = EveningReport(
         reasoning_chain=rc,
-        daily_summary="x", lessons="x", tomorrow_outlook="x",
+        daily_summary="x",
+        lessons="x",
+        tomorrow_outlook="x",
         risk_rating="low",
     )
     assert r.tomorrow_bias == "neutral"
@@ -525,9 +587,12 @@ def test_evening_report_parses_structured_fields():
     # Explicit values parse
     r2 = EveningReport(
         reasoning_chain=rc,
-        daily_summary="x", lessons="x", tomorrow_outlook="x",
+        daily_summary="x",
+        lessons="x",
+        tomorrow_outlook="x",
         risk_rating="high",
-        tomorrow_bias="bearish", tomorrow_conviction="high",
+        tomorrow_bias="bearish",
+        tomorrow_conviction="high",
         tomorrow_key_risks=["FOMC", "NVDA earnings"],
     )
     assert r2.tomorrow_bias == "bearish"
@@ -565,8 +630,12 @@ def test_risk_verdict_accepts_reason_category():
 
     def _rc():
         return RiskReasoningChain(
-            rr_audit="x", signal_fidelity="x", correlation_check="x",
-            event_risk="x", sizing_sanity="x", overall="x",
+            rr_audit="x",
+            signal_fidelity="x",
+            correlation_check="x",
+            event_risk="x",
+            sizing_sanity="x",
+            overall="x",
         )
 
     # Default when field omitted
@@ -574,14 +643,24 @@ def test_risk_verdict_accepts_reason_category():
     assert v1.reason_category == "clean"
 
     # All enum values parse
-    for cat in ("oversized", "rr_fail", "concentration", "correlation_risk",
-                "event_risk", "macro_misalign", "data_degraded",
-                "signal_fidelity", "other", "clean"):
+    for cat in (
+        "oversized",
+        "rr_fail",
+        "concentration",
+        "correlation_risk",
+        "event_risk",
+        "macro_misalign",
+        "data_degraded",
+        "signal_fidelity",
+        "other",
+        "clean",
+    ):
         v = RiskVerdict(approved=True, reasoning_chain=_rc(), reasoning="x", reason_category=cat)
         assert v.reason_category == cat
 
     # Unknown category rejected
     import pytest
+
     with pytest.raises(Exception):  # pydantic ValidationError
         RiskVerdict(approved=True, reasoning_chain=_rc(), reasoning="x", reason_category="weird")
 
@@ -594,25 +673,35 @@ def test_pm_decisions_builder_parses_own_history(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="p1",
-        input_summary="", input_message="",
+        agent_name="portfolio_manager",
+        run_id="p1",
+        input_summary="",
+        input_message="",
         output_summary="1 trade",
-        full_response=json.dumps({
-            "reasoning_chain": {
-                "sizing_logic": "high conviction on AI capex",
-                "continuity_check": "consistent with 5-day risk-on narrative",
-            },
-            "decisions": [
-                {"action": "BUY", "symbol": "NVDA", "allocation_pct": 8.0,
-                 "entry_price": 195, "stop_loss": 186, "take_profit": 215,
-                 "reasoning": "..."},
-            ],
-        }),
-        model="gpt-5.4", tokens_used=100,
+        full_response=json.dumps(
+            {
+                "reasoning_chain": {
+                    "sizing_logic": "high conviction on AI capex",
+                    "continuity_check": "consistent with 5-day risk-on narrative",
+                },
+                "decisions": [
+                    {
+                        "action": "BUY",
+                        "symbol": "NVDA",
+                        "allocation_pct": 8.0,
+                        "entry_price": 195,
+                        "stop_loss": 186,
+                        "take_profit": 215,
+                        "reasoning": "...",
+                    },
+                ],
+            }
+        ),
+        model="gpt-5.4",
+        tokens_used=100,
     )
     db.conn.execute(
-        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') "
-        "WHERE agent_name = 'portfolio_manager'"
+        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') WHERE agent_name = 'portfolio_manager'"
     )
     db.conn.commit()
 
@@ -640,20 +729,25 @@ def test_pm_decisions_builder_tags_the_unit_on_targets_schema(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id="p1",
-        input_summary="", input_message="", output_summary="targets",
-        full_response=json.dumps({
-            "targets": [
-                {"symbol": "NVDA", "risk_allocation_pct": 1.2, "conviction": "high"},
-                {"symbol": "JPM", "target_weight_pct": 5.0, "conviction": "medium"},
-                {"symbol": "XLE", "conviction": "low"},
-            ],
-        }),
-        model="gpt-5.4", tokens_used=100,
+        agent_name="portfolio_manager",
+        run_id="p1",
+        input_summary="",
+        input_message="",
+        output_summary="targets",
+        full_response=json.dumps(
+            {
+                "targets": [
+                    {"symbol": "NVDA", "risk_allocation_pct": 1.2, "conviction": "high"},
+                    {"symbol": "JPM", "target_weight_pct": 5.0, "conviction": "medium"},
+                    {"symbol": "XLE", "conviction": "low"},
+                ],
+            }
+        ),
+        model="gpt-5.4",
+        tokens_used=100,
     )
     db.conn.execute(
-        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') "
-        "WHERE agent_name = 'portfolio_manager'"
+        "UPDATE agent_logs SET timestamp = datetime('now', '-1 day') WHERE agent_name = 'portfolio_manager'"
     )
     db.conn.commit()
 
@@ -670,22 +764,40 @@ def test_pm_renders_weight_pct_and_drift_flag():
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         # 15% weight + 25% P&L → drifted concentration
         drifted = Position(
-            symbol="NVDA", qty=10, avg_entry=100, current_price=150,
-            market_value=1500, unrealized_pnl=500, sector="Technology",
+            symbol="NVDA",
+            qty=10,
+            avg_entry=100,
+            current_price=150,
+            market_value=1500,
+            unrealized_pnl=500,
+            sector="Technology",
         )
         # 14% weight but only 2% P&L → NOT drift (was sized that way)
         big_but_not_drift = Position(
-            symbol="MSFT", qty=10, avg_entry=140, current_price=140,
-            market_value=1400, unrealized_pnl=28, sector="Technology",
+            symbol="MSFT",
+            qty=10,
+            avg_entry=140,
+            current_price=140,
+            market_value=1400,
+            unrealized_pnl=28,
+            sector="Technology",
         )
         # 6% normal
         small = Position(
-            symbol="JPM", qty=5, avg_entry=120, current_price=120,
-            market_value=600, unrealized_pnl=0, sector="Financial Services",
+            symbol="JPM",
+            qty=5,
+            avg_entry=120,
+            current_price=120,
+            market_value=600,
+            unrealized_pnl=0,
+            sector="Financial Services",
         )
         msg = agent.build_user_message(
-            analyses=[], positions=[drifted, big_but_not_drift, small],
-            macro_analysis=None, cash_balance=6500.0, total_value=10000.0,
+            analyses=[],
+            positions=[drifted, big_but_not_drift, small],
+            macro_analysis=None,
+            cash_balance=6500.0,
+            total_value=10000.0,
         )
         assert "Weight: 15.0%" in msg
         assert "Weight: 14.0%" in msg
@@ -703,20 +815,37 @@ def test_queued_earnings_buys_are_refused_not_capped():
     from src.pipeline import TradingPipeline
 
     decisions = [
-        TradeDecision(action="BUY", symbol="NVDA", allocation_pct=12.0,
-                      entry_price=100, stop_loss=95, take_profit=110,
-                      reasoning="high conviction"),
-        TradeDecision(action="BUY", symbol="MSFT", allocation_pct=8.0,
-                      entry_price=400, stop_loss=380, take_profit=430,
-                      reasoning="moderate"),
-        TradeDecision(action="SELL", symbol="AAPL", allocation_pct=100,
-                      entry_price=200, stop_loss=0, take_profit=0,
-                      reasoning="exit"),
+        TradeDecision(
+            action="BUY",
+            symbol="NVDA",
+            allocation_pct=12.0,
+            entry_price=100,
+            stop_loss=95,
+            take_profit=110,
+            reasoning="high conviction",
+        ),
+        TradeDecision(
+            action="BUY",
+            symbol="MSFT",
+            allocation_pct=8.0,
+            entry_price=400,
+            stop_loss=380,
+            take_profit=430,
+            reasoning="moderate",
+        ),
+        TradeDecision(
+            action="SELL",
+            symbol="AAPL",
+            allocation_pct=100,
+            entry_price=200,
+            stop_loss=0,
+            take_profit=0,
+            reasoning="exit",
+        ),
     ]
     # NVDA has a just-filed 10-Q with no analysis yet; MSFT is fully analyzed
     earnings_results = [
-        {"symbol": "NVDA", "queued": True, "analysis": None,
-         "form_type": "10-Q", "filing_date": "2026-04-18"},
+        {"symbol": "NVDA", "queued": True, "analysis": None, "form_type": "10-Q", "filing_date": "2026-04-18"},
         {"symbol": "MSFT", "queued": False, "analysis": {"investment_implications": {}}},
     ]
     out = RiskGate._refuse_queued_earnings_buys(decisions, earnings_results)
@@ -726,8 +855,8 @@ def test_queued_earnings_buys_are_refused_not_capped():
     # seat, and doctrine refuses an entry the seats are not right about, so the
     # BUY is gone rather than shrunk to a 5%-of-book figure nothing sourced.
     assert [d.symbol for d in out if d.action == "BUY"] == ["MSFT"]
-    assert msft.allocation_pct == 8.0   # untouched (no queued flag)
-    assert aapl.allocation_pct == 100   # SELL untouched
+    assert msft.allocation_pct == 8.0  # untouched (no queued flag)
+    assert aapl.allocation_pct == 100  # SELL untouched
 
 
 def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
@@ -739,44 +868,26 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
 
     # Large winner: buy 100 @ 100 (entry = $10k), sell 100 @ 115 → +15%
     db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-15 days') "
-        "WHERE symbol='NVDA' AND action='BUY'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-15 days') WHERE symbol='NVDA' AND action='BUY'")
     db.conn.commit()
     db.insert_trade("NVDA", "SELL", 100, 115, "exit", "r2")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-5 days') "
-        "WHERE symbol='NVDA' AND action='SELL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-5 days') WHERE symbol='NVDA' AND action='SELL'")
     db.conn.commit()
 
     # Medium loser: buy 100 @ 60 (entry = $6k), sell 100 @ 54 → -10%
     db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-20 days') "
-        "WHERE symbol='XOM' AND action='BUY'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-20 days') WHERE symbol='XOM' AND action='BUY'")
     db.conn.commit()
     db.insert_trade("XOM", "SELL", 100, 54, "stop", "r4")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-10 days') "
-        "WHERE symbol='XOM' AND action='SELL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE symbol='XOM' AND action='SELL'")
     db.conn.commit()
 
     # Small winner: buy 10 @ 200 (entry = $2k), sell 10 @ 220 → +10%
     db.insert_trade("JPM", "BUY", 10, 200, "small", "r5", stop_loss=90.0)
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-8 days') "
-        "WHERE symbol='JPM' AND action='BUY'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE symbol='JPM' AND action='BUY'")
     db.conn.commit()
     db.insert_trade("JPM", "SELL", 10, 220, "target", "r6")
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-1 day') "
-        "WHERE symbol='JPM' AND action='SELL'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-1 day') WHERE symbol='JPM' AND action='SELL'")
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=45)
@@ -810,12 +921,12 @@ def test_pm_renders_calibration_section():
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
-            calibration_note=(
-                "- Overall (last 45d): 12 closed BUYs, win rate 58%, "
-                "avg return +3.20%, avg hold 6.4d"
-            ),
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
+            calibration_note=("- Overall (last 45d): 12 closed BUYs, win rate 58%, avg return +3.20%, avg hold 6.4d"),
         )
         assert "## Trade Calibration" in msg
         assert "win rate 58%" in msg
@@ -828,8 +939,12 @@ def test_earnings_record_failure_abandons_after_max_attempts(tmp_path):
 
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     report = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-15",
-        filing_path="", analysis_path=None, text_excerpt="",
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-15",
+        filing_path="",
+        analysis_path=None,
+        text_excerpt="",
         is_new=True,
     )
 
@@ -848,15 +963,19 @@ def test_earnings_record_failure_abandons_after_max_attempts(tmp_path):
 
     # confirm_filing resets the counter (so a successful retry wipes the state)
     report2 = EarningsReport(
-        symbol="NVDA", form_type="10-Q", filing_date="2026-04-15",
+        symbol="NVDA",
+        form_type="10-Q",
+        filing_date="2026-04-15",
         filing_path="/path/to/10q.html",
         analysis_path="/path/to/analysis.md",
-        text_excerpt="...", is_new=True,
+        text_excerpt="...",
+        is_new=True,
     )
     provider.confirm_filing(report2)
     assert provider.manifest["NVDA_10-Q"]["failed_attempts"] == 0
-    assert "abandoned" not in provider.manifest["NVDA_10-Q"] or \
-           provider.manifest["NVDA_10-Q"].get("abandoned") is not True
+    assert (
+        "abandoned" not in provider.manifest["NVDA_10-Q"] or provider.manifest["NVDA_10-Q"].get("abandoned") is not True
+    )
 
 
 def test_queued_earnings_refusal_noop_when_nothing_queued():
@@ -864,13 +983,18 @@ def test_queued_earnings_refusal_noop_when_nothing_queued():
     from src.pipeline import TradingPipeline
 
     decisions = [
-        TradeDecision(action="BUY", symbol="NVDA", allocation_pct=12.0,
-                      entry_price=100, stop_loss=95, take_profit=110,
-                      reasoning="x"),
+        TradeDecision(
+            action="BUY",
+            symbol="NVDA",
+            allocation_pct=12.0,
+            entry_price=100,
+            stop_loss=95,
+            take_profit=110,
+            reasoning="x",
+        ),
     ]
     # Only fully-analyzed entries
-    earnings_results = [{"symbol": "NVDA", "queued": False,
-                         "analysis": {"investment_implications": {}}}]
+    earnings_results = [{"symbol": "NVDA", "queued": False, "analysis": {"investment_implications": {}}}]
     out = RiskGate._refuse_queued_earnings_buys(decisions, earnings_results)
     assert out[0].allocation_pct == 12.0
 
@@ -914,12 +1038,20 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     pipeline = _projection_pipeline(target_pct=20.0)
     # Existing 30% Tech position
     positions = [
-        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
-                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+        Position(
+            symbol="MSFT",
+            qty=10,
+            avg_entry=400,
+            current_price=400,
+            market_value=3000,
+            unrealized_pnl=0,
+            sector="Technology",
+        ),
     ]
     with patch("src.execution.broker._get_sector") as mock_get_sector:
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline))
+            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline)
+        )
     # `invested` is capital at work (unsigned, un-leveraged) and `net
     # direction` is the signed leverage-aware figure, both from the one
     # `book_exposure` call. Long-only book, so the two agree at 30%.
@@ -929,8 +1061,7 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     # The candidate set is described by its SECTOR COMPOSITION, not by a
     # projected weight.
     assert (
-        "3 BUY-rated candidate(s) on offer, by sector: Technology 3 of 3 "
-        "(100% of the candidate set: NVDA, AMD, AAPL)"
+        "3 BUY-rated candidate(s) on offer, by sector: Technology 3 of 3 (100% of the candidate set: NVDA, AMD, AAPL)"
     ) in out
     # Each name carries its OWN stop distance and stop-implied ceiling.
     # The stop implies 100%; what is PRINTED is clamped to the 65%
@@ -961,13 +1092,21 @@ def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path)
     """
     pipeline = _projection_pipeline(target_pct=75.0)
     positions = [
-        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
-                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+        Position(
+            symbol="MSFT",
+            qty=10,
+            avg_entry=400,
+            current_price=400,
+            market_value=3000,
+            unrealized_pnl=0,
+            sector="Technology",
+        ),
     ]
     wide = {"NVDA": 50.0, "AMD": 50.0, "AAPL": 50.0}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(wide), total_value=10000, run=prun(pipeline))
+            positions, _tech_buy_analyses(wide), total_value=10000, run=prun(pipeline)
+        )
     assert "Technology long 30%" in out
     assert "concentration target" not in out
     # Wide stops imply small ceilings: 5% risk budget x 100/50 = 10%.
@@ -988,14 +1127,29 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
     """
     pipeline = _projection_pipeline(target_pct=40.0)
     positions = [
-        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
-                 market_value=3000, unrealized_pnl=0, sector="Technology"),
-        Position(symbol="INTC", qty=-20, avg_entry=100, current_price=100,
-                 market_value=-2000, unrealized_pnl=0, sector="Technology"),
+        Position(
+            symbol="MSFT",
+            qty=10,
+            avg_entry=400,
+            current_price=400,
+            market_value=3000,
+            unrealized_pnl=0,
+            sector="Technology",
+        ),
+        Position(
+            symbol="INTC",
+            qty=-20,
+            avg_entry=100,
+            current_price=100,
+            market_value=-2000,
+            unrealized_pnl=0,
+            sector="Technology",
+        ),
     ]
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline))
+            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline)
+        )
     assert "Technology long 30%" in out, "the short must not net off the longs"
     assert "Technology short 20%" in out
     assert "Technology -" not in out
@@ -1003,10 +1157,12 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
 
 # === Board item 221 — the preview sizes from each candidate's own stop ===
 
+
 def _sizing_pipeline(target_pct: float = 75.0):
     """A projection pipeline carrying the constructor the pipeline would
     really build orders with, so the preview reads the SAME sizing dials."""
     from types import SimpleNamespace
+
     pipeline = _projection_pipeline(target_pct=target_pct)
     pipeline.portfolio_constructor = SimpleNamespace(
         cfg=SimpleNamespace(risk_budget_pct=5.0, max_position_pct=65.0),
@@ -1018,11 +1174,9 @@ def _preview_ceilings(out: str) -> dict[str, float]:
     """The per-candidate stop-implied CEILINGS the preview printed, by
     symbol. A ceiling on one name, never a projected weight."""
     import re
+
     line = next(ln for ln in out.splitlines() if "OWN stop distance" in ln)
-    return {
-        m.group(1): float(m.group(2))
-        for m in re.finditer(r"([A-Z]+) stop -[\d.]+% → ≤(\d+)%", line)
-    }
+    return {m.group(1): float(m.group(2)) for m in re.finditer(r"([A-Z]+) stop -[\d.]+% → ≤(\d+)%", line)}
 
 
 def test_preview_ceiling_is_the_constructors_own_stop_implied_cap():
@@ -1033,16 +1187,18 @@ def test_preview_ceiling_is_the_constructors_own_stop_implied_cap():
     weight each name actually gets depends on a PM target that does not
     exist yet."""
     from src.risk.constants import risk_budget_allocation_pct
+
     stops = {"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}
     pipeline = _sizing_pipeline()
     with patch("src.execution.broker._get_sector"):
-        out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses(stops), total_value=10000, run=prun(pipeline))
+        out = pipeline._build_projected_portfolio([], _tech_buy_analyses(stops), total_value=10000, run=prun(pipeline))
     shown = _preview_ceilings(out)
     assert set(shown) == {"NVDA", "AMD", "AAPL"}
     for sym, stop in stops.items():
         expected = risk_budget_allocation_pct(
-            entry_price=100.0, stop_price=stop, total_value=10000.0,
+            entry_price=100.0,
+            stop_price=stop,
+            total_value=10000.0,
             risk_budget_pct=5.0,
         )
         assert expected is not None
@@ -1061,13 +1217,11 @@ def test_preview_ceiling_is_not_independent_of_the_stop():
     for stop in (90.0, 80.0):
         with patch("src.execution.broker._get_sector"):
             out = pipeline._build_projected_portfolio(
-                [], _tech_buy_analyses({"NVDA": stop, "AMD": stop,
-                                        "AAPL": stop}),
-                total_value=10000, run=prun(pipeline))
+                [], _tech_buy_analyses({"NVDA": stop, "AMD": stop, "AAPL": stop}), total_value=10000, run=prun(pipeline)
+            )
         sizes.append(_preview_ceilings(out)["NVDA"])
     assert sizes[0] != sizes[1], (
-        "the preview's number for a candidate is independent of its stop — "
-        "the flat per-candidate size is back"
+        "the preview's number for a candidate is independent of its stop — the flat per-candidate size is back"
     )
     # Wider stop, lower ceiling: the direction matters, not just change.
     assert sizes[1] < sizes[0]
@@ -1082,8 +1236,7 @@ def test_preview_ceiling_is_clamped_to_something_the_desk_could_reach():
     pipeline = _sizing_pipeline()
     tight = {"NVDA": 98.0, "AMD": 97.0, "AAPL": 99.0}
     with patch("src.execution.broker._get_sector"):
-        out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses(tight), total_value=10000, run=prun(pipeline))
+        out = pipeline._build_projected_portfolio([], _tech_buy_analyses(tight), total_value=10000, run=prun(pipeline))
     ceilings = _preview_ceilings(out)
     assert ceilings == {"NVDA": 65.0, "AMD": 65.0, "AAPL": 65.0}
     assert max(ceilings.values()) <= 65.0
@@ -1099,24 +1252,24 @@ def test_preview_dials_come_from_the_constructors_own_defaults():
     import inspect
     from src.portfolio_constructor import ConstructorConfig
     from src.prompt_facts.projected import PromptProjected
+
     body = inspect.getsource(PromptProjected._build_projected_portfolio)
     tree = ast.parse(textwrap.dedent(body))
-    dial = next(
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "_dial"
-    )
+    dial = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_dial")
     assert not [
-        n for n in ast.walk(dial)
-        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float))
-        and not isinstance(n.value, bool) and n.value != 0
+        n
+        for n in ast.walk(dial)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, (int, float))
+        and not isinstance(n.value, bool)
+        and n.value != 0
     ], "a flat sizing literal is back in the preview's dial reader"
     pipeline = build_pipeline()
     prun(pipeline).symbol_sectors = {}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses({"NVDA": 50.0, "AMD": 50.0,
-                                    "AAPL": 50.0}),
-            total_value=10000, run=prun(pipeline))
+            [], _tech_buy_analyses({"NVDA": 50.0, "AMD": 50.0, "AAPL": 50.0}), total_value=10000, run=prun(pipeline)
+        )
     # No constructor attached, so the fallback runs: it must reproduce
     # ConstructorConfig's OWN declared defaults.
     expected = ConstructorConfig().risk_budget_pct * 100 / 50
@@ -1132,11 +1285,12 @@ def test_preview_states_each_sectors_share_of_the_candidate_set():
     pipeline = _sizing_pipeline()
     analyses = _tech_buy_analyses({"NVDA": 90.0, "AMD": 90.0, "AAPL": 90.0})
     prun(pipeline).symbol_sectors = {
-        "NVDA": "Technology", "AMD": "Technology", "AAPL": "Energy",
+        "NVDA": "Technology",
+        "AMD": "Technology",
+        "AAPL": "Energy",
     }
     with patch("src.execution.broker._get_sector"):
-        out = pipeline._build_projected_portfolio(
-            [], analyses, total_value=10000, run=prun(pipeline))
+        out = pipeline._build_projected_portfolio([], analyses, total_value=10000, run=prun(pipeline))
     assert "Technology 2 of 3 (67% of the candidate set: NVDA, AMD)" in out
     assert "Energy 1 of 3 (33% of the candidate set: AAPL)" in out
     # No threshold, no warning level on the candidate composition.
@@ -1152,13 +1306,11 @@ def test_preview_claims_no_projected_sector_weight():
     pipeline = _sizing_pipeline()
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses({"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}),
-            total_value=10000, run=prun(pipeline))
+            [], _tech_buy_analyses({"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}), total_value=10000, run=prun(pipeline)
+        )
     assert "CANNOT tell you what these candidates would weigh" in out
     assert "If you allocate" not in out
-    assert "→ " not in out.split("Per candidate")[0], (
-        "a projected book line is back"
-    )
+    assert "→ " not in out.split("Per candidate")[0], "a projected book line is back"
     assert "NOT a weight" in out
 
 
@@ -1167,24 +1319,22 @@ def test_preview_and_constructor_share_ONE_sizing_definition():
     constructor and the preview must resolve to the same function object."""
     import src.portfolio_constructor as pc
     import src.risk.constants as rc
+
     assert pc.risk_budget_allocation_pct is rc.risk_budget_allocation_pct
     import ast
     import inspect
     from src.prompt_facts.projected import PromptProjected
+
     params = inspect.signature(
         PromptProjected._build_projected_portfolio,
     ).parameters
-    assert "default_buy_pct" not in params, (
-        "the flat per-candidate preview size is back in the preview path"
-    )
+    assert "default_buy_pct" not in params, "the flat per-candidate preview size is back in the preview path"
     # And no flat per-candidate constant survives in the body either: the
     # only `default_buy_pct` left in the module is the historical note in
     # the docstring, which is prose, not code.
     body = inspect.getsource(PromptProjected._build_projected_portfolio)
     tree = ast.parse(textwrap.dedent(body))
-    names = {
-        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
-    } | {
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} | {
         n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)
     }
     assert "default_buy_pct" not in names
@@ -1195,29 +1345,45 @@ def test_preview_names_a_candidate_it_cannot_size_rather_than_assuming_one():
     """ITEM 221. Unusable stop geometry is reported, never back-filled with
     an assumed size — inventing one is the defect being fixed."""
     from src.risk.constants import risk_budget_allocation_pct
-    assert risk_budget_allocation_pct(
-        entry_price=100.0, stop_price=100.0, total_value=10000.0,
-        risk_budget_pct=5.0,
-    ) is None
+
+    assert (
+        risk_budget_allocation_pct(
+            entry_price=100.0,
+            stop_price=100.0,
+            total_value=10000.0,
+            risk_budget_pct=5.0,
+        )
+        is None
+    )
 
 
 # === MacroStore history ===
 
+
 def test_macro_store_save_appends_to_history(tmp_path):
     store = MacroStore(data_dir=str(tmp_path / "macro"))
-    store.save_last_state({
-        "regime": "risk-on", "confidence": "high",
-        "equity_outlook": "bullish", "summary": "day1",
-        "position_guidance": {"target_invested_pct": 75},
-    })
+    store.save_last_state(
+        {
+            "regime": "risk-on",
+            "confidence": "high",
+            "equity_outlook": "bullish",
+            "summary": "day1",
+            "position_guidance": {"target_invested_pct": 75},
+        }
+    )
     # Simulate next day
     from src.data.macro_store import MacroStore as _M
+
     store2 = _M(data_dir=str(tmp_path / "macro"))
-    store2.save_last_state({
-        "regime": "transitional", "confidence": "medium",
-        "equity_outlook": "neutral", "summary": "day2",
-        "position_guidance": {"target_invested_pct": 60},
-    })
+    store2.save_last_state(
+        {
+            "regime": "transitional",
+            "confidence": "medium",
+            "equity_outlook": "neutral",
+            "summary": "day2",
+            "position_guidance": {"target_invested_pct": 60},
+        }
+    )
     hist = store2.load_history(days=7)
     # Both entries keyed by et_today() — one row only if same ET date.
     assert len(hist) >= 1
@@ -1228,11 +1394,15 @@ def test_macro_store_save_appends_to_history(tmp_path):
 def test_macro_store_load_history_falls_back_to_last_state(tmp_path):
     """Historical file missing but last_state.json exists → returns 1-element list."""
     store = MacroStore(data_dir=str(tmp_path / "macro"))
-    store.save_last_state({
-        "regime": "risk-on", "confidence": "high",
-        "equity_outlook": "bullish", "summary": "x",
-        "position_guidance": {"target_invested_pct": 70},
-    })
+    store.save_last_state(
+        {
+            "regime": "risk-on",
+            "confidence": "high",
+            "equity_outlook": "bullish",
+            "summary": "x",
+            "position_guidance": {"target_invested_pct": 70},
+        }
+    )
     # Delete the history file to simulate legacy state
     store.history_path.unlink()
     history = store.load_history(days=7)
@@ -1241,6 +1411,7 @@ def test_macro_store_load_history_falls_back_to_last_state(tmp_path):
 
 
 # === NewsStore recent_state_changes ===
+
 
 def test_news_store_recent_state_changes_dedupe_by_event(tmp_path):
     store = NewsStore(data_dir=str(tmp_path / "news"))
@@ -1252,28 +1423,43 @@ def test_news_store_recent_state_changes_dedupe_by_event(tmp_path):
         d = et_today() - timedelta(days=days_ago)
         day_dir = store.data_dir / str(d)
         day_dir.mkdir(parents=True, exist_ok=True)
-        (day_dir / "full_report.json").write_text(json.dumps({
-            "state_changes": [{
-                "event": "Iran ceasefire holds",
-                "conviction": "high",
-                "affected_symbols": ["XOM", "CVX"],
-                "previous_state": "conflict",
-                "new_state": "ceasefire",
-                "market_impact": "bearish energy",
-            }],
-        }))
+        (day_dir / "full_report.json").write_text(
+            json.dumps(
+                {
+                    "state_changes": [
+                        {
+                            "event": "Iran ceasefire holds",
+                            "conviction": "high",
+                            "affected_symbols": ["XOM", "CVX"],
+                            "previous_state": "conflict",
+                            "new_state": "ceasefire",
+                            "market_impact": "bearish energy",
+                        }
+                    ],
+                }
+            )
+        )
 
     # And one different HIGH event only today
     today_dir = store.data_dir / str(et_today())
     today_dir.mkdir(parents=True, exist_ok=True)
-    (today_dir / "full_report.json").write_text(json.dumps({
-        "state_changes": [
-            {"event": "Fed signals pause", "conviction": "high",
-             "affected_symbols": ["JPM"], "previous_state": "cutting",
-             "new_state": "holding", "market_impact": "banks bullish"},
-            {"event": "Minor noise", "conviction": "low"},  # skipped
-        ],
-    }))
+    (today_dir / "full_report.json").write_text(
+        json.dumps(
+            {
+                "state_changes": [
+                    {
+                        "event": "Fed signals pause",
+                        "conviction": "high",
+                        "affected_symbols": ["JPM"],
+                        "previous_state": "cutting",
+                        "new_state": "holding",
+                        "market_impact": "banks bullish",
+                    },
+                    {"event": "Minor noise", "conviction": "low"},  # skipped
+                ],
+            }
+        )
+    )
 
     changes = store.recent_state_changes(lookback_days=14, limit=10)
     events = [c["event"] for c in changes]
@@ -1289,16 +1475,16 @@ def test_news_store_recent_state_changes_dedupe_by_event(tmp_path):
 
 # === DB helpers ===
 
+
 def test_db_get_symbol_last_buy_returns_most_recent_buy(tmp_path):
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     # Insert an OLD buy then a newer one; last_buy should return the newer
     db.insert_trade("NVDA", "BUY", 5, 180, "first entry", "r-1", stop_loss=90.0)
     # Force timestamp backdate
-    db.conn.execute(
-        "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE reasoning='first entry'"
-    )
+    db.conn.execute("UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE reasoning='first entry'")
     db.conn.commit()
     db.insert_trade("NVDA", "BUY", 5, 195, "second entry, 3/4 aligned", "r-2", stop_loss=90.0)
     last = db.get_symbol_last_buy("NVDA")
@@ -1309,14 +1495,18 @@ def test_db_get_symbol_last_buy_returns_most_recent_buy(tmp_path):
 
 def test_db_get_recent_insights_returns_newest_first(tmp_path):
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.save_insights(date="2026-04-15", tomorrow_outlook="O15",
-                     lessons="L15", suggested_actions="[]", risk_rating="low")
-    db.save_insights(date="2026-04-17", tomorrow_outlook="O17",
-                     lessons="L17", suggested_actions="[]", risk_rating="moderate")
-    db.save_insights(date="2026-04-16", tomorrow_outlook="O16",
-                     lessons="L16", suggested_actions="[]", risk_rating="low")
+    db.save_insights(
+        date="2026-04-15", tomorrow_outlook="O15", lessons="L15", suggested_actions="[]", risk_rating="low"
+    )
+    db.save_insights(
+        date="2026-04-17", tomorrow_outlook="O17", lessons="L17", suggested_actions="[]", risk_rating="moderate"
+    )
+    db.save_insights(
+        date="2026-04-16", tomorrow_outlook="O16", lessons="L16", suggested_actions="[]", risk_rating="low"
+    )
     rows = db.get_recent_insights(limit=7)
     assert [r["date"] for r in rows] == ["2026-04-17", "2026-04-16", "2026-04-15"]
 
@@ -1345,11 +1535,18 @@ def test_db_insert_trade_round_trips_thesis_invalid_if(tmp_path):
     """A trades-table column, not just an in-memory field: the condition
     must still be there after `Database` re-reads its own row."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        "NVDA", "BUY", 10, 200.0, "AI capex supercycle", "r-1",
-        thesis_invalid_if=_LONG_CONDITION_FOR_DB, stop_loss=90.0,
+        "NVDA",
+        "BUY",
+        10,
+        200.0,
+        "AI capex supercycle",
+        "r-1",
+        thesis_invalid_if=_LONG_CONDITION_FOR_DB,
+        stop_loss=90.0,
     )
     last = db.get_symbol_last_buy("NVDA")
     assert last is not None
@@ -1360,6 +1557,7 @@ def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
     """Every legacy call site that never passes it gets NULL, not a
     fabricated value — same discipline as the conviction-ledger columns."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1", stop_loss=90.0)
@@ -1371,6 +1569,7 @@ def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
 def _pipeline_for_position_history():
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
+
     pipeline = build_pipeline(db=MagicMock(), tech_store=MagicMock())
     pipeline.tech_store.get_history.return_value = []
     return pipeline

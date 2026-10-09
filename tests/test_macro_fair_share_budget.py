@@ -20,7 +20,6 @@ def _series(values, start="2026-08-01", freq="B"):
     return pd.Series(values, index=pd.date_range(start, periods=len(values), freq=freq))
 
 
-
 # ===========================================================================
 # Board items 119 + 187 — the shared budget is shared, not first-come
 #
@@ -33,12 +32,14 @@ def _series(values, start="2026-08-01", freq="B"):
 # series, retry or metadata lookup may spend another series' turn.
 # ===========================================================================
 
+
 def _hang_for_the_socket_timeout(_series_id, **_kwargs):
     """Simulate a hung FRED socket: consume exactly the timeout the caller
     set, then fail the way a real read timeout fails. This is what makes the
     test measure BUDGET POLICY rather than mock bookkeeping — a series that
     is allowed 15 s of clock really takes 15 s of clock."""
     import socket as _socket
+
     timeout = _socket.getdefaulttimeout()
     time.sleep(timeout if timeout else 0.01)
     raise TimeoutError("The read operation timed out")
@@ -72,6 +73,7 @@ def _hang_against(clock):
 
     def _hang(_series_id, **_kwargs):
         import socket as _socket
+
         timeout = _socket.getdefaulttimeout()
         clock.sleep(timeout if timeout else 0.01)
         raise TimeoutError("The read operation timed out")
@@ -137,8 +139,7 @@ def test_every_required_series_is_attempted_even_when_every_call_hangs(mock_fred
     # the virtual clock (measured 5.5e-12 s of drift); it is arithmetic
     # error, not a tolerance for machine load.
     assert spent <= provider.total_fetch_deadline_s + 1e-6, (
-        f"fair-share fetch spent {spent:.6f}s of budget against a "
-        f"{provider.total_fetch_deadline_s}s ceiling"
+        f"fair-share fetch spent {spent:.6f}s of budget against a {provider.total_fetch_deadline_s}s ceiling"
     )
 
 
@@ -176,9 +177,7 @@ def test_one_slow_series_no_longer_starves_the_tail_of_the_list(mock_fred_cls):
     coverage = provider.last_coverage
     assert coverage.succeeded == len(CONFIGURED_SERIES) - 1, coverage.describe()
     assert [f.series_id for f in coverage.failed] == [first]
-    assert coverage.not_attempted == [], (
-        "no series may be left un-attempted when only one series is slow"
-    )
+    assert coverage.not_attempted == [], "no series may be left un-attempted when only one series is slow"
 
 
 @patch("src.data.macro.Fred")
@@ -209,10 +208,7 @@ def test_metadata_never_spends_an_observation_it_cannot_replace(mock_fred_cls):
     provider.get_macro_summary()
 
     coverage = provider.last_coverage
-    assert coverage.status == "ok", (
-        "hanging METADATA must not cost a single observation: "
-        + coverage.describe()
-    )
+    assert coverage.status == "ok", "hanging METADATA must not cost a single observation: " + coverage.describe()
     assert coverage.succeeded == len(CONFIGURED_SERIES)
 
 
@@ -237,12 +233,12 @@ def test_an_unattempted_series_is_named_as_unattempted_not_merely_failed(mock_fr
     failure = provider._run_failed[-1]
     assert failure.series_id == "VIXCLS"
     assert failure.reason == NOT_ATTEMPTED_REASON
-    assert failure.reason != "fetch_deadline_exceeded", (
-        "never-asked and asked-then-timed-out are different defects"
-    )
+    assert failure.reason != "fetch_deadline_exceeded", "never-asked and asked-then-timed-out are different defects"
 
     coverage = MacroCoverage(
-        configured=15, succeeded=14, failed=[failure],
+        configured=15,
+        succeeded=14,
+        failed=[failure],
     )
     assert [f.series_id for f in coverage.not_attempted] == ["VIXCLS"]
     described = coverage.describe()
@@ -293,10 +289,7 @@ def test_the_per_series_reserve_is_derived_not_chosen(mock_fred_cls):
     # Tight by construction: every series spending its whole share is
     # exactly the ceiling, which is what makes "all fifteen are attempted"
     # true in the worst case rather than merely likely.
-    assert (
-        provider.budget.per_series_reserve_s * len(CONFIGURED_SERIES)
-        == provider.total_fetch_deadline_s
-    )
+    assert provider.budget.per_series_reserve_s * len(CONFIGURED_SERIES) == provider.total_fetch_deadline_s
 
     wider = MacroDataProvider(api_key="test-key", total_fetch_deadline_s=180.0)
     assert wider.budget.per_series_reserve_s == 2 * provider.budget.per_series_reserve_s

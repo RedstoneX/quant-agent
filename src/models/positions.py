@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from src.risk.exit_trigger import ExitTrigger, normalize_trigger
 from src.models.base import LLMOutputModel, _normalize_enum_case_fields, _normalize_symbol, logger
 
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -75,7 +76,8 @@ class PositionAction(LLMOutputModel):
                 logger.warning(
                     "PositionAction: unrecognised exit_trigger %r on %s — "
                     "read as 'no trigger named' and healed from the reason",
-                    raw, values.get("symbol"),
+                    raw,
+                    values.get("symbol"),
                 )
             values["exit_trigger"] = coerced
         return values
@@ -127,6 +129,7 @@ class PositionReasoningChain(LLMOutputModel):
     decisions. Each field is required; empty strings will fail validation
     so the agent can't skip a step by sending "".
     """
+
     macro_continuity_check: str = Field(min_length=1)
     """Regime + outlook today vs morning vs this week. Stable ⇒ HOLD bias."""
 
@@ -170,5 +173,3 @@ class PositionReview(LLMOutputModel):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(values, lower_fields=("risk_level",))
-
-

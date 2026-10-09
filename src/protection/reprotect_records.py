@@ -17,7 +17,8 @@ class ReprotectRecords:
     """The reprotect identity-gap record; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         record_exit_refusal=None,
     ) -> None:
         self._record_exit_refusal = record_exit_refusal
@@ -40,6 +41,7 @@ class ReprotectRecords:
         """
         try:
             from datetime import datetime, timezone
+
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             self._record_exit_refusal(
                 symbol=symbol,
@@ -52,5 +54,7 @@ class ReprotectRecords:
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "reprotect ambiguity record failed for %s: %s", symbol, exc,
+                "reprotect ambiguity record failed for %s: %s",
+                symbol,
+                exc,
             )

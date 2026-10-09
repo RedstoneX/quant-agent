@@ -22,6 +22,7 @@ once per run):
 (the construction-time heal uses source `raw_model_output`, so the two heal
 routes stay distinguishable.)
 """
+
 from src.models.base import stated_soft_exit
 
 FALSIFIER = "thesis_invalid_if"
@@ -33,19 +34,21 @@ def install(cls) -> None:
     original_setattr = cls.__setattr__
 
     def __setattr__(self, name, value):
-        if name == FALSIFIER and not stated_soft_exit(
-            value if isinstance(value, str) else None
-        ):
+        if name == FALSIFIER and not stated_soft_exit(value if isinstance(value, str) else None):
             prior = stated_soft_exit(self.__dict__.get(FALSIFIER))
             if prior:
                 from src.seat_heal import _note_restore_observation
 
                 sym = getattr(self, "symbol", None)
                 sym = sym.strip().upper() if isinstance(sym, str) and sym.strip() else None
-                _note_restore_observation({
-                    "symbol": sym, "blank_found": True, "healed": True,
-                    "source": PRIOR_SOURCE,
-                })
+                _note_restore_observation(
+                    {
+                        "symbol": sym,
+                        "blank_found": True,
+                        "healed": True,
+                        "source": PRIOR_SOURCE,
+                    }
+                )
             if prior:
                 value = prior
         original_setattr(self, name, value)

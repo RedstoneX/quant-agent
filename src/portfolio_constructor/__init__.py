@@ -46,8 +46,12 @@ from src.portfolio_constructor.sector_weights import (
     _note_reducing_order_sectors,
 )
 from src.models import (
-    Position, TargetPosition, TechAnalysisResult, TradeDecision,
-    reward_to_risk, stated_soft_exit,
+    Position,
+    TargetPosition,
+    TechAnalysisResult,
+    TradeDecision,
+    reward_to_risk,
+    stated_soft_exit,
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
@@ -210,11 +214,14 @@ class PortfolioConstructor:
         return refusal_log.drain_data_faults(self)
 
     def _note_data_fault(
-        self, symbol: str, direction: str, fault: str, detail: str,
+        self,
+        symbol: str,
+        direction: str,
+        fault: str,
+        detail: str,
     ) -> None:
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
         refusal_log._note_data_fault(self, symbol, direction, fault, detail)
-
 
     def drain_refusals(self) -> dict[str, dict[str, str]]:
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
@@ -240,27 +247,56 @@ class PortfolioConstructor:
         refusal_log._note_parity_standdown(self, symbol, direction, reason, derivation)
 
     def _record_parity_refusal(
-        self, symbol, direction, entry, stop, level, ratio, *, stage="construction",
+        self,
+        symbol,
+        direction,
+        entry,
+        stop,
+        level,
+        ratio,
+        *,
+        stage="construction",
     ):
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
         refusal_log._record_parity_refusal(
-            self, symbol, direction, entry, stop, level, ratio, stage=stage,
+            self,
+            symbol,
+            direction,
+            entry,
+            stop,
+            level,
+            ratio,
+            stage=stage,
         )
 
     def _record_subfloor_risk_target(
-        self, symbol: str, direction: str | None, requested_pct: float,
+        self,
+        symbol: str,
+        direction: str | None,
+        requested_pct: float,
     ) -> None:
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
         refusal_log._record_subfloor_risk_target(self, symbol, direction, requested_pct)
 
     def _note_refusal(
-        self, symbol: str, direction: str, refusal: str, detail: str,
-        *, only_if_unrecorded: bool = False, action: str | None = None,
+        self,
+        symbol: str,
+        direction: str,
+        refusal: str,
+        detail: str,
+        *,
+        only_if_unrecorded: bool = False,
+        action: str | None = None,
     ) -> None:
         """Thin shim: body lives in src/portfolio_constructor/refusal_log.py."""
         refusal_log._note_refusal(
-            self, symbol, direction, refusal, detail,
-            only_if_unrecorded=only_if_unrecorded, action=action,
+            self,
+            symbol,
+            direction,
+            refusal,
+            detail,
+            only_if_unrecorded=only_if_unrecorded,
+            action=action,
         )
 
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
@@ -281,9 +317,7 @@ class PortfolioConstructor:
             return orders
         finally:
             logger.removeHandler(capture)
-            self.last_drop_reasons = {
-                sym: " | ".join(msgs) for sym, msgs in capture.reasons.items()
-            }
+            self.last_drop_reasons = {sym: " | ".join(msgs) for sym, msgs in capture.reasons.items()}
 
     _note_reducing_order_sectors = _note_reducing_order_sectors
     _current_sector_weights = staticmethod(_current_sector_weights)
@@ -403,14 +437,10 @@ class PortfolioConstructor:
         # every call — per-run state, like `price_map` itself.
         if isinstance(unpriceable_symbols, dict):
             self._unpriceable_symbols = {
-                str(s).strip().upper(): str(code or FAULT_NO_PRICE)
-                for s, code in unpriceable_symbols.items()
+                str(s).strip().upper(): str(code or FAULT_NO_PRICE) for s, code in unpriceable_symbols.items()
             }
         else:
-            self._unpriceable_symbols = {
-                str(s).strip().upper(): FAULT_NO_PRICE
-                for s in (unpriceable_symbols or ())
-            }
+            self._unpriceable_symbols = {str(s).strip().upper(): FAULT_NO_PRICE for s in (unpriceable_symbols or ())}
         current_weights = self._current_weights(positions, total_value)
         analyses_by_sym = {a.symbol: a for a in analyses}
         positions_by_sym = {p.symbol: p for p in positions}
@@ -482,7 +512,9 @@ class PortfolioConstructor:
                     "target %.2f%%) — refusing the flip. Emitting only the "
                     "flattening leg this session; the other side may open "
                     "next session once the book is actually flat.",
-                    sym, current_pct, signed_target,
+                    sym,
+                    current_pct,
+                    signed_target,
                 )
                 try:
                     self.last_side_flips[str(sym).strip().upper()] = {
@@ -494,13 +526,8 @@ class PortfolioConstructor:
                     pass
                 signed_target = 0.0
 
-            plan_for_sym = (
-                risk_plan.get(sym) if target.risk_allocation_pct is not None else None
-            )
-            if (
-                plan_for_sym is not None and plan_for_sym.sized_from_live_stop
-                and abs(signed_target) > abs(current_pct)
-            ):
+            plan_for_sym = risk_plan.get(sym) if target.risk_allocation_pct is not None else None
+            if plan_for_sym is not None and plan_for_sym.sized_from_live_stop and abs(signed_target) > abs(current_pct):
                 # A trim sized from the live stop may only reduce. At its live
                 # stop this position already carries no more than the risk
                 # asked for, so there is nothing to sell — and with no
@@ -509,7 +536,9 @@ class PortfolioConstructor:
                     "Constructor: %s trim needs no order — at its live stop "
                     "($%.2f) the position already risks no more than the "
                     "%.2f%% asked for; left unchanged.",
-                    sym, plan_for_sym.stop_price or 0.0, plan_for_sym.risk_pct,
+                    sym,
+                    plan_for_sym.stop_price or 0.0,
+                    plan_for_sym.risk_pct,
                 )
                 signed_target = current_pct
 
@@ -522,7 +551,7 @@ class PortfolioConstructor:
             # decided to exit sat in the book indefinitely (2026-07-16
             # audit). Anything held with target 0 goes to the SELL/COVER
             # builder, which emits a full exit.
-            closing = (signed_target == 0 and current_pct != 0)
+            closing = signed_target == 0 and current_pct != 0
             # Owner ruling 2026-09-30 (board item 183): the picked
             # `min_trade_weight_delta` churn floor is GONE. Any delta the
             # desk's own reasoning asked for is attempted below, however
@@ -551,7 +580,8 @@ class PortfolioConstructor:
                     # the arm above this one produces nothing and must say
                     # why in its own words.
                     self._note_refusal(
-                        sym, target.direction,
+                        sym,
+                        target.direction,
                         CONSTRUCTOR_SHORT_ALREADY_AT_TARGET,
                         "this short is already the size the desk wants it, "
                         "so there was nothing to buy or sell. Nothing was "
@@ -563,7 +593,8 @@ class PortfolioConstructor:
                     # zero. Not a size judgement and not a refusal of the
                     # idea: there is no position to place.
                     self._note_refusal(
-                        sym, target.direction,
+                        sym,
+                        target.direction,
                         CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD,
                         "the desk named this stock but asked for a position "
                         "of zero, and nothing is held in it, so there was no "
@@ -576,9 +607,13 @@ class PortfolioConstructor:
                 if current_pct > 0:
                     # Trim or close a LONG.
                     sell_decision = self._build_sell(
-                        target, positions_by_sym.get(sym), current_pct, signed_target,
+                        target,
+                        positions_by_sym.get(sym),
+                        current_pct,
+                        signed_target,
                         current_risk_pct=_lookup_existing_risk(
-                            existing_risk_pct, sym,
+                            existing_risk_pct,
+                            sym,
                         ),
                     )
                     if sell_decision is not None:
@@ -603,9 +638,13 @@ class PortfolioConstructor:
                 if current_pct < 0:
                     # Cover (reduce/close) a SHORT.
                     cover_decision = self._build_cover(
-                        target, positions_by_sym.get(sym), current_pct, signed_target,
+                        target,
+                        positions_by_sym.get(sym),
+                        current_pct,
+                        signed_target,
                         current_risk_pct=_lookup_existing_risk(
-                            existing_risk_pct, sym,
+                            existing_risk_pct,
+                            sym,
                         ),
                     )
                     if cover_decision is not None:
@@ -647,20 +686,28 @@ class PortfolioConstructor:
         # runs before any agent and therefore keeps working on a run where
         # the Portfolio Manager returns nothing at all.
         from src.risk.rules import (
-            GrossCeiling, apply_gross_ceiling, resolve_gross_ceiling,
+            GrossCeiling,
+            apply_gross_ceiling,
+            resolve_gross_ceiling,
         )
+
         # isinstance, not truthiness: a caller (or a Mock pipeline in a test)
         # that hands over something ceiling-shaped-but-not-a-ceiling must fall
         # back to the standing cap rather than silently size against a
         # comparison that raises.
         ceiling = (
-            gross_ceiling if isinstance(gross_ceiling, GrossCeiling)
+            gross_ceiling
+            if isinstance(gross_ceiling, GrossCeiling)
             else resolve_gross_ceiling(
-                None, base_x=self.cfg.max_gross_exposure_x,
+                None,
+                base_x=self.cfg.max_gross_exposure_x,
             )
         )
         outcome = apply_gross_ceiling(
-            orders, positions, total_value, ceiling,
+            orders,
+            positions,
+            total_value,
+            ceiling,
             cash_park_symbol=self.cfg.cash_park_symbol,
             # No `min_order_usd`: board item 183 deleted the constructor's
             # copy of the flat $500 floor. `apply_gross_ceiling` accepts the
@@ -683,21 +730,19 @@ class PortfolioConstructor:
             for sym in outcome.blocked:
                 direction = "short" if action_by_symbol.get(sym) == "SHORT" else "long"
                 self._note_refusal(
-                    sym, direction, STOP_REFUSAL_GROSS_EXPOSURE_CEILING,
+                    sym,
+                    direction,
+                    STOP_REFUSAL_GROSS_EXPOSURE_CEILING,
                     outcome.blocked_detail.get(
                         sym,
-                        "the §11.2 gross-exposure ceiling refused this "
-                        "entry outright; no further detail was recorded",
+                        "the §11.2 gross-exposure ceiling refused this entry outright; no further detail was recorded",
                     ),
                 )
         # An entry rationed to nothing is dropped rather than emitted as a
         # zero-allocation order — `allocation_pct == 0` means SKIP to the
         # execution stage, and leaving it in the list would show the operator
         # a trade that was never going to happen.
-        orders = [
-            d for d in orders
-            if d.action not in ("BUY", "SHORT") or d.allocation_pct > 0
-        ]
+        orders = [d for d in orders if d.action not in ("BUY", "SHORT") or d.allocation_pct > 0]
         return orders
 
     def _plan_risk_targets(
@@ -744,12 +789,15 @@ class PortfolioConstructor:
         """
         from src.risk.budget import RiskRequest, allocate_risk_budget
         from src.risk.rules import (
-            _gross_multiplier, agreement_refuses_trade, count_aligned_sources,
-            count_opposing_sources, signed_source_score,
+            _gross_multiplier,
+            agreement_refuses_trade,
+            count_aligned_sources,
+            count_opposing_sources,
+            signed_source_score,
         )
         from src.risk.size_override import SizeOverride
 
-        priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
+        priced: dict[str, tuple[float, float]] = {}  # symbol -> (entry, stop)
         # Stage 3: direction is tracked alongside the priced entry/stop so
         # the weight formula below can pick the right (unsigned) risk-per-
         # share denominator and apply the short sizing haircut. The RESULT
@@ -806,13 +854,13 @@ class PortfolioConstructor:
                 # CLOSE branch above), which is why the comparison is
                 # strictly positive.
                 self._record_subfloor_risk_target(
-                    sym, target.direction, target.risk_allocation_pct,
+                    sym,
+                    target.direction,
+                    target.risk_allocation_pct,
                 )
             analysis = analyses_by_sym.get(sym)
             held_pct = current_weights.get(sym, 0.0)
-            held_same_side = (
-                held_pct < 0 if target.direction == "short" else held_pct > 0
-            )
+            held_same_side = held_pct < 0 if target.direction == "short" else held_pct > 0
             if analysis is None and held_same_side:
                 # A held name this session still has no Technical for (Tech
                 # unresolved after retry, or a path that never asked). The
@@ -822,7 +870,9 @@ class PortfolioConstructor:
                 # already HAS one at the broker: size the trim from that,
                 # and never let it grow the position.
                 entry, stop = self._held_trim_entry_and_stop(
-                    target, price_map.get(sym), (live_stops or {}).get(sym.upper()),
+                    target,
+                    price_map.get(sym),
+                    (live_stops or {}).get(sym.upper()),
                 )
                 if entry is None or stop is None:
                     # drop-reason: delegated — `_held_trim_entry_and_stop`
@@ -832,7 +882,10 @@ class PortfolioConstructor:
                 live_stop_trims.add(sym)
             else:
                 entry, stop = self._resolve_entry_and_stop(
-                    target, analysis, price_map.get(sym), regime=regime,
+                    target,
+                    analysis,
+                    price_map.get(sym),
+                    regime=regime,
                 )
             if entry is None or stop is None:
                 # drop-reason: delegated. `_resolve_entry_and_stop` has
@@ -873,18 +926,19 @@ class PortfolioConstructor:
                 # Item 109: a broadcast macro stance comes off the ALIGNED
                 # side only. It cannot corroborate a name the macro read
                 # never looked at; it can still dissent.
-                non_corroborating = (
-                    non_corroborating_sources or {}
-                ).get(sym.upper())
-                aligned_ignored = (
-                    frozenset(ignored or ()) | frozenset(non_corroborating or ())
-                )
+                non_corroborating = (non_corroborating_sources or {}).get(sym.upper())
+                aligned_ignored = frozenset(ignored or ()) | frozenset(non_corroborating or ())
                 agreement_count = count_aligned_sources(
-                    sym, sources, target.direction,
+                    sym,
+                    sources,
+                    target.direction,
                     ignored_sources=aligned_ignored,
                 )
                 opposing_count = count_opposing_sources(
-                    sym, sources, target.direction, ignored_sources=ignored,
+                    sym,
+                    sources,
+                    target.direction,
+                    ignored_sources=ignored,
                 )
                 # 2026-09-02: the ceiling reads the SIGNED score, not the
                 # aligned count. Before this, a seat that stayed silent, a
@@ -895,7 +949,10 @@ class PortfolioConstructor:
                 # there is deliberately NO separate veto rule, because that
                 # would charge the same dissenter twice.
                 source_score = signed_source_score(
-                    sym, sources, target.direction, ignored_sources=ignored,
+                    sym,
+                    sources,
+                    target.direction,
+                    ignored_sources=ignored,
                     non_corroborating_sources=non_corroborating,
                 )
                 # 2026-09-14: agreement is a REFUSAL, not a ceiling. Net at
@@ -922,7 +979,9 @@ class PortfolioConstructor:
                             "Constructor: %s — %s stance(s) present but too "
                             "stale to count toward agreement (%d aligned "
                             "after the freshness gate)",
-                            sym, ", ".join(gated), agreement_count,
+                            sym,
+                            ", ".join(gated),
+                            agreement_count,
                         )
                 if non_corroborating:
                     broad = sorted(s for s in non_corroborating if s in sources)
@@ -933,14 +992,20 @@ class PortfolioConstructor:
                             "this name's sector, so they cannot count FOR "
                             "the trade (they still count against one they "
                             "oppose); %d aligned, %d opposed",
-                            sym, ", ".join(broad), agreement_count,
+                            sym,
+                            ", ".join(broad),
+                            agreement_count,
                             opposing_count,
                         )
                 logger.info(
                     "Constructor: %s agreement %d aligned / %d opposed = "
                     "net %+d (direction=%s, %d source(s) with coverage)",
-                    sym, agreement_count, opposing_count, source_score,
-                    target.direction, len(sources),
+                    sym,
+                    agreement_count,
+                    opposing_count,
+                    source_score,
+                    target.direction,
+                    len(sources),
                 )
             else:
                 # No registry to check dissent against — same "no view, don't
@@ -974,7 +1039,9 @@ class PortfolioConstructor:
                 # portfolio-level budget allocator below, found again here by
                 # running the regex against this message.
                 self._note_refusal(
-                    sym, target.direction, STOP_REFUSAL_AGREEMENT_NET,
+                    sym,
+                    target.direction,
+                    STOP_REFUSAL_AGREEMENT_NET,
                     # Board item 89 defect 4 — a rule cited by NUMBER whose
                     # text says something else. This read "§9.4 refuses a
                     # net at or below zero". `docs/QAMC_REMEDIATION_SPEC.md`
@@ -1038,24 +1105,32 @@ class PortfolioConstructor:
         # clusters present) must degrade the SAME way as a total one: ceilings
         # unenforced, per-position sizing still applies. See
         # `_book_risk_inputs` in `src/pipeline_stages.py`.
-        allocation = self.last_risk_allocation = allocate_risk_budget(
-            requests,
-            existing_pct=existing_risk_pct,
-            clusters=clusters,
-            ceiling_pct=self.cfg.max_portfolio_risk_pct,
-            cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
-            floor_pct=self.cfg.min_risk_pct,
-            # retired board item 49 — best-ranked first. `ranking` is the PM's
-            # own `rank_verdicts` order, threaded through unchanged; the
-            # allocator scores nothing and this module scores nothing.
-            priority=ranking,
-        ) if existing_risk_pct is not None else None
+        allocation = self.last_risk_allocation = (
+            allocate_risk_budget(
+                requests,
+                existing_pct=existing_risk_pct,
+                clusters=clusters,
+                ceiling_pct=self.cfg.max_portfolio_risk_pct,
+                cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
+                floor_pct=self.cfg.min_risk_pct,
+                # retired board item 49 — best-ranked first. `ranking` is the PM's
+                # own `rank_verdicts` order, threaded through unchanged; the
+                # allocator scores nothing and this module scores nothing.
+                priority=ranking,
+            )
+            if existing_risk_pct is not None
+            else None
+        )
 
         plans: dict[str, RiskPlan] = {}
         for sym in closes:
             plans[sym] = RiskPlan(
-                symbol=sym, risk_pct=0.0, target_weight_pct=0.0,
-                entry_price=None, stop_price=None, note="",
+                symbol=sym,
+                risk_pct=0.0,
+                target_weight_pct=0.0,
+                entry_price=None,
+                stop_price=None,
+                note="",
             )
 
         for sym, (entry, stop) in priced.items():
@@ -1090,7 +1165,8 @@ class PortfolioConstructor:
                     # untouched here.
                     limited_by = grant.limited_by if grant else "no grant"
                     self._note_refusal(
-                        sym, directions.get(sym, ""),
+                        sym,
+                        directions.get(sym, ""),
                         STOP_REFUSAL_BUDGET_EXHAUSTED,
                         f"the portfolio risk budget granted 0.00% of the "
                         f"{requested:.2f}% risk this idea asked for "
@@ -1128,12 +1204,17 @@ class PortfolioConstructor:
         return plans
 
     def _held_trim_entry_and_stop(
-        self, target: TargetPosition, market_price: float | None,
+        self,
+        target: TargetPosition,
+        market_price: float | None,
         live_stop: float | None,
     ) -> tuple[float | None, float | None]:
         """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
         return target_derivation._held_trim_entry_and_stop(
-            self._note_refusal, target, market_price, live_stop,
+            self._note_refusal,
+            target,
+            market_price,
+            live_stop,
         )
 
     def _derive_target(
@@ -1145,16 +1226,26 @@ class PortfolioConstructor:
     ) -> TargetDerivation:
         """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
         return target_derivation._derive_target(
-            self.cfg, self._note_data_fault, self._log_target_divergence,
-            symbol, analysis, entry_price, direction,
+            self.cfg,
+            self._note_data_fault,
+            self._log_target_divergence,
+            symbol,
+            analysis,
+            entry_price,
+            direction,
         )
 
     def _log_target_divergence(
-        self, symbol: str, derivation: TargetDerivation,
+        self,
+        symbol: str,
+        derivation: TargetDerivation,
     ) -> None:
         """Thin shim: body lives in src/portfolio_constructor/target_derivation.py."""
         target_derivation._log_target_divergence(
-            self.cfg, self.refusal_recorder, symbol, derivation,
+            self.cfg,
+            self.refusal_recorder,
+            symbol,
+            derivation,
         )
 
     @staticmethod
@@ -1164,11 +1255,11 @@ class PortfolioConstructor:
 
     @staticmethod
     def _current_weights(
-        positions: list[Position], total_value: float,
+        positions: list[Position],
+        total_value: float,
     ) -> dict[str, float]:
         """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
         return sector_dial._current_weights(positions, total_value)
-
 
     def _apply_sector_dial(
         self,
@@ -1181,8 +1272,13 @@ class PortfolioConstructor:
     ) -> tuple[float, str]:
         """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
         return sector_dial._apply_sector_dial(
-            self.cfg, self._note_refusal, symbol, allocation_pct,
-            sector_weights=sector_weights, total_value=total_value, action=action,
+            self.cfg,
+            self._note_refusal,
+            symbol,
+            allocation_pct,
+            sector_weights=sector_weights,
+            total_value=total_value,
+            action=action,
         )
 
     def _accrue_sector(

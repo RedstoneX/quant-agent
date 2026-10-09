@@ -36,6 +36,7 @@ def _hub(tmp_path):
 
 def _install_handler(hub, captured):
     import src.execution.broker_parts.trade_stream as ts
+
     orig = ts.TradingStream
     ts.TradingStream = lambda *a, **k: hub._stream
     try:

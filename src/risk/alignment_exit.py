@@ -112,9 +112,7 @@ SMA_LADDER: dict[int, int] = {20: 50, 50: 200}
 #: CHART supplies when the thesis prose names no average the desk can
 #: compute — see `check_alignment_exit`. No new number: the set is exactly
 #: the periods already named by `SMA_LADDER`.
-CHART_MA_PERIODS: tuple[int, ...] = tuple(
-    sorted(set(SMA_LADDER) | set(SMA_LADDER.values()))
-)
+CHART_MA_PERIODS: tuple[int, ...] = tuple(sorted(set(SMA_LADDER) | set(SMA_LADDER.values())))
 
 #: Durable, machine-readable verdict codes. Every read writes one of these
 #: per symbol, INCLUDING the states where the desk could not read the chart
@@ -140,14 +138,14 @@ class ChartMark:
 class AlignmentExitCheck:
     """Verdict on whether the chart says this position's move is over.
 
-      "EXIT"        - price has given up the last mark holding the trend by
-                      more than `ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` ATR (the
-                      FIRST lost mark once the target has voted).
-      "HOLD"        - the last mark still holds, or the slip through it is
-                      inside the tolerance.
-      "UNPARSEABLE" - no live mark, no ATR, or no closes. Treated as HOLD by
-                      callers; a separate value so the desk can report the
-                      true state instead of a silent hold.
+    "EXIT"        - price has given up the last mark holding the trend by
+                    more than `ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` ATR (the
+                    FIRST lost mark once the target has voted).
+    "HOLD"        - the last mark still holds, or the slip through it is
+                    inside the tolerance.
+    "UNPARSEABLE" - no live mark, no ATR, or no closes. Treated as HOLD by
+                    callers; a separate value so the desk can report the
+                    true state instead of a silent hold.
     """
 
     status: Literal["EXIT", "HOLD", "UNPARSEABLE"]
@@ -207,7 +205,10 @@ def thesis_ma_period(thesis_invalid_if: str | None) -> int | None:
 
 
 def _sessions_since_mark_lost(
-    series: list[float], mark: ChartMark, ma: tuple[int, str] | None, *,
+    series: list[float],
+    mark: ChartMark,
+    ma: tuple[int, str] | None,
+    *,
     is_short: bool,
 ) -> int:
     """How many completed sessions price has been on the wrong side of this
@@ -279,9 +280,16 @@ def check_alignment_exit(
     series = [v for v in (_finite(c) for c in closes) if v is not None]
     if not series:
         return AlignmentExitCheck(
-            "UNPARSEABLE", CODE_NO_CLOSES, (), None, None, None,
+            "UNPARSEABLE",
+            CODE_NO_CLOSES,
+            (),
+            None,
+            None,
+            None,
             "no completed closes to read the chart from",
-            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
+            thesis_ma_period=fast,
+            thesis_ma_kind=kind,
+            thesis_text=thesis_text,
         )
     last = series[-1]
 
@@ -305,7 +313,8 @@ def check_alignment_exit(
     # from the same ladder.
     if fast is not None:
         ma_pairs: tuple[tuple[int | None, str], ...] = (
-            (fast, kind), (SMA_LADDER.get(fast), "SMA"),
+            (fast, kind),
+            (SMA_LADDER.get(fast), "SMA"),
         )
     else:
         ma_pairs = tuple((p, "SMA") for p in CHART_MA_PERIODS)
@@ -317,8 +326,7 @@ def check_alignment_exit(
             label = (
                 f"{k}{period} (thesis rides the {kind}{fast})"
                 if fast is not None
-                else f"SMA{period} (the chart's own average — the thesis "
-                     f"named none the desk computes)"
+                else f"SMA{period} (the chart's own average — the thesis named none the desk computes)"
             )
             m = ChartMark(v, label)
             marks.append(m)
@@ -326,35 +334,58 @@ def check_alignment_exit(
 
     if not marks:
         return AlignmentExitCheck(
-            "UNPARSEABLE", CODE_NO_MARK, (), None, None, None,
+            "UNPARSEABLE",
+            CODE_NO_MARK,
+            (),
+            None,
+            None,
+            None,
             "the chart presents no mark for this position — no confirmed "
             "structural break, and too few closes for any average the desk "
             "computes — so there is nothing to read; refusing to invent one",
-            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
+            thesis_ma_period=fast,
+            thesis_ma_kind=kind,
+            thesis_text=thesis_text,
         )
     if a is None or a <= 0:
         return AlignmentExitCheck(
-            "UNPARSEABLE", CODE_NO_ATR, tuple(marks), None, None, None,
-            "no ATR for this name — the tolerance that judges a give-back "
-            "cannot be read off the instrument",
-            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
+            "UNPARSEABLE",
+            CODE_NO_ATR,
+            tuple(marks),
+            None,
+            None,
+            None,
+            "no ATR for this name — the tolerance that judges a give-back cannot be read off the instrument",
+            thesis_ma_period=fast,
+            thesis_ma_kind=kind,
+            thesis_text=thesis_text,
         )
 
     reached, vote = target_vote(
-        series, bar_dates, target, target_effective_date, target_version,
+        series,
+        bar_dates,
+        target,
+        target_effective_date,
+        target_version,
         is_short=is_short,
     )
     breached = [m for m in marks if (last > m.price if is_short else last < m.price)]
     if not breached:
-        held = min(marks, key=lambda m: m.price) if is_short else max(
-            marks, key=lambda m: m.price
-        )
+        held = min(marks, key=lambda m: m.price) if is_short else max(marks, key=lambda m: m.price)
         return AlignmentExitCheck(
-            "HOLD", CODE_HOLD, tuple(marks), None, None, None,
+            "HOLD",
+            CODE_HOLD,
+            tuple(marks),
+            None,
+            None,
+            None,
             f"close {last:.4f} is still holding against {held.price:.4f} "
             f"[{held.source}] — the move is not over; {vote}",
-            thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
-            target_vote_applied=bool(reached), target_vote=vote,
+            thesis_ma_period=fast,
+            thesis_ma_kind=kind,
+            thesis_text=thesis_text,
+            target_vote_applied=bool(reached),
+            target_vote=vote,
         )
 
     # THE LAST THING HOLDING THE TREND UP: of the marks price has given up,
@@ -365,9 +396,7 @@ def check_alignment_exit(
     breach_atrs = breach / a
     band_atrs = ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
     band = band_atrs * a
-    sessions = _sessions_since_mark_lost(
-        series, last_mark, mark_periods.get(last_mark.source), is_short=is_short
-    )
+    sessions = _sessions_since_mark_lost(series, last_mark, mark_periods.get(last_mark.source), is_short=is_short)
 
     detail = (
         f"close {last:.4f} is {breach:.4f} ({breach_atrs:.2f} ATR) "
@@ -379,9 +408,18 @@ def check_alignment_exit(
     )
     if breach > band:
         return AlignmentExitCheck(
-            "EXIT", CODE_EXIT, tuple(marks), last_mark, breach_atrs, band_atrs,
-            detail, thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
-            sessions_since_mark_lost=sessions, target_vote_applied=bool(reached),
+            "EXIT",
+            CODE_EXIT,
+            tuple(marks),
+            last_mark,
+            breach_atrs,
+            band_atrs,
+            detail,
+            thesis_ma_period=fast,
+            thesis_ma_kind=kind,
+            thesis_text=thesis_text,
+            sessions_since_mark_lost=sessions,
+            target_vote_applied=bool(reached),
             target_vote=vote,
             owner_reason=(
                 f"Trend alignment over: the {'first' if reached else 'last'} line "
@@ -395,15 +433,23 @@ def check_alignment_exit(
                 + (
                     f"; the target ({_finite(target):.2f}) voted with the chart, "
                     f"so the give-back was read from the first lost mark."
-                    if reached else "."
+                    if reached
+                    else "."
                 )
             ),
         )
     return AlignmentExitCheck(
-        "HOLD", CODE_HOLD, tuple(marks), last_mark, breach_atrs, band_atrs,
-        f"holding — the slip through the last mark is inside the give-back "
-        f"tolerance. {detail}",
-        thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
-        sessions_since_mark_lost=sessions, target_vote_applied=bool(reached),
+        "HOLD",
+        CODE_HOLD,
+        tuple(marks),
+        last_mark,
+        breach_atrs,
+        band_atrs,
+        f"holding — the slip through the last mark is inside the give-back tolerance. {detail}",
+        thesis_ma_period=fast,
+        thesis_ma_kind=kind,
+        thesis_text=thesis_text,
+        sessions_since_mark_lost=sessions,
+        target_vote_applied=bool(reached),
         target_vote=vote,
     )

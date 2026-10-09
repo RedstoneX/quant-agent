@@ -19,6 +19,7 @@ Contract shared by every implementation:
 No logic lives here; the L3 implementation is ``src.storage.event_journal``
 and the test fake is ``tests/fake_event_journal.py``.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -29,15 +30,28 @@ class EventJournal(ABC):
 
     @abstractmethod
     def persist_evidence(
-        self, *, run_id: str, agent_name: str, kind: str, scope: str,
-        evidence_json: str, symbol: str | None = None,
+        self,
+        *,
+        run_id: str,
+        agent_name: str,
+        kind: str,
+        scope: str,
+        evidence_json: str,
+        symbol: str | None = None,
         decision_id: str | None = None,
     ) -> None:
         """Record one already-serialised structured-evidence row. Never raises."""
 
     @abstractmethod
     def record_pipeline_event(
-        self, *, run_id: str, decision_id: str | None, symbol: str | None,
-        stage: str, outcome: str, reason: str = "", **details,
+        self,
+        *,
+        run_id: str,
+        decision_id: str | None,
+        symbol: str | None,
+        stage: str,
+        outcome: str,
+        reason: str = "",
+        **details,
     ) -> None:
         """Record one typed lifecycle fact for this run (and symbol). Never raises."""

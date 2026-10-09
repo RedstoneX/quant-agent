@@ -10,6 +10,7 @@ and persists an `execution_skip` evidence row; a morning whose approved
 BUYs ALL died on the funding race reports terminal `buys_unfunded` without
 automatically purchasing another full decision chain.
 """
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -21,8 +22,12 @@ from src.execution.cash_sweep import CashSweeper
 
 def _rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="b",
         cash_target="c",
     )
 
@@ -33,7 +38,9 @@ def _pipeline(live_price=100.0, cash=50_000.0):
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": cash, "portfolio_value": 100_000.0}, [], {},
+        {"cash": cash, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     return pipeline
 
@@ -46,26 +53,33 @@ def _ctx(decisions, cash=50_000.0) -> RunContext:
     ctx.positions = []
     ctx.decision_id = "run-x-dec-abc123"
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_rc(), decisions=decisions, portfolio_view="t",
+        reasoning_chain=_rc(),
+        decisions=decisions,
+        portfolio_view="t",
     )
     ctx.symbols_bars = {}
     return ctx
 
 
 def _evidence_kinds(pipeline) -> list[str]:
-    return [
-        call.kwargs.get("kind")
-        for call in pipeline.db.insert_specialist_evidence.call_args_list
-    ]
+    return [call.kwargs.get("kind") for call in pipeline.db.insert_specialist_evidence.call_args_list]
 
 
 def test_stale_entry_skip_is_recorded():
     pipeline = _pipeline(live_price=100.0)
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10,
-        entry_price=80.0, stop_loss=72.0, take_profit=130.0,
-        reasoning="stale entry",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=80.0,
+                stop_loss=72.0,
+                take_profit=130.0,
+                reasoning="stale entry",
+            )
+        ]
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -89,13 +103,23 @@ def test_partial_confirmed_cash_resizes_instead_of_dropping_buy():
     """
     pipeline = _pipeline(live_price=100.0, cash=645.11)
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-partial", "status": "accepted",
+        "id": "ord-partial",
+        "status": "accepted",
     }
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved but unfunded",
-    )], cash=645.11)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved but unfunded",
+            )
+        ],
+        cash=645.11,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -106,11 +130,20 @@ def test_partial_confirmed_cash_resizes_instead_of_dropping_buy():
 
 def test_insufficient_cash_for_one_share_is_recorded():
     pipeline = _pipeline(live_price=100.0, cash=99.0)
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved but unfunded",
-    )], cash=99.0)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved but unfunded",
+            )
+        ],
+        cash=99.0,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -122,13 +155,22 @@ def test_insufficient_cash_for_one_share_is_recorded():
 def test_successful_buy_records_no_skip():
     pipeline = _pipeline(live_price=100.0)
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted",
+        "id": "ord-1",
+        "status": "accepted",
     }
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=112.0,
-        reasoning="clean",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=112.0,
+                reasoning="clean",
+            )
+        ]
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -139,27 +181,35 @@ def test_successful_buy_records_no_skip():
 def test_buy_limit_crosses_offer_with_bounded_price_protection():
     pipeline = _pipeline(live_price=100.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 100.0, "ask_price": 100.10,
+        "bid_price": 100.0,
+        "ask_price": 100.10,
     }
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-quote", "status": "accepted",
+        "id": "ord-quote",
+        "status": "accepted",
     }
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=112.0,
-        reasoning="clean",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=112.0,
+                reasoning="clean",
+            )
+        ]
+    )
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
     limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
-    assert limit_price > 100.10          # marketable through the displayed ask
+    assert limit_price > 100.10  # marketable through the displayed ask
     # Cap raised 25bp -> 40bp on 2026-08-27 (see MAX_ENTRY_SLIPPAGE_BPS). The
     # property under test is unchanged: the limit crosses the offer and stays
     # bounded. Only the bound moved.
     assert limit_price <= 100.40
-
-
 
 
 def test_evidence_failure_never_blocks_the_skip_decision():
@@ -167,11 +217,20 @@ def test_evidence_failure_never_blocks_the_skip_decision():
     deterministic behavior — the skip still happens, the run continues."""
     pipeline = _pipeline(live_price=100.0, cash=50.0)
     pipeline.db.insert_specialist_evidence.side_effect = RuntimeError("disk full")
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="r",
-    )], cash=50.0)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="r",
+            )
+        ],
+        cash=50.0,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -181,6 +240,7 @@ def test_evidence_failure_never_blocks_the_skip_decision():
 
 def test_buys_unfunded_does_not_repeat_paid_stack_in_main():
     import main as main_mod
+
     assert "buys_unfunded" not in main_mod._RETRYABLE_RESULT_STATUSES
     assert "agent_failure" not in main_mod._RETRYABLE_RESULT_STATUSES
 
@@ -188,6 +248,7 @@ def test_buys_unfunded_does_not_repeat_paid_stack_in_main():
 # ---------------------------------------------------------------------------
 # The VLO no-fill, 2026-08-27 — an order that could never have filled
 # ---------------------------------------------------------------------------
+
 
 def test_the_limit_is_a_ceiling_not_a_haggled_price():
     """The VLO shape: reference $349.99, IEX ask $350.96 (28bp above it).
@@ -201,14 +262,23 @@ def test_the_limit_is_a_ceiling_not_a_haggled_price():
     pipeline = _pipeline(live_price=349.99)
     pipeline.config.execution.max_entry_slippage_bps = 40.0
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 350.86, "ask_price": 350.96,
+        "bid_price": 350.86,
+        "ask_price": 350.96,
     }
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="VLO", allocation_pct=9,
-        entry_price=349.99, stop_loss=335.0, take_profit=380.0,
-        reasoning="strong_buy",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="VLO",
+                allocation_pct=9,
+                entry_price=349.99,
+                stop_loss=335.0,
+                take_profit=380.0,
+                reasoning="strong_buy",
+            )
+        ]
+    )
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -227,14 +297,23 @@ def test_even_a_tight_ceiling_is_not_shaved_below_the_offer():
     pipeline = _pipeline(live_price=349.99)
     pipeline.config.execution.max_entry_slippage_bps = 25.0
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 350.86, "ask_price": 350.96,
+        "bid_price": 350.86,
+        "ask_price": 350.96,
     }
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="VLO", allocation_pct=9,
-        entry_price=349.99, stop_loss=335.0, take_profit=380.0,
-        reasoning="strong_buy",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="VLO",
+                allocation_pct=9,
+                entry_price=349.99,
+                stop_loss=335.0,
+                take_profit=380.0,
+                reasoning="strong_buy",
+            )
+        ]
+    )
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -259,14 +338,23 @@ def test_a_quote_far_through_the_cap_is_recorded_and_still_submitted():
     pipeline = _pipeline(live_price=100.0)
     pipeline.config.execution.max_entry_slippage_bps = 40.0
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 102.9, "ask_price": 103.0,     # 300bp above reference
+        "bid_price": 102.9,
+        "ask_price": 103.0,  # 300bp above reference
     }
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=112.0,
-        reasoning="clean",
-    )])
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=112.0,
+                reasoning="clean",
+            )
+        ]
+    )
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -287,16 +375,9 @@ def test_the_far_through_quote_skip_is_gone_from_the_source():
 
     from src.pipeline_stages import ExecutionStage as _Stage
 
-    src = "\n".join(
-        line.split("#", 1)[0]
-        for line in inspect.getsource(_Stage._run_session).splitlines()
-    )
-    assert not re.search(r"cap\s*\*\s*\d", src), (
-        "an entry BUY must not be gated on a multiple of its own ceiling"
-    )
-    assert not re.search(r"floor\s*/\s*\d", src), (
-        "a SHORT must not be gated on a divisor of its own floor"
-    )
+    src = "\n".join(line.split("#", 1)[0] for line in inspect.getsource(_Stage._run_session).splitlines())
+    assert not re.search(r"cap\s*\*\s*\d", src), "an entry BUY must not be gated on a multiple of its own ceiling"
+    assert not re.search(r"floor\s*/\s*\d", src), "a SHORT must not be gated on a divisor of its own floor"
 
 
 # ---------------------------------------------------------------------------
@@ -304,22 +385,30 @@ def test_the_far_through_quote_skip_is_gone_from_the_source():
 # Same `max_entry_slippage_bps` as a floor vs the bid; not a new budget.
 # ---------------------------------------------------------------------------
 
+
 def _short_pipeline(live_price=100.0, cash=50_000.0, *, slippage_bps=40.0):
     pipeline = _pipeline(live_price=live_price, cash=cash)
     pipeline.config.execution.max_entry_slippage_bps = slippage_bps
     pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
+        "shortable": True,
+        "easy_to_borrow": True,
+        "reason": "eligible",
     }
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-short", "status": "accepted",
+        "id": "ord-short",
+        "status": "accepted",
     }
     return pipeline
 
 
 def _short_decision(symbol="NKE", entry=100.0, stop=105.0, target=90.0):
     return TradeDecision(
-        action="SHORT", symbol=symbol, allocation_pct=10,
-        entry_price=entry, stop_loss=stop, take_profit=target,
+        action="SHORT",
+        symbol=symbol,
+        allocation_pct=10,
+        entry_price=entry,
+        stop_loss=stop,
+        take_profit=target,
         reasoning="short birth-pricing",
     )
 
@@ -336,7 +425,8 @@ def test_short_limit_is_a_floor_marketable_versus_the_bid():
     """
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 99.90, "ask_price": 100.10,
+        "bid_price": 99.90,
+        "ask_price": 100.10,
     }
     ctx = _ctx([_short_decision()])
 
@@ -355,7 +445,8 @@ def test_short_uses_the_configured_bps_not_a_new_constant():
     """25bp floor at $100 is $99.75 — the configured bound, not 40 and not 1%."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=25.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 99.90, "ask_price": 100.10,
+        "bid_price": 99.90,
+        "ask_price": 100.10,
     }
     ctx = _ctx([_short_decision()])
 
@@ -373,7 +464,8 @@ def test_short_records_and_still_submits_when_the_bid_is_through_the_floor():
     entries where the venue was wrong."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 97.00, "ask_price": 97.10,  # 300bp below reference
+        "bid_price": 97.00,
+        "ask_price": 97.10,  # 300bp below reference
     }
     ctx = _ctx([_short_decision()])
 
@@ -392,7 +484,8 @@ def test_short_within_iex_noise_still_submits_at_the_floor():
     happen is a limit shaved up toward the bid, or an unbound order."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": 98.50, "ask_price": 98.60,
+        "bid_price": 98.50,
+        "ask_price": 98.60,
     }
     ctx = _ctx([_short_decision()])
 
@@ -410,7 +503,8 @@ def test_short_still_lowers_to_market_when_quote_has_no_bid():
     last — not skip, not invent a floor without a bid."""
     pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": None, "ask_price": 100.10,
+        "bid_price": None,
+        "ask_price": 100.10,
     }
     ctx = _ctx([_short_decision(entry=101.0, stop=106.0, target=90.0)])
 

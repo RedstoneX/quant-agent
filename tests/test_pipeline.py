@@ -6,15 +6,25 @@ from src.pipeline import TradingPipeline
 from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
 from src.models import (
-    TechAnalysisResult, PortfolioDecision, TradeDecision, RiskVerdict, Position,
+    TechAnalysisResult,
+    PortfolioDecision,
+    TradeDecision,
+    RiskVerdict,
+    Position,
     TargetPosition,
-    MacroAnalysis, MacroReasoningChain, MacroPositionGuidance,
-    NewsIntelligenceReport, MacroNarrative,
-    PositionReview, PositionReasoningChain, PositionAction,
-    ReasoningChain, RiskReasoningChain, TechReasoningChain,
+    MacroAnalysis,
+    MacroReasoningChain,
+    MacroPositionGuidance,
+    NewsIntelligenceReport,
+    MacroNarrative,
+    PositionReview,
+    PositionReasoningChain,
+    PositionAction,
+    ReasoningChain,
+    RiskReasoningChain,
+    TechReasoningChain,
 )
 from tests.pipeline_factory import build_pipeline
-
 
 
 def _news_stub():
@@ -28,11 +38,15 @@ def _news_stub():
     """
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-04-07", era_themes=["AI capex"],
+            last_updated="2026-04-07",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
-        state_changes=[], stock_news={},
-        pm_briefing="stub", market_sentiment="neutral", confidence="medium",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="stub",
+        market_sentiment="neutral",
+        confidence="medium",
     )
 
 
@@ -64,7 +78,8 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=cancel_ok, coverage_shrank=False)
     cleared = snapshot_ok and cancel_ok
     broker.cancel_protective_stops.return_value = (
-        cleared, specs if cleared else [],
+        cleared,
+        specs if cleared else [],
     )
 
 
@@ -83,10 +98,12 @@ def _partial_trim(pipeline, position, *, qty, run_id, label="REDUCE"):
     orders: list[dict] = []
     pending: list[dict] = []
     sale = pipeline._submit_protected_sell(
-        symbol=position.symbol, qty=qty,
+        symbol=position.symbol,
+        qty=qty,
         limit_price=round(position.current_price * 0.995, 2),
         reference_price=position.current_price,
-        position_qty_before_sell=position.qty, label=label,
+        position_qty_before_sell=position.qty,
+        label=label,
     )
     if sale is not None:
         order, prot = sale
@@ -103,7 +120,9 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     3-tuple return must be stubbed directly — _mock_stop_seam only wires
     the broker, which a fully-mocked pipeline never reaches."""
     pipeline._cancel_stops_with_write_ahead.return_value = (
-        ok, list(specs), wal_row_id,
+        ok,
+        list(specs),
+        wal_row_id,
     )
     # Callers unpack finalize's (ok, retry_specs) contract; default to
     # "coverage confirmed" so the full-MagicMock pipeline yields a tuple.
@@ -113,32 +132,46 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     # against the mocked broker/seams (real integration, not a no-op mock).
     import types as _types
     from src.pipeline import TradingPipeline as _TP
+
     pipeline._submit_protected_sell = _types.MethodType(
-        _TP._submit_protected_sell, pipeline,
+        _TP._submit_protected_sell,
+        pipeline,
     )
     pipeline._finalize_pending_protections = _types.MethodType(
-        _TP._finalize_pending_protections, pipeline,
+        _TP._finalize_pending_protections,
+        pipeline,
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
 def _risk_rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _trc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
@@ -155,8 +188,7 @@ def _review_rc():
     )
 
 
-def _macro_stub(regime="risk-on", outlook="bullish", confidence="medium",
-                target_invested_pct=75.0, cash_rec_pct=25.0):
+def _macro_stub(regime="risk-on", outlook="bullish", confidence="medium", target_invested_pct=75.0, cash_rec_pct=25.0):
     """Build a valid MacroAnalysis Pydantic object for pipeline tests.
 
     Phase 4 #7 made MacroAnalystAgent.analyze() return MacroAnalysis
@@ -165,9 +197,12 @@ def _macro_stub(regime="risk-on", outlook="bullish", confidence="medium",
     """
     return MacroAnalysis(
         reasoning_chain=MacroReasoningChain(
-            volatility_analysis="a", yield_curve_analysis="b",
-            monetary_policy_analysis="c", inflation_labor_credit="d",
-            cross_signal_synthesis="e", sector_implications="f",
+            volatility_analysis="a",
+            yield_curve_analysis="b",
+            monetary_policy_analysis="c",
+            inflation_labor_credit="d",
+            cross_signal_synthesis="e",
+            sector_implications="f",
         ),
         regime=regime,
         confidence=confidence,
@@ -226,9 +261,21 @@ def mock_config():
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_morning_run_buy(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config, tmp_path
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
+    tmp_path,
 ):
     mock_config.storage.db_path = str(tmp_path / "test.db")
     mock_config.llm.earnings_analyst_model = "claude-opus-4-6-20250725"
@@ -236,9 +283,13 @@ def test_pipeline_morning_run_buy(
     # Tech Analyst batch returns buy for SPY
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
@@ -253,8 +304,10 @@ def test_pipeline_morning_run_buy(
         # (530-507)/(507-490) = 1.35 and the entry is refused on geometry,
         # which is not what these pipeline tests are about. At $545 it is
         # 2.24 and the constructor places the trade.
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 4.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -265,24 +318,35 @@ def test_pipeline_morning_run_buy(
     # Portfolio Manager emits a target (not a TradeDecision) — Phase 2:
     # the constructor derives the actual order from target + TA + live price.
     mock_pm = MagicMock()
-    mock_pm.decide.return_value = (PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        targets=[
-            TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )
-        ],
-        portfolio_view="Bullish",
-    ), _mock_agent_result())
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
+            portfolio_view="Bullish",
+        ),
+        _mock_agent_result(),
+    )
     mock_pm_cls.return_value = mock_pm
 
     # Risk Manager approves
     mock_rm = MagicMock()
-    mock_rm.review.return_value = (RiskVerdict(
-        approved=True, modifications=[], reasoning="Approved",
-        reasoning_chain=_risk_rc(),
-    ), _mock_agent_result())
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
+            reasoning_chain=_risk_rc(),
+        ),
+        _mock_agent_result(),
+    )
     mock_rm_cls.return_value = mock_rm
 
     # Market data
@@ -363,9 +427,21 @@ def test_pipeline_morning_run_buy(
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_morning_run_persists_specialist_evidence(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config, tmp_path
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
+    tmp_path,
 ):
     """Stage 4: an ordinary morning run persists already-validated structured
     evidence into `specialist_evidence` for every specialist + PM + RM, with
@@ -382,17 +458,23 @@ def test_pipeline_morning_run_persists_specialist_evidence(
 
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
         # Divisor 4.5 clears the WIDEST stop multiple these tests can hit
         # (3.0 base x 1.15 range x 1.20 risk-off = 4.14), so the structural
         # stop survives untouched whatever regime the test stubs.
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 4.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -401,23 +483,34 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_ta_cls.return_value = mock_ta
 
     mock_pm = MagicMock()
-    mock_pm.decide.return_value = (PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        targets=[
-            TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )
-        ],
-        portfolio_view="Bullish",
-    ), _mock_agent_result())
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
+            portfolio_view="Bullish",
+        ),
+        _mock_agent_result(),
+    )
     mock_pm_cls.return_value = mock_pm
 
     mock_rm = MagicMock()
-    mock_rm.review.return_value = (RiskVerdict(
-        approved=True, modifications=[], reasoning="Approved",
-        reasoning_chain=_risk_rc(),
-    ), _mock_agent_result())
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
+            reasoning_chain=_risk_rc(),
+        ),
+        _mock_agent_result(),
+    )
     mock_rm_cls.return_value = mock_rm
 
     mock_market = MagicMock()
@@ -477,8 +570,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     conn = sqlite3.connect(mock_config.storage.db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json "
-        "FROM specialist_evidence ORDER BY id"
+        "SELECT agent_name, kind, scope, symbol, decision_id, evidence_json FROM specialist_evidence ORDER BY id"
     ).fetchall()
     by_key = {(r["agent_name"], r["kind"], r["symbol"]): r for r in rows}
 
@@ -504,9 +596,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
 
     # Decision-phase evidence: correlated to the SAME decision_id the PM/RM
     # agent_logs rows and the resulting `trades` row carry.
-    decision_id = conn.execute(
-        "SELECT decision_id FROM trades WHERE symbol = 'SPY' LIMIT 1"
-    ).fetchone()[0]
+    decision_id = conn.execute("SELECT decision_id FROM trades WHERE symbol = 'SPY' LIMIT 1").fetchone()[0]
     assert decision_id, "expected the executed SPY trade to carry a decision_id"
 
     target_row = by_key[("portfolio_manager", "target", "SPY")]
@@ -548,9 +638,21 @@ def test_pipeline_morning_run_persists_specialist_evidence(
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_market_order_sizes_from_live_market_price(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config, tmp_path
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
+    tmp_path,
 ):
     mock_config.storage.db_path = str(tmp_path / "test.db")
     mock_config.llm.earnings_analyst_model = "claude-opus-4-6-20250725"
@@ -562,11 +664,17 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     # test is still exercised: limit < market → raised to market → sizing
     # uses live broker price.
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=98.0,
-        reference_target=145.0, stop_loss=72.0,
-        support_levels=[72.0], resistance_levels=[145.0],
-        computed_levels=[72.0, 145.0], atr_14=26.0 / 4.5,
-        setup_type="range", expected_horizon_sessions=60,
+        symbol="SPY",
+        rating="buy",
+        entry_price=98.0,
+        reference_target=145.0,
+        stop_loss=72.0,
+        support_levels=[72.0],
+        resistance_levels=[145.0],
+        computed_levels=[72.0, 145.0],
+        atr_14=26.0 / 4.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -575,23 +683,34 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_ta_cls.return_value = mock_ta
 
     mock_pm = MagicMock()
-    mock_pm.decide.return_value = (PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        targets=[
-            TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )
-        ],
-        portfolio_view="Bullish",
-    ), _mock_agent_result())
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
+            portfolio_view="Bullish",
+        ),
+        _mock_agent_result(),
+    )
     mock_pm_cls.return_value = mock_pm
 
     mock_rm = MagicMock()
-    mock_rm.review.return_value = (RiskVerdict(
-        approved=True, modifications=[], reasoning="Approved",
-        reasoning_chain=_risk_rc(),
-    ), _mock_agent_result())
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
+            reasoning_chain=_risk_rc(),
+        ),
+        _mock_agent_result(),
+    )
     mock_rm_cls.return_value = mock_rm
 
     mock_market = MagicMock()
@@ -679,26 +798,44 @@ def test_pipeline_market_order_sizes_from_live_market_price(
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_risk_rejected(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config, tmp_path
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
+    tmp_path,
 ):
     mock_config.storage.db_path = str(tmp_path / "test.db")
     mock_config.llm.earnings_analyst_model = "claude-opus-4-6-20250725"
 
     mock_ta = MagicMock()
     spy_analysis = TechAnalysisResult(
-        symbol="SPY", rating="buy", entry_price=507.0,
-        reference_target=545.0, stop_loss=490.0,
-        support_levels=[490.0], resistance_levels=[545.0],
+        symbol="SPY",
+        rating="buy",
+        entry_price=507.0,
+        reference_target=545.0,
+        stop_loss=490.0,
+        support_levels=[490.0],
+        resistance_levels=[545.0],
         # Python-set by TechAnalystAgent, never model-emitted. The
         # constructor derives the take-profit from `computed_levels`
         # (2026-09-01) and refuses without them.
         # Divisor 4.5 clears the WIDEST stop multiple these tests can hit
         # (3.0 base x 1.15 range x 1.20 risk-off = 4.14), so the structural
         # stop survives untouched whatever regime the test stubs.
-        computed_levels=[490.0, 545.0], atr_14=17.0 / 4.5,
-        setup_type="range", expected_horizon_sessions=60,
+        computed_levels=[490.0, 545.0],
+        atr_14=17.0 / 4.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -707,16 +844,22 @@ def test_pipeline_risk_rejected(
     mock_ta_cls.return_value = mock_ta
 
     mock_pm = MagicMock()
-    mock_pm.decide.return_value = (PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        targets=[
-            TargetPosition(
-                symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="closes below support",
-            )
-        ],
-        portfolio_view="Bullish",
-    ), _mock_agent_result())
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=10.0,
+                    conviction="high",
+                    thesis="Buy",
+                    thesis_invalid_if="closes below support",
+                )
+            ],
+            portfolio_view="Bullish",
+        ),
+        _mock_agent_result(),
+    )
     mock_pm_cls.return_value = mock_pm
 
     # Risk Manager refuses the (only) proposed new entry.
@@ -726,13 +869,17 @@ def test_pipeline_risk_rejected(
     # trade is by naming it in rejected_symbols. Here SPY is the only proposed
     # entry, so dropping it leaves nothing to execute (per-symbol drops summing
     # to empty), and no order is submitted.
-    mock_rm.review.return_value = (RiskVerdict(
-        approved=False, modifications=[],
-        rejected_symbols=[{"symbol": "SPY", "reason": "thesis fails on the primary data"}],
-        reason_category="signal_fidelity",
-        reasoning="SPY refused on its own merits",
-        reasoning_chain=_risk_rc(),
-    ), _mock_agent_result())
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=False,
+            modifications=[],
+            rejected_symbols=[{"symbol": "SPY", "reason": "thesis fails on the primary data"}],
+            reason_category="signal_fidelity",
+            reasoning="SPY refused on its own merits",
+            reasoning_chain=_risk_rc(),
+        ),
+        _mock_agent_result(),
+    )
     mock_rm_cls.return_value = mock_rm
 
     mock_market = MagicMock()
@@ -753,7 +900,10 @@ def test_pipeline_risk_rejected(
 
     # Macro analyst
     mock_maa = MagicMock()
-    mock_maa.analyze.return_value = (_macro_stub(regime="risk-off", outlook="bearish", confidence="high"), _mock_agent_result())
+    mock_maa.analyze.return_value = (
+        _macro_stub(regime="risk-off", outlook="bearish", confidence="high"),
+        _mock_agent_result(),
+    )
     mock_maa_cls.return_value = mock_maa
 
     # News
@@ -849,7 +999,16 @@ def test_pipeline_midday_skips_non_trading_day():
 
 
 def test_pipeline_midday_preserves_protective_orders():
-    pipeline = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock())
+    pipeline = build_pipeline(
+        news_provider=MagicMock(),
+        news_analyst=MagicMock(),
+        earnings_provider=MagicMock(),
+        earnings_analyst=MagicMock(),
+        broker=MagicMock(),
+        macro=MagicMock(),
+        db=MagicMock(),
+        risk_engine=MagicMock(),
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
@@ -866,11 +1025,15 @@ def test_pipeline_midday_preserves_protective_orders():
 
 @pytest.mark.parametrize("session_type", ["midday", "close"])
 def test_prelatched_position_review_preserves_deterministic_safety(session_type):
-    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_session_close.return_value = None
     pipeline.broker.get_account.return_value = {
-        "cash": 1000.0, "portfolio_value": 10_000.0, "last_equity": 10_000.0,
+        "cash": 1000.0,
+        "portfolio_value": 10_000.0,
+        "last_equity": 10_000.0,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline._drain_pending_protection_restores = MagicMock()
@@ -886,7 +1049,8 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
-        "prelatched", {"suspended": True},
+        "prelatched",
+        {"suspended": True},
     )
 
     result = pipeline.run_position_review(session_type)
@@ -917,7 +1081,8 @@ def test_paid_suspension_marks_morning_for_the_evening_dead_man_probe():
     pipeline = build_pipeline()
     with patch.object(dc, "write_status") as write_status:
         result = pipeline._paid_suspension_after_late_safety(
-            "run-dd502c6f", session="morning",
+            "run-dd502c6f",
+            session="morning",
             error=PaidAnalysisSuspended("circuit open", {"suspended": True}),
             where="post-research-circuit-open",
         )
@@ -934,7 +1099,8 @@ def test_paid_suspension_does_not_mark_non_morning_sessions():
     pipeline = build_pipeline()
     with patch.object(dc, "write_status") as write_status:
         pipeline._paid_suspension_after_late_safety(
-            "midday-abc123", session="midday",
+            "midday-abc123",
+            session="midday",
             error=PaidAnalysisSuspended("circuit open", {"suspended": True}),
             where="post-research-circuit-open",
         )
@@ -1023,7 +1189,10 @@ def test_reprotect_residual_submits_when_existing_stop_has_different_price():
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]
     pipeline._reprotect_residual_after_partial_sell("NVDA", 10.0, cancelled)
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA", qty=10.0, stop_price=90.0, limit_price=None,
+        symbol="NVDA",
+        qty=10.0,
+        stop_price=90.0,
+        limit_price=None,
         side="sell",
     )
 
@@ -1043,7 +1212,10 @@ def test_reprotect_residual_picks_highest_stop_price_among_specs():
     pipeline._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
 
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=248.5, limit_price=None,
+        symbol="AMZN",
+        qty=41.0,
+        stop_price=248.5,
+        limit_price=None,
         side="sell",
     )
 
@@ -1082,10 +1254,7 @@ def test_reprotect_residual_swallows_submit_failure_with_loud_warning(caplog):
     # Must not raise.
     pipeline._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
 
-    assert any(
-        "Re-protect failed for AMZN" in rec.message and rec.levelname == "WARNING"
-        for rec in caplog.records
-    )
+    assert any("Re-protect failed for AMZN" in rec.message and rec.levelname == "WARNING" for rec in caplog.records)
 
 
 def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
@@ -1102,7 +1271,9 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     pipeline = build_pipeline(db=db, broker=MagicMock())
     # SELL is rejected by broker
     pipeline.broker.submit_order.return_value = {
-        "id": "tp-rejected", "status": "rejected", "symbol": "NVDA",
+        "id": "tp-rejected",
+        "status": "rejected",
+        "symbol": "NVDA",
     }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
@@ -1110,8 +1281,13 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     _mock_stop_seam(pipeline.broker, specs=cancelled)
 
     winner = Position(
-        symbol="NVDA", qty=100, avg_entry=100, current_price=135,
-        market_value=13500, unrealized_pnl=3500, sector="Technology",
+        symbol="NVDA",
+        qty=100,
+        avg_entry=100,
+        current_price=135,
+        market_value=13500,
+        unrealized_pnl=3500,
+        sector="Technology",
     )
 
     orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
@@ -1123,7 +1299,9 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     # check is OFF (we just cancelled these specs ourselves; checking
     # would just race against Alpaca's eventual-consistency window).
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", cancelled, check_idempotency=False,
+        "NVDA",
+        cancelled,
+        check_idempotency=False,
     )
     # And no new residual-stop submission, since the SELL didn't fire.
     pipeline.broker._submit_stop_limit_order.assert_not_called()
@@ -1143,15 +1321,13 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
     pipeline.broker.submit_order.return_value = {
-        "id": "sell-full", "status": "accepted", "symbol": "JPM",
+        "id": "sell-full",
+        "status": "accepted",
+        "symbol": "JPM",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
-    _mock_stop_seam(pipeline.broker, specs=[
-        {"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}
-    ])
-    _mock_stage_seam(pipeline, specs=[
-        {"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}
-    ])
+    _mock_stop_seam(pipeline.broker, specs=[{"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}])
+    _mock_stage_seam(pipeline, specs=[{"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}])
     # Board item 178: ExecutionStage now re-reads the account before the
     # SELL loop too, so this fixture must reflect a fresh snapshot that
     # STILL holds JPM — otherwise the SELL never fires and the "no residual
@@ -1161,8 +1337,13 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
         {"cash": 60_000.0, "portfolio_value": 100_500.0},
         [
             Position(
-                symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-                market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+                symbol="JPM",
+                qty=10.0,
+                avg_entry=300.0,
+                current_price=320.0,
+                market_value=3_200.0,
+                unrealized_pnl=200.0,
+                sector="Financial",
             ),
         ],
         {},
@@ -1178,16 +1359,25 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     ctx.last_equity = 100_000.0
     ctx.positions = [
         Position(
-            symbol="JPM", qty=10.0, avg_entry=300.0, current_price=320.0,
-            market_value=3_200.0, unrealized_pnl=200.0, sector="Financial",
+            symbol="JPM",
+            qty=10.0,
+            avg_entry=300.0,
+            current_price=320.0,
+            market_value=3_200.0,
+            unrealized_pnl=200.0,
+            sector="Financial",
         ),
     ]
     ctx.portfolio_decision = PortfolioDecision(
         reasoning_chain=_pm_rc(),
         decisions=[
             TradeDecision(
-                action="SELL", symbol="JPM", allocation_pct=100,
-                entry_price=300.0, stop_loss=280.0, take_profit=350.0,
+                action="SELL",
+                symbol="JPM",
+                allocation_pct=100,
+                entry_price=300.0,
+                stop_loss=280.0,
+                take_profit=350.0,
                 reasoning="full exit",
             ),
         ],
@@ -1221,7 +1411,9 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
-        "id": "tp-1", "status": "accepted", "symbol": "NVDA",
+        "id": "tp-1",
+        "status": "accepted",
+        "symbol": "NVDA",
     }
     cancelled = [
         {"id": "stop-old-low", "qty": 100, "stop_price": 90.0, "limit_price": 87.0},
@@ -1231,19 +1423,29 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
     # Limit fills at exactly the trim qty.
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "15", "filled_avg_price": "134.5",
+        "status": "filled",
+        "filled_qty": "15",
+        "filled_avg_price": "134.5",
     }
 
     winner = Position(
-        symbol="NVDA", qty=100, avg_entry=100, current_price=135,
-        market_value=13500, unrealized_pnl=3500, sector="Technology",
+        symbol="NVDA",
+        qty=100,
+        avg_entry=100,
+        current_price=135,
+        market_value=13500,
+        unrealized_pnl=3500,
+        sector="Technology",
     )
 
     orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert len(orders) == 1
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA", qty=85.0, stop_price=95.0, limit_price=None,
+        symbol="NVDA",
+        qty=85.0,
+        stop_price=95.0,
+        limit_price=None,
         side="sell",
     )
     db.close()
@@ -1265,7 +1467,9 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
-        "id": "tp-pending", "status": "accepted", "symbol": "NVDA",
+        "id": "tp-pending",
+        "status": "accepted",
+        "symbol": "NVDA",
     }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
@@ -1274,12 +1478,19 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
     # Limit accepted, but later expired with zero fill.
     pipeline.broker.wait_for_order_terminal.return_value = "expired"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "expired", "filled_qty": "0", "filled_avg_price": None,
+        "status": "expired",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
 
     winner = Position(
-        symbol="NVDA", qty=100, avg_entry=100, current_price=135,
-        market_value=13500, unrealized_pnl=3500, sector="Technology",
+        symbol="NVDA",
+        qty=100,
+        avg_entry=100,
+        current_price=135,
+        market_value=13500,
+        unrealized_pnl=3500,
+        sector="Technology",
     )
 
     _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
@@ -1287,7 +1498,9 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
     # Original full-position stops restored — NOT a 67-share residual stop.
     # Non-drain finalize → check_idempotency=False (recent self-cancel).
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", cancelled, check_idempotency=False,
+        "NVDA",
+        cancelled,
+        check_idempotency=False,
     )
     # And no residual-shaped stop was submitted.
     pipeline.broker._submit_stop_limit_order.assert_not_called()
@@ -1304,7 +1517,9 @@ def test_finalize_protection_cancels_lingering_sell_when_status_non_terminal():
     The fix forces terminal by cancelling the lingering SELL, re-reads
     fill_info post-cancel, then proceeds with normal branch logic.
     Pin the cancel call sequence + the eventual restore."""
-    pipeline = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     # First read: SELL is still live ("new"). After cancel, broker
     # reports terminal "canceled" with 0 fill.
@@ -1332,7 +1547,9 @@ def test_finalize_protection_cancels_lingering_sell_when_status_non_terminal():
     # Post-cancel fill_qty=0 → restore originals (NOT reprotect residual).
     # Non-drain finalize → check_idempotency=False.
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", cancelled, check_idempotency=False,
+        "NVDA",
+        cancelled,
+        check_idempotency=False,
     )
     pipeline._reprotect_residual_after_partial_sell.assert_not_called()
 
@@ -1341,7 +1558,9 @@ def test_finalize_protection_uses_partial_fill_after_lingering_cancel():
     """Edge case: SELL was non-terminal at wait timeout, but the cancel
     propagation captured a partial fill. The post-cancel filled_qty
     must drive the residual computation — NOT a no-fill restore."""
-    pipeline = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     pipeline.broker.get_order_fill_info.side_effect = [
         {"status": "new", "filled_qty": "0", "filled_avg_price": None},
@@ -1363,7 +1582,9 @@ def test_finalize_protection_uses_partial_fill_after_lingering_cancel():
     pipeline.broker.cancel_entry_order.assert_called_once()
     # Residual = 100 - 18 = 82 (driven by post-cancel fill_qty)
     pipeline._reprotect_residual_after_partial_sell.assert_called_once_with(
-        "NVDA", 82.0, cancelled,
+        "NVDA",
+        82.0,
+        cancelled,
     )
     pipeline.broker._restore_stop_orders.assert_not_called()
 
@@ -1374,7 +1595,9 @@ def test_finalize_protection_bails_when_post_cancel_status_still_non_terminal():
     Restoring stops at this point recreates the held_for_orders conflict
     PR K was supposed to fix. Pin: bail if post-cancel status is not in
     the terminal set."""
-    pipeline = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     # First read: live. After cancel + 5s wait: STILL non-terminal
     # (pending_cancel). Cancel itself didn't raise — it succeeded —
@@ -1413,10 +1636,14 @@ def test_finalize_persists_orphan_when_lingering_cancel_fails(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "new", "filled_qty": "0", "filled_avg_price": None,
+        "status": "new",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
@@ -1438,6 +1665,7 @@ def test_finalize_persists_orphan_when_lingering_cancel_fails(tmp_path):
     assert row["sell_order_id"] == "alpaca-stuck"
     assert row["position_qty_before_sell"] == 100.0
     import json as _json
+
     persisted_specs = _json.loads(row["specs_json"])
     assert persisted_specs[0]["stop_price"] == 95.0
     db.close()
@@ -1452,7 +1680,9 @@ def test_finalize_persists_orphan_when_post_cancel_status_non_terminal(tmp_path)
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     pipeline.broker.get_order_fill_info.side_effect = [
         {"status": "new", "filled_qty": "0", "filled_avg_price": None},
@@ -1492,12 +1722,16 @@ def test_drain_pending_protection_restores_replays_finalize_when_terminal(tmp_pa
         specs_json=_json.dumps(cancelled),
     )
 
-    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     # Order is now terminal (canceled with no fill) — drain replays
     # finalize, which hits the no-fill branch → restore originals.
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # PR S: restore now returns (count, failed_specs). Full success → empty failed.
     pipeline.broker._restore_stop_orders.return_value = (1, [])
@@ -1525,7 +1759,8 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-orphan",
+        symbol="NVDA",
+        sell_order_id="alpaca-orphan",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps(cancelled),
     )
@@ -1534,23 +1769,34 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
+
     pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
-        "portfolio_value": 100_500.0, "last_equity": 100_000.0, "cash": 5000.0,
+        "portfolio_value": 100_500.0,
+        "last_equity": 100_000.0,
+        "cash": 5000.0,
     }
     # Position still held — finalize re-queries to detect concurrent-path
     # liquidation; with NVDA still at 100 shares the restore branch fires.
     from src.models import Position
+
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="NVDA", qty=100.0, avg_entry=100.0, current_price=100.0,
-            market_value=10000.0, unrealized_pnl=0.0,
-            unrealized_intraday_pnl=0.0, sector="Tech",
+            symbol="NVDA",
+            qty=100.0,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=10000.0,
+            unrealized_pnl=0.0,
+            unrealized_intraday_pnl=0.0,
+            sector="Tech",
         ),
     ]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.return_value = (1, [])  # full success
 
@@ -1561,7 +1807,9 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
     # Drain replay → check_idempotency=True so the audit's drain-
     # narrowing race can't re-submit already-alive stops.
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", cancelled, check_idempotency=True,
+        "NVDA",
+        cancelled,
+        check_idempotency=True,
     )
     db.close()
 
@@ -1584,15 +1832,20 @@ def test_drain_narrows_row_to_failed_specs_after_partial_restore(tmp_path):
     spec_a = {"id": "stop-a", "qty": 50, "stop_price": 95.0, "limit_price": 92.0}
     spec_b = {"id": "stop-b", "qty": 50, "stop_price": 96.0, "limit_price": 93.0}
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-orphan",
+        symbol="NVDA",
+        sell_order_id="alpaca-orphan",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps([spec_a, spec_b]),
     )
 
-    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # 1 of 2 restored: spec_a landed, spec_b failed.
     pipeline.broker._restore_stop_orders.return_value = (1, [spec_b])
@@ -1606,9 +1859,7 @@ def test_drain_narrows_row_to_failed_specs_after_partial_restore(tmp_path):
     assert len(rows) == 1
     persisted_now = _json.loads(rows[0]["specs_json"])
     assert len(persisted_now) == 1
-    assert persisted_now[0]["id"] == "stop-b", (
-        f"row should be narrowed to just the failed spec; got {persisted_now}"
-    )
+    assert persisted_now[0]["id"] == "stop-b", f"row should be narrowed to just the failed spec; got {persisted_now}"
     db.close()
 
 
@@ -1627,13 +1878,17 @@ def test_drain_does_not_narrow_row_when_no_progress(tmp_path):
         {"id": "stop-b", "qty": 50, "stop_price": 96.0},
     ]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-orphan",
-        position_qty_before_sell=100.0, specs_json=_json.dumps(cancelled),
+        symbol="NVDA",
+        sell_order_id="alpaca-orphan",
+        position_qty_before_sell=100.0,
+        specs_json=_json.dumps(cancelled),
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # Total failure: 0 of 2 restored.
     pipeline.broker._restore_stop_orders.return_value = (0, cancelled)
@@ -1664,7 +1919,9 @@ def test_finalize_skips_restore_when_concurrent_path_fully_exited(tmp_path):
 
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # Broker now reports position=0 (intra_check liquidated NVDA).
     pipeline.broker.get_positions.return_value = []
@@ -1701,14 +1958,21 @@ def test_finalize_clips_residual_when_concurrent_path_partially_exited(tmp_path)
 
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "30", "filled_avg_price": "100.0",
+        "status": "filled",
+        "filled_qty": "30",
+        "filled_avg_price": "100.0",
     }
     # Broker reports 20 shares (intra_check took 50 more).
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="NVDA", qty=20.0, avg_entry=100.0, current_price=100.0,
-            market_value=2000.0, unrealized_pnl=0.0,
-            unrealized_intraday_pnl=0.0, sector="Tech",
+            symbol="NVDA",
+            qty=20.0,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=2000.0,
+            unrealized_pnl=0.0,
+            unrealized_intraday_pnl=0.0,
+            sector="Tech",
         ),
     ]
 
@@ -1746,14 +2010,21 @@ def test_finalize_collapses_to_reprotect_when_concurrent_reduced_position_no_fil
         {"id": "stop-b", "qty": 40, "stop_price": 96.0},
     ]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # Broker reports 40 shares (intra_check took 60).
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="NVDA", qty=40.0, avg_entry=100.0, current_price=100.0,
-            market_value=4000.0, unrealized_pnl=0.0,
-            unrealized_intraday_pnl=0.0, sector="Tech",
+            symbol="NVDA",
+            qty=40.0,
+            avg_entry=100.0,
+            current_price=100.0,
+            market_value=4000.0,
+            unrealized_pnl=0.0,
+            unrealized_intraday_pnl=0.0,
+            sector="Tech",
         ),
     ]
 
@@ -1795,7 +2066,9 @@ def test_finalize_persists_only_failed_specs_on_partial_restore(tmp_path):
     # Order is terminal (canceled, no fill). Restore: 1 of 2 succeeds —
     # spec_a landed, spec_b failed.
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.return_value = (1, [spec_b])
 
@@ -1810,6 +2083,7 @@ def test_finalize_persists_only_failed_specs_on_partial_restore(tmp_path):
     rows = db.get_pending_protection_restores()
     assert len(rows) == 1
     import json as _json
+
     persisted = _json.loads(rows[0]["specs_json"])
     # Only spec_b (the failed one) should be in the persisted recovery —
     # NOT spec_a (already alive at broker).
@@ -1833,7 +2107,9 @@ def test_finalize_persists_recovery_when_restore_raises_in_non_drain_path(tmp_pa
 
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.side_effect = RuntimeError("api 503")
 
@@ -1865,7 +2141,9 @@ def test_finalize_persists_recovery_when_reprotect_raises_in_non_drain_path(tmp_
 
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5",
+        "status": "canceled",
+        "filled_qty": "12",
+        "filled_avg_price": "117.5",
     }
     pipeline.broker._submit_protective_stop_retrying.side_effect = RuntimeError("rejected")
 
@@ -1894,13 +2172,17 @@ def test_finalize_does_not_double_persist_when_called_from_drain(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-orphan",
-        position_qty_before_sell=100.0, specs_json=_json.dumps(cancelled),
+        symbol="NVDA",
+        sell_order_id="alpaca-orphan",
+        position_qty_before_sell=100.0,
+        specs_json=_json.dumps(cancelled),
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.side_effect = RuntimeError("api 503")
 
@@ -1935,14 +2217,17 @@ def test_drain_keeps_row_when_restore_submits_zero_stops(tmp_path):
         {"id": "stop-old-b", "qty": 50, "stop_price": 95.0, "limit_price": 92.0},
     ]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps(cancelled),
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # Broker rejects every restore attempt (e.g., a residual stop is
     # still hanging around or position isn't visible). 0 of 2 restored,
@@ -1970,14 +2255,17 @@ def test_drain_keeps_row_when_restore_raises(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps(cancelled),
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.side_effect = RuntimeError("api 503")
 
@@ -2000,14 +2288,17 @@ def test_drain_keeps_row_when_reprotect_raises_for_partial_fill(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps(cancelled),
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5",
+        "status": "canceled",
+        "filled_qty": "12",
+        "filled_avg_price": "117.5",
     }
     pipeline.broker._submit_protective_stop_retrying.side_effect = RuntimeError("api error")
     pipeline._format_qty = lambda q: str(q)
@@ -2032,7 +2323,8 @@ def test_drain_does_not_re_persist_when_called_from_drain_path(tmp_path):
     db.initialize()
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="alpaca-resolved",
+        symbol="NVDA",
+        sell_order_id="alpaca-resolved",
         position_qty_before_sell=100.0,
         specs_json=_json.dumps(cancelled),
     )
@@ -2043,7 +2335,7 @@ def test_drain_does_not_re_persist_when_called_from_drain_path(tmp_path):
     # this would persist a SECOND row.
     pipeline.broker.get_order_fill_info.side_effect = [
         {"status": "canceled", "filled_qty": "0"},  # drain's check
-        {"status": "new", "filled_qty": "0"},        # finalize's re-check (regressed)
+        {"status": "new", "filled_qty": "0"},  # finalize's re-check (regressed)
     ]
     pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
@@ -2076,7 +2368,9 @@ def test_drain_leaves_row_when_sell_still_non_terminal(tmp_path):
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "pending_cancel", "filled_qty": "0", "filled_avg_price": None,
+        "status": "pending_cancel",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline._reprotect_residual_after_partial_sell = MagicMock()
 
@@ -2095,10 +2389,14 @@ def test_finalize_protection_bails_when_lingering_cancel_fails():
     would compound the problem — broker has live SELL + about-to-be
     submitted stop on the same shares. Better to bail with a loud
     warning and let the next session's reconcile rebuild coverage."""
-    pipeline = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
 
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "new", "filled_qty": "0", "filled_avg_price": None,
+        "status": "new",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
@@ -2130,7 +2428,9 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
-        "id": "tp-partial", "status": "accepted", "symbol": "NVDA",
+        "id": "tp-partial",
+        "status": "accepted",
+        "symbol": "NVDA",
     }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
@@ -2138,19 +2438,29 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
     _mock_stop_seam(pipeline.broker, specs=cancelled)
     pipeline.broker.wait_for_order_terminal.return_value = "canceled"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5",
+        "status": "canceled",
+        "filled_qty": "12",
+        "filled_avg_price": "117.5",
     }
 
     winner = Position(
-        symbol="NVDA", qty=100, avg_entry=100, current_price=135,
-        market_value=13500, unrealized_pnl=3500, sector="Technology",
+        symbol="NVDA",
+        qty=100,
+        avg_entry=100,
+        current_price=135,
+        market_value=13500,
+        unrealized_pnl=3500,
+        sector="Technology",
     )
 
     _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     # Actual residual = 100 - 12 = 88 (NOT 100 - 15 = 85).
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA", qty=88.0, stop_price=95.0, limit_price=None,
+        symbol="NVDA",
+        qty=88.0,
+        stop_price=95.0,
+        limit_price=None,
         side="sell",
     )
     pipeline.broker._restore_stop_orders.assert_not_called()
@@ -2166,9 +2476,9 @@ def _halt_ready(pipeline, *, covered_qty=None):
     pipeline.db = getattr(pipeline, "db", None) or MagicMock()
     pipeline._reconcile_fills = MagicMock()
     pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
-    pipeline.broker.snapshot_protective_stops.side_effect = (
-        lambda sym, side="sell": (True, [{"qty": 1e9 if covered_qty is None
-                                          else covered_qty}])
+    pipeline.broker.snapshot_protective_stops.side_effect = lambda sym, side="sell": (
+        True,
+        [{"qty": 1e9 if covered_qty is None else covered_qty}],
     )
     return pipeline
 
@@ -2209,17 +2519,19 @@ def test_pipeline_init_propagates_allow_margin_to_risk_engine():
     mock_config.llm.meta_reflector_model = "claude-sonnet-4-6-20250514"
     mock_config.llm.get_max_tokens = MagicMock(return_value=8000)
 
-    with _patch("src.pipeline.AlpacaBroker"), \
-         _patch("src.pipeline.EarningsDataProvider"), \
-         _patch("src.pipeline.NewsDataProvider"), \
-         _patch("src.pipeline.MacroAnalystAgent"), \
-         _patch("src.pipeline.NewsAnalystAgent"), \
-         _patch("src.pipeline.TechAnalystAgent"), \
-         _patch("src.pipeline.PortfolioManagerAgent"), \
-         _patch("src.pipeline.RiskManagerAgent"), \
-         _patch("src.pipeline.EarningsAnalystAgent"), \
-         _patch("src.pipeline.MarketDataProvider"), \
-         _patch("src.pipeline.MacroDataProvider"):
+    with (
+        _patch("src.pipeline.AlpacaBroker"),
+        _patch("src.pipeline.EarningsDataProvider"),
+        _patch("src.pipeline.NewsDataProvider"),
+        _patch("src.pipeline.MacroAnalystAgent"),
+        _patch("src.pipeline.NewsAnalystAgent"),
+        _patch("src.pipeline.TechAnalystAgent"),
+        _patch("src.pipeline.PortfolioManagerAgent"),
+        _patch("src.pipeline.RiskManagerAgent"),
+        _patch("src.pipeline.EarningsAnalystAgent"),
+        _patch("src.pipeline.MarketDataProvider"),
+        _patch("src.pipeline.MacroDataProvider"),
+    ):
         pipeline = TradingPipeline(mock_config)
 
     assert pipeline.risk_engine.config.allow_margin is True, (
@@ -2245,26 +2557,41 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     db.initialize()
     # Morning BUY: still 'submitted' from the run-id-scoped reconcile.
     db.insert_trade(
-        symbol="SPY", action="BUY", qty=10.0, price=500.0,
-        reasoning="morning entry", run_id="morning-r1",
-        broker_order_id="alpaca-late-fill", fill_status="submitted",
-        stop_loss=480.0, take_profit=540.0,
+        symbol="SPY",
+        action="BUY",
+        qty=10.0,
+        price=500.0,
+        reasoning="morning entry",
+        run_id="morning-r1",
+        broker_order_id="alpaca-late-fill",
+        fill_status="submitted",
+        stop_loss=480.0,
+        take_profit=540.0,
     )
 
-    pipeline = build_pipeline(db=db, broker=MagicMock(), macro=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), macro=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="SPY", qty=10.0, avg_entry=500.0, current_price=505.0,
-            market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
+            symbol="SPY",
+            qty=10.0,
+            avg_entry=500.0,
+            current_price=505.0,
+            market_value=5050.0,
+            unrealized_pnl=50.0,
+            sector="ETF",
         )
     ]
     # Broker reports the late fill — our scoped reconcile in run_morning
     # didn't see it because the order_id wasn't tied to morning's run_id
     # at terminal-status time, but a fresh unscoped reconcile here will.
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10.0", "filled_avg_price": "500.0",
+        "status": "filled",
+        "filled_qty": "10.0",
+        "filled_avg_price": "500.0",
     }
     pipeline.macro.get_macro_summary.return_value = {}
     pipeline.config = MagicMock()
@@ -2283,9 +2610,7 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     assert result["status"] == "reviewed"
     # The 'submitted' row must be reconciled to 'filled' BEFORE the
     # reviewer reads it — otherwise executed_only=True drops it.
-    rows = db.execute(
-        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-late-fill'"
-    ).fetchall()
+    rows = db.execute("SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-late-fill'").fetchall()
     assert rows[0]["fill_status"] == "filled", (
         "morning BUY must be reconciled to 'filled' before the reviewer "
         "queries with executed_only=True; otherwise reviewer loses entry context"
@@ -2300,13 +2625,20 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
 
 
 def test_pipeline_midday_fetches_only_executed_morning_trades():
-    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="SPY", qty=10.0, avg_entry=500.0, current_price=505.0,
-            market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
+            symbol="SPY",
+            qty=10.0,
+            avg_entry=500.0,
+            current_price=505.0,
+            market_value=5050.0,
+            unrealized_pnl=50.0,
+            sector="ETF",
         )
     ]
     pipeline.macro.get_macro_summary.return_value = {}
@@ -2332,12 +2664,11 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     # The first MUST still use executed_only=True so canceled morning orders
     # don't pollute the reviewer's "what trades fired" context.
     morning_call_kwargs = {
-        "limit": 50, "today_only": True, "executed_only": True,
+        "limit": 50,
+        "today_only": True,
+        "executed_only": True,
     }
-    morning_calls = [
-        c for c in pipeline.db.get_trades.call_args_list
-        if c.kwargs == morning_call_kwargs
-    ]
+    morning_calls = [c for c in pipeline.db.get_trades.call_args_list if c.kwargs == morning_call_kwargs]
     assert len(morning_calls) == 1, (
         f"morning_trades fetch must still be exactly one call with "
         f"executed_only=True; got {pipeline.db.get_trades.call_args_list}"
@@ -2363,10 +2694,7 @@ def test_no_fixed_gain_automatic_profit_trim_exists():
     import pathlib
     import re
 
-    names = sorted(
-        n for n in dir(TradingPipeline)
-        if re.search(r"take_profit|auto_tp|profit_trim|profit_target", n)
-    )
+    names = sorted(n for n in dir(TradingPipeline) if re.search(r"take_profit|auto_tp|profit_trim|profit_target", n))
     assert names == [], f"preset profit-target hook(s) on TradingPipeline: {names}"
 
     src = pathlib.Path(__file__).resolve().parents[1] / "src"
@@ -2395,13 +2723,20 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
     a HOLD-only review must leave the book untouched at midday. Under the
     deleted rule this position would have been trimmed 15% before the
     reviewer ever saw it."""
-    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 17000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="NVDA", qty=100.0, avg_entry=100.0, current_price=160.0,
-            market_value=16000.0, unrealized_pnl=6000.0, sector="Technology",
+            symbol="NVDA",
+            qty=100.0,
+            avg_entry=100.0,
+            current_price=160.0,
+            market_value=16000.0,
+            unrealized_pnl=6000.0,
+            sector="Technology",
         )
     ]
     pipeline.macro.get_macro_summary.return_value = {}
@@ -2422,9 +2757,9 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
     assert result["status"] == "reviewed"
     assert result["orders"] == []
     pipeline.broker.submit_order.assert_not_called()
-    assert not any(
-        "TAKE_PROFIT" in str(c) for c in pipeline.db.insert_trade.call_args_list
-    ), "a TAKE_PROFIT trade row was written by a rule that no longer exists"
+    assert not any("TAKE_PROFIT" in str(c) for c in pipeline.db.insert_trade.call_args_list), (
+        "a TAKE_PROFIT trade row was written by a rule that no longer exists"
+    )
 
 
 def test_pipeline_evening_skips_non_trading_day():
@@ -2451,9 +2786,21 @@ def test_pipeline_evening_skips_non_trading_day():
 @patch("src.stage_morning_research.compute_indicators")
 @patch("src.data.technical.compute_indicators")
 def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
-    mock_ci, mock_ci_stages, mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config, tmp_path
+    mock_ci,
+    mock_ci_stages,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
+    tmp_path,
 ):
     mock_config.storage.db_path = str(tmp_path / "test.db")
     mock_config.trading.universe = ["SPY", "QQQ"]
@@ -2462,11 +2809,17 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
 
     mock_ta = MagicMock()
     qqq_analysis = TechAnalysisResult(
-        symbol="QQQ", rating="buy", entry_price=100.0,
-        reference_target=110.0, stop_loss=95.0,
-        support_levels=[95.0], resistance_levels=[110.0],
-        computed_levels=[95.0, 110.0], atr_14=5.0 / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
+        symbol="QQQ",
+        rating="buy",
+        entry_price=100.0,
+        reference_target=110.0,
+        stop_loss=95.0,
+        support_levels=[95.0],
+        resistance_levels=[110.0],
+        computed_levels=[95.0, 110.0],
+        atr_14=5.0 / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
         thesis_invalid_if="closes below support",
@@ -2477,28 +2830,40 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     mock_pm = MagicMock()
     # Rotation: close SPY (target=0) + open QQQ at 30% weight. Constructor
     # turns target_weight_pct=0 on a held symbol into a full-exit SELL.
-    mock_pm.decide.return_value = (PortfolioDecision(
-        reasoning_chain=_pm_rc(),
-        targets=[
-            TargetPosition(
-                symbol="SPY", target_weight_pct=0.0, conviction="medium",
-                thesis="Rotate out",
-            ),
-            TargetPosition(
-                symbol="QQQ", target_weight_pct=15.0, conviction="high",
-                thesis="Rotate in",
-                thesis_invalid_if="closes below support",
-            ),
-        ],
-        portfolio_view="Rotate from SPY to QQQ",
-    ), _mock_agent_result())
+    mock_pm.decide.return_value = (
+        PortfolioDecision(
+            reasoning_chain=_pm_rc(),
+            targets=[
+                TargetPosition(
+                    symbol="SPY",
+                    target_weight_pct=0.0,
+                    conviction="medium",
+                    thesis="Rotate out",
+                ),
+                TargetPosition(
+                    symbol="QQQ",
+                    target_weight_pct=15.0,
+                    conviction="high",
+                    thesis="Rotate in",
+                    thesis_invalid_if="closes below support",
+                ),
+            ],
+            portfolio_view="Rotate from SPY to QQQ",
+        ),
+        _mock_agent_result(),
+    )
     mock_pm_cls.return_value = mock_pm
 
     mock_rm = MagicMock()
-    mock_rm.review.return_value = (RiskVerdict(
-        approved=True, modifications=[], reasoning="Approved",
-        reasoning_chain=_risk_rc(),
-    ), _mock_agent_result())
+    mock_rm.review.return_value = (
+        RiskVerdict(
+            approved=True,
+            modifications=[],
+            reasoning="Approved",
+            reasoning_chain=_risk_rc(),
+        ),
+        _mock_agent_result(),
+    )
     mock_rm_cls.return_value = mock_rm
 
     mock_market = MagicMock()
@@ -2549,7 +2914,11 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
         # reads the same SPY position the run-open snapshot already
         # returned) — the existing 5 entries already cover it exactly, one
         # of which previously went unused.
-        [spy_position], [spy_position], [spy_position], [spy_position], [],
+        [spy_position],
+        [spy_position],
+        [spy_position],
+        [spy_position],
+        [],
     ]
     mock_broker.wait_for_order_terminal.return_value = "filled"
     mock_broker.submit_order.side_effect = [
@@ -2593,8 +2962,9 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
     # Global stale-entry cancel in the preamble (no symbol) exactly once;
     # audit round 2 added SYMBOL-SCOPED cancels on full-exit SELLs, which is
     # why total call_count may exceed 1.
-    global_cancels = [c for c in mock_broker.cancel_open_entry_orders.call_args_list
-                      if not c.args and not c.kwargs.get("symbol")]
+    global_cancels = [
+        c for c in mock_broker.cancel_open_entry_orders.call_args_list if not c.args and not c.kwargs.get("symbol")
+    ]
     assert len(global_cancels) == 1
     mock_broker.cancel_open_orders.assert_not_called()
     assert mock_broker.wait_for_order_terminal.call_count == 1
@@ -2629,15 +2999,19 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
 # 41→21→11 share double-trim incident.
 # ============================================================================
 
+
 def _mk_midday_pipeline(position: Position) -> TradingPipeline:
     pipeline = build_pipeline(broker=MagicMock())
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted", "symbol": position.symbol,
+        "id": "ord-1",
+        "status": "accepted",
+        "symbol": position.symbol,
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.replace_stop_loss.return_value = {
-        "id": "stop-1", "status": "accepted",
+        "id": "stop-1",
+        "status": "accepted",
     }
     pipeline.db = MagicMock()
     pipeline._format_qty = lambda q: str(q)
@@ -2652,22 +3026,32 @@ def test_midday_blocks_second_sell_on_soft_reason_for_already_trimmed_symbol():
     SELL with a soft reason (`TARGET_BREACH`, valuation stretch, etc.).
     Pin: broker.submit_order is NOT called — discipline holds."""
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="AMZN",
-            reason="TARGET_BREACH — up 16% since entry, valuation stretched",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="AMZN",
+                reason="TARGET_BREACH — up 16% since entry, valuation stretched",
+            )
+        ],
         overall_assessment="trim winner",
         risk_level="low",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today={"AMZN"},
     )
     assert orders == []
@@ -2681,22 +3065,32 @@ def test_midday_allows_second_sell_on_hard_trigger_for_already_trimmed_symbol():
     daily-loss circuit breaker, stop hit). Pin:
     discipline yields, broker.submit_order IS called."""
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="AMZN",
-            reason="thesis_invalid_if triggered — guidance cut, earnings call missed",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="AMZN",
+                reason="thesis_invalid_if triggered — guidance cut, earnings call missed",
+            )
+        ],
         overall_assessment="exit on broken thesis",
         risk_level="high",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today={"AMZN"},
     )
     assert len(orders) == 1
@@ -2707,22 +3101,32 @@ def test_midday_blocks_second_reduce_on_soft_reason_for_already_trimmed_symbol()
     """REDUCE is on the same discipline as SELL — soft reason on an
     already-trimmed name must not stack a second trim."""
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="REDUCE", symbol="AMZN",
-            reason="momentum slowing slightly, +13% on day",
-        )],
+        actions=[
+            PositionAction(
+                action="REDUCE",
+                symbol="AMZN",
+                reason="momentum slowing slightly, +13% on day",
+            )
+        ],
         overall_assessment="trim again",
         risk_level="low",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today={"AMZN"},
     )
     assert orders == []
@@ -2734,23 +3138,33 @@ def test_midday_allows_trail_stop_on_already_trimmed_symbol():
     is fine even after a same-day trim. Pin: replace_stop_loss IS called
     regardless of trim history."""
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="TRAIL_STOP", symbol="AMZN",
-            reason="lock in some of the +16% move",
-            new_stop_price=195.0,
-        )],
+        actions=[
+            PositionAction(
+                action="TRAIL_STOP",
+                symbol="AMZN",
+                reason="lock in some of the +16% move",
+                new_stop_price=195.0,
+            )
+        ],
         overall_assessment="tighten stop",
         risk_level="low",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today={"AMZN"},
     )
     assert len(orders) == 1
@@ -2773,22 +3187,32 @@ def test_midday_first_sell_of_day_on_a_soft_reason_is_now_blocked():
     instead, protected by its broker-resident stop.
     """
     position = Position(
-        symbol="NVDA", qty=10.0, avg_entry=400.0, current_price=420.0,
-        market_value=4200.0, unrealized_pnl=200.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="NVDA",
+        qty=10.0,
+        avg_entry=400.0,
+        current_price=420.0,
+        market_value=4200.0,
+        unrealized_pnl=200.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="NVDA",
-            reason="momentum cooling, take some off",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="NVDA",
+                reason="momentum cooling, take some off",
+            )
+        ],
         overall_assessment="trim winner",
         risk_level="low",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today=set(),  # empty — first time today
     )
     assert orders == []
@@ -2800,22 +3224,32 @@ def test_midday_first_sell_of_day_passes_when_it_names_a_trigger():
     the first sale exactly as before — this is the other half of 3.3, and
     without it the change would just be a blanket freeze."""
     position = Position(
-        symbol="NVDA", qty=10.0, avg_entry=400.0, current_price=420.0,
-        market_value=4200.0, unrealized_pnl=200.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="NVDA",
+        qty=10.0,
+        avg_entry=400.0,
+        current_price=420.0,
+        market_value=4200.0,
+        unrealized_pnl=200.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="NVDA",
-            reason="thesis_invalid triggered: closed below MA50 on 2x volume",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="NVDA",
+                reason="thesis_invalid triggered: closed below MA50 on 2x volume",
+            )
+        ],
         overall_assessment="thesis broke",
         risk_level="moderate",
     )
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-1",
+        positions=[position],
+        review=review,
+        run_id="r-1",
         already_trimmed_today=set(),
     )
     assert len(orders) == 1
@@ -2852,13 +3286,20 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
     symbols still in the broker-truth position list, so a sold-out name can
     never surface in the prompt (and therefore never in a fabricated
     action) again."""
-    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="AAPL", qty=10.0, avg_entry=200.0, current_price=210.0,
-            market_value=2100.0, unrealized_pnl=100.0, sector="Technology",
+            symbol="AAPL",
+            qty=10.0,
+            avg_entry=200.0,
+            current_price=210.0,
+            market_value=2100.0,
+            unrealized_pnl=100.0,
+            sector="Technology",
         )
     ]
     pipeline.macro.get_macro_summary.return_value = {}
@@ -2886,9 +3327,7 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
 
     review_kwargs = pipeline.position_reviewer.review.call_args.kwargs
     reviewed_symbols = {p.symbol for p in review_kwargs["positions"]}
-    assert reviewed_symbols == {"AAPL"}, (
-        f"sold-out XOM must not reach review_positions: got {reviewed_symbols}"
-    )
+    assert reviewed_symbols == {"AAPL"}, f"sold-out XOM must not reach review_positions: got {reviewed_symbols}"
     assert review_kwargs["already_trimmed_today"] == set(), (
         "XOM was fully sold (not merely trimmed while still held) — it must "
         "not appear in the 'Already Trimmed Today' set the reviewer prompt "
@@ -2902,13 +3341,20 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
     in already_trimmed_today — that is the discipline the set exists to
     enforce (2026-05-04 AMZN double-trim). Only a fully-closed name should
     be dropped."""
-    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
+    pipeline = build_pipeline(
+        broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock()
+    )
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
         Position(
-            symbol="AMZN", qty=21.0, avg_entry=100.0, current_price=112.0,
-            market_value=2352.0, unrealized_pnl=252.0, sector="Consumer Cyclical",
+            symbol="AMZN",
+            qty=21.0,
+            avg_entry=100.0,
+            current_price=112.0,
+            market_value=2352.0,
+            unrealized_pnl=252.0,
+            sector="Consumer Cyclical",
         )
     ]
     pipeline.macro.get_macro_summary.return_value = {}
@@ -2941,6 +3387,7 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
 # FORCE_DELEVER persistence + inverse-ETF deprioritization
 # ============================================================================
 
+
 def test_force_delever_persists_exact_action_string_to_trades_table():
     """The same-day-trim discipline filters trades by action string. If
     force_delever wrote anything other than 'FORCE_DELEVER' (e.g.,
@@ -2948,14 +3395,19 @@ def test_force_delever_persists_exact_action_string_to_trades_table():
     discipline would miss it and allow a same-day double-trim on a
     symbol force-sold for margin reasons. Pin the exact string."""
     from src.pipeline_context import RunContext
+
     pipeline = build_pipeline(broker=MagicMock())
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted", "symbol": "NVDA",
+        "id": "ord-1",
+        "status": "accepted",
+        "symbol": "NVDA",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_account.return_value = {
-        "cash": 5000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
+        "cash": 5000.0,
+        "portfolio_value": 5000.0,
+        "last_equity": 5000.0,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline.db = MagicMock()
@@ -2966,9 +3418,14 @@ def test_force_delever_persists_exact_action_string_to_trades_table():
     pipeline.config.risk.allow_margin = False
 
     losing_position = Position(
-        symbol="NVDA", qty=10.0, avg_entry=500.0, current_price=400.0,
-        market_value=4000.0, unrealized_pnl=-1000.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="NVDA",
+        qty=10.0,
+        avg_entry=500.0,
+        current_price=400.0,
+        market_value=4000.0,
+        unrealized_pnl=-1000.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     ctx = RunContext(run_id="r-1", session="morning")
     ctx.cash = -500.0  # deficit, triggers de-lever
@@ -2979,8 +3436,7 @@ def test_force_delever_persists_exact_action_string_to_trades_table():
     assert pipeline.db.insert_trade.called, "force_delever must persist a trade row"
     insert_kwargs = pipeline.db.insert_trade.call_args.kwargs
     assert insert_kwargs["action"] == "FORCE_DELEVER", (
-        f"action string drift would break same-day-trim discipline; "
-        f"got {insert_kwargs['action']!r}"
+        f"action string drift would break same-day-trim discipline; got {insert_kwargs['action']!r}"
     )
 
 
@@ -2992,14 +3448,18 @@ def test_force_delever_sells_long_before_inverse_etf_hedge():
     reduction. The tiered sort sells longs FIRST, then inverse ETFs
     only when no longs remain or the deficit isn't cleared yet."""
     from src.pipeline_context import RunContext
+
     pipeline = build_pipeline(broker=MagicMock())
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted",
+        "id": "ord-1",
+        "status": "accepted",
     }
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     pipeline.broker.get_account.return_value = {
-        "cash": 0.0, "portfolio_value": 6000.0, "last_equity": 6000.0,
+        "cash": 0.0,
+        "portfolio_value": 6000.0,
+        "last_equity": 6000.0,
     }
     pipeline.broker.get_positions.return_value = []
     pipeline.db = MagicMock()
@@ -3011,15 +3471,25 @@ def test_force_delever_sells_long_before_inverse_etf_hedge():
 
     # SH (inverse hedge) is the BIGGER loser on a rally day.
     sh_hedge = Position(
-        symbol="SH", qty=100.0, avg_entry=20.0, current_price=18.0,
-        market_value=1800.0, unrealized_pnl=-200.0,
-        unrealized_intraday_pnl=0.0, sector="ETF",
+        symbol="SH",
+        qty=100.0,
+        avg_entry=20.0,
+        current_price=18.0,
+        market_value=1800.0,
+        unrealized_pnl=-200.0,
+        unrealized_intraday_pnl=0.0,
+        sector="ETF",
     )
     # NVDA long, smaller loss.
     nvda_long = Position(
-        symbol="NVDA", qty=10.0, avg_entry=420.0, current_price=400.0,
-        market_value=4000.0, unrealized_pnl=-200.0,  # tie on P&L
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="NVDA",
+        qty=10.0,
+        avg_entry=420.0,
+        current_price=400.0,
+        market_value=4000.0,
+        unrealized_pnl=-200.0,  # tie on P&L
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     ctx = RunContext(run_id="r-1", session="morning")
     ctx.cash = -300.0  # deficit small enough that ONE position clears it
@@ -3034,15 +3504,14 @@ def test_force_delever_sells_long_before_inverse_etf_hedge():
         f"un-hedging the book; first sold symbol={first_sell_kwargs['symbol']!r}"
     )
     # SH must not be touched while a long was available.
-    sold_symbols = [
-        c.kwargs["symbol"] for c in pipeline.broker.submit_order.call_args_list
-    ]
+    sold_symbols = [c.kwargs["symbol"] for c in pipeline.broker.submit_order.call_args_list]
     assert "SH" not in sold_symbols
 
 
 # ============================================================================
 # NaN market_value guard in SELL pre-sum
 # ============================================================================
+
 
 def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_path):
     """If broker returns NaN market_value (rare market-open glitch), the
@@ -3054,21 +3523,44 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
     from src.config import RiskConfig
     from src.risk.rules import RiskRuleEngine
 
-    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, allow_margin=False, require_stop_loss=True, )))
+    pipeline = build_pipeline(
+        risk_engine=RiskRuleEngine(
+            RiskConfig(
+                max_position_pct=20,
+                max_total_position_pct=90,
+                max_sector_pct=40,
+                allow_margin=False,
+                require_stop_loss=True,
+            )
+        )
+    )
 
     nan_position = Position(
-        symbol="GLITCH", qty=10.0, avg_entry=100.0, current_price=float("nan"),
-        market_value=float("nan"), unrealized_pnl=0.0,
-        unrealized_intraday_pnl=0.0, sector="Technology",
+        symbol="GLITCH",
+        qty=10.0,
+        avg_entry=100.0,
+        current_price=float("nan"),
+        market_value=float("nan"),
+        unrealized_pnl=0.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Technology",
     )
     sell = TradeDecision(
-        action="SELL", symbol="GLITCH", allocation_pct=50.0,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action="SELL",
+        symbol="GLITCH",
+        allocation_pct=50.0,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="trim half",
     )
     buy = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=10.0,
-        entry_price=180.0, stop_loss=170.0, take_profit=200.0,
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=10.0,
+        entry_price=180.0,
+        stop_loss=170.0,
+        take_profit=200.0,
         reasoning="add",
     )
     allowed, _violations, _reasons = pipeline.risk_gate._filter_hard_risk_decisions(
@@ -3077,14 +3569,14 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
         total_value=10000.0,
         cash=500.0,
         invested_target_pct=None,
-        correlation_matrix={},)
+        correlation_matrix={},
+    )
     # SELL with NaN market_value is dropped from the pre-sum, so
     # effective_cash = 500 + 0 = 500 (not NaN). The BUY for $1000
     # (10% of $10k) exceeds 500 cash → cash_only rule blocks the BUY.
     buy_in_allowed = any(d.action == "BUY" for d in allowed)
     assert not buy_in_allowed, (
-        "BUY must not slip through when SELL's market_value was NaN — "
-        "effective_cash should not have been NaN-poisoned"
+        "BUY must not slip through when SELL's market_value was NaN — effective_cash should not have been NaN-poisoned"
     )
     # The SELL itself still goes through (not its job to know its proceeds
     # for cash-budget purposes; broker just executes).
@@ -3098,8 +3590,10 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
 # drain pass even after a hard process kill in the cancel→finalize window.
 # ---------------------------------------------------------------------------
 
+
 def _wal_pipeline(db):
     from src.pipeline import TradingPipeline
+
     p = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     return p
 
@@ -3124,11 +3618,17 @@ def test_write_ahead_row_persisted_with_sentinel_then_cleared_on_success(tmp_pat
 
     # SELL filled in full → finalize success → WAL row discharged.
     pipe.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10", "filled_avg_price": 100.0,
+        "status": "filled",
+        "filled_qty": "10",
+        "filled_avg_price": 100.0,
     }
     pipe._current_position_qty_for_finalize = lambda s: 0.0
     ok, _ = pipe._finalize_protection_after_sell(
-        "ord-real", "NVDA", 10.0, specs, wal_row_id=wal_id,
+        "ord-real",
+        "NVDA",
+        10.0,
+        specs,
+        wal_row_id=wal_id,
     )
     assert ok is True
     assert db.get_pending_protection_restores() == []
@@ -3136,6 +3636,7 @@ def test_write_ahead_row_persisted_with_sentinel_then_cleared_on_success(tmp_pat
 
 def test_write_ahead_no_row_when_nothing_was_protected(tmp_path):
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pipe = _wal_pipeline(db)
@@ -3162,7 +3663,11 @@ def test_finalize_bail_updates_wal_row_not_duplicate(tmp_path):
     pipe.broker.cancel_entry_order.side_effect = RuntimeError("broker down")
 
     ok, _ = pipe._finalize_protection_after_sell(
-        "ord-real", "NVDA", 5.0, specs, wal_row_id=wal_id,
+        "ord-real",
+        "NVDA",
+        5.0,
+        specs,
+        wal_row_id=wal_id,
     )
     assert ok is False
     rows = db.get_pending_protection_restores()
@@ -3184,8 +3689,10 @@ def test_drain_sentinel_restores_when_position_intact(tmp_path):
 
     specs = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id=_WAL_SELL_SENTINEL,
-        position_qty_before_sell=10.0, specs_json=json.dumps(specs),
+        symbol="NVDA",
+        sell_order_id=_WAL_SELL_SENTINEL,
+        position_qty_before_sell=10.0,
+        specs_json=json.dumps(specs),
     )
     # SELL never went out → position intact at 10.
     pipe._current_position_qty_for_finalize = lambda s: 10.0
@@ -3210,7 +3717,8 @@ def test_drain_sentinel_noop_when_position_flat(tmp_path):
     db.initialize()
     pipe = _wal_pipeline(db)
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id=_WAL_SELL_SENTINEL,
+        symbol="NVDA",
+        sell_order_id=_WAL_SELL_SENTINEL,
         position_qty_before_sell=10.0,
         specs_json=json.dumps([{"id": "s1", "qty": 10, "stop_price": 90.0}]),
     )
@@ -3234,8 +3742,10 @@ def test_drain_sentinel_collapses_when_position_reduced(tmp_path):
     pipe = _wal_pipeline(db)
     specs = [{"id": "s1", "qty": 10, "stop_price": 90.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id=_WAL_SELL_SENTINEL,
-        position_qty_before_sell=10.0, specs_json=json.dumps(specs),
+        symbol="NVDA",
+        sell_order_id=_WAL_SELL_SENTINEL,
+        position_qty_before_sell=10.0,
+        specs_json=json.dumps(specs),
     )
     pipe._current_position_qty_for_finalize = lambda s: 4.0
     pipe._reprotect_residual_after_partial_sell = MagicMock(return_value=True)
@@ -3244,7 +3754,9 @@ def test_drain_sentinel_collapses_when_position_reduced(tmp_path):
 
     assert drained == 1
     pipe._reprotect_residual_after_partial_sell.assert_called_once_with(
-        "NVDA", 4.0, specs,
+        "NVDA",
+        4.0,
+        specs,
     )
     assert db.get_pending_protection_restores() == []
 
@@ -3269,8 +3781,13 @@ def test_midday_emergency_writes_wal_before_submit_survives_submit_crash(tmp_pat
     pipe.db.has_pending_action_for_symbol = lambda *a, **k: False
 
     pos = Position(
-        symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=51.0,
+        avg_entry=240.0,
+        current_price=230.0,
+        market_value=11730.0,
+        unrealized_pnl=-510.0,
+        sector="Consumer Cyclical",
     )
     # The daily-loss liquidator that used to drive this is deleted
     # (docs/WORK.md item 32). The write-ahead discipline it exercised is
@@ -3278,15 +3795,17 @@ def test_midday_emergency_writes_wal_before_submit_survives_submit_crash(tmp_pat
     # forced-sell path uses (`_force_delever`, the §11.2 gross ceiling),
     # so the test drives that directly instead of through a caller.
     pipe._submit_protected_sell(
-        symbol=pos.symbol, qty=pos.qty, limit_price=227.7,
-        reference_price=pos.current_price, position_qty_before_sell=pos.qty,
+        symbol=pos.symbol,
+        qty=pos.qty,
+        limit_price=227.7,
+        reference_price=pos.current_price,
+        position_qty_before_sell=pos.qty,
         label="FORCE_DELEVER",
     )
 
     rows = db.get_pending_protection_restores()
     assert len(rows) == 1, (
-        "write-ahead row must survive a submit-time crash so drain can "
-        "recover — this is the whole point of audit F1"
+        "write-ahead row must survive a submit-time crash so drain can recover — this is the whole point of audit F1"
     )
     assert rows[0]["symbol"] == "AMZN"
     assert rows[0]["sell_order_id"] == _WAL_SELL_SENTINEL
@@ -3298,8 +3817,10 @@ def test_midday_emergency_writes_wal_before_submit_survives_submit_crash(tmp_pat
 # cancels the stops — snapshot (read) -> persist WAL -> cancel (mutate).
 # ---------------------------------------------------------------------------
 
+
 def _wal_pipe(db):
     from src.pipeline import TradingPipeline
+
     p = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     return p
 
@@ -3341,6 +3862,7 @@ def test_cancel_stops_with_write_ahead_no_stops_no_row_no_cancel(tmp_path):
     """No protective stops → nothing to write-ahead, cancel never called,
     SELL still proceeds (ok=True, no wal row)."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pipe = _wal_pipe(db)
@@ -3358,6 +3880,7 @@ def test_cancel_stops_with_write_ahead_discharges_row_on_cancel_failure(tmp_path
     SELL must be skipped, and the pre-written WAL row is discharged so
     the next drain doesn't 'restore' stops that never left."""
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pipe = _wal_pipe(db)
@@ -3374,6 +3897,7 @@ def test_cancel_stops_with_write_ahead_discharges_row_on_cancel_failure(tmp_path
 
 def test_cancel_stops_with_write_ahead_skips_on_snapshot_failure(tmp_path):
     from src.storage.db import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     pipe = _wal_pipe(db)
@@ -3391,30 +3915,46 @@ def test_finalize_pending_protections_waits_finalizes_and_logs_on_failure(caplog
     fill, and logs a warning when coverage couldn't be rebuilt (drain retries
     next session). This is the behavior the 6 SELL paths used to copy-paste."""
     import logging
-    pipe = build_pipeline(broker=MagicMock(), _finalize_protection_after_sell=MagicMock(return_value=(False, [{"id": "s1"}])))
-    pending = [{
-        "order_id": "o1", "symbol": "NVDA", "position_qty_before_sell": 5.0,
-        "specs": [{"id": "s1"}], "wal_row_id": 7,
-    }]
+
+    pipe = build_pipeline(
+        broker=MagicMock(), _finalize_protection_after_sell=MagicMock(return_value=(False, [{"id": "s1"}]))
+    )
+    pending = [
+        {
+            "order_id": "o1",
+            "symbol": "NVDA",
+            "position_qty_before_sell": 5.0,
+            "specs": [{"id": "s1"}],
+            "wal_row_id": 7,
+        }
+    ]
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
         pipe._finalize_pending_protections(pending, context="TestCtx")
     pipe.broker.wait_for_order_terminal.assert_called_once_with("o1")
     pipe._finalize_protection_after_sell.assert_called_once_with(
-        "o1", "NVDA", 5.0, [{"id": "s1"}], wal_row_id=7,
+        "o1",
+        "NVDA",
+        5.0,
+        [{"id": "s1"}],
+        wal_row_id=7,
     )
     assert any(
-        "did not confirm stop coverage" in r.getMessage() and "TestCtx" in r.getMessage()
-        for r in caplog.records
+        "did not confirm stop coverage" in r.getMessage() and "TestCtx" in r.getMessage() for r in caplog.records
     ), f"expected a coverage-not-confirmed warning; got {[r.getMessage() for r in caplog.records]}"
 
 
 def test_finalize_pending_protections_skips_wait_when_wait_false():
     """wait=False (ExecutionStage, which already waited) must not re-wait."""
     pipe = build_pipeline(broker=MagicMock(), _finalize_protection_after_sell=MagicMock(return_value=(True, [])))
-    pending = [{
-        "order_id": "o2", "symbol": "AAPL", "position_qty_before_sell": 3.0,
-        "specs": [], "wal_row_id": None,
-    }]
+    pending = [
+        {
+            "order_id": "o2",
+            "symbol": "AAPL",
+            "position_qty_before_sell": 3.0,
+            "specs": [],
+            "wal_row_id": None,
+        }
+    ]
     pipe._finalize_pending_protections(pending, context="X", wait=False)
     pipe.broker.wait_for_order_terminal.assert_not_called()
     pipe._finalize_protection_after_sell.assert_called_once()
@@ -3422,7 +3962,14 @@ def test_finalize_pending_protections_skips_wait_when_wait_false():
 
 def _protected_sell_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
     """A __new__'d pipeline wired just enough to exercise _submit_protected_sell."""
-    pipe = build_pipeline(broker=MagicMock(), db=MagicMock(), _cancel_stops_with_write_ahead=MagicMock( return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99), ), _order_accepted=MagicMock(return_value=accepted))
+    pipe = build_pipeline(
+        broker=MagicMock(),
+        db=MagicMock(),
+        _cancel_stops_with_write_ahead=MagicMock(
+            return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99),
+        ),
+        _order_accepted=MagicMock(return_value=accepted),
+    )
     if submit_raises:
         pipe.broker.submit_order.side_effect = RuntimeError("broker down")
     else:
@@ -3433,37 +3980,51 @@ def _protected_sell_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
 def test_submit_protected_sell_accept_returns_order_and_prot():
     pipe = _protected_sell_pipe(accepted=True)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=5, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=10.0, label="SELL",
+        symbol="NVDA",
+        qty=5,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=10.0,
+        label="SELL",
     )
     assert out is not None
     order, prot = out
-    assert order["action"] == "SELL"                      # helper tags the action
+    assert order["action"] == "SELL"  # helper tags the action
     assert prot["order_id"] == "ord-1" and prot["symbol"] == "NVDA"
     assert prot["position_qty_before_sell"] == 10.0
     assert prot["specs"] == [{"id": "s1", "qty": 10}] and prot["wal_row_id"] == 99
-    pipe.broker._restore_stop_orders.assert_not_called()   # no restore on success
+    pipe.broker._restore_stop_orders.assert_not_called()  # no restore on success
 
 
 def test_submit_protected_sell_skips_and_does_not_submit_when_clear_fails():
     pipe = _protected_sell_pipe(clear_ok=False)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=5, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=10.0, label="SELL",
+        symbol="NVDA",
+        qty=5,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=10.0,
+        label="SELL",
     )
     assert out is None
-    pipe.broker.submit_order.assert_not_called()           # never submit if stops aren't cleared
+    pipe.broker.submit_order.assert_not_called()  # never submit if stops aren't cleared
 
 
 def test_submit_protected_sell_restores_stops_on_reject():
     pipe = _protected_sell_pipe(accepted=False)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=5, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=10.0, label="EMERGENCY_SELL",
+        symbol="NVDA",
+        qty=5,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=10.0,
+        label="EMERGENCY_SELL",
     )
     assert out is None
     pipe.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", [{"id": "s1", "qty": 10}], check_idempotency=False,
+        "NVDA",
+        [{"id": "s1", "qty": 10}],
+        check_idempotency=False,
     )
 
 
@@ -3473,18 +4034,25 @@ def test_submit_protected_sell_restores_stops_on_submit_throw():
     auto take-profit did; the other paths rode naked until next drain)."""
     pipe = _protected_sell_pipe(submit_raises=True)
     out = pipe._submit_protected_sell(
-        symbol="NVDA", qty=5, limit_price=99.0, reference_price=100.0,
-        position_qty_before_sell=10.0, label="FORCE_DELEVER",
+        symbol="NVDA",
+        qty=5,
+        limit_price=99.0,
+        reference_price=100.0,
+        position_qty_before_sell=10.0,
+        label="FORCE_DELEVER",
     )
     assert out is None
     pipe.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA", [{"id": "s1", "qty": 10}], check_idempotency=False,
+        "NVDA",
+        [{"id": "s1", "qty": 10}],
+        check_idempotency=False,
     )
 
 
 def test_reconcile_stop_coverage_flags_undercovered_long():
     """A held long with less open protective-stop qty than held qty is a gap."""
     from types import SimpleNamespace
+
     pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = []
     pipe.broker.get_positions.return_value = [
@@ -3495,8 +4063,9 @@ def test_reconcile_stop_coverage_flags_undercovered_long():
     def _snap(sym, side="sell"):
         assert side == "sell", "both positions here are longs"
         if sym == "NVDA":
-            return (True, [{"id": "s1", "qty": 4.0}])   # only 4 of 10 covered
-        return (True, [{"id": "s2", "qty": 5.0}])        # fully covered
+            return (True, [{"id": "s1", "qty": 4.0}])  # only 4 of 10 covered
+        return (True, [{"id": "s2", "qty": 5.0}])  # fully covered
+
     pipe.broker.snapshot_protective_stops.side_effect = _snap
 
     gaps = pipe._reconcile_stop_coverage()
@@ -3515,12 +4084,13 @@ def test_reconcile_stop_coverage_skips_pending_flags_neither_when_covered():
     short is now read on its own side via `snapshot_protective_stops(...,
     side="buy")`."""
     from types import SimpleNamespace
+
     pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = [{"symbol": "TSLA"}]
     pipe.broker.get_positions.return_value = [
-        SimpleNamespace(symbol="SQQQ", qty=-2.0),   # short, fully covered
-        SimpleNamespace(symbol="TSLA", qty=8.0),    # drain owns it → skip
-        SimpleNamespace(symbol="MSFT", qty=2.0),    # fully covered long
+        SimpleNamespace(symbol="SQQQ", qty=-2.0),  # short, fully covered
+        SimpleNamespace(symbol="TSLA", qty=8.0),  # drain owns it → skip
+        SimpleNamespace(symbol="MSFT", qty=2.0),  # fully covered long
     ]
     pipe.broker.snapshot_protective_stops.return_value = (True, [{"id": "s", "qty": 2.0}])
 
@@ -3537,6 +4107,7 @@ def test_reconcile_stop_coverage_repairs_undercovered_short():
     SHORT row — the Stage 2 'flag only' line was false once SHORT became a
     live opening action."""
     from types import SimpleNamespace
+
     pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = []
     pipe.db.get_symbol_last_buy.return_value = {"stop_loss": 220.0, "action": "SHORT"}
@@ -3544,7 +4115,8 @@ def test_reconcile_stop_coverage_repairs_undercovered_short():
         SimpleNamespace(symbol="TSLA", qty=-40.0),
     ]
     pipe.broker.snapshot_protective_stops.return_value = (
-        True, [{"id": "s1", "qty": 25.0}],   # only 25 of 40 covered
+        True,
+        [{"id": "s1", "qty": 25.0}],  # only 25 of 40 covered
     )
     pipe.broker.get_latest_price.return_value = 200.0
     pipe.broker.STOP_LIMIT_BUFFER_PCT = 0.03
@@ -3565,6 +4137,7 @@ def test_reconcile_stop_coverage_repairs_undercovered_short():
 
 # === Stage 1 (QAMC provider/model plumbing) — paper/live isolation ===
 
+
 @patch("src.pipeline.AlpacaBroker")
 @patch("src.pipeline.EarningsDataProvider")
 @patch("src.pipeline.EarningsAnalystAgent")
@@ -3577,9 +4150,18 @@ def test_reconcile_stop_coverage_repairs_undercovered_short():
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
 def test_broker_paper_flag_unaffected_by_new_provider_config(
-    mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
 ):
     """The new explicit-provider config field must have no path into
     Alpaca paper/live selection — AlpacaBroker(paper=...) must reflect ONLY
@@ -3609,9 +4191,18 @@ def test_broker_paper_flag_unaffected_by_new_provider_config(
 @patch("src.pipeline.PortfolioManagerAgent")
 @patch("src.pipeline.TechAnalystAgent")
 def test_broker_paper_flag_false_still_passes_through_unmodified(
-    mock_ta_cls, mock_pm_cls, mock_rm_cls, mock_market_cls, mock_macro_cls,
-    mock_maa_cls, mock_na_cls, mock_ndp_cls, mock_ea_cls, mock_edp_cls,
-    mock_broker_cls, mock_config,
+    mock_ta_cls,
+    mock_pm_cls,
+    mock_rm_cls,
+    mock_market_cls,
+    mock_macro_cls,
+    mock_maa_cls,
+    mock_na_cls,
+    mock_ndp_cls,
+    mock_ea_cls,
+    mock_edp_cls,
+    mock_broker_cls,
+    mock_config,
 ):
     """paper=False (live) must also pass through explicitly — proving the
     value isn't silently coerced by anything Stage 1 touched."""
@@ -3638,8 +4229,15 @@ def test_sync_positions_from_broker_writes_full_snapshot_not_a_stale_subset(tmp_
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     fresh = [
-        Position(symbol=sym, qty=1.0, avg_entry=10.0, current_price=11.0,
-                 market_value=11.0, unrealized_pnl=1.0, sector="Tech")
+        Position(
+            symbol=sym,
+            qty=1.0,
+            avg_entry=10.0,
+            current_price=11.0,
+            market_value=11.0,
+            unrealized_pnl=1.0,
+            sector="Tech",
+        )
         for sym in ("ORCL", "MSFT", "NVDA", "AAPL", "AMZN", "GOOGL")
     ]
     pipeline.broker.get_positions.return_value = fresh
@@ -3658,8 +4256,15 @@ def test_sync_positions_from_broker_uses_provided_snapshot_without_a_broker_call
     db.initialize()
     pipeline = build_pipeline(db=db, broker=MagicMock())
     snapshot = [
-        Position(symbol="MSFT", qty=2.0, avg_entry=400.0, current_price=410.0,
-                 market_value=820.0, unrealized_pnl=20.0, sector="Tech"),
+        Position(
+            symbol="MSFT",
+            qty=2.0,
+            avg_entry=400.0,
+            current_price=410.0,
+            market_value=820.0,
+            unrealized_pnl=20.0,
+            sector="Tech",
+        ),
     ]
     pipeline._sync_positions_from_broker(snapshot)
     pipeline.broker.get_positions.assert_not_called()
@@ -3719,16 +4324,23 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="AMD", action="BUY", qty=5.0, price=540.0,
-        reasoning="morning entry", run_id="morning-r1",
-        broker_order_id="alpaca-amd-1", fill_status="submitted",
-        stop_loss=500.0, take_profit=600.0,
+        symbol="AMD",
+        action="BUY",
+        qty=5.0,
+        price=540.0,
+        reasoning="morning entry",
+        run_id="morning-r1",
+        broker_order_id="alpaca-amd-1",
+        fill_status="submitted",
+        stop_loss=500.0,
+        take_profit=600.0,
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
+
     pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
@@ -3739,26 +4351,26 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
     pipeline._release_retired_cash_park = MagicMock()
     pipeline._reconcile_orphan_pending_submits = MagicMock()
     pipeline._reconcile_stop_out_fills = MagicMock()
-    pipeline._run_intraday_opportunity_scan = MagicMock(
-        return_value={"status": "intraday_scan_disabled"}
-    )
+    pipeline._run_intraday_opportunity_scan = MagicMock(return_value={"status": "intraday_scan_disabled"})
     pipeline._sync_positions_from_broker = MagicMock()
     pipeline.broker.get_account.return_value = {
-        "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
+        "cash": 1000.0,
+        "portfolio_value": 5000.0,
+        "last_equity": 5000.0,
     }
     pipeline.broker.get_positions.return_value = []
     # Broker truth: AMD actually filled at $549.11 — the desk's own record
     # just hasn't been told yet.
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "5.0", "filled_avg_price": "549.11",
+        "status": "filled",
+        "filled_qty": "5.0",
+        "filled_avg_price": "549.11",
     }
 
     result = pipeline.run_intra_check()
 
     assert result["status"] == "ok"
-    row = db.execute(
-        "SELECT fill_status, fill_price FROM trades WHERE broker_order_id = 'alpaca-amd-1'"
-    ).fetchone()
+    row = db.execute("SELECT fill_status, fill_price FROM trades WHERE broker_order_id = 'alpaca-amd-1'").fetchone()
     assert row["fill_status"] == "filled", (
         "an order that filled between sessions must be reconciled on the "
         "next half-hourly run, not left reading 'submitted'"
@@ -3776,20 +4388,32 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.insert_trade(
-        symbol="TSLA", action="BUY", qty=3.0, price=250.0,
-        reasoning="rejected entry", run_id="morning-r1",
-        broker_order_id="alpaca-tsla-1", fill_status="submitted", stop_loss=90.0,
+        symbol="TSLA",
+        action="BUY",
+        qty=3.0,
+        price=250.0,
+        reasoning="rejected entry",
+        run_id="morning-r1",
+        broker_order_id="alpaca-tsla-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_trade(
-        symbol="NVDA", action="REDUCE", qty=2.0, price=120.0,
-        reasoning="cancelled reduce", run_id="morning-r1",
-        broker_order_id="alpaca-nvda-1", fill_status="submitted",
+        symbol="NVDA",
+        action="REDUCE",
+        qty=2.0,
+        price=120.0,
+        reasoning="cancelled reduce",
+        run_id="morning-r1",
+        broker_order_id="alpaca-nvda-1",
+        fill_status="submitted",
     )
 
     pipeline = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
+
     pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     pipeline._kill_switch_path = None
     pipeline._is_trading_day = MagicMock(return_value=True)
@@ -3800,12 +4424,12 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     pipeline._release_retired_cash_park = MagicMock()
     pipeline._reconcile_orphan_pending_submits = MagicMock()
     pipeline._reconcile_stop_out_fills = MagicMock()
-    pipeline._run_intraday_opportunity_scan = MagicMock(
-        return_value={"status": "intraday_scan_disabled"}
-    )
+    pipeline._run_intraday_opportunity_scan = MagicMock(return_value={"status": "intraday_scan_disabled"})
     pipeline._sync_positions_from_broker = MagicMock()
     pipeline.broker.get_account.return_value = {
-        "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
+        "cash": 1000.0,
+        "portfolio_value": 5000.0,
+        "last_equity": 5000.0,
     }
     pipeline.broker.get_positions.return_value = []
 
@@ -3821,12 +4445,8 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     result = pipeline.run_intra_check()
 
     assert result["status"] == "ok"
-    tsla = db.execute(
-        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-tsla-1'"
-    ).fetchone()
-    nvda = db.execute(
-        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-nvda-1'"
-    ).fetchone()
+    tsla = db.execute("SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-tsla-1'").fetchone()
+    nvda = db.execute("SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-nvda-1'").fetchone()
     assert tsla["fill_status"] == "rejected"
     assert nvda["fill_status"] == "canceled"
     db.close()
@@ -3838,13 +4458,11 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
 # refresh log line must say so honestly instead of always claiming both
 # sources ran, whichever way the switch sits.
 
+
 def test_smart_money_refresh_sources_word_when_congress_off():
     from src.pipeline import _smart_money_refresh_sources_word
 
-    assert (
-        _smart_money_refresh_sources_word(False)
-        == "SEC Form 4 only (congressional cross-check switched off)"
-    )
+    assert _smart_money_refresh_sources_word(False) == "SEC Form 4 only (congressional cross-check switched off)"
 
 
 def test_smart_money_refresh_sources_word_when_congress_on():

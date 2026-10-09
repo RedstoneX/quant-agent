@@ -16,10 +16,7 @@ from src.risk.noise_band_anchor import (
 
 
 def test_module_loads_without_exit_guard():
-    code = (
-        "import sys; import src.risk.noise_band_anchor; "
-        "sys.exit(1 if 'src.risk.exit_guard' in sys.modules else 0)"
-    )
+    code = "import sys; import src.risk.noise_band_anchor; sys.exit(1 if 'src.risk.exit_guard' in sys.modules else 0)"
     root = str(Path(__file__).resolve().parents[1])
     env = {**os.environ, "PYTHONPATH": root}
     assert subprocess.run([sys.executable, "-c", code], env=env).returncode == 0

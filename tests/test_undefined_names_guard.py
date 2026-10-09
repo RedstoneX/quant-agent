@@ -1,4 +1,5 @@
 """The undefined-name guard: clean on the trunk, and proven to bite."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,8 +29,7 @@ def test_a_name_moved_out_and_left_behind_is_caught_in_a_method():
 
 
 def test_locals_builtins_and_closures_are_not_flagged():
-    src = ("import os\ndef f(a):\n    b = len(a)\n    def g():\n        return b + 1\n"
-           "    return g, os, [i for i in a]\n")
+    src = "import os\ndef f(a):\n    b = len(a)\n    def g():\n        return b + 1\n    return g, os, [i for i in a]\n"
     assert g.check_source(src)[0] == []
 
 

@@ -32,10 +32,7 @@ def _clean_cache():
 
 def _db(rows):
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE agent_logs (agent_name TEXT, model TEXT, "
-        "input_message TEXT, input_tokens INTEGER)"
-    )
+    conn.execute("CREATE TABLE agent_logs (agent_name TEXT, model TEXT, input_message TEXT, input_tokens INTEGER)")
     conn.executemany(
         "INSERT INTO agent_logs VALUES (?,?,?,?)",
         [("a", "m", "x" * b, t) for b, t in rows],
@@ -96,6 +93,7 @@ def test_a_nonsensical_fit_is_rejected():
 def test_a_broken_database_never_raises_into_a_session():
     """Sizing is an efficiency measure. An efficiency measure that can stop a
     trading session is a bad trade — this whole day was spent removing one."""
+
     class _Exploding:
         def execute(self, *a, **k):
             raise sqlite3.OperationalError("no such table")
@@ -119,8 +117,11 @@ def test_extrapolating_far_past_observed_sizes_errs_smaller():
 # --------------------------------------------------------------- packing
 
 _MODEL = SizeModel(
-    fixed_tokens=4127, tokens_per_byte=0.939, samples=41,
-    measured=True, observed_max_bytes=379_208,
+    fixed_tokens=4127,
+    tokens_per_byte=0.939,
+    samples=41,
+    measured=True,
+    observed_max_bytes=379_208,
 )
 
 
@@ -151,10 +152,14 @@ def test_packing_beats_the_fixed_count_it_replaced():
 
     packed = pack_to_budget(trimmed, lambda i: i[1], budget_tokens=45_000, model=_MODEL)
     fixed = pack_to_budget(
-        untrimmed, lambda i: i[1], budget_tokens=10**9, model=_MODEL, max_items=25,
+        untrimmed,
+        lambda i: i[1],
+        budget_tokens=10**9,
+        model=_MODEL,
+        max_items=25,
     )
-    assert max(_sizes(packed)) < max(_sizes(fixed)) * 0.40   # peak: -60% or better
-    assert sum(_sizes(packed)) < sum(_sizes(fixed))          # and fewer tokens overall
+    assert max(_sizes(packed)) < max(_sizes(fixed)) * 0.40  # peak: -60% or better
+    assert sum(_sizes(packed)) < sum(_sizes(fixed))  # and fewer tokens overall
 
 
 def test_an_item_too_large_for_the_whole_budget_still_makes_progress():
@@ -168,11 +173,15 @@ def test_an_item_too_large_for_the_whole_budget_still_makes_progress():
 
 def test_an_unmeasurable_item_is_assumed_large_not_free():
     """The safe direction is fewer items per request."""
+
     def _explode(item):
         raise ValueError("cannot size this")
 
     batches = pack_to_budget(
-        [("a", 1), ("b", 1)], _explode, budget_tokens=45_000, model=_MODEL,
+        [("a", 1), ("b", 1)],
+        _explode,
+        budget_tokens=45_000,
+        model=_MODEL,
     )
     assert len(batches) == 2
 
@@ -180,7 +189,11 @@ def test_an_unmeasurable_item_is_assumed_large_not_free():
 def test_the_hard_item_cap_still_applies():
     items = [(f"S{i}", 10) for i in range(100)]
     batches = pack_to_budget(
-        items, lambda i: i[1], budget_tokens=10**9, model=_MODEL, max_items=30,
+        items,
+        lambda i: i[1],
+        budget_tokens=10**9,
+        model=_MODEL,
+        max_items=30,
     )
     assert max(len(b) for b in batches) == 30
 
@@ -194,10 +207,7 @@ def test_an_empty_batch_packs_to_nothing():
 
 def _db_named(rows):
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE agent_logs (agent_name TEXT, model TEXT, "
-        "input_message TEXT, input_tokens INTEGER)"
-    )
+    conn.execute("CREATE TABLE agent_logs (agent_name TEXT, model TEXT, input_message TEXT, input_tokens INTEGER)")
     conn.executemany("INSERT INTO agent_logs VALUES (?,?,?,?)", rows)
     return conn
 
@@ -207,10 +217,7 @@ def test_history_logged_under_a_session_suffixed_name_is_still_found():
     always `news_analyst`. An exact match found nothing for exactly those
     seats and fell back to the guess — safe, but it threw away the history
     that makes this measured rather than guessed."""
-    rows = [
-        ("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b))
-        for b in range(10_000, 120_000, 8_000)
-    ]
+    rows = [("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b)) for b in range(10_000, 120_000, 8_000)]
     model = size_model(_db_named(rows), "news_analyst", "m")
     assert model.measured
     assert model.fixed_tokens == pytest.approx(4200, rel=0.05)
@@ -220,10 +227,7 @@ def test_a_shorter_agent_name_does_not_absorb_a_longer_ones_history():
     """Matched against an explicit suffix list, not a `name_%` wildcard. No
     two current agent names collide that way, but a rule that is only safe
     because of today's naming is a trap for whoever adds the next agent."""
-    rows = [
-        ("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b))
-        for b in range(10_000, 120_000, 8_000)
-    ]
+    rows = [("news_analyst_morning", "m", "x" * b, int(4200 + 0.23 * b)) for b in range(10_000, 120_000, 8_000)]
     assert not size_model(_db_named(rows), "news", "m").measured
 
 

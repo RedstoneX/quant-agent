@@ -24,7 +24,8 @@ class DeleverEnforce:
     """Ceiling enforcement and the shortfall record; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         is_margin_floor_breach=None,
         open_exit_relief=None,
         resolve_gross_ceiling=None,
@@ -151,11 +152,13 @@ class DeleverEnforce:
         # Exits ONLY: passing the session's BUYs here would let STEP 2
         # re-cut allocations the risk stage has already ruled on.
         decisions = list(open_exits) + [
-            d for d in (planned_exits or [])
-            if getattr(d, "action", None) in ("SELL", "COVER")
+            d for d in (planned_exits or []) if getattr(d, "action", None) in ("SELL", "COVER")
         ]
         outcome = apply_gross_ceiling(
-            decisions, ctx.positions, ctx.total_value, ceiling,
+            decisions,
+            ctx.positions,
+            ctx.total_value,
+            ceiling,
             cash_park_symbol=self._sweep_symbol(),
             min_order_usd=min_order_usd,
             conviction_rank=conviction_rank,
@@ -169,9 +172,13 @@ class DeleverEnforce:
         return orders
 
     def _record_delever_shortfall(
-        self, ctx: RunContext, *, held_gross_before: float,
+        self,
+        ctx: RunContext,
+        *,
+        held_gross_before: float,
         ceiling_usd_before: float | None,
-        equity_before: float | None, protections: list[dict],
+        equity_before: float | None,
+        protections: list[dict],
     ) -> None:
         """Durable record of a gross-exposure de-lever that finished with the
         book STILL over its ceiling (docs/WORK.md item 112).
@@ -197,6 +204,7 @@ class DeleverEnforce:
             return
         try:
             import json
+
             gross_before_x = (
                 held_gross_before / equity_before
                 if isinstance(equity_before, (int, float)) and equity_before > 0
@@ -214,7 +222,8 @@ class DeleverEnforce:
                 for p in protections
             ]
             payload = {
-                "stage": "gross_delever", "outcome": "still_over_ceiling",
+                "stage": "gross_delever",
+                "outcome": "still_over_ceiling",
                 "reason": leverage.get("reason") or "",
                 "rung": leverage.get("rung"),
                 "gross_usd_before": held_gross_before,
@@ -227,13 +236,17 @@ class DeleverEnforce:
                 "orders": order_rows,
             }
             self.db.insert_specialist_evidence(
-                run_id=ctx.run_id, agent_name="pipeline", kind="pipeline_event",
-                scope="run", symbol=None,
+                run_id=ctx.run_id,
+                agent_name="pipeline",
+                kind="pipeline_event",
+                scope="run",
+                symbol=None,
                 decision_id=getattr(ctx, "decision_id", None),
                 evidence_json=json.dumps(payload, sort_keys=True, default=str),
             )
         except Exception as exc:  # noqa: BLE001 — evidence is never trading authority
             logger.warning(
-                "GROSS-EXPOSURE DE-LEVER: could not persist the shortfall "
-                "record for run %s: %s", ctx.run_id, exc,
+                "GROSS-EXPOSURE DE-LEVER: could not persist the shortfall record for run %s: %s",
+                ctx.run_id,
+                exc,
             )

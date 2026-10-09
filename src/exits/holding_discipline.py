@@ -18,11 +18,9 @@ logger = logging.getLogger("src.pipeline")
 class HoldingDiscipline:
     """The holding-discipline fact-check for an exit: every claim the exit reason makes, checked against the recorded state."""
 
-    def __init__(self, *,
-                 build_active_state_changes,
-                 carry_forward_macro,
-                 structural_protection_for_holding,
-                 db) -> None:
+    def __init__(
+        self, *, build_active_state_changes, carry_forward_macro, structural_protection_for_holding, db
+    ) -> None:
         self._build_active_state_changes = build_active_state_changes
         self._carry_forward_macro = carry_forward_macro
         self._structural_protection_for_holding = structural_protection_for_holding
@@ -120,8 +118,10 @@ class HoldingDiscipline:
         adjudicable_claim = (
             claims_regime_flip(reason)
             or claims_bearish_state_change(reason)
-            or _structured in (
-                ExitTrigger.REGIME_SHIFT, ExitTrigger.BEARISH_STATE_CHANGE,
+            or _structured
+            in (
+                ExitTrigger.REGIME_SHIFT,
+                ExitTrigger.BEARISH_STATE_CHANGE,
                 ExitTrigger.ADVERSE_NEWS,
             )
         )
@@ -162,10 +162,7 @@ class HoldingDiscipline:
         # level was considered and deliberately NOT done here: it is a
         # separate, ratifiable decision, not a side effect of wiring up a
         # check that should always have been consulted.
-        thesis_claim = (
-            claims_thesis_invalidation(reason)
-            or _structured is ExitTrigger.THESIS_INVALID
-        )
+        thesis_claim = claims_thesis_invalidation(reason) or _structured is ExitTrigger.THESIS_INVALID
         if not (adjudicable_claim or thesis_claim):
             return None
 
@@ -193,9 +190,11 @@ class HoldingDiscipline:
             persist=adjudicable_claim,
         )
         logger.info(
-            "Holding-discipline structural protection for %s: protected=%s "
-            "basis=%s — %s",
-            symbol_u, protection.protected, protection.basis, protection.detail,
+            "Holding-discipline structural protection for %s: protected=%s basis=%s — %s",
+            symbol_u,
+            protection.protected,
+            protection.basis,
+            protection.detail,
         )
 
         if thesis_claim:
@@ -211,33 +210,41 @@ class HoldingDiscipline:
                 "Thesis-invalidation exit %s %s: structural check says "
                 "%s (basis=%s). Recorded, not acted on — this observation "
                 "neither blocks nor releases the exit. %s",
-                action, symbol_u,
+                action,
+                symbol_u,
                 "the backing level HAS broken (exit corroborated)"
-                if corroborated else
-                "the backing level is INTACT (exit not corroborated)",
-                protection.basis, protection.detail,
+                if corroborated
+                else "the backing level is INTACT (exit not corroborated)",
+                protection.basis,
+                protection.detail,
             )
             try:
                 self.db.insert_specialist_evidence(
-                    run_id=run_id, agent_name="risk_manager",
+                    run_id=run_id,
+                    agent_name="risk_manager",
                     kind="thesis_invalidation_structural_check",
-                    scope="symbol", symbol=symbol_u,
-                    evidence_json=_json.dumps({
-                        "action": str(action).upper(),
-                        "protected": bool(protection.protected),
-                        "raw_broken": bool(protection.raw_broken),
-                        "basis": protection.basis,
-                        "detail": str(protection.detail)[:400],
-                        "corroborates_exit": corroborated,
-                        "reason": str(reason)[:400],
-                        "advisory_only": True,
-                    }),
+                    scope="symbol",
+                    symbol=symbol_u,
+                    evidence_json=_json.dumps(
+                        {
+                            "action": str(action).upper(),
+                            "protected": bool(protection.protected),
+                            "raw_broken": bool(protection.raw_broken),
+                            "basis": protection.basis,
+                            "detail": str(protection.detail)[:400],
+                            "corroborates_exit": corroborated,
+                            "reason": str(reason)[:400],
+                            "advisory_only": True,
+                        }
+                    ),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "thesis-invalidation structural check: evidence write "
                     "failed for %s (%s) — the check still ran and is in "
-                    "the log above", symbol_u, e,
+                    "the log above",
+                    symbol_u,
+                    e,
                 )
 
         if not adjudicable_claim:
@@ -257,9 +264,7 @@ class HoldingDiscipline:
         if carried_macro.same_session and carried_macro.payload is not None:
             macro_regime_today = _macro_regime(carried_macro.payload)
             macro_status = (
-                carried_macro.status
-                if carried_macro.status == "carried_from_morning"
-                else "carried_from_morning"
+                carried_macro.status if carried_macro.status == "carried_from_morning" else "carried_from_morning"
             )
         else:
             macro_regime_today = None
@@ -271,7 +276,8 @@ class HoldingDiscipline:
             logger.warning(
                 "holding discipline: state-change lookup failed (%s) — "
                 "bearish-state-change claims go unverified for %s",
-                e, symbol_u,
+                e,
+                symbol_u,
             )
             active_state_changes = ""
 

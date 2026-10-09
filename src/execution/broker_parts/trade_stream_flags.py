@@ -4,6 +4,7 @@ Each call that fails logs a full traceback at ERROR. No ledger handle is in
 reach inside the reconnect guard (it is built from the bare stream object), so
 `record_guarded_pass` is lent no owner and writes no counted row.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,7 +23,6 @@ def _signal_event(stream: object, attr: str, method: str, owner=None) -> None:
     try:
         getattr(event, method)()
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(owner, where, exc, log=logger,
-                            context={"effect": "auth/connected flag left stale"})
+        record_guarded_pass(owner, where, exc, log=logger, context={"effect": "auth/connected flag left stale"})
     else:
         record_guarded_pass(owner, where, context={})

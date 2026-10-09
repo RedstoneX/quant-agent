@@ -42,7 +42,8 @@ def recorded(monkeypatch):
     """Capture every evidence row the audit writes, as the recorder sees it."""
     rows: list[dict] = []
     monkeypatch.setattr(
-        records, "_persist_evidence",
+        records,
+        "_persist_evidence",
         lambda db, **kwargs: rows.append(kwargs),
     )
     return rows
@@ -137,7 +138,9 @@ def test_targets_without_an_emitted_risk_field_are_not_counted(recorded):
 
 
 def test_a_raising_check_is_recorded_instead_of_swallowed(
-    recorded, monkeypatch, caplog,
+    recorded,
+    monkeypatch,
+    caplog,
 ):
     """A failure used to vanish into `logger.debug`; it must leave a row."""
     import src.risk_narrative_check as check_module

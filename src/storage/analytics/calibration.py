@@ -10,6 +10,7 @@ The three module-level helpers below moved with the cluster; src/storage/db.py
 re-imports them so `from src.storage.db import _CONVICTION_OUTCOME_MIN_N`
 keeps working (one definition, here).
 """
+
 from __future__ import annotations
 
 import json
@@ -79,7 +80,6 @@ _POSITION_OPEN_ACTIONS: dict[str, str] = {"BUY": "long", "SHORT": "short"}
 _CONVICTION_OUTCOME_MIN_N = 20
 
 
-
 class TradeAnalytics:
     """Reads trade/report rows and computes calibration and reporting numbers."""
 
@@ -102,12 +102,11 @@ class TradeAnalytics:
         with self._lock:
             if date:
                 row = self.conn.execute(
-                    "SELECT * FROM evening_reports WHERE date = ?", (date,),
+                    "SELECT * FROM evening_reports WHERE date = ?",
+                    (date,),
                 ).fetchone()
             else:
-                row = self.conn.execute(
-                    "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
-                ).fetchone()
+                row = self.conn.execute("SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1").fetchone()
         if not row:
             return None
         record = dict(row)
@@ -210,8 +209,8 @@ class TradeAnalytics:
                 ).fetchone()
             else:
                 row = self.conn.execute(
-                    "SELECT * FROM session_reports WHERE mode = ? "
-                    "ORDER BY date DESC LIMIT 1", (mode,),
+                    "SELECT * FROM session_reports WHERE mode = ? ORDER BY date DESC LIMIT 1",
+                    (mode,),
                 ).fetchone()
         if not row:
             return None
@@ -221,7 +220,8 @@ class TradeAnalytics:
         except (TypeError, ValueError):
             logger.error(
                 "session_reports row for %s/%s has unreadable payload_json",
-                record.get("mode"), record.get("date"),
+                record.get("mode"),
+                record.get("date"),
             )
             return None
         if not isinstance(payload, dict):
@@ -243,8 +243,7 @@ class TradeAnalytics:
             "positions": positions,
         }
 
-    def get_intra_check_report(self, run_id: str | None = None,
-                               date: str | None = None) -> dict | None:
+    def get_intra_check_report(self, run_id: str | None = None, date: str | None = None) -> dict | None:
         """One stored intra_check tick.
 
         `run_id` selects a specific tick. Otherwise `date` (or, absent
@@ -266,13 +265,12 @@ class TradeAnalytics:
                 # (`datetime('now')`) — two ticks in the same second must
                 # still resolve to insertion order, not an arbitrary one.
                 row = self.conn.execute(
-                    "SELECT * FROM intra_check_reports WHERE date = ? "
-                    "ORDER BY timestamp DESC, rowid DESC LIMIT 1", (date,),
+                    "SELECT * FROM intra_check_reports WHERE date = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1",
+                    (date,),
                 ).fetchone()
             else:
                 row = self.conn.execute(
-                    "SELECT * FROM intra_check_reports "
-                    "ORDER BY timestamp DESC, rowid DESC LIMIT 1"
+                    "SELECT * FROM intra_check_reports ORDER BY timestamp DESC, rowid DESC LIMIT 1"
                 ).fetchone()
         if not row:
             return None
@@ -312,9 +310,7 @@ class TradeAnalytics:
         row IS the reset baseline — never reconstructed from the archive.
         """
         with self._lock:
-            row = self.conn.execute(
-                "SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1"
-            ).fetchone()
+            row = self.conn.execute("SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1").fetchone()
         return dict(row) if row else None
 
     def get_daily_pnl(self, limit: int = 30, before_date: str | None = None) -> list[dict]:
@@ -331,10 +327,7 @@ class TradeAnalytics:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_symbol_last_buy(self, symbol: str,
-                            include_in_flight: bool = False,
-                            *,
-                            action: str = "BUY") -> dict | None:
+    def get_symbol_last_buy(self, symbol: str, include_in_flight: bool = False, *, action: str = "BUY") -> dict | None:
         """Most recent executed opening row for a symbol.
 
         Default `action='BUY'` is the PM-memory contract and must not start
@@ -363,7 +356,8 @@ class TradeAnalytics:
         if opening not in _POSITION_OPEN_ACTIONS:
             logger.warning(
                 "get_symbol_last_buy: refusing unknown opening action %r for %s",
-                action, symbol,
+                action,
+                symbol,
             )
             return None
         predicate = self._executed_trade_predicate()
@@ -606,6 +600,7 @@ class TradeAnalytics:
                 "ORDER BY timestamp",
             ).fetchall()
         from collections import defaultdict
+
         # FIFO queue of open BUY lots per symbol (long side).
         open_lots: dict[str, list[dict]] = defaultdict(list)
         # FIFO queue of open SHORT lots per symbol (Stage 3, short side) —
@@ -637,18 +632,29 @@ class TradeAnalytics:
                 "decision_model": row["decision_model"],
             }
             if act == "BUY":
-                open_lots[sym].append({
-                    "qty": qty, "price": price, "ts": ts, **entry_facts,
-                })
+                open_lots[sym].append(
+                    {
+                        "qty": qty,
+                        "price": price,
+                        "ts": ts,
+                        **entry_facts,
+                    }
+                )
             elif act == "SHORT":
-                open_short_lots[sym].append({
-                    "qty": qty, "price": price, "ts": ts, **entry_facts,
-                })
-            elif (act.startswith("SELL") or act.startswith("PARTIAL_SELL")
-                  or act in ("EMERGENCY_SELL", "FORCE_DELEVER",
-                             "REDUCE", "TAKE_PROFIT", "STOP_OUT",
-                             "RECONCILED_EXIT")
-                  or _is_filled_trail_stop(row, act)):
+                open_short_lots[sym].append(
+                    {
+                        "qty": qty,
+                        "price": price,
+                        "ts": ts,
+                        **entry_facts,
+                    }
+                )
+            elif (
+                act.startswith("SELL")
+                or act.startswith("PARTIAL_SELL")
+                or act in ("EMERGENCY_SELL", "FORCE_DELEVER", "REDUCE", "TAKE_PROFIT", "STOP_OUT", "RECONCILED_EXIT")
+                or _is_filled_trail_stop(row, act)
+            ):
                 # RECONCILED_EXIT (item 173(a)) is, like STOP_OUT, written by
                 # _reconcile_stop_out_fills ONLY after the broker confirmed the
                 # fill — every such row that exists is a realized close, so it
@@ -700,23 +706,24 @@ class TradeAnalytics:
                         if lot["qty"] <= 1e-9:
                             lots.pop(0)
                         continue
-                    closed.append({
-                        "symbol": sym,
-                        "side": "long",
-                        "return_pct": ret_pct,
-                        "hold_days": hold_days,
-                        "entry_usd": entry_usd,
-                        "conviction": lot.get("conviction"),
-                        "allocated_risk_pct": lot.get("allocated_risk_pct"),
-                        "requested_risk_pct": lot.get("requested_risk_pct"),
-                        "decision_model": lot.get("decision_model"),
-                    })
+                    closed.append(
+                        {
+                            "symbol": sym,
+                            "side": "long",
+                            "return_pct": ret_pct,
+                            "hold_days": hold_days,
+                            "entry_usd": entry_usd,
+                            "conviction": lot.get("conviction"),
+                            "allocated_risk_pct": lot.get("allocated_risk_pct"),
+                            "requested_risk_pct": lot.get("requested_risk_pct"),
+                            "decision_model": lot.get("decision_model"),
+                        }
+                    )
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
                         lots.pop(0)
                     remaining -= closed_qty
-            elif (act in ("COVER", "EMERGENCY_COVER")
-                  or act.startswith("PARTIAL_COVER")):
+            elif act in ("COVER", "EMERGENCY_COVER") or act.startswith("PARTIAL_COVER"):
                 # Stage 3: the short-side twin of the SELL-family block
                 # above, against the SEPARATE short-lot queue. Only the
                 # return sign differs — a short profits when price FALLS,
@@ -736,10 +743,7 @@ class TradeAnalytics:
                     # 100`: a short's profit is (entry - exit), so its
                     # return is expressed relative to the entry the SAME
                     # way, just with entry and exit swapped.
-                    ret_pct = (
-                        (lot["price"] - price) / lot["price"] * 100
-                        if lot["price"] > 0 else 0
-                    )
+                    ret_pct = (lot["price"] - price) / lot["price"] * 100 if lot["price"] > 0 else 0
                     entry_usd = closed_qty * lot["price"]
                     try:
                         cover_age_days = (datetime.utcnow() - cover_dt).days
@@ -751,17 +755,19 @@ class TradeAnalytics:
                         if lot["qty"] <= 1e-9:
                             lots.pop(0)
                         continue
-                    closed.append({
-                        "symbol": sym,
-                        "side": "short",
-                        "return_pct": ret_pct,
-                        "hold_days": hold_days,
-                        "entry_usd": entry_usd,
-                        "conviction": lot.get("conviction"),
-                        "allocated_risk_pct": lot.get("allocated_risk_pct"),
-                        "requested_risk_pct": lot.get("requested_risk_pct"),
-                        "decision_model": lot.get("decision_model"),
-                    })
+                    closed.append(
+                        {
+                            "symbol": sym,
+                            "side": "short",
+                            "return_pct": ret_pct,
+                            "hold_days": hold_days,
+                            "entry_usd": entry_usd,
+                            "conviction": lot.get("conviction"),
+                            "allocated_risk_pct": lot.get("allocated_risk_pct"),
+                            "requested_risk_pct": lot.get("requested_risk_pct"),
+                            "decision_model": lot.get("decision_model"),
+                        }
+                    )
                     lot["qty"] -= closed_qty
                     if lot["qty"] <= 1e-9:
                         lots.pop(0)
@@ -792,9 +798,7 @@ class TradeAnalytics:
             avg_win = sum(win_returns) / len(win_returns) if win_returns else None
             avg_loss = sum(loss_returns) / len(loss_returns) if loss_returns else None
             avg_win_loss_ratio = (
-                round(avg_win / abs(avg_loss), 2)
-                if avg_win is not None and avg_loss not in (None, 0)
-                else None
+                round(avg_win / abs(avg_loss), 2) if avg_win is not None and avg_loss not in (None, 0) else None
             )
             return {
                 "n": n,
@@ -892,14 +896,13 @@ class TradeAnalytics:
             "lookback_days": lookback_days,
         }
 
-    def get_recent_agent_outputs(self, agent_name: str, limit: int = 5,
-                                 before_date: str | None = None) -> list[dict]:
+    def get_recent_agent_outputs(self, agent_name: str, limit: int = 5, before_date: str | None = None) -> list[dict]:
         """Thin shim: lifted into `src.storage.analytics.agent_log_reads`,
         which also exposes the pre-cut candidate COUNT the prompt builders
         need. One definition of the ET-to-UTC predicate, there."""
-        return recent_agent_outputs(conn=self.conn, lock=self._lock,
-                                    agent_name=agent_name, limit=limit,
-                                    before_date=before_date)
+        return recent_agent_outputs(
+            conn=self.conn, lock=self._lock, agent_name=agent_name, limit=limit, before_date=before_date
+        )
 
     def get_latest_insights(self, before_date: str | None = None) -> dict | None:
         if before_date:

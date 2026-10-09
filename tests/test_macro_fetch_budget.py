@@ -171,9 +171,9 @@ def test_second_class_work_may_only_draw_on_the_surplus():
 
 def test_backoff_doubles_then_caps_then_takes_its_jitter():
     budget, _ = build(jitter=lambda width: width)
-    assert budget.next_backoff(0) == 3.0   # 2 + 1 jitter
-    assert budget.next_backoff(1) == 5.0   # 4 + 1
-    assert budget.next_backoff(2) == 9.0   # capped at 8, + 1
+    assert budget.next_backoff(0) == 3.0  # 2 + 1 jitter
+    assert budget.next_backoff(1) == 5.0  # 4 + 1
+    assert budget.next_backoff(2) == 9.0  # capped at 8, + 1
     assert budget.next_backoff(5) == 9.0
 
 

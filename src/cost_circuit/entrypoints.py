@@ -1,4 +1,5 @@
 """src.cost_circuit.entrypoints -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -31,7 +32,9 @@ def activate_paid_call_session(
         resolved_db_path = str(resolved)
     try:
         breaker = LLMCostCircuitBreaker(
-            resolved_db_path, app_config.llm_cost_circuit, notifier=notifier,
+            resolved_db_path,
+            app_config.llm_cost_circuit,
+            notifier=notifier,
         )
     except Exception as exc:
         breaker = LLMCostCircuitBreaker.fail_closed(
@@ -45,6 +48,7 @@ def activate_paid_call_session(
         )
     try:
         from src.cost_table import refresh_openrouter_pricing
+
         # Pricing-staleness SPOF fix (2026-08-28): pass the configured grace
         # window/multiplier through explicitly so a stale-but-recent cache
         # is used (widened, logged loudly) instead of latching this whole
@@ -54,13 +58,15 @@ def activate_paid_call_session(
             grace_period_hours=float(
                 getattr(
                     app_config.llm_cost_circuit,
-                    "openrouter_pricing_grace_period_hours", 0.0,
+                    "openrouter_pricing_grace_period_hours",
+                    0.0,
                 )
             ),
             max_stale_multiplier=float(
                 getattr(
                     app_config.llm_cost_circuit,
-                    "openrouter_pricing_stale_multiplier_max", 1.0,
+                    "openrouter_pricing_stale_multiplier_max",
+                    1.0,
                 )
             ),
         )
@@ -75,10 +81,7 @@ def activate_paid_call_session(
     else:
         if not pricing_ok:
             breaker.mark_unavailable(
-                RuntimeError(
-                    "current official OpenRouter pricing is unavailable; "
-                    "paid calls cannot be bounded safely"
-                ),
+                RuntimeError("current official OpenRouter pricing is unavailable; paid calls cannot be bounded safely"),
                 run_id=run_id,
                 mode=mode,
                 agent_name="pricing_preflight",
@@ -95,6 +98,7 @@ def activate_paid_call_session(
         )
     return breaker
 
+
 def protect_paid_agent(
     agent: Any,
     app_config: Any,
@@ -107,8 +111,11 @@ def protect_paid_agent(
     """Activate one operator-tool session and attach it to a BaseAgent."""
 
     breaker = activate_paid_call_session(
-        app_config, run_id=run_id, mode=mode,
-        notifier=notifier, db_path=db_path,
+        app_config,
+        run_id=run_id,
+        mode=mode,
+        notifier=notifier,
+        db_path=db_path,
     )
     agent.set_cost_circuit(breaker)
     breaker.require_paid_analysis(f"{mode}_start")

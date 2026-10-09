@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_state.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import logging
 import sqlite3
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 class CircuitState:
     def __init__(
-        self, *,
+        self,
+        *,
         config,
         context,
         emergency_latch_path,
@@ -42,8 +44,7 @@ class CircuitState:
         item 14 (2026-09-02) deleted the reservation layer entirely."""
 
         day_row = conn.execute(
-            "SELECT baseline_cost_usd + incremental_cost_usd AS cost "
-            "FROM llm_budget_days WHERE day = ?", (day,)
+            "SELECT baseline_cost_usd + incremental_cost_usd AS cost FROM llm_budget_days WHERE day = ?", (day,)
         ).fetchone()
         session_row = conn.execute(
             "SELECT actual_cost_usd FROM llm_budget_sessions WHERE run_id = ?", (run_id,)
@@ -55,9 +56,7 @@ class CircuitState:
         return daily, session
 
     def _state_row(self, conn: sqlite3.Connection) -> dict[str, Any]:
-        row = conn.execute(
-            "SELECT * FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()
+        row = conn.execute("SELECT * FROM llm_circuit_state WHERE singleton=1").fetchone()
         if row is None:
             raise RuntimeError("cost-circuit singleton state row is missing")
         return dict(row)
@@ -109,7 +108,10 @@ class CircuitState:
             )
             return state
         hold = self._active_quota_hold_locked(
-            conn, day=day, run_id=run_id, mode=mode,
+            conn,
+            day=day,
+            run_id=run_id,
+            mode=mode,
         )
         if hold is None:
             state.update(
@@ -208,10 +210,7 @@ class CircuitState:
         code = state.get("trigger_code")
         if code not in _SELF_CLEARING_HARD_TRIGGERS:
             return False
-        if (
-            self._emergency_latch_path is not None
-            and self._emergency_latch_path.exists()
-        ):
+        if self._emergency_latch_path is not None and self._emergency_latch_path.exists():
             return False
 
         suspended_at = state.get("suspended_at")
@@ -232,8 +231,7 @@ class CircuitState:
         failed_call_rows = 0
         for day in sorted(spanned_days):
             day_row = conn.execute(
-                "SELECT unknown_cost_rows, failed_call_unknown_rows "
-                "FROM llm_budget_days WHERE day=?",
+                "SELECT unknown_cost_rows, failed_call_unknown_rows FROM llm_budget_days WHERE day=?",
                 (day,),
             ).fetchone()
             if day_row is None:
@@ -254,28 +252,25 @@ class CircuitState:
             (suspended_at,),
         ).fetchone()
         elapsed = elapsed_row["minutes"] if elapsed_row is not None else None
-        cooldown = float(
-            getattr(self.config, "transient_latch_cooldown_minutes", 15.0)
-        )
+        cooldown = float(getattr(self.config, "transient_latch_cooldown_minutes", 15.0))
         if elapsed is None or float(elapsed) < cooldown:
             return False
 
         _, utc_start, utc_end = _et_day_and_utc_bounds()
         already = conn.execute(
-            "SELECT COUNT(*) AS n FROM llm_circuit_events "
-            "WHERE event_type='auto_reset' AND created_at BETWEEN ? AND ?",
+            "SELECT COUNT(*) AS n FROM llm_circuit_events WHERE event_type='auto_reset' AND created_at BETWEEN ? AND ?",
             (utc_start, utc_end),
         ).fetchone()
-        allowance = int(
-            getattr(self.config, "max_transient_latch_auto_clears_per_day", 14)
-        )
+        allowance = int(getattr(self.config, "max_transient_latch_auto_clears_per_day", 14))
         used = int(already["n"] if already else 0)
         if used >= allowance:
             logger.error(
                 "cost-circuit refusing to auto-clear %s: %d auto-clear(s) "
                 "already used today of an allowance of %d. A fault recurring "
                 "this often is not transient; an operator must look.",
-                code, used, allowance,
+                code,
+                used,
+                allowance,
             )
             return False
 
@@ -301,9 +296,13 @@ class CircuitState:
             "session_cost_usd, daily_cost_usd, suspension_alert_state) VALUES "
             "('auto_reset', ?, ?, ?, ?, 'transient_latch_expiry', ?, ?, ?, ?)",
             (
-                code, reason, run_id, mode,
+                code,
+                reason,
+                run_id,
+                mode,
                 int(state.get("session_attempts") or 0),
-                session_cost, daily,
+                session_cost,
+                daily,
                 # Item 174 pairing: capture whether the owner actually received
                 # the "SUSPENDED" note BEFORE the UPDATE below resets
                 # alert_state to 0. After that write the answer is gone, and
@@ -323,9 +322,7 @@ class CircuitState:
             (reason,),
         )
         if updated_state.rowcount != 1:
-            raise RuntimeError(
-                "cost-circuit singleton could not be auto-cleared"
-            )
+            raise RuntimeError("cost-circuit singleton could not be auto-cleared")
         if failed_call_rows:
             # Exactly the operator-reset treatment, and for the same reason
             # (see `reset`): the recorded AMOUNT is untouched, only the
@@ -358,6 +355,8 @@ class CircuitState:
                 (current_day,),
             )
         logger.warning(
-            "cost-circuit auto-cleared hard latch %s: %s", code, reason,
+            "cost-circuit auto-cleared hard latch %s: %s",
+            code,
+            reason,
         )
         return True

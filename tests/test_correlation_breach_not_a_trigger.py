@@ -58,6 +58,7 @@ CORRELATION_PHRASINGS = (
 # 1 + 2. The phrase is gone from both vocabularies
 # ---------------------------------------------------------------------------
 
+
 def test_phrase_is_absent_from_the_hard_trigger_vocabulary():
     joined = " ".join(_HARD_TRIGGER_KEYWORDS).lower()
     assert "correlation" not in joined
@@ -103,36 +104,43 @@ def test_correlation_claim_is_invisible_to_the_holding_discipline_checker():
 # 3. Nothing else was narrowed
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("reason", [
-    "thesis_invalid triggered: closed below MA50",
-    "thesis broken on the daily chart",
-    "adverse news: FDA rejection this morning",
-    "material news landed after the open",
-    "sector shock — the whole group gapped down",
-    "high-conviction bearish state change posted today",
-    "bearish earnings, revenue missed by 8%",
-    "earnings miss on both lines",
-    "guidance cut for the full year",
-    "macro regime shift to risk-off today",
-    "regime flip confirmed this morning",
-    # "daily loss circuit breaker fired" was in this list until 2026-09-20,
-    # when the account-level loss alarm it named was removed in full
-    # (WORK.md item 32). It moved to the rejected list below, for the first
-    # of the two reasons this file's own docstring gives for correlation
-    # breach: nothing in the desk computes that event any more.
-    "stopped out at the broker",
-])
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "thesis_invalid triggered: closed below MA50",
+        "thesis broken on the daily chart",
+        "adverse news: FDA rejection this morning",
+        "material news landed after the open",
+        "sector shock — the whole group gapped down",
+        "high-conviction bearish state change posted today",
+        "bearish earnings, revenue missed by 8%",
+        "earnings miss on both lines",
+        "guidance cut for the full year",
+        "macro regime shift to risk-off today",
+        "regime flip confirmed this morning",
+        # "daily loss circuit breaker fired" was in this list until 2026-09-20,
+        # when the account-level loss alarm it named was removed in full
+        # (WORK.md item 32). It moved to the rejected list below, for the first
+        # of the two reasons this file's own docstring gives for correlation
+        # breach: nothing in the desk computes that event any more.
+        "stopped out at the broker",
+    ],
+)
 def test_every_other_trigger_still_passes(reason):
     assert _reason_cites_hard_trigger(reason) is True, reason
 
 
-@pytest.mark.parametrize("reason", [
-    "adverse news: FDA rejection this morning",
-    "bearish earnings, revenue missed",
-    "macro regime flip to risk-off",
-    "sector shock hit the whole group",
-    "stopped out at the broker",
-])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "adverse news: FDA rejection this morning",
+        "bearish earnings, revenue missed",
+        "macro regime flip to risk-off",
+        "sector shock hit the whole group",
+        "stopped out at the broker",
+    ],
+)
 def test_other_external_information_still_bypasses_the_noise_band(reason):
     assert cites_external_information(reason) is True, reason
 
@@ -140,6 +148,7 @@ def test_other_external_information_still_bypasses_the_noise_band(reason):
 # ---------------------------------------------------------------------------
 # 4. The case that used to slip through, end to end
 # ---------------------------------------------------------------------------
+
 
 def test_midday_sell_on_correlation_breach_alone_is_now_dropped():
     """Verbatim the free exit item 44 describes. Before this change the
@@ -149,32 +158,39 @@ def test_midday_sell_on_correlation_breach_alone_is_now_dropped():
     from src.models import Position, PositionAction, PositionReview
 
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="AMZN",
-            reason="correlation breach: three names now move as one cluster",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="AMZN",
+                reason="correlation breach: three names now move as one cluster",
+            )
+        ],
         overall_assessment="de-risking the cluster",
         risk_level="high",
     )
 
     orders = pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-44",
+        positions=[position],
+        review=review,
+        run_id="r-44",
     )
 
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
     pipeline.db.insert_trade.assert_not_called()
-    statuses = [
-        c.kwargs.get("status")
-        for c in pipeline.db.record_intraday_evaluation.call_args_list
-    ]
+    statuses = [c.kwargs.get("status") for c in pipeline.db.record_intraday_evaluation.call_args_list]
     assert "exit_blocked_no_named_trigger" in statuses
 
 
@@ -186,23 +202,33 @@ def test_midday_sell_still_executes_on_a_verifiable_trigger():
     from src.models import Position, PositionAction, PositionReview
 
     position = Position(
-        symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,
-        market_value=4200.0, unrealized_pnl=600.0,
-        unrealized_intraday_pnl=0.0, sector="Consumer Cyclical",
+        symbol="AMZN",
+        qty=20.0,
+        avg_entry=180.0,
+        current_price=210.0,
+        market_value=4200.0,
+        unrealized_pnl=600.0,
+        unrealized_intraday_pnl=0.0,
+        sector="Consumer Cyclical",
     )
     pipeline = _mk_midday_pipeline(position)
     review = PositionReview(
         reasoning_chain=_review_rc(),
-        actions=[PositionAction(
-            action="SELL", symbol="AMZN",
-            reason="thesis_invalid_if triggered — guidance cut on the call",
-        )],
+        actions=[
+            PositionAction(
+                action="SELL",
+                symbol="AMZN",
+                reason="thesis_invalid_if triggered — guidance cut on the call",
+            )
+        ],
         overall_assessment="exit on broken thesis",
         risk_level="high",
     )
 
     pipeline._midday_execute_llm_actions(
-        positions=[position], review=review, run_id="r-44b",
+        positions=[position],
+        review=review,
+        run_id="r-44b",
     )
 
     pipeline.broker.submit_order.assert_called()

@@ -26,6 +26,7 @@ deletion site, and nothing else. Then run this test; every hit it reports is
 a sentence you have to correct or delete. Do NOT widen `allowed` to make the
 test pass; widening it is the failure this file exists to catch.
 """
+
 from __future__ import annotations
 
 import re
@@ -41,7 +42,10 @@ SEARCH_ROOTS = (ROOT / "src", ROOT / "config" / "prompts", ROOT / "scripts", ROO
 
 class DeletedMechanism:
     def __init__(
-        self, label: str, patterns: tuple[str, ...], allowed: tuple[str, ...],
+        self,
+        label: str,
+        patterns: tuple[str, ...],
+        allowed: tuple[str, ...],
         why: str,
     ) -> None:
         self.label = label
@@ -135,4 +139,3 @@ def test_a_deleted_mechanism_is_not_described_as_live(mech: DeletedMechanism) ->
         + "\n\nCorrect or delete each line. Do NOT add it to `allowed` "
         "unless the line is a tombstone recording the deletion."
     )
-

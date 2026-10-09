@@ -44,13 +44,19 @@ def _risk_config() -> RiskConfig:
 def test_invariant_orders_cannot_breach_position_cap():
     engine = RiskRuleEngine(_risk_config())
     decision = TradeDecision(
-        action="BUY", symbol="NVDA",
+        action="BUY",
+        symbol="NVDA",
         allocation_pct=25.0,  # 25% — breaches 15% position cap
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="pathological oversized",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=100_000.0,)
+        decision=decision,
+        positions=[],
+        total_value=100_000.0,
+    )
     rule_names = {v.rule for v in violations}
     assert "max_position_pct" in rule_names
     assert "max_position_pct" in HARD_BLOCK_RULES
@@ -64,19 +70,28 @@ def test_invariant_hard_risk_stage_drops_breaching_buy():
     pipeline.config.trading.universe = ["NVDA"]
 
     bad = TradeDecision(
-        action="BUY", symbol="NVDA",
+        action="BUY",
+        symbol="NVDA",
         allocation_pct=25.0,  # over 15% cap
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="pathological",
     )
     ok = TradeDecision(
-        action="BUY", symbol="AAPL",
+        action="BUY",
+        symbol="AAPL",
         allocation_pct=5.0,
-        entry_price=180.0, stop_loss=170.0, take_profit=200.0,
+        entry_price=180.0,
+        stop_loss=170.0,
+        take_profit=200.0,
         reasoning="fine",
     )
     allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [bad, ok], positions=[], total_value=100_000.0,)
+        [bad, ok],
+        positions=[],
+        total_value=100_000.0,
+    )
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols
     assert "AAPL" in allowed_symbols
@@ -105,19 +120,28 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
     pipeline.config.llm = "not-a-config-object-and-has-no-provider-field"
 
     bad = TradeDecision(
-        action="BUY", symbol="NVDA",
+        action="BUY",
+        symbol="NVDA",
         allocation_pct=25.0,  # over 15% cap
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="pathological",
     )
     ok = TradeDecision(
-        action="BUY", symbol="AAPL",
+        action="BUY",
+        symbol="AAPL",
         allocation_pct=5.0,
-        entry_price=180.0, stop_loss=170.0, take_profit=200.0,
+        entry_price=180.0,
+        stop_loss=170.0,
+        take_profit=200.0,
         reasoning="fine",
     )
     allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-        [bad, ok], positions=[], total_value=100_000.0,)
+        [bad, ok],
+        positions=[],
+        total_value=100_000.0,
+    )
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols
     assert "AAPL" in allowed_symbols
@@ -153,22 +177,20 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     """
     import inspect
     from src.risk.rules import RiskRuleEngine as _Engine
+
     sig = inspect.signature(_Engine.__init__)
     params = sig.parameters
 
-    positional = [
-        name for name, p in params.items()
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
+    positional = [name for name, p in params.items() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
     assert positional == ["self", "config"], (
         "RiskRuleEngine must take exactly one positional config object "
         "(RiskConfig); widening this to also accept llm/provider config "
         "would create a path from Stage 1's provider plumbing into hard "
         "risk math"
     )
-    assert not any(
-        p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params.values()
-    ), "*args/**kwargs would let anything at all reach the risk engine"
+    assert not any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params.values()), (
+        "*args/**kwargs would let anything at all reach the risk engine"
+    )
 
     extra = set(params) - {"self", "config"}
     assert extra <= _ENGINE_ALLOWED_KEYWORD_ARGS, (
@@ -180,8 +202,7 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     )
     for name in extra:
         assert params[name].kind == params[name].KEYWORD_ONLY, (
-            f"`{name}` must be keyword-only so it can never be passed by "
-            f"position where a config object is expected"
+            f"`{name}` must be keyword-only so it can never be passed by position where a config object is expected"
         )
         assert params[name].default is None, (
             f"`{name}` must default to None: an engine built with a config "
@@ -195,18 +216,23 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
             # is about MODEL providers, so match on the narrower tokens.
             continue
         assert not any(token in name for token in forbidden), (
-            f"`{name}` names model/provider plumbing — it must not reach "
-            f"deterministic risk math"
+            f"`{name}` names model/provider plumbing — it must not reach deterministic risk math"
         )
 
 
 # ---------------------------------------------------------------------------
 # Invariant 2: Non-trading days short-circuit every entry point.
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("method_name", [
-    "run_morning", "run_midday", "run_evening",
-    "run_earnings_preprocess", "run_intra_check",
-])
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "run_morning",
+        "run_midday",
+        "run_evening",
+        "run_earnings_preprocess",
+        "run_intra_check",
+    ],
+)
 def test_invariant_non_trading_day_blocks_every_entry_point(method_name, tmp_path):
     pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
@@ -217,9 +243,7 @@ def test_invariant_non_trading_day_blocks_every_entry_point(method_name, tmp_pat
     pipeline.config.trading.universe = []
 
     result = getattr(pipeline, method_name)()
-    assert result["status"] == "market_holiday", (
-        f"{method_name} should short-circuit on non-trading days"
-    )
+    assert result["status"] == "market_holiday", f"{method_name} should short-circuit on non-trading days"
     # Nothing should hit the broker beyond the calendar probe.
     pipeline.broker.get_account.assert_not_called()
     pipeline.broker.submit_order.assert_not_called()
@@ -254,7 +278,9 @@ def test_invariant_evening_snapshot_is_idempotent(tmp_path):
     for _ in range(3):
         db.save_evening_snapshot(
             date="2026-04-17",
-            total_value=100_000.0, daily_pnl=500.0, daily_return_pct=0.5,
+            total_value=100_000.0,
+            daily_pnl=500.0,
+            daily_return_pct=0.5,
             tomorrow_outlook="stable",
             lessons="fine",
             suggested_actions=[],
@@ -282,18 +308,43 @@ def test_invariant_unfilled_buys_are_invisible_to_pm_memory(tmp_path):
     # Legacy — NULL fill_status, treated as filled for back-compat.
     db.insert_trade("NVDA", "BUY", 10, 100.0, "legacy", "r1", stop_loss=90.0)
     # Submitted-only, never filled — MUST NOT count as a current buy.
-    db.insert_trade("NVDA", "BUY", 20, 105.0, "submitted", "r2",
-                    broker_order_id="ord-submit", fill_status="submitted", stop_loss=90.0)
+    db.insert_trade(
+        "NVDA",
+        "BUY",
+        20,
+        105.0,
+        "submitted",
+        "r2",
+        broker_order_id="ord-submit",
+        fill_status="submitted",
+        stop_loss=90.0,
+    )
     # Fully canceled with zero partial fill — invisible.
-    db.insert_trade("NVDA", "BUY", 15, 103.0, "canceled", "r3",
-                    broker_order_id="ord-cancel", fill_status="submitted", stop_loss=90.0)
-    db.update_trade_fill("ord-cancel", fill_status="canceled",
-                         fill_qty=0.0, fill_price=0.0)
+    db.insert_trade(
+        "NVDA",
+        "BUY",
+        15,
+        103.0,
+        "canceled",
+        "r3",
+        broker_order_id="ord-cancel",
+        fill_status="submitted",
+        stop_loss=90.0,
+    )
+    db.update_trade_fill("ord-cancel", fill_status="canceled", fill_qty=0.0, fill_price=0.0)
     # Rejected — invisible.
-    db.insert_trade("NVDA", "BUY", 12, 104.0, "rejected", "r4",
-                    broker_order_id="ord-reject", fill_status="submitted", stop_loss=90.0)
-    db.update_trade_fill("ord-reject", fill_status="rejected",
-                         fill_qty=0.0, fill_price=0.0)
+    db.insert_trade(
+        "NVDA",
+        "BUY",
+        12,
+        104.0,
+        "rejected",
+        "r4",
+        broker_order_id="ord-reject",
+        fill_status="submitted",
+        stop_loss=90.0,
+    )
+    db.update_trade_fill("ord-reject", fill_status="rejected", fill_qty=0.0, fill_price=0.0)
 
     last = db.get_symbol_last_buy("NVDA")
     # Newest visible row is the legacy NULL one — everything else either
@@ -309,10 +360,10 @@ def test_invariant_partial_fill_on_canceled_order_preserved(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    db.insert_trade("AAPL", "BUY", 10, 180.0, "partial", "r1",
-                    broker_order_id="ord-part", fill_status="submitted", stop_loss=90.0)
-    db.update_trade_fill(broker_order_id="ord-part", fill_status="canceled",
-                         fill_qty=3.0, fill_price=180.5)
+    db.insert_trade(
+        "AAPL", "BUY", 10, 180.0, "partial", "r1", broker_order_id="ord-part", fill_status="submitted", stop_loss=90.0
+    )
+    db.update_trade_fill(broker_order_id="ord-part", fill_status="canceled", fill_qty=3.0, fill_price=180.5)
 
     row = db.get_symbol_last_buy("AAPL")
     assert row is not None
@@ -326,34 +377,32 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
     db.initialize()
 
     # Three legitimate closed pairs (needed: n_closed >= 3).
-    for sym, entry, exit_, days_back in (("NVDA", 100.0, 110.0, (10, 5)),
-                                          ("JPM", 180.0, 195.0, (7, 2)),
-                                          ("MSFT", 300.0, 310.0, (12, 3))):
-        db.insert_trade(sym, "BUY", 10, entry, "x", "r1",
-                        broker_order_id=f"buy-{sym}", fill_status="filled", stop_loss=90.0)
+    for sym, entry, exit_, days_back in (
+        ("NVDA", 100.0, 110.0, (10, 5)),
+        ("JPM", 180.0, 195.0, (7, 2)),
+        ("MSFT", 300.0, 310.0, (12, 3)),
+    ):
+        db.insert_trade(
+            sym, "BUY", 10, entry, "x", "r1", broker_order_id=f"buy-{sym}", fill_status="filled", stop_loss=90.0
+        )
         db.conn.execute(
-            "UPDATE trades SET timestamp = datetime('now', ?) "
-            "WHERE broker_order_id=?",
+            "UPDATE trades SET timestamp = datetime('now', ?) WHERE broker_order_id=?",
             (f"-{days_back[0]} days", f"buy-{sym}"),
         )
-        db.insert_trade(sym, "SELL", 10, exit_, "x", "r2",
-                        broker_order_id=f"sell-{sym}", fill_status="filled")
+        db.insert_trade(sym, "SELL", 10, exit_, "x", "r2", broker_order_id=f"sell-{sym}", fill_status="filled")
         db.conn.execute(
-            "UPDATE trades SET timestamp = datetime('now', ?) "
-            "WHERE broker_order_id=?",
+            "UPDATE trades SET timestamp = datetime('now', ?) WHERE broker_order_id=?",
             (f"-{days_back[1]} days", f"sell-{sym}"),
         )
     db.conn.commit()
 
     # Poisoning pair — rejected order that should NOT pollute calibration.
-    db.insert_trade("TSLA", "BUY", 10, 250.0, "x", "r1",
-                    broker_order_id="buy-bad", fill_status="submitted", stop_loss=90.0)
-    db.update_trade_fill("buy-bad", fill_status="rejected",
-                         fill_qty=0.0, fill_price=0.0)
-    db.insert_trade("TSLA", "SELL", 10, 200.0, "x", "r2",
-                    broker_order_id="sell-bad", fill_status="submitted")
-    db.update_trade_fill("sell-bad", fill_status="rejected",
-                         fill_qty=0.0, fill_price=0.0)
+    db.insert_trade(
+        "TSLA", "BUY", 10, 250.0, "x", "r1", broker_order_id="buy-bad", fill_status="submitted", stop_loss=90.0
+    )
+    db.update_trade_fill("buy-bad", fill_status="rejected", fill_qty=0.0, fill_price=0.0)
+    db.insert_trade("TSLA", "SELL", 10, 200.0, "x", "r2", broker_order_id="sell-bad", fill_status="submitted")
+    db.update_trade_fill("sell-bad", fill_status="rejected", fill_qty=0.0, fill_price=0.0)
 
     stats = db.compute_trade_calibration(lookback_days=30)
     # 3 legitimate wins, rejected pair excluded → 100% win-rate, n=3.
@@ -374,11 +423,11 @@ def test_invariant_utc_midnight_boundary_attributes_to_et_trading_day(tmp_path):
 
     # Insert a trade at 03:00 UTC on 2026-04-18 (= 23:00 ET on 2026-04-17).
     # Manually set the timestamp so we're not at the mercy of wall clock.
-    db.insert_trade("NVDA", "BUY", 10, 100.0, "boundary", "r1",
-                    broker_order_id="ord-boundary", fill_status="filled", stop_loss=90.0)
+    db.insert_trade(
+        "NVDA", "BUY", 10, 100.0, "boundary", "r1", broker_order_id="ord-boundary", fill_status="filled", stop_loss=90.0
+    )
     db.conn.execute(
-        "UPDATE trades SET timestamp = '2026-04-18 03:00:00' "
-        "WHERE broker_order_id = 'ord-boundary'",
+        "UPDATE trades SET timestamp = '2026-04-18 03:00:00' WHERE broker_order_id = 'ord-boundary'",
     )
     db.conn.commit()
 
@@ -424,12 +473,14 @@ def test_invariant_session_date_key_stable_across_host_tz():
 # behavior changed correctly, these prove the boundaries did NOT.
 # ---------------------------------------------------------------------------
 
+
 def test_invariant_alpaca_remains_paper_only():
     """No change in this tranche may make a live-trading config loadable."""
     from src.config import AlpacaConfig
 
     base = {
-        "api_key": "k", "secret_key": "s",
+        "api_key": "k",
+        "secret_key": "s",
         "base_url": "https://paper-api.alpaca.markets",
     }
     with pytest.raises(ValueError, match="paper must be true"):
@@ -442,18 +493,26 @@ def test_invariant_cash_only_no_margin_still_enforced_on_deployable_cash():
     cash — and now it evaluates against the truthful deployable figure, so
     SGOV's parked value can no longer be what makes a BUY 'affordable'."""
     cfg = RiskConfig(
-        max_position_pct=100.0, max_total_position_pct=100.0,
+        max_position_pct=100.0,
+        max_total_position_pct=100.0,
         max_sector_pct=100.0,
-        require_stop_loss=True, allow_margin=False,
+        require_stop_loss=True,
+        allow_margin=False,
     )
     engine = RiskRuleEngine(cfg)
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=50.0,  # $5,000 of a $10k book
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=50.0,  # $5,000 of a $10k book
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="more than deployable cash covers",
     )
     violations = engine.check(
-        decision=decision, positions=[], total_value=10_000.0,
+        decision=decision,
+        positions=[],
+        total_value=10_000.0,
         cash=145.0,  # the forensic's real deployable figure
     )
     assert "cash_only" in {v.rule for v in violations}
@@ -470,7 +529,22 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     from types import SimpleNamespace
     from src.config import IntradayScanConfig
 
-    p = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock())
+    p = build_pipeline(
+        news_provider=MagicMock(),
+        news_analyst=MagicMock(),
+        earnings_provider=MagicMock(),
+        earnings_analyst=MagicMock(),
+        broker=MagicMock(),
+        db=MagicMock(),
+        market=MagicMock(),
+        macro_store=MagicMock(),
+        news_store=MagicMock(),
+        tech_store=MagicMock(),
+        tech_analyst=MagicMock(),
+        decision_stage=MagicMock(),
+        risk_stage=MagicMock(),
+        execution_stage=MagicMock(),
+    )
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         storage=SimpleNamespace(
@@ -482,35 +556,49 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         # `last_trade_at`/`session_bar_at` are board item 120: a payload
         # with no timestamps is correctly not-today and buys no paid
         # look, so a fixture that means "this traded today" says so.
-        "AAPL": {"last_price": 110.0, "prev_close": 100.0,
-                 "last_trade_at": todays_session_stamp()},
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0, "last_trade_at": todays_session_stamp()},
     }
     p.db.get_trades.return_value = []
     p.market.get_ohlcv.return_value = [MagicMock()]
     from tests.test_intraday_scan import _todays_macro_state
     from src.trading_calendar import et_today
+
     p.macro_store.load_last_state.return_value = _todays_macro_state()
     from src.models import MacroNarrative, NewsIntelligenceReport
+
     p.news_store.load_daily_report.return_value = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=str(et_today()), era_themes=["test"],
+            last_updated=str(et_today()),
+            era_themes=["test"],
             current_regime="risk-on, test",
         ),
-        state_changes=[], stock_news={},
-        pm_briefing="test", market_sentiment="bullish",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="test",
+        market_sentiment="bullish",
         confidence="medium",
     ).model_dump()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}
 
     from src.models import TechAnalysisResult, TechReasoningChain
+
     analysis = TechAnalysisResult(
-        symbol="AAPL", rating="buy", conviction="high",
-        entry_price=100.0, stop_loss=95.0, reference_target=115.0,
-        support_levels=[95.0], resistance_levels=[115.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol="AAPL",
+        rating="buy",
+        conviction="high",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=115.0,
+        support_levels=[95.0],
+        resistance_levels=[115.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
         reasoning="test",
@@ -518,16 +606,20 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     )
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     # Deterministic gate blocks everything — RiskStage's existing early-exit.
     p.risk_stage.run.return_value = {
-        "status": "hard_risk_block", "orders": [], "reason": "cash_only",
+        "status": "hard_risk_block",
+        "orders": [],
+        "reason": "cash_only",
     }
 
     ctx = RunContext.start("intra_check")
@@ -536,9 +628,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
 
     assert result["status"] == "hard_risk_block"
     p.risk_stage.run.assert_called_once_with(ctx)
-    p.execution_stage.run.assert_not_called(), (
-        "a deterministic-gate block must stop the scan before execution"
-    )
+    p.execution_stage.run.assert_not_called(), ("a deterministic-gate block must stop the scan before execution")
 
 
 def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
@@ -547,10 +637,12 @@ def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
     the same instances run_morning uses — rather than constructing its own
     decision path that could drift from the audited one."""
     import inspect
+
     # The scan is a thin concurrency-guard wrapper delegating to a body;
     # inspect both so the invariant can't be dodged by moving code between
     # them.
     from tests.intraday_sources import scan_source
+
     src = scan_source("_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body")
     assert "self.decision_stage.run(ctx)" in src
     assert "self.risk_stage.run(ctx)" in src
@@ -565,9 +657,12 @@ def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
     already-approved inverse ETFs in the configured universe — never by
     emitting a short/sell-to-open action or enabling margin."""
     from tests.intraday_sources import scan_source
+
     src = scan_source(
-        "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
-        "_intraday_scan_mover_candidates", "_intraday_held_tech_symbols",
+        "_run_intraday_opportunity_scan",
+        "_intraday_opportunity_scan_body",
+        "_intraday_scan_mover_candidates",
+        "_intraday_held_tech_symbols",
     )
     for forbidden in ("sell_short", "short_sell", "allow_margin", "SHORT"):
         assert forbidden not in src, f"intraday scan must not reference {forbidden}"
@@ -602,17 +697,13 @@ def test_no_test_file_defines_the_same_test_twice():
         counts = collections.Counter(
             node.name
             for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("test_")
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
         )
         duplicates.extend(
-            f"{path.name}: {name} defined {count} times"
-            for name, count in sorted(counts.items())
-            if count > 1
+            f"{path.name}: {name} defined {count} times" for name, count in sorted(counts.items()) if count > 1
         )
 
     assert not duplicates, (
         "these test names are defined more than once in one file, so every "
-        "copy but the last is collected by nobody and guards nothing: "
-        + "; ".join(duplicates)
+        "copy but the last is collected by nobody and guards nothing: " + "; ".join(duplicates)
     )

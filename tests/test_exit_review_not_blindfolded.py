@@ -33,7 +33,10 @@ import pytest
 from src.agents import risk_review_mode
 from src.agents.risk_manager import RiskManagerAgent
 from src.models import (
-    ExitReviewChain, PortfolioDecision, Position, ReasoningChain,
+    ExitReviewChain,
+    PortfolioDecision,
+    Position,
+    ReasoningChain,
     TradeDecision,
 )
 from tests.pipeline_factory import build_pipeline
@@ -48,23 +51,47 @@ def _agent() -> RiskManagerAgent:
 
 def _positions() -> list[Position]:
     return [
-        Position(symbol="DIS", qty=3.0, avg_entry=108.09, current_price=106.21,
-                 market_value=318.63, unrealized_pnl=-5.65,
-                 sector="Communication Services"),
-        Position(symbol="V", qty=1.0, avg_entry=380.33, current_price=373.70,
-                 market_value=373.70, unrealized_pnl=-6.63,
-                 sector="Financial Services"),
+        Position(
+            symbol="DIS",
+            qty=3.0,
+            avg_entry=108.09,
+            current_price=106.21,
+            market_value=318.63,
+            unrealized_pnl=-5.65,
+            sector="Communication Services",
+        ),
+        Position(
+            symbol="V",
+            qty=1.0,
+            avg_entry=380.33,
+            current_price=373.70,
+            market_value=373.70,
+            unrealized_pnl=-6.63,
+            sector="Financial Services",
+        ),
     ]
 
 
 def _exit_decisions() -> list[TradeDecision]:
     return [
-        TradeDecision(action="SELL", symbol="DIS", allocation_pct=50.0,
-                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                      reasoning="thesis_progress=-19.01% and nearing stop"),
-        TradeDecision(action="SELL", symbol="V", allocation_pct=100.0,
-                      entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                      reasoning="R=-1.09, distance_to_stop=2.98%"),
+        TradeDecision(
+            action="SELL",
+            symbol="DIS",
+            allocation_pct=50.0,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning="thesis_progress=-19.01% and nearing stop",
+        ),
+        TradeDecision(
+            action="SELL",
+            symbol="V",
+            allocation_pct=100.0,
+            entry_price=0.0,
+            stop_loss=0.0,
+            take_profit=0.0,
+            reasoning="R=-1.09, distance_to_stop=2.98%",
+        ),
     ]
 
 
@@ -90,15 +117,24 @@ def _exit_proposal() -> PortfolioDecision:
 def _morning_proposal() -> PortfolioDecision:
     return PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter="risk-on", news_check="nothing adverse",
-            earnings_check="none inside window", signal_conflicts="none",
-            sizing_logic="proportional", portfolio_balance="balanced",
+            macro_filter="risk-on",
+            news_check="nothing adverse",
+            earnings_check="none inside window",
+            signal_conflicts="none",
+            sizing_logic="proportional",
+            portfolio_balance="balanced",
             cash_target="90% invested",
         ),
         decisions=[
-            TradeDecision(action="BUY", symbol="SPY", allocation_pct=10.0,
-                          entry_price=507.0, stop_loss=490.0,
-                          take_profit=530.0, reasoning="uptrend"),
+            TradeDecision(
+                action="BUY",
+                symbol="SPY",
+                allocation_pct=10.0,
+                entry_price=507.0,
+                stop_loss=490.0,
+                take_profit=530.0,
+                reasoning="uptrend",
+            ),
         ],
         portfolio_view="Bullish",
     )
@@ -106,8 +142,11 @@ def _morning_proposal() -> PortfolioDecision:
 
 def _render(proposal: PortfolioDecision, **kwargs) -> str:
     base = dict(
-        portfolio_decision=proposal, positions=_positions(),
-        macro_summary={}, rule_violations=[], total_value=9817.0,
+        portfolio_decision=proposal,
+        positions=_positions(),
+        macro_summary={},
+        rule_violations=[],
+        total_value=9817.0,
     )
     base.update(kwargs)
     return _agent().build_user_message(**base)
@@ -117,11 +156,11 @@ def _render(proposal: PortfolioDecision, **kwargs) -> str:
 # 1. The banner for steps that do not exist on this path.
 # --------------------------------------------------------------------------
 
+
 def test_exit_review_carries_no_not_performed_banner():
     """THE defect. The exit message must not accuse the reviewer of skipping
     two audit steps its schema has never had."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     assert NOT_PERFORMED not in message
     assert "Continuity check" not in message
     assert "Pre-mortem check" not in message
@@ -129,8 +168,7 @@ def test_exit_review_carries_no_not_performed_banner():
 
 def test_exit_review_says_those_fields_belong_to_a_different_schema():
     """Silence would leave the seat to wonder. It is told why they are gone."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "NO `continuity_check` and NO `premortem_check`" in flat
     assert "not a skipped audit step" in flat
@@ -139,19 +177,22 @@ def test_exit_review_says_those_fields_belong_to_a_different_schema():
 
 
 def test_exit_chain_is_labelled_as_the_position_reviewers_not_pms():
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     assert "## Position Reviewer Reasoning Chain" in message
     assert "## PM Reasoning Chain" not in message
     # The reviewer's own field names, not PM's.
-    for label in ("Macro continuity check", "Thesis progress check",
-                  "Thesis integrity check", "Execution rationale",
-                  "Winners discipline check", "Session disposition check"):
+    for label in (
+        "Macro continuity check",
+        "Thesis progress check",
+        "Thesis integrity check",
+        "Execution rationale",
+        "Winners discipline check",
+        "Session disposition check",
+    ):
         assert f"- {label}:" in message, label
     # PM's labels must not appear on this path — auditing "sizing logic"
     # against a sentence about execution is what the relabel fixes.
-    for label in ("Sizing logic", "Portfolio balance", "Cash target",
-                  "News check", "Earnings check", "Macro filter"):
+    for label in ("Sizing logic", "Portfolio balance", "Cash target", "News check", "Earnings check", "Macro filter"):
         assert f"- {label}:" not in message, label
 
 
@@ -159,26 +200,24 @@ def test_exit_chain_is_labelled_as_the_position_reviewers_not_pms():
 # 2. Blocks that are absent by construction are described as such.
 # --------------------------------------------------------------------------
 
+
 def test_absent_tech_block_is_unavailable_by_design_not_not_provided():
     """No TechAnalyst call runs on the midday/close loop. Saying '(not
     provided)' invites the seat to read it as an omission and refuse."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     assert "## Tech Analyst Signals\n(not provided)" not in message
     assert "UNAVAILABLE BY DESIGN ON THIS PATH" in message
     assert "do not refuse an exit for lacking Tech confirmation" in message
 
 
 def test_absent_news_block_says_unknown_not_quiet():
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     assert "## News Intelligence\n(not provided)" not in message
     assert "Treat today's news as UNKNOWN rather than as quiet" in message
 
 
 def test_exit_header_disapplies_the_checks_that_cannot_apply():
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "## Review Mode: EXIT REVIEW" in message
     # The $0.0 geometry is explained rather than left as an apparent data bug.
@@ -191,16 +230,15 @@ def test_exit_header_disapplies_the_checks_that_cannot_apply():
 # 3. Inputs newly passed actually appear.
 # --------------------------------------------------------------------------
 
+
 def test_newly_passed_inputs_reach_the_message():
     message = _render(
         _exit_proposal(),
         review_mode=risk_review_mode.EXIT_REVIEW,
         cash=1234.0,
-        recent_performance={"rolling_5d_pct": -1.4, "rolling_20d_pct": 2.2,
-                            "trailing_days": 20},
+        recent_performance={"rolling_5d_pct": -1.4, "rolling_20d_pct": 2.2, "trailing_days": 20},
         position_history={"DIS": {"days_held": 6}, "V": {"days_held": 11}},
-        earnings_analyses=[{"symbol": "DIS", "queued": True,
-                            "form_type": "8-K", "filing_date": "2026-09-01"}],
+        earnings_analyses=[{"symbol": "DIS", "queued": True, "form_type": "8-K", "filing_date": "2026-09-01"}],
     )
     assert "Cash (deployable this session): $1,234" in message
     assert "System performance: not provided" not in message
@@ -215,9 +253,13 @@ def test_no_fabricated_placeholder_reaches_an_empty_chain_field():
     n = risk_review_mode.NOT_AUTHORED
     empty = PortfolioDecision(
         reasoning_chain=ReasoningChain(
-            macro_filter=n, earnings_check=n, news_check=n,
-            signal_conflicts=n, sizing_logic=n,
-            portfolio_balance=n, cash_target=n,
+            macro_filter=n,
+            earnings_check=n,
+            news_check=n,
+            signal_conflicts=n,
+            sizing_logic=n,
+            portfolio_balance=n,
+            cash_target=n,
         ),
         decisions=_exit_decisions(),
         portfolio_view="EXIT REVIEW (position reviewer): x",
@@ -232,6 +274,7 @@ def test_no_fabricated_placeholder_reaches_an_empty_chain_field():
 # --------------------------------------------------------------------------
 # 4. The morning plan path is untouched.
 # --------------------------------------------------------------------------
+
 
 def test_morning_plan_rendering_is_unchanged_by_default():
     """No `review_mode` argument at all — every pre-existing call site."""
@@ -257,28 +300,21 @@ def test_morning_plan_still_banners_a_genuinely_skipped_pm_audit_step():
     from src.models import ReasoningChain
 
     expected = sum(
-        1 for label, attr, mandatory
-        in risk_review_mode.chain_rows(risk_review_mode.MORNING_PLAN)
-        if mandatory
+        1 for label, attr, mandatory in risk_review_mode.chain_rows(risk_review_mode.MORNING_PLAN) if mandatory
     )
-    optional_in_schema = sum(
-        1 for name, f in ReasoningChain.model_fields.items() if f.default == ""
-    )
+    optional_in_schema = sum(1 for name, f in ReasoningChain.model_fields.items() if f.default == "")
     assert expected == optional_in_schema, (
-        "every reasoning-chain field the schema lets default to \"\" must "
+        'every reasoning-chain field the schema lets default to "" must '
         "have a morning row that banners it, or a skipped audit step is "
         "invisible to the seat that audits PM"
     )
-    message = _render(_morning_proposal(),
-                      review_mode=risk_review_mode.MORNING_PLAN)
+    message = _render(_morning_proposal(), review_mode=risk_review_mode.MORNING_PLAN)
     assert message.count(NOT_PERFORMED) == expected
 
 
 def test_explicit_morning_mode_is_byte_identical_to_no_mode_at_all():
     proposal = _morning_proposal()
-    assert _render(proposal) == _render(
-        proposal, review_mode=risk_review_mode.MORNING_PLAN
-    )
+    assert _render(proposal) == _render(proposal, review_mode=risk_review_mode.MORNING_PLAN)
 
 
 @pytest.mark.parametrize("bogus", ["", None, "exit", "exit review", "nonsense"])
@@ -298,6 +334,7 @@ def test_exit_review_mode_is_recognised_case_insensitively():
 # --------------------------------------------------------------------------
 # 5. The call site passes the mode and the inputs.
 # --------------------------------------------------------------------------
+
 
 def _pipeline_double():
     """A bare pipeline object with only what `_risk_review_exits` touches."""
@@ -325,8 +362,7 @@ class _ReviewChain:
 class _Review:
     overall_assessment = "mixed"
     reasoning_chain = _ReviewChain()
-    actions = [_ReviewAction("DIS", "REDUCE", "thesis broken"),
-               _ReviewAction("V", "SELL", "stop proximity")]
+    actions = [_ReviewAction("DIS", "REDUCE", "thesis broken"), _ReviewAction("V", "SELL", "stop proximity")]
 
 
 def test_call_site_declares_exit_review_mode_and_passes_the_evidence():
@@ -337,15 +373,21 @@ def test_call_site_declares_exit_review_mode_and_passes_the_evidence():
     verdict.reasoning = "fine"
     pipe.risk_manager.review.return_value = (verdict, MagicMock())
 
-    with patch.object(type(pipe), "_build_portfolio_heat",
-                      return_value=None, create=True), \
-         patch.object(type(pipe), "_build_position_history",
-                      return_value={"DIS": {"days_held": 6}}, create=True):
+    with (
+        patch.object(type(pipe), "_build_portfolio_heat", return_value=None, create=True),
+        patch.object(type(pipe), "_build_position_history", return_value={"DIS": {"days_held": 6}}, create=True),
+    ):
         vetoed, got = pipe._risk_review_exits(
-            _Review(), _positions(), run_id="r1", total_value=9817.0,
+            _Review(),
+            _positions(),
+            run_id="r1",
+            total_value=9817.0,
             macro_summary={"vix": {"current": 14.9}},
-            news_intel=None, earnings_analyses=[], cash=1234.0,
-            reserve_balance=0.0, recent_performance={"rolling_5d_pct": -1.2},
+            news_intel=None,
+            earnings_analyses=[],
+            cash=1234.0,
+            reserve_balance=0.0,
+            recent_performance={"rolling_5d_pct": -1.2},
         )
 
     assert vetoed == set() and got is verdict
@@ -393,14 +435,22 @@ def test_exit_call_site_message_is_clean_end_to_end():
         return verdict, MagicMock()
 
     pipe.risk_manager.review.side_effect = _fake_review
-    with patch.object(type(pipe), "_build_portfolio_heat",
-                      return_value=None, create=True), \
-         patch.object(type(pipe), "_build_position_history",
-                      return_value={"DIS": {"days_held": 6},
-                                    "V": {"days_held": 11}}, create=True):
+    with (
+        patch.object(type(pipe), "_build_portfolio_heat", return_value=None, create=True),
+        patch.object(
+            type(pipe),
+            "_build_position_history",
+            return_value={"DIS": {"days_held": 6}, "V": {"days_held": 11}},
+            create=True,
+        ),
+    ):
         pipe._risk_review_exits(
-            _Review(), _positions(), run_id="r1", total_value=9817.0,
-            macro_summary={}, cash=1234.0,
+            _Review(),
+            _positions(),
+            run_id="r1",
+            total_value=9817.0,
+            macro_summary={},
+            cash=1234.0,
             recent_performance={"in_drawdown": False, "rolling_5d_pct": -1.0},
         )
 
@@ -417,12 +467,15 @@ def test_verdict_none_still_fails_open():
     unavailable leaves a broken thesis on the book overnight."""
     pipe = _pipeline_double()
     pipe.risk_manager.review.return_value = (None, MagicMock())
-    with patch.object(type(pipe), "_build_portfolio_heat",
-                      return_value=None, create=True), \
-         patch.object(type(pipe), "_build_position_history",
-                      return_value={}, create=True):
+    with (
+        patch.object(type(pipe), "_build_portfolio_heat", return_value=None, create=True),
+        patch.object(type(pipe), "_build_position_history", return_value={}, create=True),
+    ):
         vetoed, verdict = pipe._risk_review_exits(
-            _Review(), _positions(), run_id="r1", total_value=9817.0,
+            _Review(),
+            _positions(),
+            run_id="r1",
+            total_value=9817.0,
             macro_summary={},
         )
     assert vetoed == set() and verdict is None
@@ -432,14 +485,14 @@ def test_verdict_none_still_fails_open():
 # 6. Regressions found in adversarial review of the first draft.
 # --------------------------------------------------------------------------
 
+
 def test_event_risk_checklist_cannot_be_read_as_a_reason_to_refuse_an_exit():
     """Checklist 4 says a fetched event inside the window means "downsize or
     reject". `_exit_event_risk_block` is what first gives this path a fetched
     date to trigger on, so the first draft ADDED refusal pressure that did not
     exist before it. On an entry, refusing carries less risk through the event;
     here it carries the position THROUGH the event. The instruction inverts."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "Event proximity is **not a reason to refuse an exit**" in flat
     assert "refusing HERE carries the position THROUGH it" in flat
@@ -453,20 +506,17 @@ def test_checklist_8_is_not_stood_down():
     """The four Python gates run AFTER this review — which is precisely the
     reason checklist 8 exists. The first draft used that downstream-ness as
     grounds to delete the instruction; the same fact cannot be both."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "Checklist 8 still applies and is the substance of your job" in flat
     # Stood-down items are named explicitly; 8 must not be among them.
-    disapplied = flat[flat.index("**Does not apply here.**"):
-                      flat.index("**Checklist 8 still applies")]
+    disapplied = flat[flat.index("**Does not apply here.**") : flat.index("**Checklist 8 still applies")]
     assert "Checklist 8" not in disapplied
 
 
 def test_the_four_gates_are_described_with_their_real_limits():
     """The first draft listed them as coverage. Each abstains somewhere."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "after you speak" in flat
     assert "checks only that the reason says recognised words" in flat
@@ -483,14 +533,10 @@ def test_seat_is_told_refusal_is_its_only_live_lever():
     2026-09-14 they are not fields of `ExitRiskVerdict` at all. Telling the
     seat how to edit `allocation_pct` on this path is the same class of false
     statement this change exists to remove."""
-    message = _render(_exit_proposal(),
-                      review_mode=risk_review_mode.EXIT_REVIEW)
+    message = _render(_exit_proposal(), review_mode=risk_review_mode.EXIT_REVIEW)
     flat = " ".join(message.split())
     assert "Refusal is your only lever" in flat
-    assert (
-        "`modifications` and `scale_all_buys` are **not fields of this "
-        "path's output**" in flat
-    )
+    assert "`modifications` and `scale_all_buys` are **not fields of this path's output**" in flat
     assert "do not size it and do not comment on it" in flat
 
 
@@ -525,6 +571,7 @@ def test_exit_header_stays_under_its_size_budget():
 # morning path uses all of it for real.
 # --------------------------------------------------------------------------
 
+
 def _exit_verdict_json(**over) -> dict:
     body = {
         "approved": True,
@@ -541,6 +588,7 @@ def _exit_verdict_json(**over) -> dict:
 
 def test_exit_verdict_has_no_levers_that_nothing_applies():
     from src.models import ExitRiskVerdict, RiskVerdict
+
     assert "modifications" not in ExitRiskVerdict.model_fields
     assert "scale_all_buys" not in ExitRiskVerdict.model_fields
     # The morning verdict keeps both — `_apply_risk_modifications` and the
@@ -553,18 +601,16 @@ def test_only_the_morning_stage_applies_modifications():
     """The load-bearing fact under the whole change. If a second call site
     ever applies them, the exit schema must grow them back."""
     import pathlib
+
     root = pathlib.Path(__file__).resolve().parent.parent
-    callers = sorted(
-        p.name
-        for p in (root / "src").rglob("*.py")
-        if "_apply_risk_modifications(" in p.read_text()
-    )
+    callers = sorted(p.name for p in (root / "src").rglob("*.py") if "_apply_risk_modifications(" in p.read_text())
     # Definition site and the single caller.
     assert callers == ["pipeline_risk_gate.py", "stage_risk.py"], callers
 
 
 def test_exit_chain_does_not_demand_the_steps_its_prompt_stands_down():
     from src.models import ExitRiskReasoningChain, RiskReasoningChain
+
     stood_down = ("rr_audit", "sizing_sanity", "event_risk")
     for name in stood_down:
         assert not ExitRiskReasoningChain.model_fields[name].is_required(), name
@@ -578,28 +624,34 @@ def test_exit_chain_does_not_demand_the_steps_its_prompt_stands_down():
 
 def test_exit_chain_omitting_the_stood_down_steps_validates():
     from src.models import ExitRiskReasoningChain, RiskReasoningChain
+
     chain = ExitRiskReasoningChain(
-        signal_fidelity="a", correlation_check="b", overall="c",
+        signal_fidelity="a",
+        correlation_check="b",
+        overall="c",
     )
     assert chain.rr_audit == "" and chain.sizing_sanity == ""
     assert chain.event_risk == ""
     # Same payload against the morning chain must still fail — the morning
     # BUY path is not weakened by any of this.
     with pytest.raises(Exception):
-        RiskReasoningChain(signal_fidelity="a", correlation_check="b",
-                           overall="c")
+        RiskReasoningChain(signal_fidelity="a", correlation_check="b", overall="c")
 
 
 def test_exit_review_parses_into_the_exit_verdict_shape():
     from src.models import ExitRiskVerdict
+
     agent = _agent()
     with patch.object(RiskManagerAgent, "run") as run:
         run.return_value = MagicMock(
             parse_json=lambda: _exit_verdict_json(),
         )
         verdict, _ = agent.review(
-            portfolio_decision=_exit_proposal(), positions=_positions(),
-            macro_summary={}, rule_violations=[], total_value=9817.0,
+            portfolio_decision=_exit_proposal(),
+            positions=_positions(),
+            macro_summary={},
+            rule_violations=[],
+            total_value=9817.0,
             review_mode=risk_review_mode.EXIT_REVIEW,
         )
     assert isinstance(verdict, ExitRiskVerdict)
@@ -612,15 +664,26 @@ def test_a_lever_the_exit_seat_emits_anyway_is_dropped_not_stored():
     emits them anyway must not have them recorded as if they meant something."""
     agent = _agent()
     with patch.object(RiskManagerAgent, "run") as run:
-        run.return_value = MagicMock(parse_json=lambda: _exit_verdict_json(
-            scale_all_buys=0.0,
-            modifications=[{"symbol": "DIS", "field": "allocation_pct",
-                            "original_value": 50.0, "new_value": 10.0,
-                            "reason": "x"}],
-        ))
+        run.return_value = MagicMock(
+            parse_json=lambda: _exit_verdict_json(
+                scale_all_buys=0.0,
+                modifications=[
+                    {
+                        "symbol": "DIS",
+                        "field": "allocation_pct",
+                        "original_value": 50.0,
+                        "new_value": 10.0,
+                        "reason": "x",
+                    }
+                ],
+            )
+        )
         verdict, _ = agent.review(
-            portfolio_decision=_exit_proposal(), positions=_positions(),
-            macro_summary={}, rule_violations=[], total_value=9817.0,
+            portfolio_decision=_exit_proposal(),
+            positions=_positions(),
+            macro_summary={},
+            rule_violations=[],
+            total_value=9817.0,
             review_mode=risk_review_mode.EXIT_REVIEW,
         )
     dumped = verdict.model_dump()
@@ -632,15 +695,18 @@ def test_exit_refusal_still_reaches_the_caller_per_symbol():
     not touch it, and doctrine requires a durable per-symbol reason."""
     agent = _agent()
     with patch.object(RiskManagerAgent, "run") as run:
-        run.return_value = MagicMock(parse_json=lambda: _exit_verdict_json(
-            rejected_symbols=[{"symbol": "dis",
-                               "reason": "trigger cites a filing that is not "
-                                         "in the news block"}],
-            reason_category="signal_fidelity",
-        ))
+        run.return_value = MagicMock(
+            parse_json=lambda: _exit_verdict_json(
+                rejected_symbols=[{"symbol": "dis", "reason": "trigger cites a filing that is not in the news block"}],
+                reason_category="signal_fidelity",
+            )
+        )
         verdict, _ = agent.review(
-            portfolio_decision=_exit_proposal(), positions=_positions(),
-            macro_summary={}, rule_violations=[], total_value=9817.0,
+            portfolio_decision=_exit_proposal(),
+            positions=_positions(),
+            macro_summary={},
+            rule_violations=[],
+            total_value=9817.0,
             review_mode=risk_review_mode.EXIT_REVIEW,
         )
     assert verdict.rejections_by_symbol() == {
@@ -652,16 +718,27 @@ def test_exit_refusal_still_reaches_the_caller_per_symbol():
 def test_morning_review_still_parses_into_the_full_verdict():
     """The regression that matters most: the BUY path must be untouched."""
     from src.models import RiskVerdict
+
     agent = _agent()
     payload = {
         "approved": True,
         "reasoning_chain": {
-            "rr_audit": "a", "signal_fidelity": "b", "correlation_check": "c",
-            "event_risk": "d", "sizing_sanity": "e", "overall": "f",
+            "rr_audit": "a",
+            "signal_fidelity": "b",
+            "correlation_check": "c",
+            "event_risk": "d",
+            "sizing_sanity": "e",
+            "overall": "f",
         },
-        "modifications": [{"symbol": "NVDA", "field": "allocation_pct",
-                           "original_value": 15.0, "new_value": 7.5,
-                           "reason": "earnings inside the window"}],
+        "modifications": [
+            {
+                "symbol": "NVDA",
+                "field": "allocation_pct",
+                "original_value": 15.0,
+                "new_value": 7.5,
+                "reason": "earnings inside the window",
+            }
+        ],
         "scale_all_buys": 0.5,
         "reason_category": "event_risk",
         "reasoning": "trimmed",
@@ -669,8 +746,11 @@ def test_morning_review_still_parses_into_the_full_verdict():
     with patch.object(RiskManagerAgent, "run") as run:
         run.return_value = MagicMock(parse_json=lambda: payload)
         verdict, _ = agent.review(
-            portfolio_decision=_morning_proposal(), positions=_positions(),
-            macro_summary={}, rule_violations=[], total_value=9817.0,
+            portfolio_decision=_morning_proposal(),
+            positions=_positions(),
+            macro_summary={},
+            rule_violations=[],
+            total_value=9817.0,
         )
     assert isinstance(verdict, RiskVerdict)
     assert verdict.scale_all_buys == 0.5
@@ -685,15 +765,17 @@ def test_exit_repair_is_not_failed_closed_over_a_lever_that_does_nothing():
     — failing closed here leaves a broken-thesis position on the book, the
     exact asymmetry `_risk_review_exits` fails OPEN for."""
     unchanged = RiskManagerAgent._decision_fields_unchanged
-    original = {"approved": True, "rejected_symbols": [],
-                "reason_category": "clean", "scale_all_buys": 1.0}
-    repaired = {"approved": True, "rejected_symbols": [],
-                "reason_category": "clean", "scale_all_buys": 0.0,
-                "modifications": [{"symbol": "DIS", "field": "allocation_pct",
-                                   "original_value": 1.0, "new_value": 2.0,
-                                   "reason": "x"}]}
-    assert unchanged(original, repaired,
-                     fields=RiskManagerAgent._EXIT_DECISION_FIELDS) is True
+    original = {"approved": True, "rejected_symbols": [], "reason_category": "clean", "scale_all_buys": 1.0}
+    repaired = {
+        "approved": True,
+        "rejected_symbols": [],
+        "reason_category": "clean",
+        "scale_all_buys": 0.0,
+        "modifications": [
+            {"symbol": "DIS", "field": "allocation_pct", "original_value": 1.0, "new_value": 2.0, "reason": "x"}
+        ],
+    }
+    assert unchanged(original, repaired, fields=RiskManagerAgent._EXIT_DECISION_FIELDS) is True
     # Morning default: the same drift IS an unauthorized re-decision.
     assert unchanged(original, repaired) is False
 
@@ -701,25 +783,34 @@ def test_exit_repair_is_not_failed_closed_over_a_lever_that_does_nothing():
 def test_exit_repair_still_fails_closed_on_a_changed_refusal():
     """The lever that DOES do something on this path keeps its guard."""
     unchanged = RiskManagerAgent._decision_fields_unchanged
-    original = {"approved": True, "reason_category": "signal_fidelity",
-                "rejected_symbols": [{"symbol": "DIS", "reason": "r"}]}
-    repaired = {"approved": True, "reason_category": "signal_fidelity",
-                "rejected_symbols": []}
-    assert unchanged(original, repaired,
-                     fields=RiskManagerAgent._EXIT_DECISION_FIELDS) is False
+    original = {
+        "approved": True,
+        "reason_category": "signal_fidelity",
+        "rejected_symbols": [{"symbol": "DIS", "reason": "r"}],
+    }
+    repaired = {"approved": True, "reason_category": "signal_fidelity", "rejected_symbols": []}
+    assert unchanged(original, repaired, fields=RiskManagerAgent._EXIT_DECISION_FIELDS) is False
 
 
 def test_exit_input_chain_needs_no_placeholder_for_a_pm_only_slot():
     """`news_check` has no exit counterpart and no rendered row. It was being
     filled with a marker string only to satisfy the parent's `min_length=1`."""
     chain = ExitReviewChain(
-        macro_filter="a", earnings_check="b", signal_conflicts="c",
-        sizing_logic="d", portfolio_balance="e", cash_target="f",
+        macro_filter="a",
+        earnings_check="b",
+        signal_conflicts="c",
+        sizing_logic="d",
+        portfolio_balance="e",
+        cash_target="f",
     )
     assert chain.news_check == ""
     # The morning chain still refuses the same omission.
     with pytest.raises(Exception):
         ReasoningChain(
-            macro_filter="a", earnings_check="b", signal_conflicts="c",
-            sizing_logic="d", portfolio_balance="e", cash_target="f",
+            macro_filter="a",
+            earnings_check="b",
+            signal_conflicts="c",
+            sizing_logic="d",
+            portfolio_balance="e",
+            cash_target="f",
         )

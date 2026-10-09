@@ -67,7 +67,10 @@ def test_a_listed_finding_that_no_longer_occurs_is_stale(tmp_path) -> None:
 
 def test_the_list_never_carries_the_raw_excerpt() -> None:
     """The list is committed to a PUBLIC repo: it holds hashes, not the values."""
-    excerpts = {f.excerpt for k in _specimen_keys() for f in guard.scan_text(
-        guard.read_text(PROJECT_ROOT / SPECIMEN) or "", SPECIMEN)}
+    excerpts = {
+        f.excerpt
+        for k in _specimen_keys()
+        for f in guard.scan_text(guard.read_text(PROJECT_ROOT / SPECIMEN) or "", SPECIMEN)
+    }
     body = "\n".join(struct_allowlist.load("desk_output"))
     assert not any(e and e in body for e in excerpts)

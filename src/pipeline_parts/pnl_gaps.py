@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def _total_pnl_since_reset(
-    pipeline, total_value: float,
+    pipeline,
+    total_value: float,
 ) -> tuple[float | None, float | None, str | None]:
     """`(total_pnl, total_return_pct, since_date)` for the Telegram
     feed's "total P&L" line.
@@ -140,17 +141,23 @@ def _record_short_overnight_gaps(pipeline, positions) -> None:
                 continue
             prev_bar, today = bars[-2], bars[-1]
             pipeline.db.record_overnight_gap(
-                p.symbol, prev_bar.close, today.open, str(today.date),
+                p.symbol,
+                prev_bar.close,
+                today.open,
+                str(today.date),
             )
         except Exception:  # noqa: BLE001
             logger.debug(
                 "overnight-gap recording skipped for %s",
-                getattr(p, "symbol", "?"), exc_info=True,
+                getattr(p, "symbol", "?"),
+                exc_info=True,
             )
 
 
 def _run_news_update(
-    pipeline, run_id: str, session: str = "morning",
+    pipeline,
+    run_id: str,
+    session: str = "morning",
     universe: list[str] | None = None,
     held_symbols: list[str] | None = None,
     candidate_symbols: list[str] | None = None,
@@ -166,7 +173,9 @@ def _run_news_update(
 
 
 def _load_earnings_analyses(
-    pipeline, run_id: str, session: str = "morning",
+    pipeline,
+    run_id: str,
+    session: str = "morning",
     ctx: RunContext | None = None,
     universe: list[str] | None = None,
 ) -> tuple[list, list]:
@@ -189,9 +198,7 @@ def _earnings_preprocess_symbols(pipeline) -> list[str]:
     and `max_external_candidates` still decide who actually trades.
     """
     configured = [
-        str(symbol).strip().upper()
-        for symbol in (pipeline.config.trading.universe or [])
-        if str(symbol).strip()
+        str(symbol).strip().upper() for symbol in (pipeline.config.trading.universe or []) if str(symbol).strip()
     ]
     hot: list[str] = []
     try:
@@ -212,14 +219,14 @@ def _earnings_preprocess_symbols(pipeline) -> list[str]:
             hot.append(symbol)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "Earnings preprocess: hot-admit symbol union failed (%s) — "
-            "falling back to the configured universe", exc,
+            "Earnings preprocess: hot-admit symbol union failed (%s) — falling back to the configured universe",
+            exc,
         )
         return configured
     if hot:
         logger.info(
-            "Earnings preprocess: adding %d Form-4 admission-eligible "
-            "symbol(s) to the filing check: %s",
-            len(hot), ", ".join(hot),
+            "Earnings preprocess: adding %d Form-4 admission-eligible symbol(s) to the filing check: %s",
+            len(hot),
+            ", ".join(hot),
         )
     return configured + hot

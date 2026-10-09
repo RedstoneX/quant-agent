@@ -24,7 +24,8 @@ SCRIPT = PROJECT_ROOT / "scripts" / "export_alpaca_trades.py"
 
 def _load_module():
     spec = importlib.util.spec_from_file_location(
-        "export_alpaca_trades_under_test", SCRIPT,
+        "export_alpaca_trades_under_test",
+        SCRIPT,
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -32,23 +33,50 @@ def _load_module():
     return module
 
 
-def _ord(*, oid, sym, side, qty, filled, price, status, submitted,
-         filled_at=None, otype="limit", tif="day", cls="simple",
-         limit=None, stop=None):
+def _ord(
+    *,
+    oid,
+    sym,
+    side,
+    qty,
+    filled,
+    price,
+    status,
+    submitted,
+    filled_at=None,
+    otype="limit",
+    tif="day",
+    cls="simple",
+    limit=None,
+    stop=None,
+):
     """Build a SimpleNamespace shaped like an alpaca-py Order."""
     return SimpleNamespace(
-        id=oid, client_order_id=f"cli-{oid}",
-        symbol=sym, side=side,
-        order_type=otype, time_in_force=tif, order_class=cls,
-        qty=str(qty), notional=None,
-        filled_qty=str(filled), filled_avg_price=(str(price) if price else None),
+        id=oid,
+        client_order_id=f"cli-{oid}",
+        symbol=sym,
+        side=side,
+        order_type=otype,
+        time_in_force=tif,
+        order_class=cls,
+        qty=str(qty),
+        notional=None,
+        filled_qty=str(filled),
+        filled_avg_price=(str(price) if price else None),
         limit_price=(str(limit) if limit else None),
         stop_price=(str(stop) if stop else None),
-        trail_percent=None, trail_price=None,
-        status=status, extended_hours=False,
-        submitted_at=submitted, filled_at=filled_at,
-        expired_at=None, canceled_at=None, failed_at=None,
-        replaced_at=None, replaced_by="", replaces="",
+        trail_percent=None,
+        trail_price=None,
+        status=status,
+        extended_hours=False,
+        submitted_at=submitted,
+        filled_at=filled_at,
+        expired_at=None,
+        canceled_at=None,
+        failed_at=None,
+        replaced_at=None,
+        replaced_by="",
+        replaces="",
     )
 
 
@@ -58,12 +86,27 @@ def test_fetch_all_orders_paginates_dedupes_and_sorts():
     oldest-first."""
     mod = _load_module()
     t0 = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
-    a = _ord(oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-             status="filled", submitted=t0)
-    b = _ord(oid="B", sym="NVDA", side="buy", qty=5, filled=5, price=900.0,
-             status="filled", submitted=t0 + timedelta(seconds=2))
-    c = _ord(oid="C", sym="NVDA", side="sell", qty=5, filled=0, price=None,
-             status="canceled", submitted=t0 + timedelta(days=1))
+    a = _ord(oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42, status="filled", submitted=t0)
+    b = _ord(
+        oid="B",
+        sym="NVDA",
+        side="buy",
+        qty=5,
+        filled=5,
+        price=900.0,
+        status="filled",
+        submitted=t0 + timedelta(seconds=2),
+    )
+    c = _ord(
+        oid="C",
+        sym="NVDA",
+        side="sell",
+        qty=5,
+        filled=0,
+        price=None,
+        status="canceled",
+        submitted=t0 + timedelta(days=1),
+    )
 
     client = MagicMock()
     # Page 1 (newest first): C, B; page 2: B (duplicate), A; page 3 empty.
@@ -72,7 +115,7 @@ def test_fetch_all_orders_paginates_dedupes_and_sorts():
     orders = mod.fetch_all_orders(client, page_limit=2)
 
     ids = [o["id"] for o in orders]
-    assert ids == ["A", "B", "C"], ids                            # dedup + sort
+    assert ids == ["A", "B", "C"], ids  # dedup + sort
     # Numeric fields are preserved as their broker-side string form
     # (Decimal-faithful, no precision loss). Cast at the arithmetic
     # boundary.
@@ -88,29 +131,57 @@ def test_render_report_includes_required_sections(tmp_path):
     mod = _load_module()
     t = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
     orders = [
-        mod._order_to_dict(_ord(
-            oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-            status="filled", submitted=t, filled_at=t + timedelta(seconds=2),
-            limit=188.0,
-        )),
-        mod._order_to_dict(_ord(
-            oid="B", sym="AAPL", side="sell", qty=10, filled=10, price=190.5,
-            status="filled", submitted=t + timedelta(days=1), filled_at=t + timedelta(days=1, seconds=3),
-            limit=190.0,
-        )),
-        mod._order_to_dict(_ord(
-            oid="C", sym="NVDA", side="buy", qty=5, filled=0, price=None,
-            status="canceled", submitted=t + timedelta(days=2),
-            limit=900.0,
-        )),
+        mod._order_to_dict(
+            _ord(
+                oid="A",
+                sym="AAPL",
+                side="buy",
+                qty=10,
+                filled=10,
+                price=187.42,
+                status="filled",
+                submitted=t,
+                filled_at=t + timedelta(seconds=2),
+                limit=188.0,
+            )
+        ),
+        mod._order_to_dict(
+            _ord(
+                oid="B",
+                sym="AAPL",
+                side="sell",
+                qty=10,
+                filled=10,
+                price=190.5,
+                status="filled",
+                submitted=t + timedelta(days=1),
+                filled_at=t + timedelta(days=1, seconds=3),
+                limit=190.0,
+            )
+        ),
+        mod._order_to_dict(
+            _ord(
+                oid="C",
+                sym="NVDA",
+                side="buy",
+                qty=5,
+                filled=0,
+                price=None,
+                status="canceled",
+                submitted=t + timedelta(days=2),
+                limit=900.0,
+            )
+        ),
     ]
-    account = {"id": "acct-1", "account_number": "PA123",
-               "created_at": "2026-01-15 09:00:00"}
+    account = {"id": "acct-1", "account_number": "PA123", "created_at": "2026-01-15 09:00:00"}
 
     text = mod.render_report(
-        orders, account=account, env_label="PAPER",
+        orders,
+        account=account,
+        env_label="PAPER",
         api_url="https://paper-api.alpaca.markets/v2",
-        since=None, until=None,
+        since=None,
+        until=None,
     )
 
     # Top-level sections present.
@@ -139,9 +210,12 @@ def test_render_report_includes_required_sections(tmp_path):
 def test_render_report_handles_zero_orders():
     mod = _load_module()
     text = mod.render_report(
-        [], account={"id": "acct-empty", "account_number": "", "created_at": ""},
-        env_label="PAPER", api_url="https://paper-api.alpaca.markets/v2",
-        since=None, until=None,
+        [],
+        account={"id": "acct-empty", "account_number": "", "created_at": ""},
+        env_label="PAPER",
+        api_url="https://paper-api.alpaca.markets/v2",
+        since=None,
+        until=None,
     )
     assert "Orders fetched:   0" in text
     assert "(no orders)" in text
@@ -152,9 +226,12 @@ def test_render_report_handles_zero_orders():
 def test_render_report_warning_visible_on_fetch_failure():
     mod = _load_module()
     text = mod.render_report(
-        [], account={"id": "acct-1", "account_number": "", "created_at": ""},
-        env_label="LIVE", api_url="https://api.alpaca.markets/v2",
-        since=None, until=None,
+        [],
+        account={"id": "acct-1", "account_number": "", "created_at": ""},
+        env_label="LIVE",
+        api_url="https://api.alpaca.markets/v2",
+        since=None,
+        until=None,
         fetch_warning="fetch aborted: 500 Internal Server Error",
     )
     assert "!!! WARNING" in text
@@ -165,10 +242,19 @@ def test_render_jsonl_emits_parseable_lines_with_iso_timestamps():
     mod = _load_module()
     t = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
     orders = [
-        mod._order_to_dict(_ord(
-            oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-            status="filled", submitted=t, filled_at=t + timedelta(seconds=2),
-        )),
+        mod._order_to_dict(
+            _ord(
+                oid="A",
+                sym="AAPL",
+                side="buy",
+                qty=10,
+                filled=10,
+                price=187.42,
+                status="filled",
+                submitted=t,
+                filled_at=t + timedelta(seconds=2),
+            )
+        ),
     ]
     blob = mod.render_jsonl(orders)
     rec = json.loads(blob.strip())
@@ -190,6 +276,7 @@ def test_render_jsonl_empty_orders_is_empty_string():
 # orders.csv companion: header row = field names, one row per order.
 # ---------------------------------------------------------------------------
 
+
 def test_render_orders_csv_header_first_and_alphabetical():
     """Spreadsheet-friendly export. Header is the alphabetical union of
     every key seen across rows so a future SDK field surfaces as a new
@@ -200,15 +287,32 @@ def test_render_orders_csv_header_first_and_alphabetical():
     mod = _load_module()
     t = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
     orders = [
-        mod._order_to_dict(_ord(
-            oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-            status="filled", submitted=t, filled_at=t + timedelta(seconds=2),
-            limit=188.0,
-        )),
-        mod._order_to_dict(_ord(
-            oid="B", sym="NVDA", side="sell", qty=5, filled=0, price=None,
-            status="canceled", submitted=t + timedelta(days=1),
-        )),
+        mod._order_to_dict(
+            _ord(
+                oid="A",
+                sym="AAPL",
+                side="buy",
+                qty=10,
+                filled=10,
+                price=187.42,
+                status="filled",
+                submitted=t,
+                filled_at=t + timedelta(seconds=2),
+                limit=188.0,
+            )
+        ),
+        mod._order_to_dict(
+            _ord(
+                oid="B",
+                sym="NVDA",
+                side="sell",
+                qty=5,
+                filled=0,
+                price=None,
+                status="canceled",
+                submitted=t + timedelta(days=1),
+            )
+        ),
     ]
 
     blob = mod.render_orders_csv(orders)
@@ -219,8 +323,7 @@ def test_render_orders_csv_header_first_and_alphabetical():
     assert header == sorted(header), f"header not alphabetical: {header}"
     expected_keys = set(orders[0].keys()) | set(orders[1].keys())
     assert set(header) == expected_keys, (
-        f"header missing fields {expected_keys - set(header)} or "
-        f"has extras {set(header) - expected_keys}"
+        f"header missing fields {expected_keys - set(header)} or has extras {set(header) - expected_keys}"
     )
 
     # Exactly one row per order.
@@ -249,10 +352,18 @@ def test_render_orders_csv_serializes_legs_as_json_cell():
 
     mod = _load_module()
     t = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
-    row = mod._order_to_dict(_ord(
-        oid="parent", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-        status="filled", submitted=t,
-    ))
+    row = mod._order_to_dict(
+        _ord(
+            oid="parent",
+            sym="AAPL",
+            side="buy",
+            qty=10,
+            filled=10,
+            price=187.42,
+            status="filled",
+            submitted=t,
+        )
+    )
     row["legs"] = [{"id": "stop-1", "side": "sell", "stop_price": "179.00"}]
 
     blob = mod.render_orders_csv([row])
@@ -272,6 +383,7 @@ def test_render_orders_csv_empty_input_is_empty_string():
 # daily_pnl.csv: per-day equity + daily P&L from /v2/account/portfolio_history.
 # ---------------------------------------------------------------------------
 
+
 def test_render_daily_pnl_csv_zips_arrays_and_computes_daily_delta():
     """Alpaca returns parallel arrays + a scalar base_value. The renderer
     must zip them into rows AND add daily_pnl = equity[i] − equity[i−1],
@@ -288,18 +400,17 @@ def test_render_daily_pnl_csv_zips_arrays_and_computes_daily_delta():
 
     mod = _load_module()
     # 3 trading days. base_value=100k, equity ramps to 102k, then dips.
-    day0 = datetime(2026, 4, 7, 20, 0, tzinfo=timezone.utc)   # close of 4-7
+    day0 = datetime(2026, 4, 7, 20, 0, tzinfo=timezone.utc)  # close of 4-7
     day1 = datetime(2026, 4, 8, 20, 0, tzinfo=timezone.utc)
     day2 = datetime(2026, 4, 9, 20, 0, tzinfo=timezone.utc)
     # profit_loss / profit_loss_pct match Alpaca's real (daily) contract,
     # not the misread cumulative form. They're ignored by the renderer
     # now but kept here to mirror what the API actually returns.
     history = {
-        "timestamp": [int(day0.timestamp()), int(day1.timestamp()),
-                       int(day2.timestamp())],
+        "timestamp": [int(day0.timestamp()), int(day1.timestamp()), int(day2.timestamp())],
         "equity": [100500.0, 102000.0, 101200.0],
-        "profit_loss":     [500.0,  1500.0,   -800.0],
-        "profit_loss_pct": [0.005,  0.0149,  -0.00784],
+        "profit_loss": [500.0, 1500.0, -800.0],
+        "profit_loss_pct": [0.005, 0.0149, -0.00784],
         "base_value": 100000.0,
         "timeframe": "1D",
     }
@@ -311,8 +422,7 @@ def test_render_daily_pnl_csv_zips_arrays_and_computes_daily_delta():
     header_line = blob.splitlines()[0].split(",")
     assert header_line[0] == "date_et"
     assert header_line[-1] == "base_value"
-    assert {"equity", "daily_pnl", "daily_return_pct",
-            "cumulative_pnl_vs_base"} <= set(header_line)
+    assert {"equity", "daily_pnl", "daily_return_pct", "cumulative_pnl_vs_base"} <= set(header_line)
 
     # --- daily columns (equity-diff) ---
     # Day 0: daily_pnl seeded from base_value → 100500 − 100000 = 500.
@@ -366,8 +476,10 @@ def test_render_daily_pnl_csv_blank_first_row_when_no_base():
 
     mod = _load_module()
     history = {
-        "timestamp": [int(datetime(2026, 4, 7, 20, tzinfo=timezone.utc).timestamp()),
-                       int(datetime(2026, 4, 8, 20, tzinfo=timezone.utc).timestamp())],
+        "timestamp": [
+            int(datetime(2026, 4, 7, 20, tzinfo=timezone.utc).timestamp()),
+            int(datetime(2026, 4, 8, 20, tzinfo=timezone.utc).timestamp()),
+        ],
         "equity": [100500.0, 102000.0],
         "profit_loss": [500.0, 2000.0],
         "profit_loss_pct": [0.005, 0.02],
@@ -393,6 +505,7 @@ def test_render_daily_pnl_csv_empty_history_is_empty_string():
 # Order and assert no field is silently dropped on the way to JSONL.
 # ---------------------------------------------------------------------------
 
+
 def test_order_dump_preserves_every_sdk_field():
     """If the SDK's Order model adds a new field, the export must keep
     it without code changes. Iterate Order.model_fields and assert each
@@ -400,26 +513,51 @@ def test_order_dump_preserves_every_sdk_field():
     import uuid
     from alpaca.trading.models import Order
     from alpaca.trading.enums import (
-        OrderSide, OrderStatus, OrderType, TimeInForce, OrderClass, AssetClass,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+        TimeInForce,
+        OrderClass,
+        AssetClass,
     )
 
     mod = _load_module()
     o = Order(
-        id=uuid.uuid4(), client_order_id="cli-1",
-        symbol="AAPL", asset_id=uuid.uuid4(), asset_class=AssetClass.US_EQUITY,
-        side=OrderSide.BUY, order_type=OrderType.LIMIT, type=OrderType.LIMIT,
-        time_in_force=TimeInForce.DAY, order_class=OrderClass.SIMPLE,
-        qty="10", notional=None, filled_qty="10", filled_avg_price="187.42",
-        limit_price="188.00", stop_price=None, status=OrderStatus.FILLED,
-        extended_hours=False, legs=None, trail_percent=None, trail_price=None,
-        hwm=None, position_intent=None, ratio_qty=None,
-        replaced_by=None, replaces=None,
+        id=uuid.uuid4(),
+        client_order_id="cli-1",
+        symbol="AAPL",
+        asset_id=uuid.uuid4(),
+        asset_class=AssetClass.US_EQUITY,
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        type=OrderType.LIMIT,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.SIMPLE,
+        qty="10",
+        notional=None,
+        filled_qty="10",
+        filled_avg_price="187.42",
+        limit_price="188.00",
+        stop_price=None,
+        status=OrderStatus.FILLED,
+        extended_hours=False,
+        legs=None,
+        trail_percent=None,
+        trail_price=None,
+        hwm=None,
+        position_intent=None,
+        ratio_qty=None,
+        replaced_by=None,
+        replaces=None,
         submitted_at=datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc),
         created_at=datetime(2026, 4, 19, 13, 30, 0, tzinfo=timezone.utc),
         updated_at=datetime(2026, 4, 19, 13, 30, 3, tzinfo=timezone.utc),
         filled_at=datetime(2026, 4, 19, 13, 30, 2, tzinfo=timezone.utc),
-        expired_at=None, expires_at=None,
-        canceled_at=None, failed_at=None, replaced_at=None,
+        expired_at=None,
+        expires_at=None,
+        canceled_at=None,
+        failed_at=None,
+        replaced_at=None,
     )
     d = mod._order_to_dict(o)
     missing = [name for name in Order.model_fields if name not in d]
@@ -442,19 +580,31 @@ def test_order_dump_preserves_every_sdk_field():
 # Activities pagination via the raw /v2/account/activities endpoint.
 # ---------------------------------------------------------------------------
 
+
 def test_fetch_all_activities_paginates_via_page_token():
     mod = _load_module()
     p1 = [
-        {"id": "act-001", "activity_type": "FILL", "symbol": "AAPL",
-         "side": "buy", "qty": "10", "price": "187.42",
-         "transaction_time": "2026-04-19T13:30:02Z"},
-        {"id": "act-002", "activity_type": "FILL", "symbol": "NVDA",
-         "side": "sell", "qty": "5", "price": "927.10",
-         "transaction_time": "2026-04-21T13:30:01Z"},
+        {
+            "id": "act-001",
+            "activity_type": "FILL",
+            "symbol": "AAPL",
+            "side": "buy",
+            "qty": "10",
+            "price": "187.42",
+            "transaction_time": "2026-04-19T13:30:02Z",
+        },
+        {
+            "id": "act-002",
+            "activity_type": "FILL",
+            "symbol": "NVDA",
+            "side": "sell",
+            "qty": "5",
+            "price": "927.10",
+            "transaction_time": "2026-04-21T13:30:01Z",
+        },
     ]
     p2 = [
-        {"id": "act-003", "activity_type": "DIV", "symbol": "AAPL",
-         "net_amount": "1.20", "date": "2026-05-15"},
+        {"id": "act-003", "activity_type": "DIV", "symbol": "AAPL", "net_amount": "1.20", "date": "2026-05-15"},
     ]
     client = MagicMock()
     client.get.side_effect = [p1, p2, []]
@@ -474,8 +624,7 @@ def test_fetch_all_activities_short_page_terminates():
     mod = _load_module()
     client = MagicMock()
     client.get.return_value = [
-        {"id": "x", "activity_type": "FILL",
-         "transaction_time": "2026-04-19T13:30:02Z"},
+        {"id": "x", "activity_type": "FILL", "transaction_time": "2026-04-19T13:30:02Z"},
     ]
     acts = mod.fetch_all_activities(client, page_size=100)
     assert len(acts) == 1
@@ -500,18 +649,22 @@ def test_fetch_all_activities_orders_fills_before_same_day_dividends():
     end-of-day) on the same date."""
     mod = _load_module()
     page = [
-        {"id": "DIV-1", "activity_type": "DIV", "symbol": "AAPL",
-         "date": "2026-05-15", "net_amount": "1.20"},
-        {"id": "FILL-1", "activity_type": "FILL", "symbol": "AAPL",
-         "side": "buy", "qty": "10", "price": "187.42",
-         "transaction_time": "2026-05-15T13:30:02Z"},
+        {"id": "DIV-1", "activity_type": "DIV", "symbol": "AAPL", "date": "2026-05-15", "net_amount": "1.20"},
+        {
+            "id": "FILL-1",
+            "activity_type": "FILL",
+            "symbol": "AAPL",
+            "side": "buy",
+            "qty": "10",
+            "price": "187.42",
+            "transaction_time": "2026-05-15T13:30:02Z",
+        },
     ]
     client = MagicMock()
     client.get.side_effect = [page, []]
     acts = mod.fetch_all_activities(client, page_size=100)
     assert [a["id"] for a in acts] == ["FILL-1", "DIV-1"], (
-        "intraday FILL must precede same-day DIV; got "
-        f"{[a['id'] for a in acts]}"
+        f"intraday FILL must precede same-day DIV; got {[a['id'] for a in acts]}"
     )
 
 
@@ -526,8 +679,7 @@ def test_fetch_all_orders_handles_full_page_at_same_timestamp():
     later_ts = datetime(2026, 4, 19, 13, 31, 0, tzinfo=timezone.utc)
 
     def make(oid, ts):
-        return _ord(oid=oid, sym="AAPL", side="buy", qty=1, filled=1,
-                     price=100.0, status="filled", submitted=ts)
+        return _ord(oid=oid, sym="AAPL", side="buy", qty=1, filled=1, price=100.0, status="filled", submitted=ts)
 
     # Page 1 (full, all at burst_ts — orders A,B): full → cursor stalls.
     page1 = [make("B", burst_ts), make("A", burst_ts)]
@@ -551,6 +703,7 @@ def test_fetch_all_orders_handles_full_page_at_same_timestamp():
 # End-to-end main(): companion file set lands next to --output.
 # ---------------------------------------------------------------------------
 
+
 def test_main_writes_full_companion_set(tmp_path, monkeypatch):
     """A clean run produces .txt + orders.jsonl + activities.jsonl +
     account.json, with the companion files appearing next to --output."""
@@ -562,28 +715,43 @@ def test_main_writes_full_companion_set(tmp_path, monkeypatch):
     # Account snapshot (full pydantic-shaped dict) — bypass the SDK by
     # patching fetch_account_dump to return a faithful-looking dump.
     fake_account = {
-        "id": str(uuid.uuid4()), "account_number": "PA9XXXXX",
+        "id": str(uuid.uuid4()),
+        "account_number": "PA9XXXXX",
         "created_at": datetime(2026, 1, 15, 14, 0, tzinfo=timezone.utc),
-        "status": "ACTIVE", "equity": "100000.00", "cash": "12345.67",
+        "status": "ACTIVE",
+        "equity": "100000.00",
+        "cash": "12345.67",
     }
     monkeypatch.setattr(mod, "fetch_account_dump", lambda _c: fake_account)
 
     t = datetime(2026, 4, 19, 13, 30, 1, tzinfo=timezone.utc)
     fake_orders = [
-        mod._order_to_dict(_ord(
-            oid="A", sym="AAPL", side="buy", qty=10, filled=10, price=187.42,
-            status="filled", submitted=t,
-        )),
+        mod._order_to_dict(
+            _ord(
+                oid="A",
+                sym="AAPL",
+                side="buy",
+                qty=10,
+                filled=10,
+                price=187.42,
+                status="filled",
+                submitted=t,
+            )
+        ),
     ]
-    monkeypatch.setattr(mod, "fetch_all_orders",
-                         lambda *a, **k: fake_orders)
+    monkeypatch.setattr(mod, "fetch_all_orders", lambda *a, **k: fake_orders)
     fake_activities = [
-        {"id": "act-001", "activity_type": "FILL", "symbol": "AAPL",
-         "side": "buy", "qty": "10", "price": "187.42",
-         "transaction_time": "2026-04-19T13:30:02Z"},
+        {
+            "id": "act-001",
+            "activity_type": "FILL",
+            "symbol": "AAPL",
+            "side": "buy",
+            "qty": "10",
+            "price": "187.42",
+            "transaction_time": "2026-04-19T13:30:02Z",
+        },
     ]
-    monkeypatch.setattr(mod, "fetch_all_activities",
-                         lambda *a, **k: fake_activities)
+    monkeypatch.setattr(mod, "fetch_all_activities", lambda *a, **k: fake_activities)
     fake_history = {
         "timestamp": [int(t.timestamp()), int((t + timedelta(days=1)).timestamp())],
         "equity": [100500.0, 102000.0],
@@ -592,12 +760,10 @@ def test_main_writes_full_companion_set(tmp_path, monkeypatch):
         "base_value": 100000.0,
         "timeframe": "1D",
     }
-    monkeypatch.setattr(mod, "fetch_portfolio_history_daily",
-                         lambda *a, **k: fake_history)
+    monkeypatch.setattr(mod, "fetch_portfolio_history_daily", lambda *a, **k: fake_history)
 
     # Stub out the SDK client construction (we never hit the network).
-    monkeypatch.setattr("alpaca.trading.client.TradingClient",
-                         lambda *a, **k: MagicMock())
+    monkeypatch.setattr("alpaca.trading.client.TradingClient", lambda *a, **k: MagicMock())
     monkeypatch.setenv("ALPACA_API_KEY", "PKtest")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "secret")
 
@@ -628,6 +794,7 @@ def test_main_writes_full_companion_set(tmp_path, monkeypatch):
     # Daily P&L CSV: header + one row per timestamp; daily_pnl seeded
     # from base_value so day 0 doesn't lose its P&L.
     import csv as _csv2
+
     pnl_rows = list(_csv2.DictReader(open(expected_daily_pnl)))
     assert len(pnl_rows) == 2
     assert float(pnl_rows[0]["daily_pnl"]) == pytest.approx(500.0)
@@ -639,6 +806,7 @@ def test_main_writes_full_companion_set(tmp_path, monkeypatch):
     # Orders CSV: header row first, then one row per order.
     import csv as _csv
     import io as _io
+
     csv_reader = list(_csv.reader(_io.StringIO(expected_orders_csv.read_text())))
     assert csv_reader[0][0] != "", "first CSV row must be header field names"
     assert "symbol" in csv_reader[0]
@@ -655,14 +823,11 @@ def test_main_writes_full_companion_set(tmp_path, monkeypatch):
 def test_main_no_companions_emits_only_txt(tmp_path, monkeypatch):
     mod = _load_module()
     out = tmp_path / "trades.txt"
-    monkeypatch.setattr(mod, "fetch_account_dump",
-                         lambda _c: {"id": "x", "account_number": "",
-                                      "created_at": None})
+    monkeypatch.setattr(mod, "fetch_account_dump", lambda _c: {"id": "x", "account_number": "", "created_at": None})
     monkeypatch.setattr(mod, "fetch_all_orders", lambda *a, **k: [])
     monkeypatch.setattr(mod, "fetch_all_activities", lambda *a, **k: [])
     monkeypatch.setattr(mod, "fetch_portfolio_history_daily", lambda *a, **k: {})
-    monkeypatch.setattr("alpaca.trading.client.TradingClient",
-                         lambda *a, **k: MagicMock())
+    monkeypatch.setattr("alpaca.trading.client.TradingClient", lambda *a, **k: MagicMock())
     monkeypatch.setenv("ALPACA_API_KEY", "PKtest")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "secret")
 
@@ -687,14 +852,11 @@ def test_main_skip_activities_writes_orders_and_account_only(tmp_path, monkeypat
         sentinel["called"] = True
         return []
 
-    monkeypatch.setattr(mod, "fetch_account_dump",
-                         lambda _c: {"id": "x", "account_number": "",
-                                      "created_at": None})
+    monkeypatch.setattr(mod, "fetch_account_dump", lambda _c: {"id": "x", "account_number": "", "created_at": None})
     monkeypatch.setattr(mod, "fetch_all_orders", lambda *a, **k: [])
     monkeypatch.setattr(mod, "fetch_all_activities", _should_not_be_called)
     monkeypatch.setattr(mod, "fetch_portfolio_history_daily", lambda *a, **k: {})
-    monkeypatch.setattr("alpaca.trading.client.TradingClient",
-                         lambda *a, **k: MagicMock())
+    monkeypatch.setattr("alpaca.trading.client.TradingClient", lambda *a, **k: MagicMock())
     monkeypatch.setenv("ALPACA_API_KEY", "PKtest")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "secret")
 

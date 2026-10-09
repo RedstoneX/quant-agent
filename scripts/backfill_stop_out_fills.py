@@ -81,7 +81,7 @@ def _load_env_file() -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             if line.startswith("export "):
-                line = line[len("export "):].lstrip()
+                line = line[len("export ") :].lstrip()
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip().strip('"').strip("'")
@@ -101,26 +101,30 @@ def _parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--db-path", type=Path, required=True,
+        "--db-path",
+        type=Path,
+        required=True,
         help="SQLite database to reconcile. For review/testing this MUST "
-             "be a COPY, never the live production database.",
+        "be a COPY, never the live production database.",
     )
     p.add_argument(
-        "--lookback-days", type=int,
+        "--lookback-days",
+        type=int,
         default=ReconciliationConfig.model_fields["stop_out_lookback_days"].default,
         help="How far back to ask the broker for filled SELL orders the "
-             "ledger doesn't already know about (default: same as "
-             "ReconciliationConfig.stop_out_lookback_days).",
+        "ledger doesn't already know about (default: same as "
+        "ReconciliationConfig.stop_out_lookback_days).",
     )
     p.add_argument(
-        "--apply", action="store_true",
-        help="Actually write the recovered fills. Without this flag the "
-             "script only PRINTS what it would do.",
+        "--apply",
+        action="store_true",
+        help="Actually write the recovered fills. Without this flag the script only PRINTS what it would do.",
     )
     p.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Skip the interactive confirmation prompt when --apply is "
-             "set. Only use once you've already reviewed a dry run.",
+        "set. Only use once you've already reviewed a dry run.",
     )
     return p.parse_args(argv)
 
@@ -153,8 +157,7 @@ def _dry_run(db, broker, lookback_days: int) -> int:
         if gap <= 1e-6:
             continue
         found_gap = True
-        print(f"GAP: {symbol} — ledger believes {ledger_open:.4f} sh open, "
-              f"broker shows {held:.4f}")
+        print(f"GAP: {symbol} — ledger believes {ledger_open:.4f} sh open, broker shows {held:.4f}")
         known = db.get_known_broker_order_ids(symbol)
         fills = broker.list_filled_sell_orders(symbol, after=after)
         if fills is None:
@@ -162,13 +165,17 @@ def _dry_run(db, broker, lookback_days: int) -> int:
             continue
         new_fills = [f for f in fills if f.get("id") and f["id"] not in known]
         if not new_fills:
-            print(f"  no untracked filled SELL found in the last "
-                  f"{lookback_days} day(s) — would be FLAGGED for manual "
-                  f"review, nothing recorded")
+            print(
+                f"  no untracked filled SELL found in the last "
+                f"{lookback_days} day(s) — would be FLAGGED for manual "
+                f"review, nothing recorded"
+            )
             continue
         for f in new_fills:
-            print(f"  WOULD RECORD: order {f['id']} — {f['qty']} sh @ "
-                  f"${f['price']:.4f} filled {f.get('filled_at') or '(unknown time)'}")
+            print(
+                f"  WOULD RECORD: order {f['id']} — {f['qty']} sh @ "
+                f"${f['price']:.4f} filled {f.get('filled_at') or '(unknown time)'}"
+            )
     if not found_gap:
         print("No ledger/broker mismatch found — nothing to backfill.")
     print()
@@ -194,10 +201,7 @@ def _apply(pipeline, db) -> int:
                 f"nothing recorded."
             )
             continue
-        rows = [
-            row for row in db.get_trades(symbol=symbol, executed_only=True)
-            if row["action"] == "STOP_OUT"
-        ]
+        rows = [row for row in db.get_trades(symbol=symbol, executed_only=True) if row["action"] == "STOP_OUT"]
         for row in rows:
             pnl = row.get("realized_pnl")
             pnl_str = "UNMATCHED (flagged, not guessed)" if pnl is None else f"${pnl:.2f}"
@@ -230,17 +234,13 @@ def main(argv=None) -> int:
         return 2
 
     print(f"Target database: {db_path}")
-    print("Broker:          Alpaca PAPER (paper=True is hardcoded — this "
-          "script cannot touch a live account)")
+    print("Broker:          Alpaca PAPER (paper=True is hardcoded — this script cannot touch a live account)")
     print(f"Lookback window: {args.lookback_days} day(s)")
     print(f"Mode:            {'APPLY (will write)' if args.apply else 'DRY RUN (no writes)'}")
     print()
 
     if args.apply and not args.yes:
-        resp = input(
-            f"About to WRITE stop-out fills into {db_path}. "
-            f"Type 'yes' to continue: "
-        )
+        resp = input(f"About to WRITE stop-out fills into {db_path}. Type 'yes' to continue: ")
         if resp.strip().lower() != "yes":
             print("Aborted — no changes made.")
             return 1

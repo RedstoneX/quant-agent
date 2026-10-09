@@ -12,6 +12,7 @@ via ``attach_reconciliation_db``. With neither, the traceback is still logged in
 full and the row is skipped, as ``record_reconciliation`` documents. Nothing is
 stored here and nothing is returned for a caller to branch on.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,8 +27,13 @@ logger = logging.getLogger("src.execution.scale_in")
 def record_scale_in(owner, where: str, exc: BaseException | None = None, **context) -> None:
     """Record ONE pass through a scale-in catch-all; never raises."""
     try:
-        record_guarded_outcome(db=getattr(owner, RECON_DB_ATTR, None) or owner,
-                               where=f"scale_in.{where}", exc=exc, log=logger, context=context)
+        record_guarded_outcome(
+            db=getattr(owner, RECON_DB_ATTR, None) or owner,
+            where=f"scale_in.{where}",
+            exc=exc,
+            log=logger,
+            context=context,
+        )
     except Exception:  # noqa: BLE001 - an observer must not break what it observes
         logger.error("record_scale_in could not record %s", where, exc_info=True)
 

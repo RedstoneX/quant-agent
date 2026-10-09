@@ -64,6 +64,7 @@ Exit codes
     3  the deployed checkout could not be read at all — an operator
        problem, not a finding
 """
+
 from __future__ import annotations
 
 import argparse
@@ -90,12 +91,10 @@ DEFAULT_MAX_COMMITS = 200
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(repo), *args],
-                          capture_output=True, text=True, check=False)
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
 
 
-def retiring_commits(repo: Path, ref: str = "origin/main",
-                     max_commits: int = DEFAULT_MAX_COMMITS) -> dict[str, str]:
+def retiring_commits(repo: Path, ref: str = "origin/main", max_commits: int = DEFAULT_MAX_COMMITS) -> dict[str, str]:
     """Item number -> the commit on `ref` that added it to the retired line.
 
     Newest-first, so the FIRST commit seen to add a number wins; a number
@@ -105,8 +104,7 @@ def retiring_commits(repo: Path, ref: str = "origin/main",
     work_md = board_path_in(repo)
     if work_md is None:
         return {}
-    log = _git(repo, "log", "--format=%H", f"-n{max_commits}", ref,
-               "--", work_md)
+    log = _git(repo, "log", "--format=%H", f"-n{max_commits}", ref, "--", work_md)
     if log.returncode != 0:
         return {}
     found: dict[str, str] = {}
@@ -115,8 +113,7 @@ def retiring_commits(repo: Path, ref: str = "origin/main",
         if after.returncode != 0:
             continue
         before = _git(repo, "show", f"{sha}^:{work_md}")
-        added = retired_numbers(after.stdout) - (
-            retired_numbers(before.stdout) if before.returncode == 0 else set())
+        added = retired_numbers(after.stdout) - (retired_numbers(before.stdout) if before.returncode == 0 else set())
         for number in added:
             found.setdefault(number, sha)
     return found
@@ -129,11 +126,11 @@ class Finding:
     subject: str
 
 
-def undeployed_closures(repo: Path, head: str, ref: str = "origin/main",
-                        max_commits: int = DEFAULT_MAX_COMMITS) -> list[Finding]:
+def undeployed_closures(
+    repo: Path, head: str, ref: str = "origin/main", max_commits: int = DEFAULT_MAX_COMMITS
+) -> list[Finding]:
     out: list[Finding] = []
-    for item, sha in sorted(retiring_commits(repo, ref, max_commits).items(),
-                            key=lambda kv: int(kv[0])):
+    for item, sha in sorted(retiring_commits(repo, ref, max_commits).items(), key=lambda kv: int(kv[0])):
         reachable = _git(repo, "merge-base", "--is-ancestor", sha, head)
         if reachable.returncode == 0:
             continue
@@ -154,29 +151,24 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.deployed_path)
     head = _git(repo, "rev-parse", "HEAD")
     if head.returncode != 0:
-        print(f"cannot read HEAD of {repo}: {head.stderr.strip()}",
-              file=sys.stderr)
+        print(f"cannot read HEAD of {repo}: {head.stderr.strip()}", file=sys.stderr)
         return 3
-    if not args.no_fetch and _git(repo, "fetch", "-q", "origin",
-                                  "main").returncode != 0:
-        print("could not fetch origin/main; not reporting drift from a read "
-              "that failed", file=sys.stderr)
+    if not args.no_fetch and _git(repo, "fetch", "-q", "origin", "main").returncode != 0:
+        print("could not fetch origin/main; not reporting drift from a read that failed", file=sys.stderr)
         return 0
 
-    findings = undeployed_closures(repo, head.stdout.strip(), args.ref,
-                                   args.max_commits)
+    findings = undeployed_closures(repo, head.stdout.strip(), args.ref, args.max_commits)
     if not findings:
-        print(f"every retired board item's closing commit is in {repo} "
-              f"(HEAD {head.stdout.strip()[:8]})")
+        print(f"every retired board item's closing commit is in {repo} (HEAD {head.stdout.strip()[:8]})")
         return 0
 
     lines = [f"item {f.item}: {f.commit} {f.subject}" for f in findings]
-    message = ("Board items reported closed but NOT in the production "
-               f"checkout ({len(findings)}):\n" + "\n".join(lines))
+    message = f"Board items reported closed but NOT in the production checkout ({len(findings)}):\n" + "\n".join(lines)
     print(message)
     if not args.no_telegram:
         try:
             from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
+
             send_owner_alert_with_outcome(message, kind="item_deployment", pnl_header=False)
         except Exception as exc:  # noqa: BLE001 - a push failure is not a verdict
             print(f"could not send Telegram alert: {exc}", file=sys.stderr)

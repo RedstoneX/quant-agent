@@ -21,13 +21,19 @@ _BODIES = "src/agents/portfolio_manager/candidate_ranking.py"
 
 #: Every name the agent exposes for candidate ranking, delegated to the held part.
 DELEGATED = (
-    'candidate_eligibility', '_collect_seat_verdicts', 'rank_candidates',
-    '_apply_conviction_bar', '_render_candidate_ranking',
+    "candidate_eligibility",
+    "_collect_seat_verdicts",
+    "rank_candidates",
+    "_apply_conviction_bar",
+    "_render_candidate_ranking",
 )
 
 #: Bodies the part owns that it also reads through `self.` — handed in live so a swap
 #: on the agent class after construction is what the body sees.
-LIVE_BODIES = ('_collect_seat_verdicts', 'candidate_eligibility',)
+LIVE_BODIES = (
+    "_collect_seat_verdicts",
+    "candidate_eligibility",
+)
 
 
 def build_candidate_ranking(agent_cls) -> CandidateRanking:

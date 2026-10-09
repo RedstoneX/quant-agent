@@ -42,6 +42,7 @@ def _series(start: date, closes: list[float]) -> list[_Bar]:
 # score_direction — sign only, no band
 # ---------------------------------------------------------------------------
 
+
 def test_bullish_up_is_correct():
     assert score_direction("bullish", 100.0, 110.0) is True
 
@@ -76,6 +77,7 @@ def test_unrecognised_and_bad_prices_are_none():
 # ---------------------------------------------------------------------------
 # forward_return
 # ---------------------------------------------------------------------------
+
 
 def test_forward_return_to_latest_close():
     bars = _series(date(2026, 1, 1), [100.0, 101.0, 105.0])
@@ -127,8 +129,8 @@ def test_empty_bars_returns_none():
 # iter_stored_verdicts — real disk layout
 # ---------------------------------------------------------------------------
 
-def _write_analysis(root: Path, symbol: str, form: str, filing_date: str,
-                    sentiment: str, conviction: str) -> None:
+
+def _write_analysis(root: Path, symbol: str, form: str, filing_date: str, sentiment: str, conviction: str) -> None:
     d = root / symbol
     d.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -168,24 +170,40 @@ def test_iter_stored_verdicts_missing_dir_is_empty():
 # measure / build_report — end to end, surfaces a WRONG verdict
 # ---------------------------------------------------------------------------
 
+
 def test_measure_flags_a_contradicted_verdict():
     verdicts = [
-        {"symbol": "UP", "form_type": "10-Q", "filing_date": "2026-01-01",
-         "sentiment": "bullish", "conviction": "high"},
-        {"symbol": "DOWN", "form_type": "10-Q", "filing_date": "2026-01-01",
-         "sentiment": "bullish", "conviction": "high"},
-        {"symbol": "NEU", "form_type": "10-Q", "filing_date": "2026-01-01",
-         "sentiment": "neutral", "conviction": "low"},
+        {
+            "symbol": "UP",
+            "form_type": "10-Q",
+            "filing_date": "2026-01-01",
+            "sentiment": "bullish",
+            "conviction": "high",
+        },
+        {
+            "symbol": "DOWN",
+            "form_type": "10-Q",
+            "filing_date": "2026-01-01",
+            "sentiment": "bullish",
+            "conviction": "high",
+        },
+        {
+            "symbol": "NEU",
+            "form_type": "10-Q",
+            "filing_date": "2026-01-01",
+            "sentiment": "neutral",
+            "conviction": "low",
+        },
     ]
     bars = {
-        "UP": _series(date(2026, 1, 1), [100.0, 120.0]),    # bullish + up = right
-        "DOWN": _series(date(2026, 1, 1), [100.0, 80.0]),   # bullish + down = WRONG
-        "NEU": _series(date(2026, 1, 1), [100.0, 150.0]),   # neutral = unscored
+        "UP": _series(date(2026, 1, 1), [100.0, 120.0]),  # bullish + up = right
+        "DOWN": _series(date(2026, 1, 1), [100.0, 80.0]),  # bullish + down = WRONG
+        "NEU": _series(date(2026, 1, 1), [100.0, 150.0]),  # neutral = unscored
     }
     report = measure(verdicts, bars)
     assert report["n_verdicts"] == 3
-    assert report["n_resolved"] == 2          # neutral not scored
-    assert report["n_wrong"] == 1             # DOWN was contradicted
+    assert report["n_resolved"] == 2  # neutral not scored
+    assert report["n_wrong"] == 1  # DOWN was contradicted
 
     recs = {r["symbol"]: r for r in report["records"]}
     assert recs["DOWN"]["correct"] is False
@@ -217,5 +235,5 @@ def test_build_report_survives_a_failing_symbol(tmp_path):
 
     report = build_report(str(tmp_path), _fetch)
     assert report["n_verdicts"] == 1
-    assert report["n_resolved"] == 0          # unresolved, not crashed
+    assert report["n_resolved"] == 0  # unresolved, not crashed
     assert report["records"][0]["correct"] is None

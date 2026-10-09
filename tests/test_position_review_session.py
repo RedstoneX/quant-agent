@@ -3,6 +3,7 @@
 Every collaborator is an explicit constructor argument, so the session can be
 built from stubs alone. These tests exercise the two earliest return paths.
 """
+
 from __future__ import annotations
 
 import inspect

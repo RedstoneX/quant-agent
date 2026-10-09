@@ -1,4 +1,5 @@
 """The board is found by shape; a vanished or ambiguous board refuses, never passes."""
+
 from __future__ import annotations
 
 import pytest

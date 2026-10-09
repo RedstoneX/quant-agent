@@ -141,13 +141,16 @@ from types import SimpleNamespace
 from src.backtest.swept_values import SweepMeter
 from src.backtest.budget_days import _budget_binds, _tie_break_arbitrated  # noqa: F401
 from src.backtest.exit_rules import (  # noqa: F401
-    _check_exit, _existing_risk_pct, _size_position,
+    _check_exit,
+    _existing_risk_pct,
+    _size_position,
 )
 from src.config import AppConfig
 from src.data.correlation import build_correlation_matrix, correlation_clusters
 from src.data.technical import compute_indicators
 from src.backtest.structural_stops import (  # noqa: F401
-    _resolve_structural_stop_and_target, _setup_type_for,
+    _resolve_structural_stop_and_target,
+    _setup_type_for,
 )
 from src.backtest.records import Trade, _OpenPosition, _close_trade, _fill_price  # noqa: F401
 from src.models import OHLCV
@@ -272,12 +275,15 @@ def _resolve_stop_for_signal(
     other half of item 1(d), feeding the real ratio into the weighted
     ranking, has no analogue to apply here."""
     analysis = SimpleNamespace(
-        stop_loss=structural_stop, atr_14=atr_14,
-        setup_type=setup_type, reference_target=target,
+        stop_loss=structural_stop,
+        atr_14=atr_14,
+        setup_type=setup_type,
+        reference_target=target,
         computed_levels=list(computed_levels or []),
         computed_level_touches=dict(computed_level_touches or {}),
         computed_level_bars=dict(computed_level_bars or {}),
-        signal_bar_low=signal_bar_low, signal_bar_high=signal_bar_high,
+        signal_bar_low=signal_bar_low,
+        signal_bar_high=signal_bar_high,
     )
     # `symbol` is read by `_resolve_stop`'s no-typed-stop log line, which
     # only runs now that a stopless signal is passed through instead of
@@ -286,7 +292,11 @@ def _resolve_stop_for_signal(
     stop = constructor._resolve_stop(target_shim, analysis, ref_entry)
     if direction == "long":
         stop = constructor._widen_stop_past_noise(
-            symbol, analysis, ref_entry, stop, regime=None,
+            symbol,
+            analysis,
+            ref_entry,
+            stop,
+            regime=None,
         )
         if stop is None or stop <= 0 or stop >= ref_entry:
             return None
@@ -299,61 +309,68 @@ def _resolve_stop_for_signal(
 def _with_run_meter(simulate):
     """Install this run's read counters for the duration of the run and
     remove them afterwards, so no count or wrapper outlives the run."""
+
     @functools.wraps(simulate)
     def wrapper(*, config, bars_by_symbol, params):
         with params.meter.counting():
             return simulate(config=config, bars_by_symbol=bars_by_symbol, params=params)
+
     return wrapper
 
 
 @_with_run_meter
 def run_backtest(
-    *, config: AppConfig, bars_by_symbol: dict[str, list[OHLCV]], params: BacktestParams,
+    *,
+    config: AppConfig,
+    bars_by_symbol: dict[str, list[OHLCV]],
+    params: BacktestParams,
 ) -> BacktestRunResult:
     """Run the day-by-day simulation. `bars_by_symbol` must already be
     fetched (see `src/backtest/data.py`) — this function makes no network
     calls, which is what makes it unit-testable offline."""
-    constructor = PortfolioConstructor(ConstructorConfig(
-        # Mirrors src/pipeline.py's ConstructorConfig wiring exactly, so a
-        # change to `config.risk.*` is the same experiment here as live.
-        risk_budget_pct=config.risk.max_position_risk_pct,
-        min_risk_pct=config.risk.min_position_risk_pct,
-        max_portfolio_risk_pct=config.risk.max_portfolio_risk_pct,
-        max_cluster_risk_share_pct=config.risk.max_cluster_risk_share_pct,
-        max_position_pct=config.risk.max_position_pct,
-        min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
-        # Spec §12.1 — a stop at a COMPUTED level is honoured whatever the
-        # band says, down to a deterministic 1x ATR floor. Wired here so a
-        # change to `config.risk.*` is the same experiment in the backtest
-        # as it is live.
-        # No `level_match_atr_tolerance` to wire: deleted 2026-09-13
-        # (docs/WORK.md item 46). The match tolerance is the level zone's
-        # own width, read from `src.data.levels.CLUSTER_TOLERANCE_PCT`, so
-        # live and backtest get it from the same place by construction.
-        absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
-        # The §12.1 trust bar itself. Until 2026-10-04 this line was
-        # MISSING while the two docstrings below claimed the engine ran
-        # the live touch rule: the constructor fell back to
-        # `ConstructorConfig`'s own default, so `risk.min_level_touches_
-        # for_stop_honor` in the YAML changed nothing and an A/B sweep of
-        # it returned byte-identical results. The level branch was always
-        # reached (measured: 32 entries into `_level_backing_stop` over a
-        # five-symbol 2026 run); what was unreachable was the CONFIGURED
-        # bar. Wired here for the same reason every other `config.risk.*`
-        # field above is wired — so changing the YAML IS the experiment.
-        min_level_touches_for_stop_honor=config.risk.min_level_touches_for_stop_honor,
-        # Target-derivation tunables (2026-09-01). Wired for parity with
-        # live, though this engine does not reach `_derive_target`: it
-        # computes its own nearest-level target in
-        # `_resolve_structural_stop_and_target` and hands it to
-        # `_widen_stop_past_noise` directly, which is the same rule by a
-        # shorter path and was never exposed to the guessed-target defect.
-        min_target_atr_multiple=config.risk.min_target_atr_multiple,
-        breakout_projection_atr_multiple=config.risk.breakout_projection_atr_multiple,
-        max_target_reach_atr_multiple=config.risk.max_target_reach_atr_multiple,
-        max_target_horizon_sessions=config.risk.max_target_horizon_sessions,
-        target_divergence_warn_pct=config.risk.target_divergence_warn_pct,
-    ))
+    constructor = PortfolioConstructor(
+        ConstructorConfig(
+            # Mirrors src/pipeline.py's ConstructorConfig wiring exactly, so a
+            # change to `config.risk.*` is the same experiment here as live.
+            risk_budget_pct=config.risk.max_position_risk_pct,
+            min_risk_pct=config.risk.min_position_risk_pct,
+            max_portfolio_risk_pct=config.risk.max_portfolio_risk_pct,
+            max_cluster_risk_share_pct=config.risk.max_cluster_risk_share_pct,
+            max_position_pct=config.risk.max_position_pct,
+            min_stop_atr_multiple=config.risk.min_stop_atr_multiple,
+            # Spec §12.1 — a stop at a COMPUTED level is honoured whatever the
+            # band says, down to a deterministic 1x ATR floor. Wired here so a
+            # change to `config.risk.*` is the same experiment in the backtest
+            # as it is live.
+            # No `level_match_atr_tolerance` to wire: deleted 2026-09-13
+            # (docs/WORK.md item 46). The match tolerance is the level zone's
+            # own width, read from `src.data.levels.CLUSTER_TOLERANCE_PCT`, so
+            # live and backtest get it from the same place by construction.
+            absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
+            # The §12.1 trust bar itself. Until 2026-10-04 this line was
+            # MISSING while the two docstrings below claimed the engine ran
+            # the live touch rule: the constructor fell back to
+            # `ConstructorConfig`'s own default, so `risk.min_level_touches_
+            # for_stop_honor` in the YAML changed nothing and an A/B sweep of
+            # it returned byte-identical results. The level branch was always
+            # reached (measured: 32 entries into `_level_backing_stop` over a
+            # five-symbol 2026 run); what was unreachable was the CONFIGURED
+            # bar. Wired here for the same reason every other `config.risk.*`
+            # field above is wired — so changing the YAML IS the experiment.
+            min_level_touches_for_stop_honor=config.risk.min_level_touches_for_stop_honor,
+            # Target-derivation tunables (2026-09-01). Wired for parity with
+            # live, though this engine does not reach `_derive_target`: it
+            # computes its own nearest-level target in
+            # `_resolve_structural_stop_and_target` and hands it to
+            # `_widen_stop_past_noise` directly, which is the same rule by a
+            # shorter path and was never exposed to the guessed-target defect.
+            min_target_atr_multiple=config.risk.min_target_atr_multiple,
+            breakout_projection_atr_multiple=config.risk.breakout_projection_atr_multiple,
+            max_target_reach_atr_multiple=config.risk.max_target_reach_atr_multiple,
+            max_target_horizon_sessions=config.risk.max_target_horizon_sessions,
+            target_divergence_warn_pct=config.risk.target_divergence_warn_pct,
+        )
+    )
 
     symbols_with_data = sorted(sym for sym, bars in bars_by_symbol.items() if bars)
     symbols_with_no_data = sorted(sym for sym, bars in bars_by_symbol.items() if not bars)
@@ -365,10 +382,7 @@ def run_backtest(
         sym: {b.date: i for i, b in enumerate(bars_sorted[sym])} for sym in symbols_with_data
     }
 
-    calendar = sorted({
-        b.date for bars in bars_sorted.values() for b in bars
-        if params.start <= b.date <= params.end
-    })
+    calendar = sorted({b.date for bars in bars_sorted.values() for b in bars if params.start <= b.date <= params.end})
 
     trades: list[Trade] = []
     open_positions: dict[str, _OpenPosition] = {}
@@ -398,13 +412,18 @@ def run_backtest(
                 continue
 
             # Still open: propose a trail using bars SINCE ENTRY, through today.
-            bars_since_entry = bars_sorted[symbol][pos.entry_index: idx + 1]
+            bars_since_entry = bars_sorted[symbol][pos.entry_index : idx + 1]
             atr_today = compute_indicators(symbol, bars_sorted[symbol][: idx + 1]).atr_14
             qty_sign = pos.shares if pos.direction == "long" else -pos.shares
             proposal = compute_trailing_stop(
-                symbol=symbol, setup_type=pos.setup_type, entry=pos.entry_price,
-                current_price=bar.close, current_stop=pos.stop,
-                reference_target=pos.target, bars=bars_since_entry, atr=atr_today,
+                symbol=symbol,
+                setup_type=pos.setup_type,
+                entry=pos.entry_price,
+                current_price=bar.close,
+                current_stop=pos.stop,
+                reference_target=pos.target,
+                bars=bars_since_entry,
+                atr=atr_today,
                 qty=qty_sign,
                 # The ENTRY stop, frozen at fill — never the live `pos.stop` a
                 # prior trail already moved. Powers the Type A +1R breakeven
@@ -446,7 +465,10 @@ def run_backtest(
 
             indicators = compute_indicators(symbol, bars_through_today)
             if not RiskGate._has_actionable_signal_fn(
-                indicators, symbol, bars_through_today, [],
+                indicators,
+                symbol,
+                bars_through_today,
+                [],
             ):
                 continue
 
@@ -461,47 +483,66 @@ def run_backtest(
             # the same reference every other part of this decision already
             # used. See `_resolve_structural_stop_and_target`.
             (
-                structural_stop, target, computed_levels,
-                computed_level_touches, computed_level_bars,
+                structural_stop,
+                target,
+                computed_levels,
+                computed_level_touches,
+                computed_level_bars,
             ) = _resolve_structural_stop_and_target(
-                bars_through_today, direction, ref_entry, meter=params.meter,
+                bars_through_today,
+                direction,
+                ref_entry,
+                meter=params.meter,
             )
             signal_bar = bars_through_today[-1]
             stop = _resolve_stop_for_signal(
-                constructor, symbol=symbol, direction=direction,
-                structural_stop=structural_stop, target=target,
-                atr_14=indicators.atr_14, setup_type=setup_type, ref_entry=ref_entry,
-                signal_bar_low=signal_bar.low, signal_bar_high=signal_bar.high,
+                constructor,
+                symbol=symbol,
+                direction=direction,
+                structural_stop=structural_stop,
+                target=target,
+                atr_14=indicators.atr_14,
+                setup_type=setup_type,
+                ref_entry=ref_entry,
+                signal_bar_low=signal_bar.low,
+                signal_bar_high=signal_bar.high,
                 computed_levels=computed_levels,
                 computed_level_touches=computed_level_touches,
                 computed_level_bars=computed_level_bars,
             )
             if stop is None:
                 continue
-            candidates.append(dict(
-                symbol=symbol, direction=direction, ref_entry=ref_entry, stop=stop,
-                target=target, setup_type=setup_type, next_idx=next_idx, signal_date=day,
-            ))
+            candidates.append(
+                dict(
+                    symbol=symbol,
+                    direction=direction,
+                    ref_entry=ref_entry,
+                    stop=stop,
+                    target=target,
+                    setup_type=setup_type,
+                    next_idx=next_idx,
+                    signal_date=day,
+                )
+            )
 
         if not candidates:
             continue
 
         hist_for_matrix = {
             sym: bars_sorted[sym][: index_of_date[sym][day] + 1]
-            for sym in symbols_with_data if day in index_of_date[sym]
+            for sym in symbols_with_data
+            if day in index_of_date[sym]
         }
         matrix = build_correlation_matrix(hist_for_matrix)
         cluster_universe = list(open_positions) + [c["symbol"] for c in candidates]
         clusters = correlation_clusters(cluster_universe, matrix)
 
-        existing_pct = {
-            sym: _existing_risk_pct(pos, equity) for sym, pos in open_positions.items()
-        }
-        requests = [
-            RiskRequest(c["symbol"], config.risk.max_position_risk_pct) for c in candidates
-        ]
+        existing_pct = {sym: _existing_risk_pct(pos, equity) for sym, pos in open_positions.items()}
+        requests = [RiskRequest(c["symbol"], config.risk.max_position_risk_pct) for c in candidates]
         allocation = allocate_risk_budget(
-            requests, existing_pct=existing_pct, clusters=clusters,
+            requests,
+            existing_pct=existing_pct,
+            clusters=clusters,
             ceiling_pct=config.risk.max_portfolio_risk_pct,
             cluster_share_pct=config.risk.max_cluster_risk_share_pct,
             floor_pct=config.risk.min_position_risk_pct,
@@ -518,16 +559,28 @@ def run_backtest(
                 continue
             fill_entry = _fill_price(c["ref_entry"], c["direction"], "open", params.slippage_bps)
             shares, eff_risk_pct = _size_position(
-                equity=equity, granted_risk_pct=granted, fill_entry=fill_entry,
-                stop=c["stop"], symbol=c["symbol"], max_position_pct=config.risk.max_position_pct,
+                equity=equity,
+                granted_risk_pct=granted,
+                fill_entry=fill_entry,
+                stop=c["stop"],
+                symbol=c["symbol"],
+                max_position_pct=config.risk.max_position_pct,
             )
             if shares <= 0:
                 continue
             open_positions[c["symbol"]] = _OpenPosition(
-                symbol=c["symbol"], direction=c["direction"], signal_date=c["signal_date"],
-                entry_date=next_day, entry_index=c["next_idx"], entry_price=fill_entry,
-                stop_initial=c["stop"], stop=c["stop"], target=c["target"],
-                setup_type=c["setup_type"], shares=shares, risk_pct=eff_risk_pct,
+                symbol=c["symbol"],
+                direction=c["direction"],
+                signal_date=c["signal_date"],
+                entry_date=next_day,
+                entry_index=c["next_idx"],
+                entry_price=fill_entry,
+                stop_initial=c["stop"],
+                stop=c["stop"],
+                target=c["target"],
+                setup_type=c["setup_type"],
+                shares=shares,
+                risk_pct=eff_risk_pct,
             )
 
     # ---- Force-close anything still open when the data window ends ----

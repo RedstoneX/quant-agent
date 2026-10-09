@@ -5,6 +5,7 @@ Every scanner function takes its inputs as arguments (a parsed tree, the module
 name, the names a module binds), so the module is exercised from a tree built in
 the test and nothing else (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import ast

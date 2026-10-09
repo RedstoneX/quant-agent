@@ -3,6 +3,7 @@
 Owner 2026-09-16. PR #430 same-session GOOD reuse must not regress.
 No refresh timer. No item-20 seat-count. Blank/LOST is never research.
 """
+
 from src.evidence_kind import (
     DECISION_LOST,
     DECISION_REFETCH,
@@ -31,7 +32,10 @@ def test_blank_and_none_are_lost_not_research():
     assert payload_quality({}) == QUALITY_LOST
     assert news_reuse(None, same_session=True, newer_material_wire=False).decision == DECISION_LOST
     assert macro_reuse(None, same_session=True, regime_or_print_changed=False).decision == DECISION_LOST
-    assert macro_reuse({"summary": "no regime"}, same_session=True, regime_or_print_changed=False).decision == DECISION_LOST
+    assert (
+        macro_reuse({"summary": "no regime"}, same_session=True, regime_or_print_changed=False).decision
+        == DECISION_LOST
+    )
 
 
 def test_same_session_good_news_is_reused_without_a_clock():
@@ -64,7 +68,8 @@ def test_cross_session_news_is_expired():
 def test_macro_same_session_good_reuse_is_integrity_clean():
     v = macro_reuse(
         {"regime": "risk-on", "equity_outlook": "bullish"},
-        same_session=True, regime_or_print_changed=False,
+        same_session=True,
+        regime_or_print_changed=False,
     )
     assert v.status == STATUS_CARRIED_FROM_MORNING
     assert not evidence_gate.counts_as_degraded(v.status)
@@ -110,6 +115,7 @@ def test_insider_remembered_until_new_form4():
 def test_no_seat_count_lives_in_the_kind_module():
     import inspect
     import src.evidence_kind as mod
+
     src = inspect.getsource(mod)
     assert "min_seats" not in src
     assert "seat_count" not in src
@@ -123,9 +129,7 @@ def test_covered_headlines_read_model_or_dict():
         stock_news = {"AAPL": [_Item()]}
 
     assert "Apple beats" in covered_news_headlines(_Report())
-    assert "Apple beats" in covered_news_headlines(
-        {"stock_news": {"AAPL": [{"headline": "Apple beats"}]}}
-    )
+    assert "Apple beats" in covered_news_headlines({"stock_news": {"AAPL": [{"headline": "Apple beats"}]}})
     assert headline_mentions_symbols("AAPL guidance cut after close", ["AAPL"]) is True
     assert headline_mentions_symbols("Fed holds rates after the close", ["AAPL"]) is False
     assert headline_mentions_symbols("Guidance cut after close AAPL cuts FY outlook", ["AAPL"]) is True
@@ -134,6 +138,7 @@ def test_covered_headlines_read_model_or_dict():
 
 def test_undated_is_not_same_session():
     from src.trading_calendar import et_today
+
     assert same_session_from_date(str(et_today())) is True
     assert same_session_from_date(None) is False
     assert same_session_from_date("") is False

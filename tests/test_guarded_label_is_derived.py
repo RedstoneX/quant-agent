@@ -1,4 +1,5 @@
 """A guarded row's label names the module that recorded it, never a shared broker prefix."""
+
 import ast
 import pathlib
 
@@ -9,11 +10,14 @@ from src.sentinel.guarded import origin_area
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 
 
-@pytest.mark.parametrize("module,area", [
-    ("src.execution.broker_parts.order_desk", "execution.broker_parts"),
-    ("src.trader_feed.naked", "trader_feed"),
-    ("src.pipeline_sizing", "pipeline_sizing"),
-])
+@pytest.mark.parametrize(
+    "module,area",
+    [
+        ("src.execution.broker_parts.order_desk", "execution.broker_parts"),
+        ("src.trader_feed.naked", "trader_feed"),
+        ("src.pipeline_sizing", "pipeline_sizing"),
+    ],
+)
 def test_area_is_read_off_the_recording_module(module, area):
     assert origin_area(module) == area
 

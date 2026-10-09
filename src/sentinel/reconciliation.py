@@ -6,6 +6,7 @@ WHETHER broker and ledger agreed. One row per run is appended; `status()`
 reports 'agreed', 'disagreed' or 'not_run' -- the third is never collapsed
 into either of the others. Nothing in the desk reads this yet.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,11 +26,9 @@ class ReconciliationLog:
     def __init__(self, *, conn: sqlite3.Connection):
         self.conn = conn
 
-    def record(self, *, kind: str, agreed: bool, detail: str = "",
-               run_id: str | None = None) -> int:
+    def record(self, *, kind: str, agreed: bool, detail: str = "", run_id: str | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO reconciliation_runs (kind, agreed, detail, run_id)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO reconciliation_runs (kind, agreed, detail, run_id) VALUES (?, ?, ?, ?)",
             (kind, 1 if agreed else 0, detail, run_id),
         )
         self.conn.commit()
@@ -39,7 +38,8 @@ class ReconciliationLog:
         """The newest row for `kind`, or None when that reconciler has never run."""
         cur = self.conn.execute(
             "SELECT id, ran_at, kind, agreed, detail, run_id FROM reconciliation_runs"
-            " WHERE kind = ? ORDER BY id DESC LIMIT 1", (kind,),
+            " WHERE kind = ? ORDER BY id DESC LIMIT 1",
+            (kind,),
         )
         row = cur.fetchone()
         if row is None:
@@ -83,9 +83,15 @@ def record_reconciliation(*, db, kind: str, result, run_id: str | None = None):
     return result
 
 
-def record_guarded_outcome(*, db, where: str, exc: BaseException | None = None,
-                           run_id: str | None = None, log=None,
-                           context: dict | None = None):
+def record_guarded_outcome(
+    *,
+    db,
+    where: str,
+    exc: BaseException | None = None,
+    run_id: str | None = None,
+    log=None,
+    context: dict | None = None,
+):
     """One counted row for ONE pass through a money-path catch-all.
 
     Why this exists: a broad ``except Exception`` on the trading path is
@@ -114,8 +120,11 @@ def record_guarded_outcome(*, db, where: str, exc: BaseException | None = None,
     if exc is not None:
         emitter.error(
             "money-path guard swallowed a fault at %s (%s): %s: %s",
-            where, ctx, type(exc).__name__, exc, exc_info=exc,
+            where,
+            ctx,
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
         )
-        detail = [{"where": where, "error": type(exc).__name__,
-                   "message": str(exc), **ctx}]
+        detail = [{"where": where, "error": type(exc).__name__, "message": str(exc), **ctx}]
     record_reconciliation(db=db, kind=f"guarded:{where}", result=detail, run_id=run_id)

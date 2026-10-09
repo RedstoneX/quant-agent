@@ -44,15 +44,13 @@ def rsg() -> dict:
 def _all_readable_text(result: dict) -> str:
     """Every string a person would actually read, concatenated. Excludes
     `raw_evidence` on purpose — machine detail is allowed to live there."""
-    return json.dumps(
-        {"lede": result["lede"], "readable": result["readable"],
-         "not_recorded": result["not_recorded"]}
-    )
+    return json.dumps({"lede": result["lede"], "readable": result["readable"], "not_recorded": result["not_recorded"]})
 
 
 # --------------------------------------------------------------------
 # formatting helpers
 # --------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -87,6 +85,7 @@ def test_dates_are_written_the_way_a_person_writes_them():
 # --------------------------------------------------------------------
 # RSG — the real recorded shape
 # --------------------------------------------------------------------
+
 
 def test_rsg_lede_is_one_sentence_naming_who_bought_how_much_when_and_at_what_price(rsg):
     lede = rsg["lede"]
@@ -182,9 +181,9 @@ def test_no_owner_facing_surface_claims_a_live_effect_for_the_target():
         text = (root / rel).read_text(encoding="utf-8")
         for phrase in banned:
             assert phrase not in text, f"{rel} still says {phrase!r}"
-    assert "nothing exits, caps or trails on it" in (
-        root / "src/agents/position_reviewer.py"
-    ).read_text(encoding="utf-8")
+    assert "nothing exits, caps or trails on it" in (root / "src/agents/position_reviewer.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_rsg_horizon_is_the_pinned_plan_and_says_nothing_acts_on_it(rsg):
@@ -226,11 +225,14 @@ def test_rsg_has_nothing_missing(rsg):
 # the honest-fallback path
 # --------------------------------------------------------------------
 
+
 def test_a_holding_with_no_recorded_why_says_so_in_every_field():
     """A position opened before the desk recorded any of this. Nothing may
     be omitted, nothing may read as zero, and nothing may be inferred."""
     result = build_holding_why(
-        {"symbol": "OLD", "action": "BUY", "price": 100.0}, [], [],
+        {"symbol": "OLD", "action": "BUY", "price": 100.0},
+        [],
+        [],
     )
     readable = result["readable"]
     assert result["lede"] == "Why OLD is held: Not recorded."
@@ -282,14 +284,21 @@ def test_an_admission_without_the_paid_finding_admits_it_lacks_date_and_price():
     time and not what the insider paid."""
     result = build_holding_why(
         {"symbol": "ACME", "action": "BUY", "price": 50.0},
-        [{
-            "agent_name": "smart_money_analyst", "kind": "admission",
-            "evidence_json": json.dumps({
-                "owners": ["SOME HOLDINGS LLC"], "transaction_value_usd": 12_300_000,
-                "last_price": 49.5, "temporary": True,
-                "accessions": ["0001104659-26-999999"],
-            }),
-        }],
+        [
+            {
+                "agent_name": "smart_money_analyst",
+                "kind": "admission",
+                "evidence_json": json.dumps(
+                    {
+                        "owners": ["SOME HOLDINGS LLC"],
+                        "transaction_value_usd": 12_300_000,
+                        "last_price": 49.5,
+                        "temporary": True,
+                        "accessions": ["0001104659-26-999999"],
+                    }
+                ),
+            }
+        ],
         [],
     )
     insider = result["readable"]["insider"]
@@ -298,7 +307,8 @@ def test_an_admission_without_the_paid_finding_admits_it_lacks_date_and_price():
     assert "$12.3 million" in insider["plain"]
     assert "49.5" not in insider["plain"]
     assert insider["not_recorded"] == [
-        "the price the insider paid", "the date the insider bought",
+        "the price the insider paid",
+        "the date the insider bought",
     ]
     assert result["readable"]["primary_driver"] == "Smart money"
 
@@ -307,8 +317,10 @@ def test_an_admission_without_the_paid_finding_admits_it_lacks_date_and_price():
 # the route
 # --------------------------------------------------------------------
 
+
 def test_route_serves_the_plain_language_answer_and_404s_on_an_unheld_symbol(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """End to end through the real router, against a real temp SQLite DB
     seeded through the writer (the API-safety invariant only forbids
@@ -325,20 +337,34 @@ def test_route_serves_the_plain_language_answer_and_404s_on_an_unheld_symbol(
     db = Database(str(db_path))
     db.initialize()
     db.insert_trade(
-        symbol="ZZZ", action="BUY", qty=5, price=100.0,
-        reasoning="entry thesis text", run_id="run-why0001",
-        stop_loss=95.0, take_profit=112.0, fill_status="filled",
-        expected_horizon_sessions=8, setup_type="range",
+        symbol="ZZZ",
+        action="BUY",
+        qty=5,
+        price=100.0,
+        reasoning="entry thesis text",
+        run_id="run-why0001",
+        stop_loss=95.0,
+        take_profit=112.0,
+        fill_status="filled",
+        expected_horizon_sessions=8,
+        setup_type="range",
         thesis_invalid_if="closes below 95 on volume",
     )
     db.insert_specialist_evidence(
-        run_id="run-why0001", agent_name="smart_money_analyst", kind="admission",
-        scope="symbol", symbol="ZZZ",
-        evidence_json=_json.dumps({
-            "owners": ["BIG FUND LP"], "transaction_value_usd": 480_000_000,
-            "temporary": True, "accessions": ["0001104659-26-123456"],
-            "broker": {"eligible": True, "name": "Zzz Corp.", "symbol": "ZZZ"},
-        }),
+        run_id="run-why0001",
+        agent_name="smart_money_analyst",
+        kind="admission",
+        scope="symbol",
+        symbol="ZZZ",
+        evidence_json=_json.dumps(
+            {
+                "owners": ["BIG FUND LP"],
+                "transaction_value_usd": 480_000_000,
+                "temporary": True,
+                "accessions": ["0001104659-26-123456"],
+                "broker": {"eligible": True, "name": "Zzz Corp.", "symbol": "ZZZ"},
+            }
+        ),
     )
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
 

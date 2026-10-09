@@ -32,12 +32,16 @@ from tests.test_exit_refusal_coherence import _payloads, _position, _risk_pipeli
 def _review(*actions):
     return PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="stable", thesis_progress_check="broken",
-            thesis_integrity_check="invalidation hit", winners_discipline_check="n/a",
-            session_disposition_check="midday", execution_rationale="exit",
+            macro_continuity_check="stable",
+            thesis_progress_check="broken",
+            thesis_integrity_check="invalidation hit",
+            winners_discipline_check="n/a",
+            session_disposition_check="midday",
+            execution_rationale="exit",
         ),
         actions=[PositionAction(action=a, symbol=s, reason=r) for a, s, r in actions],
-        overall_assessment="exits", risk_level="moderate",
+        overall_assessment="exits",
+        risk_level="moderate",
     )
 
 
@@ -45,8 +49,12 @@ def _verdict(approved, reasoning="because", rejected=None):
     return RiskVerdict(
         approved=approved,
         reasoning_chain=RiskReasoningChain(
-            rr_audit="n/a", signal_fidelity="ok", correlation_check="ok",
-            event_risk="none", sizing_sanity="ok", overall="ok",
+            rr_audit="n/a",
+            signal_fidelity="ok",
+            correlation_check="ok",
+            event_risk="none",
+            sizing_sanity="ok",
+            overall="ok",
         ),
         reasoning=reasoning,
         rejected_symbols=rejected or [],
@@ -64,7 +72,9 @@ def test_whole_book_reject_lets_every_exit_proceed_with_one_objection_each():
     pipeline = _risk_pipeline(_verdict(False, "drawdown state - hold everything"))
     vetoed, verdict = pipeline._risk_review_exits(
         _review(("SELL", "AAA", _NAMED), ("SELL", "BBB", _NAMED)),
-        [_position("AAA"), _position("BBB")], run_id="r1", total_value=100_000.0,
+        [_position("AAA"), _position("BBB")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     assert vetoed == set()
     assert verdict is not None and verdict.approved is False
@@ -80,13 +90,18 @@ def test_whole_book_reject_lets_every_exit_proceed_with_one_objection_each():
 
 
 def test_per_name_reject_lets_that_exit_proceed_with_its_own_objection():
-    pipeline = _risk_pipeline(_verdict(
-        True, "BBB may exit",
-        rejected=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
-    ))
+    pipeline = _risk_pipeline(
+        _verdict(
+            True,
+            "BBB may exit",
+            rejected=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
+        )
+    )
     vetoed, _ = pipeline._risk_review_exits(
         _review(("SELL", "AAA", _NAMED), ("SELL", "BBB", _NAMED)),
-        [_position("AAA"), _position("BBB")], run_id="r1", total_value=100_000.0,
+        [_position("AAA"), _position("BBB")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     assert vetoed == set()
     objections = _by_code(pipeline, CODE_AI_RISK_OBJECTION)
@@ -102,7 +117,9 @@ def test_named_trigger_drop_still_drops_before_the_seat():
     pipeline = _risk_pipeline(_verdict(False, "would object"))
     vetoed, verdict = pipeline._risk_review_exits(
         _review(("SELL", "AAA", "momentum cooling, prudent to harvest")),
-        [_position("AAA")], run_id="r1", total_value=100_000.0,
+        [_position("AAA")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     pipeline.risk_manager.review.assert_not_called()
     assert (vetoed, verdict) == (set(), None)
@@ -114,8 +131,10 @@ def test_named_trigger_drop_still_drops_before_the_seat():
 def test_seat_unavailable_still_fails_open():
     pipeline = _risk_pipeline(raises=True)
     vetoed, verdict = pipeline._risk_review_exits(
-        _review(("SELL", "AAA", _NAMED)), [_position("AAA")],
-        run_id="r1", total_value=100_000.0,
+        _review(("SELL", "AAA", _NAMED)),
+        [_position("AAA")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     assert (vetoed, verdict) == (set(), None)
     unavailable = _by_code(pipeline, CODE_AI_RISK_UNAVAILABLE)
@@ -126,8 +145,10 @@ def test_seat_unavailable_still_fails_open():
 def test_seat_returning_no_verdict_still_fails_open():
     pipeline = _risk_pipeline(verdict=None)
     vetoed, verdict = pipeline._risk_review_exits(
-        _review(("SELL", "AAA", _NAMED)), [_position("AAA")],
-        run_id="r1", total_value=100_000.0,
+        _review(("SELL", "AAA", _NAMED)),
+        [_position("AAA")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     assert (vetoed, verdict) == (set(), None)
     assert _by_code(pipeline, CODE_AI_RISK_UNAVAILABLE)["AAA"]["dropped"] is False
@@ -137,7 +158,9 @@ def test_objection_write_failure_does_not_block_the_sell():
     pipeline = _risk_pipeline(_verdict(False, "hold"))
     pipeline.db.insert_specialist_evidence = MagicMock(side_effect=RuntimeError("db down"))
     vetoed, _ = pipeline._risk_review_exits(
-        _review(("SELL", "AAA", _NAMED)), [_position("AAA")],
-        run_id="r1", total_value=100_000.0,
+        _review(("SELL", "AAA", _NAMED)),
+        [_position("AAA")],
+        run_id="r1",
+        total_value=100_000.0,
     )
     assert vetoed == set()

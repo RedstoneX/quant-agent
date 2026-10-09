@@ -4,6 +4,7 @@ from its arguments and touches no pipeline state. Lifted VERBATIM out of
 dedented and shed the decorator; `PromptFactsMixin` re-binds them as
 staticmethods so every caller is unchanged).
 """
+
 from src.quantities import avg_dollar_volume, dollar_volumes
 
 
@@ -31,9 +32,8 @@ def _valuation_signal_from(forward_pe: float | None) -> str:
         return "stretched"
     return "fair"
 
-def _missed_ops_quality_metrics(
-    bars: list, lookback_days: int
-) -> tuple[float | None, float | None, float | None]:
+
+def _missed_ops_quality_metrics(bars: list, lookback_days: int) -> tuple[float | None, float | None, float | None]:
     """Compute (avg_dollar_volume_20d_m, volume_confirmation_ratio,
     single_day_concentration_pct) from a list[OHLCV]-like. All three are
     independent — a symbol with only a few bars may return None for
@@ -74,8 +74,7 @@ def _missed_ops_quality_metrics(
     # came from the biggest single day? > 70% = gap-up day (event/squeeze);
     # < 50% = distributed (trend). Needs ≥ 3 bars in the window to be
     # meaningful (2 bars = one daily return = always 100%).
-    window = (bars[-(lookback_days + 1):]
-              if len(bars) > lookback_days else bars)
+    window = bars[-(lookback_days + 1) :] if len(bars) > lookback_days else bars
     single_day_conc: float | None = None
     try:
         if len(window) >= 3:
@@ -83,8 +82,7 @@ def _missed_ops_quality_metrics(
             for prev, cur in zip(window[:-1], window[1:]):
                 pc_attr = getattr(prev, "close", None)
                 cc_attr = getattr(cur, "close", None)
-                if not (isinstance(pc_attr, (int, float))
-                        and isinstance(cc_attr, (int, float))):
+                if not (isinstance(pc_attr, (int, float)) and isinstance(cc_attr, (int, float))):
                     continue
                 pc = float(pc_attr)
                 cc = float(cc_attr)
@@ -106,6 +104,7 @@ def _missed_ops_quality_metrics(
 
     return avg_dvol_m, vol_conf_ratio, single_day_conc
 
+
 def _actualize_trade_row(row: dict) -> dict:
     """Prefer broker-confirmed execution details when present."""
     out = dict(row)
@@ -114,6 +113,7 @@ def _actualize_trade_row(row: dict) -> dict:
     if out.get("fill_price"):
         out["price"] = float(out["fill_price"])
     return out
+
 
 def _build_macro_tech_alignment(
     macro_analysis: dict | None,

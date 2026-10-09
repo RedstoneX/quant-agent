@@ -4,6 +4,7 @@ That statement executes the package `__init__`, so any trade-writing name the
 init defines or imports lands in the importer's reachable set and trips
 `test_api_cannot_reach_write_capable_names` through no fault of the author.
 """
+
 import ast
 
 from tests import test_api_cannot_trade as guard

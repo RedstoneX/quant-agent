@@ -1,5 +1,6 @@
 """`src.pipeline_prompt_facts_pure` is a boundary: constructed and exercised
 without a pipeline (tests/boundary_harness.py clauses 1-5)."""
+
 from src.pipeline_prompt_facts_pure import (
     _actualize_trade_row,
     _build_macro_tech_alignment,

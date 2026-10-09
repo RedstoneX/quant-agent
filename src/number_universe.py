@@ -6,6 +6,7 @@ to walk ``src/`` alone, so root ``main.py`` (the live entry point), ``ops/`` and
 derived money modules were outside the ledger's scope, 17 of them outside
 ``src/``]. A new top-level package is picked up the day it is created.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

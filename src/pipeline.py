@@ -15,6 +15,7 @@ from src.agents.base import (
     BaseAgent,
 )
 from src.agents.tech_analyst import TechAnalystAgent
+
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
 from src.data.technical import compute_indicators  # noqa: F401
@@ -38,6 +39,7 @@ from src.execution.broker import (
     _split_protective_qty,  # noqa: F401
 )
 from src.pipeline_context import RunContext
+
 # --- MIRROR: config builders moved to src/pipeline_config_build.py (pure move). ---
 # Re-exported so `from src.pipeline import ...` and `patch("src.pipeline.<name>")` still resolve.
 from src.pipeline_config_build import (  # noqa: F401
@@ -46,6 +48,7 @@ from src.pipeline_config_build import (  # noqa: F401
     build_constructor_config,
     build_risk_config,
 )
+
 # --- END MIRROR ---
 # Step 1 of docs/PIPELINE_SPLIT_PLAN.md: these moved to a mixin module and are
 # re-exported here because tests and other modules import them from `src.pipeline`.
@@ -59,6 +62,7 @@ from src.pipeline_protection import (  # noqa: F401
     _price_is_through_stop,
     _reconciled_exit_action,
 )
+
 # Step 3 of docs/PIPELINE_SPLIT_PLAN.md: the Spec §11.2 de-levering ladder moved
 # to a mixin module. `_optional_risk_number`/`_risk_number` travelled with it
 # because the moved bodies read them and that module may not import this one;
@@ -81,6 +85,7 @@ from src.pipeline_delever import (  # noqa: F401
 )
 from src.pipeline_risk_gate import RiskGate
 from src.risk_gate_build import RiskGateSlot
+
 # Step 7 of docs/PIPELINE_SPLIT_PLAN.md: the research-continuity cluster
 # (change detectors, carry-forward, Form-4 backlog, seat healing) moved to a
 # mixin module. `CarryForward` travelled with it because only those bodies
@@ -103,6 +108,7 @@ from src.pipeline_stages import (
     MorningResearchStage,
     RiskStage,
 )
+
 # RE-EXPORT MIRROR (pipeline split, run gates): the paid-analysis gate and the
 # two pre-decision halt gates moved VERBATIM to function-only modules.
 # `TradingPipeline` keeps a one-line shim per moved name below, so every
@@ -146,8 +152,6 @@ from src.pipeline_parts import (  # noqa: E402
 from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
 
-
-
 class _MissingCollaborator:
     """Stand-in for a TradingPipeline attribute that a `__new__`-built test double
     never set. The session shims below read every collaborator up front; this
@@ -166,8 +170,12 @@ class _MissingCollaborator:
 
 
 class TradingPipeline(
-    ProtectionMixin, PromptFactsMixin, DeleverMixin, ExitEngineMixin,
-    ResearchContinuityMixin, IntradayMixin,
+    ProtectionMixin,
+    PromptFactsMixin,
+    DeleverMixin,
+    ExitEngineMixin,
+    ResearchContinuityMixin,
+    IntradayMixin,
 ):
     admission = AdmissionSlot()
     risk_gate = RiskGateSlot()
@@ -176,6 +184,7 @@ class TradingPipeline(
     #: raising: an unconfigured switch is INERT, never armed. Real enforcement
     #: is at the broker seam, where __init__ always runs in production.
     _kill_switch_path: "Path | None" = None
+
     def __init__(self, config: AppConfig):
         self.config = config
         self.market = MarketDataProvider()
@@ -227,6 +236,7 @@ class TradingPipeline(
             uses, so this can never pick a different provider than the client
             construction it's keying for."""
             from src.agents.base import resolve_provider
+
             provider = resolve_provider(model, explicit_provider)
             return {
                 "deepseek": config.api_keys.deepseek,
@@ -248,7 +258,8 @@ class TradingPipeline(
         # BaseAgent._tertiary_reachable reads as "no third rung".
         _tertiary_api_key = (
             _key_for(config.llm.tertiary_model, config.llm.tertiary_provider)
-            if (config.llm.tertiary_model or "").strip() else ""
+            if (config.llm.tertiary_model or "").strip()
+            else ""
         )
         # Route 3's second-road substitute (2026-09-30). Same closure again,
         # so the credential can never disagree with the provider
@@ -256,7 +267,8 @@ class TradingPipeline(
         # which BaseAgent reads as "keep the configured tertiary".
         _tertiary_alt_api_key = (
             _key_for(config.llm.tertiary_alt_model, config.llm.tertiary_alt_provider)
-            if (config.llm.tertiary_alt_model or "").strip() else ""
+            if (config.llm.tertiary_alt_model or "").strip()
+            else ""
         )
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
@@ -497,9 +509,7 @@ class TradingPipeline(
                 # 2026-09-19: the feed's own time budget, separate from Form 4's.
                 refresh_deadline_s=config.smart_money.congress_refresh_deadline_s,
                 max_trades_per_source=config.smart_money.congress_max_trades_per_source,
-                assumed_max_disclosure_lag_days=(
-                    config.smart_money.congress_assumed_max_disclosure_lag_days
-                ),
+                assumed_max_disclosure_lag_days=(config.smart_money.congress_assumed_max_disclosure_lag_days),
                 lookback_days=config.smart_money.congress_lookback_days,
                 # Board item 52 deleted the shared insider-Form4 dollar
                 # floors from `SmartMoneyConfig`; that item is scoped to
@@ -511,9 +521,7 @@ class TradingPipeline(
                 min_cluster_owners=config.smart_money.min_cluster_owners,
                 max_observations=config.smart_money.max_observations,
             )
-        self.smart_money_provider = CombinedSmartMoneyProvider(
-            [sec_form4_provider, congress_provider]
-        )
+        self.smart_money_provider = CombinedSmartMoneyProvider([sec_form4_provider, congress_provider])
         # The universe screen's pending-takeover check reads the same SEC
         # client (same rate limiter, same User-Agent, same CIK cache).
         self.sec_form4_provider = sec_form4_provider
@@ -563,13 +571,12 @@ class TradingPipeline(
             if not storage_db_path.is_absolute():
                 storage_db_path = Path(__file__).resolve().parent.parent / storage_db_path
             self._storage_db_path = str(storage_db_path)
-            trade_updates_lease_path = (
-                Path(self._storage_db_path).parent / ".trade_updates.lock"
-            )
+            trade_updates_lease_path = Path(self._storage_db_path).parent / ".trade_updates.lock"
         self.broker = AlpacaBroker(
             api_key=config.api_keys.alpaca_key,
             secret_key=config.api_keys.alpaca_secret,
-            paper=config.alpaca.paper, max_position_pct=config.risk.max_position_pct,
+            paper=config.alpaca.paper,
+            max_position_pct=config.risk.max_position_pct,
             kill_switch_path=str(self._kill_switch_path),
             trade_updates_lease_path=str(trade_updates_lease_path),
             # ON since 2026-09-18. The only site that threads this
@@ -586,7 +593,10 @@ class TradingPipeline(
         self.db = Database(self._storage_db_path)
         self.db.initialize()
         from src.sentinel.cancel_attempts import install_cancel_recording as _count_cancels
-        _count_cancels(broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None))  # every broker cancel becomes one order_attempts row
+
+        _count_cancels(
+            broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None)
+        )  # every broker cancel becomes one order_attempts row
         self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in
@@ -595,8 +605,10 @@ class TradingPipeline(
         else:
             try:
                 from src.cost_table import refresh_openrouter_pricing
+
                 self.cost_circuit = LLMCostCircuitBreaker(
-                    self._storage_db_path, config.llm_cost_circuit,
+                    self._storage_db_path,
+                    config.llm_cost_circuit,
                 )
                 # Pricing-staleness SPOF fix (2026-08-28): pass the
                 # configured grace window/multiplier through so a stale-
@@ -606,18 +618,13 @@ class TradingPipeline(
                 # see the long note above refresh_openrouter_pricing in
                 # src/cost_table.py.
                 openrouter_pricing_ok = refresh_openrouter_pricing(
-                    grace_period_hours=(
-                        config.llm_cost_circuit.openrouter_pricing_grace_period_hours
-                    ),
-                    max_stale_multiplier=(
-                        config.llm_cost_circuit.openrouter_pricing_stale_multiplier_max
-                    ),
+                    grace_period_hours=(config.llm_cost_circuit.openrouter_pricing_grace_period_hours),
+                    max_stale_multiplier=(config.llm_cost_circuit.openrouter_pricing_stale_multiplier_max),
                 )
                 if not openrouter_pricing_ok:
                     self.cost_circuit.mark_unavailable(
                         RuntimeError(
-                            "current official OpenRouter pricing is unavailable; "
-                            "paid calls cannot be bounded safely"
+                            "current official OpenRouter pricing is unavailable; paid calls cannot be bounded safely"
                         ),
                         agent_name="pricing_preflight",
                         attempts=0,
@@ -657,10 +664,14 @@ class TradingPipeline(
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
         self.morning_research_stage = MorningResearchStage(
-            config=config, db=self.db,
-            market=self.market, macro=self.macro,
-            news_provider=self.news_provider, news_store=self.news_store,
-            macro_store=self.macro_store, tech_store=self.tech_store,
+            config=config,
+            db=self.db,
+            market=self.market,
+            macro=self.macro,
+            news_provider=self.news_provider,
+            news_store=self.news_store,
+            macro_store=self.macro_store,
+            tech_store=self.tech_store,
             earnings_provider=self._collab("earnings_provider"),
             macro_analyst=self._collab("macro_analyst"),
             news_analyst=self._collab("news_analyst"),
@@ -690,6 +701,7 @@ class TradingPipeline(
         # self._sweeper() so tests that build the pipeline via __new__ (no
         # __init__) degrade to a disabled sweeper instead of AttributeError.
         from src.execution.cash_sweep import CashSweeper
+
         self.cash_sweeper = CashSweeper(pipeline=self)
         # Exit orders still working at the broker — see the attribute's own
         # comment above `_register_exit_settlement`.
@@ -703,6 +715,7 @@ class TradingPipeline(
         configs) every sweep hook must be a structural no-op.
         """
         from src.execution.cash_sweep import sweeper_or_none
+
         return sweeper_or_none(getattr(self, "cash_sweeper", None))
 
     def _typed_cash_sweeper(self):
@@ -714,6 +727,7 @@ class TradingPipeline(
         `cash_sweeper` after `__new__`, and a snapshot would freeze it.
         """
         from src.execution.cash_sweep import CashSweeper
+
         sweeper = getattr(self, "cash_sweeper", None)
         return sweeper if isinstance(sweeper, CashSweeper) else None
 
@@ -776,7 +790,6 @@ class TradingPipeline(
     def _total_pnl_since_reset(self, total_value: float) -> tuple[float | None, float | None, str | None]:
         return _pnl_gaps._total_pnl_since_reset(self, total_value)
 
-
     @staticmethod
     def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
         return _pnl_gaps._forced_close_side_and_qty(position_qty)
@@ -785,12 +798,10 @@ class TradingPipeline(
     def _trade_executed_or_pending(trade: dict) -> bool:
         return _pnl_gaps._trade_executed_or_pending(trade)
 
-
     @staticmethod
     def _resolve_live_context(snapshots: dict, symbols: list) -> tuple:
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/live_context_resolve_session.py)."""
-        return LiveContextResolveSession(
-        ).run(snapshots, symbols)
+        return LiveContextResolveSession().run(snapshots, symbols)
 
     def _live_session_context(self, symbols) -> dict[str, dict]:
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/live_session_context_session.py)."""
@@ -805,7 +816,6 @@ class TradingPipeline(
         # fails visibly and can be retried; they must not masquerade as a
         # terminal market_holiday completion.
         return self.broker.is_trading_day()
-
 
     # Realized-exit actions whose post-exit trajectory is worth auditing.
     # SWEEP_SELL is deliberately absent — parking churn is not a decision.
@@ -823,8 +833,13 @@ class TradingPipeline(
     # "did the market force us out before a bounce" question this audit
     # exists to answer.
     _EXIT_AUDIT_ACTIONS = (
-        "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
-        "STOP_OUT", "RECONCILED_EXIT",
+        "SELL",
+        "REDUCE",
+        "EMERGENCY_SELL",
+        "FORCE_DELEVER",
+        "TAKE_PROFIT",
+        "STOP_OUT",
+        "RECONCILED_EXIT",
     )
 
     def _refresh_account_state(self):
@@ -846,10 +861,7 @@ class TradingPipeline(
         trading session.
         """
         try:
-            snapshot = (
-                list(positions) if positions is not None
-                else self.broker.get_positions()
-            )
+            snapshot = list(positions) if positions is not None else self.broker.get_positions()
             self.db.sync_positions(snapshot)
             self._record_short_overnight_gaps(snapshot)
         except Exception as exc:  # noqa: BLE001
@@ -858,10 +870,19 @@ class TradingPipeline(
     def _record_short_overnight_gaps(self, positions) -> None:
         return _pnl_gaps._record_short_overnight_gaps(self, positions)
 
-    def _run_news_update(self, run_id: str, session: str='morning', universe: list[str] | None=None, held_symbols: list[str] | None=None, candidate_symbols: list[str] | None=None) -> 'tuple[NewsIntelligenceReport | None, NewsCoverage | None]':
+    def _run_news_update(
+        self,
+        run_id: str,
+        session: str = "morning",
+        universe: list[str] | None = None,
+        held_symbols: list[str] | None = None,
+        candidate_symbols: list[str] | None = None,
+    ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
         return _pnl_gaps._run_news_update(self, run_id, session, universe, held_symbols, candidate_symbols)
 
-    def _load_earnings_analyses(self, run_id: str, session: str='morning', ctx: RunContext | None=None, universe: list[str] | None=None) -> tuple[list, list]:
+    def _load_earnings_analyses(
+        self, run_id: str, session: str = "morning", ctx: RunContext | None = None, universe: list[str] | None = None
+    ) -> tuple[list, list]:
         return _pnl_gaps._load_earnings_analyses(self, run_id, session, ctx, universe)
 
     def _earnings_preprocess_symbols(self) -> list[str]:
@@ -884,6 +905,7 @@ class TradingPipeline(
         `src.data.technical.atr_for_symbol`; this is the delegation.
         """
         from src.data.technical import atr_for_symbol
+
         return atr_for_symbol(getattr(self, "market", None), symbol)
 
     def _sweep_symbol(self) -> str | None:
@@ -911,7 +933,6 @@ class TradingPipeline(
 
     def _restore_sigterm(self, previous) -> None:
         return _kill_repair._restore_sigterm(self, previous)
-
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
@@ -949,22 +970,40 @@ class TradingPipeline(
         keeps every `self._parse_logged_agent_response(row)` caller working.
         """
         from src.agents.logged_response import parse_logged_agent_response
+
         return parse_logged_agent_response(row)
 
     @staticmethod
-    def _paid_suspended_payload(run_id: str, *, orders: list[dict] | None=None, error: BaseException | None=None, filings_waiting: list[dict] | None=None) -> dict:
+    def _paid_suspended_payload(
+        run_id: str,
+        *,
+        orders: list[dict] | None = None,
+        error: BaseException | None = None,
+        filings_waiting: list[dict] | None = None,
+    ) -> dict:
         """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
         return _cost_gate._paid_suspended_payload(run_id, orders=orders, error=error, filings_waiting=filings_waiting)
 
-    def _paid_suspension_after_late_safety(self, run_id: str, *, session: str, error: BaseException, where: str, orders: list[dict] | None=None, extra: dict | None=None) -> dict:
+    def _paid_suspension_after_late_safety(
+        self,
+        run_id: str,
+        *,
+        session: str,
+        error: BaseException,
+        where: str,
+        orders: list[dict] | None = None,
+        extra: dict | None = None,
+    ) -> dict:
         """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
-        return _cost_gate._paid_suspension_after_late_safety(self, run_id, session=session, error=error, where=where, orders=orders, extra=extra)
+        return _cost_gate._paid_suspension_after_late_safety(
+            self, run_id, session=session, error=error, where=where, orders=orders, extra=extra
+        )
 
     def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
         """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
         return _halt_gates._kill_switch_halt_result(self, run_id, **extra)
 
-    def _evidence_gate_skip(self, ctx, run_id: str, *, session: str='morning') -> dict | None:
+    def _evidence_gate_skip(self, ctx, run_id: str, *, session: str = "morning") -> dict | None:
         """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
         return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
@@ -1046,15 +1085,23 @@ class TradingPipeline(
     #: sign fix to `distance_to_stop_pct` itself). Snapshots written before
     #: 2026-09-18 lack all three; `compute_deltas` handles that explicitly.
     _REVIEW_METRIC_KEYS = (
-        "thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace",
-        "days_held", "expected_horizon_sessions", "setup_type", "pace_status",
-        "stop_loss", "current_price", "qty",
+        "thesis_progress_pct",
+        "distance_to_stop_pct",
+        "r_multiple",
+        "pace",
+        "days_held",
+        "expected_horizon_sessions",
+        "setup_type",
+        "pace_status",
+        "stop_loss",
+        "current_price",
+        "qty",
     )
 
     def _persist_review_metrics(self, position_facts: dict, *, run_id: str) -> None:
         return _review._persist_review_metrics(self, position_facts, run_id=run_id)
 
-    def run_position_review(self, session_type: str='midday') -> dict:
+    def run_position_review(self, session_type: str = "midday") -> dict:
         return _review.run_position_review(self, session_type)
 
     def _collab(self, name: str):
@@ -1066,6 +1113,7 @@ class TradingPipeline(
 
     def _run_position_review_body(self, session_type: str) -> dict:
         return _review._run_position_review_body(self, session_type)
+
     def run_earnings_preprocess(self) -> dict:
         return _review.run_earnings_preprocess(self)
 
@@ -1080,6 +1128,7 @@ class TradingPipeline(
 
     def _run_evening_body(self) -> dict:
         return _evening._run_evening_body(self)
+
     def _evening_stop_proximity(self, positions) -> list[dict]:
         return _evening._evening_stop_proximity(self, positions)
 
@@ -1112,9 +1161,16 @@ class TradingPipeline(
             db=self._collab("db"),
             market=self._collab("market"),
             meta_reflector=self._collab("meta_reflector"),
-        ).run(force=force, period_end=period_end, lookback_days=lookback_days, evolution_root=evolution_root, prompts_dir=prompts_dir)
+        ).run(
+            force=force,
+            period_end=period_end,
+            lookback_days=lookback_days,
+            evolution_root=evolution_root,
+            prompts_dir=prompts_dir,
+        )
 
     def run_daily(self) -> dict:
         """The daily P&L CSV export; the body lives in src/pipeline_daily_export.py."""
         from src.pipeline_daily_export import run_daily_export
+
         return run_daily_export(self)

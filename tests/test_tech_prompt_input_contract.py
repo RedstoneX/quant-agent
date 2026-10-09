@@ -8,6 +8,7 @@ similarity score and no threshold to tune — the desk rejected a blanket scan o
 prompt prose on this item, and this is the opposite of one: it keys off the
 strings the code itself produces.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -57,20 +58,35 @@ def _fully_populated_context() -> MarketContext:
     """Every optional field present, so every renderable line is emitted."""
     return MarketContext(
         last_close=100.0,
-        return_1w=1.0, return_1m=2.0, return_3m=3.0, return_6m=4.0, return_12m=5.0,
-        rel_strength_1m=1.5, rel_strength_3m=2.5, benchmark_symbol="SPY",
-        high_52w=120.0, low_52w=80.0, pct_from_52w_high=-16.0,
-        pct_from_52w_low=25.0, range_position_pct=50.0,
-        atr_pct=2.0, atr_percentile_1y=60.0, volatility_state="normal",
-        ma20_slope_pct=0.5, ma50_slope_pct=0.4, ma200_slope_pct=0.3,
-        is_consolidating=True, consolidation_high=105.0, consolidation_low=95.0,
-        consolidation_range_pct=10.0, consolidation_range_atr=2.0,
+        return_1w=1.0,
+        return_1m=2.0,
+        return_3m=3.0,
+        return_6m=4.0,
+        return_12m=5.0,
+        rel_strength_1m=1.5,
+        rel_strength_3m=2.5,
+        benchmark_symbol="SPY",
+        high_52w=120.0,
+        low_52w=80.0,
+        pct_from_52w_high=-16.0,
+        pct_from_52w_low=25.0,
+        range_position_pct=50.0,
+        atr_pct=2.0,
+        atr_percentile_1y=60.0,
+        volatility_state="normal",
+        ma20_slope_pct=0.5,
+        ma50_slope_pct=0.4,
+        ma200_slope_pct=0.3,
+        is_consolidating=True,
+        consolidation_high=105.0,
+        consolidation_low=95.0,
+        consolidation_range_pct=10.0,
+        consolidation_range_atr=2.0,
         sessions_in_range=12,
         avg_dollar_volume_20d=5_000_000.0,
         up_down_volume_ratio=1.4,
         unfilled_gaps=[
-            Gap(date="2026-09-01", from_price=90.0, to_price=95.0,
-                direction="up", sessions_ago=8, size_atr=1.5),
+            Gap(date="2026-09-01", from_price=90.0, to_price=95.0, direction="up", sessions_ago=8, size_atr=1.5),
         ],
     )
 
@@ -114,8 +130,7 @@ def test_every_per_symbol_label_the_builder_writes_is_named_in_the_prompt():
             f"claim {phrase!r} has become untrue — remove it or re-point this row."
         )
         assert phrase in prompt, (
-            f"{label!r} is sent to the technical seat but {PROMPT.name} does "
-            f"not name it (expected {phrase!r})."
+            f"{label!r} is sent to the technical seat but {PROMPT.name} does not name it (expected {phrase!r})."
         )
 
 

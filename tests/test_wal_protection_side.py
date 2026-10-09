@@ -34,7 +34,9 @@ def _mk_db(tmp_path) -> Database:
 
 
 def _mk_pipeline(db: Database) -> TradingPipeline:
-    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
+    pipeline = build_pipeline(
+        db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock()
+    )
     return pipeline
 
 
@@ -42,10 +44,12 @@ def _mk_pipeline(db: Database) -> TradingPipeline:
 # 1. DB round-trip: a row written today carries its side.
 # ==========================================================================
 
+
 def test_insert_and_get_pending_protection_restore_round_trips_side(tmp_path):
     db = _mk_db(tmp_path)
     row_id = db.insert_pending_protection_restore(
-        symbol="TSLA", sell_order_id="cover-order-1",
+        symbol="TSLA",
+        sell_order_id="cover-order-1",
         position_qty_before_sell=40.0,
         specs_json=json.dumps([{"id": "s1", "qty": 40, "stop_price": 262.5}]),
         side="buy",  # covering a short: the closing order's side is 'buy'
@@ -63,7 +67,8 @@ def test_insert_without_side_defaults_to_null(tmp_path):
     is what decides what NULL means, not this insert."""
     db = _mk_db(tmp_path)
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id="sell-order-1",
+        symbol="NVDA",
+        sell_order_id="sell-order-1",
         position_qty_before_sell=10.0,
         specs_json=json.dumps([{"id": "s1", "qty": 10, "stop_price": 95.0}]),
     )
@@ -76,6 +81,7 @@ def test_insert_without_side_defaults_to_null(tmp_path):
 # 2. Drain PREFERS the persisted side over live-broker derivation.
 # ==========================================================================
 
+
 def test_drain_sentinel_branch_uses_persisted_side_not_broker_derivation(tmp_path):
     """A row persisted with side='buy' (a short's cover) must drive the
     restore as a BUY-side stop, even when the broker's live position would
@@ -84,7 +90,8 @@ def test_drain_sentinel_branch_uses_persisted_side_not_broker_derivation(tmp_pat
     db = _mk_db(tmp_path)
     cancelled = [{"id": "stop-old", "qty": 40, "stop_price": 262.5}]
     db.insert_pending_protection_restore(
-        symbol="TSLA", sell_order_id=_WAL_SELL_SENTINEL,
+        symbol="TSLA",
+        sell_order_id=_WAL_SELL_SENTINEL,
         position_qty_before_sell=40.0,
         specs_json=json.dumps(cancelled),
         side="buy",
@@ -101,7 +108,10 @@ def test_drain_sentinel_branch_uses_persisted_side_not_broker_derivation(tmp_pat
 
     assert drained == 1
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "TSLA", cancelled, check_idempotency=True, side="buy",
+        "TSLA",
+        cancelled,
+        check_idempotency=True,
+        side="buy",
     )
     db.close()
 
@@ -113,7 +123,8 @@ def test_drain_normal_branch_uses_persisted_side_not_broker_derivation(tmp_path)
     db = _mk_db(tmp_path)
     cancelled = [{"id": "stop-old", "qty": 40, "stop_price": 262.5, "limit_price": 265.0}]
     db.insert_pending_protection_restore(
-        symbol="TSLA", sell_order_id="cover-order-resolved",
+        symbol="TSLA",
+        sell_order_id="cover-order-resolved",
         position_qty_before_sell=40.0,
         specs_json=json.dumps(cancelled),
         side="buy",
@@ -122,7 +133,9 @@ def test_drain_normal_branch_uses_persisted_side_not_broker_derivation(tmp_path)
     pipeline = _mk_pipeline(db)
     pipeline._current_position_qty_for_finalize = MagicMock(return_value=40.0)
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "canceled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.return_value = (1, [])
 
@@ -130,7 +143,10 @@ def test_drain_normal_branch_uses_persisted_side_not_broker_derivation(tmp_path)
 
     assert drained == 1
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "TSLA", cancelled, check_idempotency=True, side="buy",
+        "TSLA",
+        cancelled,
+        check_idempotency=True,
+        side="buy",
     )
     assert db.get_pending_protection_restores() == []
     db.close()
@@ -140,6 +156,7 @@ def test_drain_normal_branch_uses_persisted_side_not_broker_derivation(tmp_path)
 # 3. A legacy NULL-side row still uses the OLD broker-derived fallback,
 #    and logs that it's doing so.
 # ==========================================================================
+
 
 def test_drain_legacy_null_side_row_falls_back_to_broker_derivation(tmp_path, caplog):
     """A row written before this migration has side=NULL. The drain must
@@ -151,7 +168,8 @@ def test_drain_legacy_null_side_row_falls_back_to_broker_derivation(tmp_path, ca
     # Simulate a pre-migration row: insert without side, exactly as every
     # call site did before this column existed.
     db.insert_pending_protection_restore(
-        symbol="MSFT", sell_order_id=_WAL_SELL_SENTINEL,
+        symbol="MSFT",
+        sell_order_id=_WAL_SELL_SENTINEL,
         position_qty_before_sell=25.0,
         specs_json=json.dumps(cancelled),
     )
@@ -167,12 +185,14 @@ def test_drain_legacy_null_side_row_falls_back_to_broker_derivation(tmp_path, ca
 
     assert drained == 1
     pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "MSFT", cancelled, check_idempotency=True, side="buy",
+        "MSFT",
+        cancelled,
+        check_idempotency=True,
+        side="buy",
     )
-    assert any(
-        "no persisted side" in rec.message and "MSFT" in rec.message
-        for rec in caplog.records
-    ), "legacy NULL-side fallback must be logged, not silent"
+    assert any("no persisted side" in rec.message and "MSFT" in rec.message for rec in caplog.records), (
+        "legacy NULL-side fallback must be logged, not silent"
+    )
     db.close()
 
 
@@ -188,7 +208,8 @@ def test_drain_legacy_null_side_row_leaves_row_when_broker_unreadable(tmp_path):
     db = _mk_db(tmp_path)
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
     db.insert_pending_protection_restore(
-        symbol="NVDA", sell_order_id=_WAL_SELL_SENTINEL,
+        symbol="NVDA",
+        sell_order_id=_WAL_SELL_SENTINEL,
         position_qty_before_sell=100.0,
         specs_json=json.dumps(cancelled),
     )

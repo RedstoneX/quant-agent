@@ -1,4 +1,5 @@
 """Reconnect and handshake time bounds for the `trade_updates` socket, lifted verbatim from trade_stream.py."""
+
 from __future__ import annotations
 
 # Fallback reconnect bounds, used only when the installed TradingStream

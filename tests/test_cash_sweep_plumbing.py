@@ -34,6 +34,7 @@ plumbing made it buy nothing.
    caller adopted that refresh only on the success path, so an unconfirmed
    attempt left the BUY loop clamping against a PRE-SALE cash reading.
 """
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -45,14 +46,17 @@ from src.pipeline_stages import ExecutionStage
 
 def _rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="b",
         cash_target="c",
     )
 
 
-def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False,
-              min_order_usd=500.0):
+def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_order_usd=500.0):
     """ExecutionStage harness. Config stays a MagicMock (the stage reads many
     attributes); only the leaves these tests depend on are pinned to real
     values, because a MagicMock leaf silently reads as "not a number"."""
@@ -61,14 +65,14 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False,
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": cash, "portfolio_value": 100_000.0}, [], {},
+        {"cash": cash, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     pipeline.config.cash_sweep.min_order_usd = min_order_usd
     pipeline.config.execution.fractional_enabled = fractional
     pipeline.config.execution.fractional_share_decimals = 4
-    pipeline.broker.get_fractionability.return_value = (
-        {"fractionable": True} if fractional else {"fractionable": False}
-    )
+    pipeline.broker.get_fractionability.return_value = {"fractionable": True} if fractional else {"fractionable": False}
     return pipeline
 
 
@@ -80,7 +84,9 @@ def _ctx(decisions, cash=50_000.0) -> RunContext:
     ctx.positions = []
     ctx.decision_id = "run-x-dec-abc123"
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_rc(), decisions=decisions, portfolio_view="t",
+        reasoning_chain=_rc(),
+        decisions=decisions,
+        portfolio_view="t",
     )
     ctx.symbols_bars = {}
     return ctx
@@ -118,16 +124,6 @@ def _events(pipeline) -> list[tuple]:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # Defect 2 — fixed 2026-09-24: the cash clamp used to refuse a resize under
 # the flat $500 `min_order_usd` floor. That floor was an arbitrary round
@@ -145,11 +141,20 @@ def test_fractional_clamp_places_a_token_order_not_refuses_it():
     sizing means a tiny order is not actually costly to hold."""
     pipeline = _pipeline(live_price=100.0, cash=3.11, fractional=True)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved, then starved of cash",
-    )], cash=3.11)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved, then starved of cash",
+            )
+        ],
+        cash=3.11,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -163,11 +168,20 @@ def test_clamp_still_places_a_meaningful_partial_order():
     behaviour the resize exists for — unaffected by the floor's removal."""
     pipeline = _pipeline(live_price=100.0, cash=750.0, fractional=True)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved, partially funded",
-    )], cash=750.0)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved, partially funded",
+            )
+        ],
+        cash=750.0,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -182,11 +196,20 @@ def test_whole_share_clamp_also_places_the_small_order():
     refused."""
     pipeline = _pipeline(live_price=100.0, cash=499.0, fractional=False)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved, starved",
-    )], cash=499.0)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved, starved",
+            )
+        ],
+        cash=499.0,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -200,7 +223,7 @@ def test_min_notional_floor_falls_back_to_500_not_zero():
     "no floor" — that is the defect, not the fallback."""
     from src.pipeline_stages import _min_order_usd
 
-    broken = MagicMock()          # config.cash_sweep.min_order_usd is a Mock
+    broken = MagicMock()  # config.cash_sweep.min_order_usd is a Mock
     assert _min_order_usd(broken) == 500.0
     assert _min_order_usd(None) == 500.0
 
@@ -225,18 +248,23 @@ def test_unconfirmed_funding_is_governed_by_raw_cash_not_refused():
     pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     _install_sweeper(pipeline, freed=0.0)
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved, funding unconfirmed",
-    )], cash=174.96)
+    ctx = _ctx(
+        [
+            TradeDecision(
+                action="BUY",
+                symbol="XLE",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="approved, funding unconfirmed",
+            )
+        ],
+        cash=174.96,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
     assert len(orders) == 1
     assert pipeline.broker.submit_order.call_args.kwargs["qty"] == pytest.approx(1.7496)
     assert ctx.execution_skips == []
-
-
-
-

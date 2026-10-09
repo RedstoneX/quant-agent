@@ -8,6 +8,7 @@ absence keeps its old reason and wording. A short is treated exactly like a
 long. A failed exchange-calendar read refuses the session rather than
 reporting "no session today".
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -24,11 +25,16 @@ from src.execution.broker_parts.account_reads import AccountReads
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
-    ExecutionStage, _rotation_buy_leg_projected_refusal, _today_sizing_price,
+    ExecutionStage,
+    _rotation_buy_leg_projected_refusal,
+    _today_sizing_price,
 )
 from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
 from src.sizing_refusal import (
-    NO_PRINT_BY_WINDOW_END, NO_SIZING_PRINT, PRICE_READ_FAILED, SIZING_PRICE_UNREADABLE,
+    NO_PRINT_BY_WINDOW_END,
+    NO_SIZING_PRINT,
+    PRICE_READ_FAILED,
+    SIZING_PRICE_UNREADABLE,
     sizing_price_or_refusal,
 )
 
@@ -46,11 +52,16 @@ def _price_boom(*_a, **_k):
 
 # --- the reader: a FAILED read raises; a MEASURED absence stays None --------
 
-@pytest.mark.parametrize("broker", [
-    SimpleNamespace(get_latest_price_stamped=_price_boom),
-    SimpleNamespace(get_intraday_snapshots=_price_boom),
-    SimpleNamespace(get_latest_price=_price_boom),
-], ids=["stamped", "snapshot", "bare"])
+
+@pytest.mark.parametrize(
+    "broker",
+    [
+        SimpleNamespace(get_latest_price_stamped=_price_boom),
+        SimpleNamespace(get_intraday_snapshots=_price_boom),
+        SimpleNamespace(get_latest_price=_price_boom),
+    ],
+    ids=["stamped", "snapshot", "bare"],
+)
 def test_every_failed_read_raises_rather_than_returning_none(broker):
     with pytest.raises(SizingPriceUnavailable) as err:
         _today_sizing_price(SimpleNamespace(broker=broker), "NVDA")
@@ -58,15 +69,19 @@ def test_every_failed_read_raises_rather_than_returning_none(broker):
 
 
 def test_measured_absence_still_returns_none():
-    stale = LivePrice(price=161.79, source="last_trade",
-                      trade_at=datetime(2026, 9, 16, 15, 59, tzinfo=ET),
-                      is_today=False, is_today_print=False)
-    broker = SimpleNamespace(get_latest_price_stamped=lambda s: stale,
-                             get_latest_price=lambda s: stale.price)
+    stale = LivePrice(
+        price=161.79,
+        source="last_trade",
+        trade_at=datetime(2026, 9, 16, 15, 59, tzinfo=ET),
+        is_today=False,
+        is_today_print=False,
+    )
+    broker = SimpleNamespace(get_latest_price_stamped=lambda s: stale, get_latest_price=lambda s: stale.price)
     assert _today_sizing_price(SimpleNamespace(broker=broker), "NVDA") is None
 
 
 # --- the helper: two different names for two different states --------------
+
 
 def test_unreadable_is_refused_with_its_own_reason_and_logs_traceback(caplog):
     def reader(_p, _s):
@@ -81,8 +96,7 @@ def test_unreadable_is_refused_with_its_own_reason_and_logs_traceback(caplog):
 
 @pytest.mark.parametrize("measured", [None, 0, -1.0, True])
 def test_measured_absence_keeps_todays_reason_and_wording(measured):
-    price, why, detail = sizing_price_or_refusal(
-        lambda _p, _s: measured, None, "NVDA", "buy")
+    price, why, detail = sizing_price_or_refusal(lambda _p, _s: measured, None, "NVDA", "buy")
     assert price is None and why == NO_SIZING_PRINT
     assert detail.startswith("no today trade print to size the buy against")
 
@@ -93,6 +107,7 @@ def test_a_real_price_passes_through():
 
 # --- the rotation buy leg ---------------------------------------------------
 
+
 def test_rotation_buy_leg_refuses_an_unreadable_sizing_price(monkeypatch):
     def _raise(_p, s):
         raise SizingPriceUnavailable(f"{s}: bare price read failed")
@@ -100,17 +115,21 @@ def test_rotation_buy_leg_refuses_an_unreadable_sizing_price(monkeypatch):
     monkeypatch.setattr("src.pipeline_rotation_exec._today_sizing_price", _raise)
     broker = SimpleNamespace(
         get_latest_price_stamped=lambda s: LivePrice(
-            price=110.0, source="last_trade", trade_at=datetime.now(ET),
-            is_today=True, is_today_print=True),
+            price=110.0, source="last_trade", trade_at=datetime.now(ET), is_today=True, is_today_print=True
+        ),
         get_latest_price=lambda s: 110.0,
     )
     clearance, gate, detail = _rotation_buy_leg_projected_refusal(
-        SimpleNamespace(broker=broker), SimpleNamespace(),
+        SimpleNamespace(broker=broker),
+        SimpleNamespace(),
         rotation=SimpleNamespace(),
-        buy_decision=SimpleNamespace(symbol="NVDA", action="BUY",
-                                     entry_price=110.0, stop_loss=104.0,
-                                     allocation_pct=5.0),
-        positions=[], total_value=100_000.0, rotation_sell=None, cash=50_000.0,
+        buy_decision=SimpleNamespace(
+            symbol="NVDA", action="BUY", entry_price=110.0, stop_loss=104.0, allocation_pct=5.0
+        ),
+        positions=[],
+        total_value=100_000.0,
+        rotation_sell=None,
+        cash=50_000.0,
     )
     assert clearance is None and gate == "no_price"
     assert detail.startswith(SIZING_PRICE_UNREADABLE)
@@ -118,21 +137,28 @@ def test_rotation_buy_leg_refuses_an_unreadable_sizing_price(monkeypatch):
 
 # --- the REAL ExecutionStage submit loop, long and short --------------------
 
+
 def _exec_pipeline(price: float = 100.0):
     pipeline = MagicMock()
     pipeline.broker.get_latest_price_stamped.return_value = LivePrice(
-        price=price, source="last_trade", trade_at=datetime.now(ET),
-        is_today=True, is_today_print=True,
+        price=price,
+        source="last_trade",
+        trade_at=datetime.now(ET),
+        is_today=True,
+        is_today_print=True,
     )
     pipeline.broker.get_latest_price.return_value = price
     pipeline.broker.get_latest_quote.return_value = {
-        "bid_price": price - 1.0, "ask_price": price + 1.0,
+        "bid_price": price - 1.0,
+        "ask_price": price + 1.0,
     }
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     return pipeline
 
@@ -151,11 +177,16 @@ def _run(decision, monkeypatch, reader):
     ctx = RunContext.start("midday")
     ctx.cash, ctx.total_value, ctx.last_equity = 50_000.0, 100_000.0, 100_000.0
     ctx.positions, ctx.symbols_bars = [], {}
-    rc = ReasoningChain(macro_filter="x", news_check="x", earnings_check="x",
-                        signal_conflicts="x", sizing_logic="x",
-                        portfolio_balance="x", cash_target="x")
-    ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=rc, decisions=[decision], portfolio_view="t")
+    rc = ReasoningChain(
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
+    )
+    ctx.portfolio_decision = PortfolioDecision(reasoning_chain=rc, decisions=[decision], portfolio_view="t")
     ExecutionStage(pipeline=pipeline).run(ctx)
     return pipeline, skips
 
@@ -163,8 +194,12 @@ def _run(decision, monkeypatch, reader):
 def _decision(action: str) -> TradeDecision:
     long = action == "BUY"
     return TradeDecision(
-        action=action, symbol="TSLA", allocation_pct=10, entry_price=100.0,
-        stop_loss=94.0 if long else 106.0, take_profit=118.0 if long else 88.0,
+        action=action,
+        symbol="TSLA",
+        allocation_pct=10,
+        entry_price=100.0,
+        stop_loss=94.0 if long else 106.0,
+        take_profit=118.0 if long else 88.0,
         reasoning="new name",
     )
 
@@ -194,6 +229,7 @@ def test_measured_absence_waits_then_skips_at_slot_end(action, monkeypatch):
 
 
 # --- a failed exchange-calendar read refuses; it is never "no session" ------
+
 
 def test_failed_calendar_read_raises_and_is_not_cached():
     reads = AccountReads.__new__(AccountReads)

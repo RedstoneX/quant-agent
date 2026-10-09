@@ -26,6 +26,7 @@ from tests.pipeline_factory import build_pipeline
 # _persist_evening_replay_inputs — serialization discipline
 # ---------------------------------------------------------------------------
 
+
 def test_persist_replay_writes_atomic_json(tmp_path):
     """Happy path: dumped file is valid JSON with the expected top-level
     keys + schema_version."""
@@ -33,14 +34,25 @@ def test_persist_replay_writes_atomic_json(tmp_path):
     from src.models import Position, MissedOpportunitySnapshot
 
     p = build_pipeline()
-    positions = [Position(
-        symbol="NVDA", qty=10, avg_entry=200, current_price=210,
-        market_value=2100, unrealized_pnl=100, sector="Technology",
-    )]
+    positions = [
+        Position(
+            symbol="NVDA",
+            qty=10,
+            avg_entry=200,
+            current_price=210,
+            market_value=2100,
+            unrealized_pnl=100,
+            sector="Technology",
+        )
+    ]
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
-        held_during_window=False, had_ta_signal=True,
-        had_news_signal=True, had_earnings_signal=False,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
+        held_during_window=False,
+        had_ta_signal=True,
+        had_news_signal=True,
+        had_earnings_signal=False,
         source="top_mover",
     )
     out = p._persist_evening_replay_inputs(
@@ -48,13 +60,17 @@ def test_persist_replay_writes_atomic_json(tmp_path):
         run_id="evening-abc123",
         positions=positions,
         macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=800, daily_return_pct=0.8,
-        today_trades=[{"symbol": "NVDA", "action": "BUY", "qty": 5,
-                       "price": 196, "reasoning": "ai capex"}],
+        total_value=100_000,
+        daily_pnl=800,
+        daily_return_pct=0.8,
+        today_trades=[{"symbol": "NVDA", "action": "BUY", "qty": 5, "price": 196, "reasoning": "ai capex"}],
         prior_outlook={"tomorrow_bias": "bullish"},
-        recent_sells=[], recent_buys=[],
-        news_intel=None, earnings_analyses=[],
-        weekly_narrative="x", active_state_changes="y",
+        recent_sells=[],
+        recent_buys=[],
+        news_intel=None,
+        earnings_analyses=[],
+        weekly_narrative="x",
+        active_state_changes="y",
         outlook_calibration={"samples": []},
         missed_ops_snapshots=[snap],
         thesis_health_context={},
@@ -87,28 +103,39 @@ def test_persist_replay_handles_news_intel_pydantic(tmp_path):
     from src.models import NewsIntelligenceReport
 
     p = build_pipeline()
-    news = NewsIntelligenceReport.model_validate({
-        "macro_narrative": {
-            "last_updated": "2026-04-20",
-            "era_themes": ["AI"],
-            "current_regime": "risk-on",
-            "key_state_tracker": {},
-        },
-        "state_changes": [],
-        "stock_news": {},
-        "pm_briefing": "x",
-        "market_sentiment": "neutral",
-        "confidence": "medium",
-    })
+    news = NewsIntelligenceReport.model_validate(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-04-20",
+                "era_themes": ["AI"],
+                "current_regime": "risk-on",
+                "key_state_tracker": {},
+            },
+            "state_changes": [],
+            "stock_news": {},
+            "pm_briefing": "x",
+            "market_sentiment": "neutral",
+            "confidence": "medium",
+        }
+    )
     out = p._persist_evening_replay_inputs(
         date_iso="2026-04-20",
-        run_id="x", positions=[],
-        macro_summary={}, total_value=0, daily_pnl=0, daily_return_pct=0,
-        today_trades=[], prior_outlook=None,
-        recent_sells=[], recent_buys=[],
-        news_intel=news, earnings_analyses=[],
-        weekly_narrative="", active_state_changes="",
-        outlook_calibration={}, missed_ops_snapshots=[],
+        run_id="x",
+        positions=[],
+        macro_summary={},
+        total_value=0,
+        daily_pnl=0,
+        daily_return_pct=0,
+        today_trades=[],
+        prior_outlook=None,
+        recent_sells=[],
+        recent_buys=[],
+        news_intel=news,
+        earnings_analyses=[],
+        weekly_narrative="",
+        active_state_changes="",
+        outlook_calibration={},
+        missed_ops_snapshots=[],
         thesis_health_context={},
         root_dir=str(tmp_path / "replays"),
     )
@@ -131,14 +158,22 @@ def test_persist_replay_tolerates_unusual_objects(tmp_path):
     p = build_pipeline()
     out = p._persist_evening_replay_inputs(
         date_iso="2026-04-20",
-        run_id="x", positions=[],
+        run_id="x",
+        positions=[],
         macro_summary={"weird": Weird()},
-        total_value=0, daily_pnl=0, daily_return_pct=0,
-        today_trades=[], prior_outlook=None,
-        recent_sells=[], recent_buys=[],
-        news_intel=None, earnings_analyses=[],
-        weekly_narrative="", active_state_changes="",
-        outlook_calibration={}, missed_ops_snapshots=[],
+        total_value=0,
+        daily_pnl=0,
+        daily_return_pct=0,
+        today_trades=[],
+        prior_outlook=None,
+        recent_sells=[],
+        recent_buys=[],
+        news_intel=None,
+        earnings_analyses=[],
+        weekly_narrative="",
+        active_state_changes="",
+        outlook_calibration={},
+        missed_ops_snapshots=[],
         thesis_health_context={},
         root_dir=str(tmp_path / "replays"),
     )
@@ -149,6 +184,7 @@ def test_persist_replay_tolerates_unusual_objects(tmp_path):
 # ---------------------------------------------------------------------------
 # Round-trip: replay reconstructor rebuilds Pydantic correctly
 # ---------------------------------------------------------------------------
+
 
 def test_replay_reconstruct_rebuilds_pydantic_from_dumped_dicts():
     """The replay script's _reconstruct_kwargs must round-trip the
@@ -165,16 +201,24 @@ def test_replay_reconstruct_rebuilds_pydantic_from_dumped_dicts():
     spec.loader.exec_module(mod)
 
     from src.models import (
-        MissedOpportunitySnapshot, NewsIntelligenceReport, Position,
+        MissedOpportunitySnapshot,
+        NewsIntelligenceReport,
+        Position,
     )
 
     # Build the kwargs_dict shape that lands on disk
     kwargs_dict = {
-        "positions": [{
-            "symbol": "NVDA", "qty": 10.0, "avg_entry": 200.0,
-            "current_price": 210.0, "market_value": 2100.0,
-            "unrealized_pnl": 100.0, "sector": "Technology",
-        }],
+        "positions": [
+            {
+                "symbol": "NVDA",
+                "qty": 10.0,
+                "avg_entry": 200.0,
+                "current_price": 210.0,
+                "market_value": 2100.0,
+                "unrealized_pnl": 100.0,
+                "sector": "Technology",
+            }
+        ],
         "news_intel": {
             "macro_narrative": {
                 "last_updated": "2026-04-20",
@@ -188,17 +232,28 @@ def test_replay_reconstruct_rebuilds_pydantic_from_dumped_dicts():
             "market_sentiment": "neutral",
             "confidence": "medium",
         },
-        "missed_ops_snapshots": [{
-            "symbol": "VST", "move_pct": 22.3, "window_days": 5,
-            "held_during_window": False, "had_ta_signal": True,
-            "had_news_signal": True, "had_earnings_signal": False,
-            "source": "top_mover",
-        }],
+        "missed_ops_snapshots": [
+            {
+                "symbol": "VST",
+                "move_pct": 22.3,
+                "window_days": 5,
+                "held_during_window": False,
+                "had_ta_signal": True,
+                "had_news_signal": True,
+                "had_earnings_signal": False,
+                "source": "top_mover",
+            }
+        ],
         "macro_summary": {"vix": {"current": 18}},
-        "total_value": 100_000, "daily_pnl": 0, "daily_return_pct": 0,
-        "today_trades": [], "recent_sells": [], "recent_buys": [],
+        "total_value": 100_000,
+        "daily_pnl": 0,
+        "daily_return_pct": 0,
+        "today_trades": [],
+        "recent_sells": [],
+        "recent_buys": [],
         "earnings_analyses": [],
-        "weekly_narrative": "", "active_state_changes": "",
+        "weekly_narrative": "",
+        "active_state_changes": "",
         "outlook_calibration": {},
         "thesis_health_context": {},
     }
@@ -243,8 +298,10 @@ def test_replay_reconstruct_degrades_gracefully_on_bad_dicts():
 # compare_evening_outputs.py — helper primitives
 # ---------------------------------------------------------------------------
 
+
 def _load_compare_module():
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
         "compare_evening_outputs",
         Path(__file__).resolve().parent.parent / "scripts/compare_evening_outputs.py",
@@ -286,7 +343,7 @@ def test_compare_grades_by_symbol():
     mod = _load_compare_module()
     grades = [
         {"symbol": "A", "grade": "correct"},
-        {"symbol": "b", "grade": "wrong"},   # lowercase normalized to upper
+        {"symbol": "b", "grade": "wrong"},  # lowercase normalized to upper
     ]
     by = mod._grades_by_symbol(grades)
     assert by == {"A": "correct", "B": "wrong"}
@@ -296,31 +353,35 @@ def test_compare_load_shadow_reads_parsed_block(tmp_path):
     """_load_shadow pulls `parsed` from the replay output envelope."""
     mod = _load_compare_module()
     shadow_file = tmp_path / "candidate.json"
-    shadow_file.write_text(json.dumps({
-        "replay_of": "2026-04-20",
-        "prompt_hash": "abc123",
-        "parsed": {
-            "tomorrow_bias": "bullish",
-            "tomorrow_conviction": "high",
-            "risk_rating": "moderate",
-            "lessons": "x",
-            "sell_grades": [{"symbol": "A", "grade": "correct"}],
-            "buy_grades": [],
-            "missed_opportunities": [],
-            "tomorrow_key_risks": ["FOMC"],
-            "suggested_actions": [],
-            "reasoning_chain": {
-                "performance_attribution": "a b c d e f",
-                "thesis_health_review": "g h i j",
-            },
-            "this_week_thesis_catalysts": ["NVDA earnings"],
-            "thesis_updates": [],
-            "selection_rules": [],
-            "discipline_notes": [],
-            "sell_decisions_assessment": "",
-            "tomorrow_outlook": "x",
-        },
-    }))
+    shadow_file.write_text(
+        json.dumps(
+            {
+                "replay_of": "2026-04-20",
+                "prompt_hash": "abc123",
+                "parsed": {
+                    "tomorrow_bias": "bullish",
+                    "tomorrow_conviction": "high",
+                    "risk_rating": "moderate",
+                    "lessons": "x",
+                    "sell_grades": [{"symbol": "A", "grade": "correct"}],
+                    "buy_grades": [],
+                    "missed_opportunities": [],
+                    "tomorrow_key_risks": ["FOMC"],
+                    "suggested_actions": [],
+                    "reasoning_chain": {
+                        "performance_attribution": "a b c d e f",
+                        "thesis_health_review": "g h i j",
+                    },
+                    "this_week_thesis_catalysts": ["NVDA earnings"],
+                    "thesis_updates": [],
+                    "selection_rules": [],
+                    "discipline_notes": [],
+                    "sell_decisions_assessment": "",
+                    "tomorrow_outlook": "x",
+                },
+            }
+        )
+    )
     out = mod._load_shadow(shadow_file)
     assert out["tomorrow_bias"] == "bullish"
     assert out["sell_grades"][0]["grade"] == "correct"
@@ -337,24 +398,39 @@ def test_compare_load_live_reads_insights_row(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     db.save_evening_snapshot(
-        date="2026-04-20", total_value=100_000, daily_pnl=800,
+        date="2026-04-20",
+        total_value=100_000,
+        daily_pnl=800,
         daily_return_pct=0.8,
         tomorrow_outlook="bullish continuation",
         lessons="don't trim winners",
         suggested_actions=["Tighten NVDA stop"],
         risk_rating="moderate",
-        tomorrow_bias="bullish", tomorrow_conviction="medium",
+        tomorrow_bias="bullish",
+        tomorrow_conviction="medium",
         tomorrow_key_risks=["FOMC"],
         sell_decisions_assessment="ok",
-        sell_grades=[{"symbol": "GOOGL", "sell_date": "2026-04-18",
-                       "sell_price": 320, "current_price": 327,
-                       "pct_move_since_sell": 2.2,
-                       "grade": "premature", "reason": "x"}],
+        sell_grades=[
+            {
+                "symbol": "GOOGL",
+                "sell_date": "2026-04-18",
+                "sell_price": 320,
+                "current_price": 327,
+                "pct_move_since_sell": 2.2,
+                "grade": "premature",
+                "reason": "x",
+            }
+        ],
         buy_grades=[],
-        missed_opportunities=[{"symbol": "VST", "move_pct": 22.3,
-                                "miss_category": "theme_blindspot",
-                                "theme_if_any": "nuclear/power",
-                                "lesson": "x"}],
+        missed_opportunities=[
+            {
+                "symbol": "VST",
+                "move_pct": 22.3,
+                "miss_category": "theme_blindspot",
+                "theme_if_any": "nuclear/power",
+                "lesson": "x",
+            }
+        ],
     )
     out = mod._load_live("2026-04-20", str(tmp_path / "t.db"))
     assert out["tomorrow_bias"] == "bullish"

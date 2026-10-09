@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,6 @@ from src.trader_feed.decision import (
 )
 
 
-
 def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     run_id = nested.get("run_id") or outer.get("run_id")
     snap = _read_run(run_id)
@@ -82,7 +82,10 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
     outcome = _outcome_word(
-        status, len(done_rows), len(blocked_rows), done_rows,
+        status,
+        len(done_rows),
+        len(blocked_rows),
+        done_rows,
         fault_count=_fault_count(blocked_rows),
     )
     lines = [f"⚡ INTRADAY OPPORTUNITY · {fmt_time_12h(et_now())} · {outcome}"]
@@ -107,13 +110,11 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
                 "deliberate no-trade decision."
             )
             if nested.get("error") or nested.get("failure_status"):
-                lines.append(_machine_detail(
-                    " ".join(
-                        str(part) for part in
-                        (nested.get("failure_status"), nested.get("error"))
-                        if part
+                lines.append(
+                    _machine_detail(
+                        " ".join(str(part) for part in (nested.get("failure_status"), nested.get("error")) if part)
                     )
-                ))
+                )
         elif status == "evidence_gate_skip":
             # Was: one prose sentence, then `nested["reason"]` printed raw
             # underneath it — so the owner read the same explanation twice,
@@ -123,7 +124,8 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             # plus bullets, shared with the standalone alert via
             # `describe_skipped_decision`.
             skip_lines = describe_skipped_decision(
-                nested.get("lost_seats"), nested.get("data_status"),
+                nested.get("lost_seats"),
+                nested.get("data_status"),
                 # This IS the tick's own message; "the next scheduled
                 # decision tries again" belongs on the standalone alert,
                 # not repeated inside every tick.
@@ -144,12 +146,11 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             # owner's sentence and into the labelled machine line with the
             # message, where it belongs and where it stays greppable.
             if nested.get("error") or nested.get("error_type"):
-                lines.append(_machine_detail(
-                    " ".join(
-                        str(part) for part in
-                        (nested.get("error_type"), nested.get("error")) if part
+                lines.append(
+                    _machine_detail(
+                        " ".join(str(part) for part in (nested.get("error_type"), nested.get("error")) if part)
                     )
-                ))
+                )
 
     # P&L FIRST, directly under the heading — owner, 2026-09-18. It used to
     # sit BELOW the status banner here, which is exactly the drift he is
@@ -172,7 +173,10 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     # tick, and a line on every tick at the top is how a banner stops being
     # read. Disclosure only; it states a count and never judges one.
     _new_block(
-        detail_lines, _append_intraday_evidence_freshness, outer, nested,
+        detail_lines,
+        _append_intraday_evidence_freshness,
+        outer,
+        nested,
     )
     # Reasoning first, the per-candidate enumeration last — same ordering
     # and same reason as `_format_decision_session`. Risk/Execution are
@@ -187,7 +191,12 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict.
     _new_block(protected_lines, _append_gate_and_execution, nested, snap)
     _budgeted_sections(
-        lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+        lines,
+        looked_at_slot,
+        looked_at_rows,
+        profiles,
+        snap,
+        detail_lines,
         protected_lines,
     )
 
@@ -265,12 +274,11 @@ def _intra_check_tick_minutes() -> tuple[int, ...]:
     for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("OnCalendar="):
-            spec = line[len("OnCalendar="):].strip()
+            spec = line[len("OnCalendar=") :].strip()
             break
     if spec is None:
         raise RuntimeError(
-            f"{_INTRA_CHECK_TIMER_PATH} has no OnCalendar= line; cannot "
-            "derive the hourly-checkpoint minute"
+            f"{_INTRA_CHECK_TIMER_PATH} has no OnCalendar= line; cannot derive the hourly-checkpoint minute"
         )
 
     match = _ONCALENDAR_PER_HOUR_RE.fullmatch(spec)
@@ -326,9 +334,12 @@ def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str,
         return False
     status = str(nested.get("status") or "")
     if status in (
-        "intraday_executed", "intraday_analysis_error",
-        "intraday_scan_crashed", "intraday_scan_out_of_credit",
-        "paid_analysis_suspended", "evidence_gate_skip",
+        "intraday_executed",
+        "intraday_analysis_error",
+        "intraday_scan_crashed",
+        "intraday_scan_out_of_credit",
+        "paid_analysis_suspended",
+        "evidence_gate_skip",
     ):
         return True
     if status == "intraday_no_trades":
@@ -389,7 +400,10 @@ def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
             # disabled/contended/found nothing) — the base formatter's own
             # `_append_intra_check_body` already renders that banner.
             own_message = _base_format_session_result(
-                "intra_check", result, elapsed_seconds, error=None,
+                "intra_check",
+                result,
+                elapsed_seconds,
+                error=None,
             )
 
     # Owner decision, 2026-09-17: the midday position review and the routine
@@ -576,14 +590,9 @@ def _format_hourly_desk_check(
     _new_section(lines, *_pnl_section_lines(result))
 
     positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
-    risk_positions = [
-        row for row in positions
-        if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
-    ]
+    risk_positions = [row for row in positions if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS]
     hour_rows = _read_hour_evidence()
-    hour_symbols = [
-        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
-    ]
+    hour_symbols = [str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")]
     profiles = _profiles(hour_symbols, trade_rows, risk_positions)
 
     if trade_count == 0:
@@ -680,13 +689,9 @@ _ON_DEMAND_PERIOD_LINE = "Covering the last hour · status requested on demand"
 # reassuring "OK" that the scheduled path prints when it has actually
 # looked.
 _ON_DEMAND_COVERAGE_TEXT = (
-    "🛡️ Stop coverage: not available — the coverage audit runs with the "
-    "scheduled sessions, not on demand"
+    "🛡️ Stop coverage: not available — the coverage audit runs with the scheduled sessions, not on demand"
 )
-_ON_DEMAND_SCANNED_TEXT = (
-    "not available — the movers scan runs with the scheduled sessions, "
-    "not on demand"
-)
+_ON_DEMAND_SCANNED_TEXT = "not available — the movers scan runs with the scheduled sessions, not on demand"
 
 
 def _position_rows_from_broker(positions: Any) -> list[dict[str, Any]]:
@@ -696,6 +701,7 @@ def _position_rows_from_broker(positions: Any) -> list[dict[str, Any]]:
     that query's `qty != 0`."""
     rows: list[dict[str, Any]] = []
     for position in positions or []:
+
         def _get(field: str) -> Any:
             if isinstance(position, dict):
                 return position.get(field)

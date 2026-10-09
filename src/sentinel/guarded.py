@@ -30,13 +30,17 @@ settled ONCE in ``guarded_reach.py``: pass whatever is already in scope and
 ``ledger_in_reach`` walks it at call time; a site with nothing to walk passes
 ``NO_LEDGER`` and is a declared, greppable exemption. Read that module first.
 """
+
 from __future__ import annotations
 
 import logging
 import sys
 
 from src.sentinel.guarded_reach import (  # noqa: F401 (re-export)
-    NO_LEDGER, RECON_DB_ATTR, _LazyLedger, ledger_in_reach,
+    NO_LEDGER,
+    RECON_DB_ATTR,
+    _LazyLedger,
+    ledger_in_reach,
 )
 from src.sentinel.reconciliation import record_guarded_outcome
 
@@ -68,8 +72,9 @@ def attach_reconciliation_db(broker, conn_getter) -> None:
     setattr(broker, RECON_DB_ATTR, _LazyLedger(conn_getter))
 
 
-def record_guarded_pass(owner, where: str, exc: BaseException | None = None, *,
-               context: dict | None = None, log=None) -> None:
+def record_guarded_pass(
+    owner, where: str, exc: BaseException | None = None, *, context: dict | None = None, log=None
+) -> None:
     """Record ONE pass through one of the broker's broad catch-alls.
 
     `owner` is whatever the site has in scope (or a tuple of such things, or

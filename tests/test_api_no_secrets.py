@@ -33,7 +33,8 @@ _SECRET_FIELD_NAME_RE = re.compile(
     # `token(?!s)` excludes legitimate token-COUNT fields (`tokens_used`,
     # `input_tokens`, `output_tokens`) while still catching a real
     # credential-shaped name like `access_token` or `auth_token`.
-    r"(api[_-]?key|secret|token(?!s)|password|credential)", re.IGNORECASE
+    r"(api[_-]?key|secret|token(?!s)|password|credential)",
+    re.IGNORECASE,
 )
 
 _SETTINGS_YAML = """
@@ -90,6 +91,7 @@ _SENTINELS = {
 # 1. Schema-level: no response model field name is secret-shaped.
 # ---------------------------------------------------------------------------
 
+
 def test_no_response_schema_field_is_secret_shaped():
     import src.api.schemas as schemas_module
 
@@ -113,6 +115,7 @@ def test_no_response_schema_field_is_secret_shaped():
 # ---------------------------------------------------------------------------
 # 2. Live: hit every GET route with sentinel-loaded config, scan bodies.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sentinel_config(tmp_path, monkeypatch):
@@ -144,9 +147,7 @@ def test_no_sentinel_secret_appears_in_any_response_body(sentinel_config):
         checked_any = True
         body_text = resp.text
         for label, sentinel in _SENTINELS.items():
-            assert sentinel not in body_text, (
-                f"GET {path} leaked the {label} sentinel secret in its response body"
-            )
+            assert sentinel not in body_text, f"GET {path} leaked the {label} sentinel secret in its response body"
     assert checked_any, "expected at least one GET route to check"
 
 

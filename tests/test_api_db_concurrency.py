@@ -41,8 +41,13 @@ def test_concurrent_api_reads_do_not_block_or_corrupt_trading_writes(tmp_path, m
         for i in range(N_WRITES):
             try:
                 writer.insert_trade(
-                    symbol="AAPL", action="BUY", qty=1, price=100.0 + i,
-                    reasoning="concurrency test", run_id=f"run-{i:06d}", stop_loss=90.0,
+                    symbol="AAPL",
+                    action="BUY",
+                    qty=1,
+                    price=100.0 + i,
+                    reasoning="concurrency test",
+                    run_id=f"run-{i:06d}",
+                    stop_loss=90.0,
                 )
             except sqlite3.OperationalError as exc:
                 write_errors.append(exc)
@@ -90,7 +95,9 @@ def test_api_read_connection_is_physically_unable_to_write(tmp_path, monkeypatch
     conn = db_reads._connect()
     try:
         with pytest.raises(sqlite3.OperationalError):
-            conn.execute("INSERT INTO trades (symbol, action, qty, price, reasoning, run_id) "
-                         "VALUES ('X', 'BUY', 1, 1.0, 'x', 'run-x')")
+            conn.execute(
+                "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id) "
+                "VALUES ('X', 'BUY', 1, 1.0, 'x', 'run-x')"
+            )
     finally:
         conn.close()

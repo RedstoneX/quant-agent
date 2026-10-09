@@ -1,4 +1,5 @@
 """Small pure helpers lifted out of pipeline_stages (re-exported there)."""
+
 from __future__ import annotations
 
 import logging
@@ -39,18 +40,23 @@ def _live_stops_from_heat(ctx) -> dict[str, float] | None:
     if heat is None:
         return None
     try:
-        return {
-            row.symbol.upper(): row.stop
-            for row in heat.per_position if row.protected and row.stop
-        }
+        return {row.symbol.upper(): row.stop for row in heat.per_position if row.protected and row.stop}
     except Exception as e:  # noqa: BLE001 — never fail the session on this
         record_stage(ctx, "live_stop_map", e)
         return None
 
 
-def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
-                       scope: str, evidence_json: str, symbol: str | None = None,
-                       decision_id: str | None = None) -> None:
+def _persist_evidence(
+    db: "Database",
+    *,
+    run_id: str,
+    agent_name: str,
+    kind: str,
+    scope: str,
+    evidence_json: str,
+    symbol: str | None = None,
+    decision_id: str | None = None,
+) -> None:
     """Best-effort Stage 4 structured-evidence write — NEVER raises.
 
     Conversion step 6: a compatibility shim over the `EventJournal` port
@@ -60,6 +66,11 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
     `journal: EventJournal` in its constructor.
     """
     DatabaseEventJournal(db).persist_evidence(
-        run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
-        evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
+        run_id=run_id,
+        agent_name=agent_name,
+        kind=kind,
+        scope=scope,
+        evidence_json=evidence_json,
+        symbol=symbol,
+        decision_id=decision_id,
     )

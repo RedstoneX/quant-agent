@@ -3,6 +3,7 @@
 Moved verbatim out of `src/pipeline_context.py`, which was at its size
 ceiling. Re-exported from there, so every existing import still works.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,8 +36,8 @@ class PMFacts:
 
     # RM discipline (how often RM overrode PM lately)
     rm_verdicts_seen: int = 0
-    rm_scale_downs_last5: int = 0   # count with scale_all_buys < 1.0
-    rm_mods_last5: int = 0           # count with any modifications
+    rm_scale_downs_last5: int = 0  # count with scale_all_buys < 1.0
+    rm_mods_last5: int = 0  # count with any modifications
 
     # Current book state
     invested_pct: float = 0.0
@@ -132,6 +133,7 @@ class PMFacts:
 
     def render(self) -> str:
         """Format as a compact markdown block for PM's prompt."""
+
         def _pct(v: float | None) -> str:
             return f"{v:+.2f}%" if v is not None else "n/a"
 
@@ -142,10 +144,10 @@ class PMFacts:
         # Netting them here would show the PM a smaller number than the gate
         # enforces against, which is precisely the defect being removed.
         def _sector_lines(weights: dict[str, float]) -> str:
-            return "\n".join(
-                f"  - {s}: {w:.1f}%"
-                for s, w in sorted(weights.items(), key=lambda kv: -kv[1])[:8]
-            ) or "  (none)"
+            return (
+                "\n".join(f"  - {s}: {w:.1f}%" for s, w in sorted(weights.items(), key=lambda kv: -kv[1])[:8])
+                or "  (none)"
+            )
 
         long_sector_lines = _sector_lines(self.sector_weights_long)
         short_sector_lines = _sector_lines(self.sector_weights_short)
@@ -162,10 +164,7 @@ class PMFacts:
                 f" · mods emitted: {self.rm_mods_last5}/{self.rm_verdicts_seen}"
             )
         else:
-            rm_block = (
-                "### RM Discipline\n"
-                "- (no RM verdicts on record — cite as [UNSOURCED:no_rm_history])"
-            )
+            rm_block = "### RM Discipline\n- (no RM verdicts on record — cite as [UNSOURCED:no_rm_history])"
 
         return f"""### Calibration (last 30d closed trades)
 - n={self.closed_trades_30d} · win_rate={_pct(self.win_rate_30d_pct)} · avg_return={_pct(self.avg_return_30d_pct)} \
@@ -199,6 +198,7 @@ class PMFacts:
 
     def _render_risk(self) -> str:
         from src.risk.metrics import format_heat_block
+
         if self.heat is None:
             return (
                 "### Portfolio Risk\n"
@@ -218,13 +218,8 @@ class PMFacts:
                 "manually and say so in `portfolio_balance`."
             )
         if not self.correlation_clusters:
-            return (
-                "\n### Correlation Clusters\n"
-                "- none: no held or candidate pair correlates at |r| >= 0.7."
-            )
-        lines = "\n".join(
-            f"  - {' / '.join(cluster)}" for cluster in self.correlation_clusters
-        )
+            return "\n### Correlation Clusters\n- none: no held or candidate pair correlates at |r| >= 0.7."
+        lines = "\n".join(f"  - {' / '.join(cluster)}" for cluster in self.correlation_clusters)
         cluster_cap = self.risk_ceiling_pct * self.cluster_risk_share_pct / 100.0
         return (
             "\n### Correlation Clusters (|r| >= 0.7 over the trailing window)\n"
@@ -253,18 +248,24 @@ class PMFacts:
         """
         try:
             from src.data.company import format_profiles_block
+
             known = [
-                p for p in self.company_profiles
-                if p is not None and any((
-                    getattr(p, "name", None),
-                    getattr(p, "summary", None),
-                    getattr(p, "industry", None),
-                ))
+                p
+                for p in self.company_profiles
+                if p is not None
+                and any(
+                    (
+                        getattr(p, "name", None),
+                        getattr(p, "summary", None),
+                        getattr(p, "industry", None),
+                    )
+                )
             ]
             if not known:
                 return ""
             block = format_profiles_block(
-                known, title="Who These Companies Are",
+                known,
+                title="Who These Companies Are",
             ).rstrip("\n")
         except Exception as e:  # noqa: BLE001 — never fail a render on prose
             logger.warning("pm_facts: company profile render failed: %s", e)
@@ -280,6 +281,7 @@ class PMFacts:
         band = self.deployment_gap_band_pct
         if band is None:
             from src.config import DeploymentGapConfig
+
             band = DeploymentGapConfig.model_fields["band_pct"].get_default()
         # 2026-09-18 fix: the not-under branch used to read
         # "invested=109.4% vs mandate=100% (gap +9pp)". On 2026-09-17 the PM
@@ -319,7 +321,7 @@ class PMFacts:
             f" rising market). In `cash_target`, either (a) close it with"
             f" qualified candidates THIS session, or (b) name the concrete"
             f" blocker per unfilled slot (no-qualified-setups after filters /"
-            f" regime gate / earnings-queue). \"Staying cautious\" without a"
+            f' regime gate / earnings-queue). "Staying cautious" without a'
             f" named blocker is not an answer, and a bearish read is expressed"
             f" with shorts or inverse ETFs, not with cash."
         )

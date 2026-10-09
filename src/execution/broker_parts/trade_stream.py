@@ -7,6 +7,7 @@ existing importers and patch targets on the broker module still resolve.
 collaborators are keyword-only, and the per-broker state the bodies mutate
 (`_trade_hub`, `_trade_slot_held`, ...) is reached through the `state` collaborator.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - optional dependency surface
 # broker's logger name, and the move must not change what they see.
 from src.execution.broker_parts.trade_stream_identity import checked_socket_identity
 from src.session_identity import _credential_fingerprint  # noqa: F401 re-export
+
 logger = logging.getLogger("src.execution.broker")
 
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
@@ -55,6 +57,7 @@ def _default_trade_updates_lease_path() -> Path:
 
 
 from src.execution.broker_parts import trade_stream_bounds, trade_stream_auth, trade_stream_reconnect
+
 _SPLIT_PARTS = (trade_stream_bounds, trade_stream_auth, trade_stream_reconnect)  # patch-mirror targets, see broker.py
 from src.execution.broker_parts.trade_stream_bounds import (  # noqa: F401
     _ALPACA_STREAM_AUTH_DEADLINE_S,
@@ -83,9 +86,6 @@ from src.execution.broker_parts.trade_stream_reconnect import (  # noqa: F401
     _stream_giveup_owner_message,
     _trading_stream_reconnect_delay,
 )
-
-
-
 
 
 @dataclass(frozen=True)
@@ -146,8 +146,7 @@ class _TradeUpdatesHub:
 
     def start(self) -> None:
         logger.info("trade_updates identity: %s", checked_socket_identity(self._broker))
-        stream = TradingStream(self._broker.api_key, self._broker.secret_key,
-                               paper=self._broker._paper)
+        stream = TradingStream(self._broker.api_key, self._broker.secret_key, paper=self._broker._paper)
         stream._qamc_authed = self._authed
         stream._qamc_connected = self._connected
         _orig_authed_set = self._authed.set
@@ -176,8 +175,7 @@ class _TradeUpdatesHub:
                 oid = str(getattr(order, "id", "") or "")
                 if not oid:
                     return
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
+                status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
                 to_signal: list[_HubWaiter] = []
                 with self._waiters_lock:
                     self._last_status[oid] = status
@@ -191,8 +189,13 @@ class _TradeUpdatesHub:
                     self._kick()
                 record_guarded_pass(self._broker, "trade_stream.hub_handler", context={})
             except Exception as exc:
-                record_guarded_pass(self._broker, "trade_stream.hub_handler", exc, log=logger,
-                                    context={"effect": "a fill update was dropped; waiters fall back to REST"})
+                record_guarded_pass(
+                    self._broker,
+                    "trade_stream.hub_handler",
+                    exc,
+                    log=logger,
+                    context={"effect": "a fill update was dropped; waiters fall back to REST"},
+                )
 
         stream.subscribe_trade_updates(_handler)
 
@@ -210,18 +213,15 @@ class _TradeUpdatesHub:
                 self._kick()
 
         self._thread = threading.Thread(
-            target=_run, name="trade-updates-hub", daemon=True,
+            target=_run,
+            name="trade-updates-hub",
+            daemon=True,
         )
         self._thread.start()
 
     def is_alive(self) -> bool:
         thread = self._thread
-        return (
-            not self._stopped
-            and not self._dead.is_set()
-            and thread is not None
-            and thread.is_alive()
-        )
+        return not self._stopped and not self._dead.is_set() and thread is not None and thread.is_alive()
 
     def authed(self) -> bool:
         return self._authed.is_set() or self._connected.is_set()
@@ -229,13 +229,14 @@ class _TradeUpdatesHub:
     def auth_remaining_s(self) -> float:
         if not self.handshake_hook:
             return float("inf")
-        left = _ALPACA_STREAM_AUTH_DEADLINE_S - (
-            time.monotonic() - self.started_mono
-        )
+        left = _ALPACA_STREAM_AUTH_DEADLINE_S - (time.monotonic() - self.started_mono)
         return max(0.0, float(left))
 
     def wait(
-        self, order_id: str, timeout_seconds: float, *,
+        self,
+        order_id: str,
+        timeout_seconds: float,
+        *,
         stop_states: frozenset,
         poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
@@ -244,15 +245,13 @@ class _TradeUpdatesHub:
         # Liveness cadence is the REST path's own poll interval — not a
         # second clock. poll_interval<=0 waits the remaining window in
         # one shot (the tests that drive REST with a zero sleep).
-        interval = (
-            float(poll_interval)
-            if poll_interval and float(poll_interval) > 0
-            else None
-        )
+        interval = float(poll_interval) if poll_interval and float(poll_interval) > 0 else None
 
         def _mark_auth_failed() -> None:
             self._broker._last_stream_warmup = TradeStreamWarmup(
-                ready=False, handshake_failed=True, retried=True,
+                ready=False,
+                handshake_failed=True,
+                retried=True,
             )
 
         if self.handshake_hook and not self.authed():
@@ -262,7 +261,8 @@ class _TradeUpdatesHub:
                 logger.warning(
                     "trade_updates websocket did not authenticate within the "
                     "encoded %.1fs budget (started at hub open) — REST for %s",
-                    _ALPACA_STREAM_AUTH_DEADLINE_S, oid,
+                    _ALPACA_STREAM_AUTH_DEADLINE_S,
+                    oid,
                 )
                 _mark_auth_failed()
                 return None, False
@@ -274,11 +274,16 @@ class _TradeUpdatesHub:
                     )
                 record_guarded_pass(self._broker, "trade_stream.hub_wait.auth_gate", context={})
             except Exception as exc:
-                record_guarded_pass(self._broker, "trade_stream.hub_wait.auth_gate", exc, log=logger, context={"effect": "auth wait aborted; caller falls back to REST"})
+                record_guarded_pass(
+                    self._broker,
+                    "trade_stream.hub_wait.auth_gate",
+                    exc,
+                    log=logger,
+                    context={"effect": "auth wait aborted; caller falls back to REST"},
+                )
             if not self.authed():
                 logger.warning(
-                    "trade_updates websocket did not authenticate within "
-                    "the wait ceiling — REST for %s",
+                    "trade_updates websocket did not authenticate within the wait ceiling — REST for %s",
                     oid,
                 )
                 _mark_auth_failed()
@@ -341,12 +346,24 @@ class _TradeUpdatesHub:
                 setattr(stream, "_should_run", False)
                 record_guarded_pass(self._broker, "trade_stream.hub_stop.should_run", context={})
             except Exception as exc:
-                record_guarded_pass(self._broker, "trade_stream.hub_stop.should_run", exc, log=logger, context={"effect": "socket may keep reconnecting after stop"})
+                record_guarded_pass(
+                    self._broker,
+                    "trade_stream.hub_stop.should_run",
+                    exc,
+                    log=logger,
+                    context={"effect": "socket may keep reconnecting after stop"},
+                )
             try:
                 stream.stop()
                 record_guarded_pass(self._broker, "trade_stream.hub_stop.stream_stop", context={})
             except Exception as exc:
-                record_guarded_pass(self._broker, "trade_stream.hub_stop.stream_stop", exc, log=logger, context={"effect": "socket may stay open after stop"})
+                record_guarded_pass(
+                    self._broker,
+                    "trade_stream.hub_stop.stream_stop",
+                    exc,
+                    log=logger,
+                    context={"effect": "socket may stay open after stop"},
+                )
         thread = self._thread
         if thread is not None:
             thread.join(timeout=5.0)
@@ -395,7 +412,8 @@ class TradeStreamWaits:
     secret_key = _OnState()
 
     def __init__(
-        self, *,
+        self,
+        *,
         state,
         get_order_status_once,
         wait_for_order_status_via_polling,
@@ -427,7 +445,6 @@ class TradeStreamWaits:
             self._hub_warmup = _hub_warmup
         if _fill_stream_off_warmup is not None:
             self._fill_stream_off_warmup = _fill_stream_off_warmup
-
 
     def _acquire_trade_updates_slot(self) -> bool:
         """Non-blocking owner of the account-wide trade_updates socket.
@@ -527,11 +544,7 @@ class TradeStreamWaits:
         return hub.auth_remaining_s()
 
     def _hub_warmup(self, hub: _TradeUpdatesHub) -> TradeStreamWarmup:
-        failed = (
-            hub.handshake_hook
-            and hub.auth_remaining_s() <= 0
-            and not hub.authed()
-        )
+        failed = hub.handshake_hook and hub.auth_remaining_s() <= 0 and not hub.authed()
         return TradeStreamWarmup(
             ready=hub.is_alive() and not failed,
             handshake_failed=failed,
@@ -553,7 +566,9 @@ class TradeStreamWaits:
             return warmup
         if TradingStream is None:
             warmup = TradeStreamWarmup(
-                ready=False, handshake_failed=True, retried=False,
+                ready=False,
+                handshake_failed=True,
+                retried=False,
             )
             self._last_stream_warmup = warmup
             return warmup
@@ -568,14 +583,21 @@ class TradeStreamWaits:
                     hub.stop()
                     record_guarded_pass(self._state, "trade_stream.start_trade_updates.stop_old_hub", context={})
                 except Exception as exc:
-                    record_guarded_pass(self._state, "trade_stream.start_trade_updates.stop_old_hub", exc, log=logger, context={"effect": "old hub may linger; thread check follows"})
+                    record_guarded_pass(
+                        self._state,
+                        "trade_stream.start_trade_updates.stop_old_hub",
+                        exc,
+                        log=logger,
+                        context={"effect": "old hub may linger; thread check follows"},
+                    )
                 if hub.thread_still_running():
                     logger.warning(
-                        "previous trade_updates thread still running — "
-                        "not opening another socket",
+                        "previous trade_updates thread still running — not opening another socket",
                     )
                     warmup = TradeStreamWarmup(
-                        ready=False, handshake_failed=False, retried=False,
+                        ready=False,
+                        handshake_failed=False,
+                        retried=False,
                     )
                     self._last_stream_warmup = warmup
                     return warmup
@@ -583,12 +605,13 @@ class TradeStreamWaits:
                 self._release_trade_updates_slot()
             if not self._acquire_trade_updates_slot():
                 logger.info(
-                    "trade_updates lease held by another process — "
-                    "not opening a competing socket",
+                    "trade_updates lease held by another process — not opening a competing socket",
                 )
                 self._trade_lease_contended = True
                 warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=False, retried=False,
+                    ready=False,
+                    handshake_failed=False,
+                    retried=False,
                 )
                 self._last_stream_warmup = warmup
                 return warmup
@@ -599,11 +622,18 @@ class TradeStreamWaits:
                 self._trade_hub = hub
                 record_guarded_pass(self._state, "trade_stream.hub_start", context={})
             except Exception as exc:
-                record_guarded_pass(self._state, "trade_stream.hub_start", exc, log=logger,
-                                    context={"effect": "no fill stream; REST confirms fills"})
+                record_guarded_pass(
+                    self._state,
+                    "trade_stream.hub_start",
+                    exc,
+                    log=logger,
+                    context={"effect": "no fill stream; REST confirms fills"},
+                )
                 self._release_trade_updates_slot()
                 warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=False,
+                    ready=False,
+                    handshake_failed=True,
+                    retried=False,
                 )
                 self._last_stream_warmup = warmup
                 return warmup
@@ -625,7 +655,13 @@ class TradeStreamWaits:
                     hub.stop()
                     record_guarded_pass(self._state, "trade_stream.stop_trade_updates.stop_hub", context={})
                 except Exception as exc:
-                    record_guarded_pass(self._state, "trade_stream.stop_trade_updates.stop_hub", exc, log=logger, context={"effect": "hub may linger; thread check follows"})
+                    record_guarded_pass(
+                        self._state,
+                        "trade_stream.stop_trade_updates.stop_hub",
+                        exc,
+                        log=logger,
+                        context={"effect": "hub may linger; thread check follows"},
+                    )
                 if hub.thread_still_running():
                     logger.warning(
                         "trade_updates thread still running after stop — "
@@ -659,15 +695,13 @@ class TradeStreamWaits:
         """
         if not use_stream or not self.fill_stream_enabled():
             return self._wait_for_order_status_via_polling(
-                order_id, timeout_seconds, poll_interval,
+                order_id,
+                timeout_seconds,
+                poll_interval,
                 stop_states=stop_states,
             )
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
-        interval = (
-            float(poll_interval)
-            if poll_interval and float(poll_interval) > 0
-            else 0.0
-        )
+        interval = float(poll_interval) if poll_interval and float(poll_interval) > 0 else 0.0
         last: str | None = None
         logged_unavailable = False
         hub = getattr(self, "_trade_hub", None)
@@ -675,12 +709,18 @@ class TradeStreamWaits:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return last if last is not None else self._get_order_status_once(
-                    order_id,
+                return (
+                    last
+                    if last is not None
+                    else self._get_order_status_once(
+                        order_id,
+                    )
                 )
             slice_s = remaining if not slice_stream else min(remaining, interval)
             status, connected = self._wait_for_order_status_via_stream(
-                order_id, slice_s, stop_states=stop_states,
+                order_id,
+                slice_s,
+                stop_states=stop_states,
                 poll_interval=poll_interval,
             )
             if status is not None:
@@ -696,7 +736,9 @@ class TradeStreamWaits:
                 if remaining <= 0:
                     return last
                 polled = self._wait_for_order_status_via_polling(
-                    order_id, remaining, poll_interval,
+                    order_id,
+                    remaining,
+                    poll_interval,
                     stop_states=stop_states,
                 )
                 return polled if polled is not None else last
@@ -704,7 +746,10 @@ class TradeStreamWaits:
                 return last
 
     def _wait_for_order_status_via_stream(
-        self, order_id: str, timeout_seconds: float, *,
+        self,
+        order_id: str,
+        timeout_seconds: float,
+        *,
         stop_states: frozenset,
         poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
@@ -757,7 +802,9 @@ class TradeStreamWaits:
         hub = getattr(self, "_trade_hub", None)
         if hub is not None and hub.is_alive():
             return hub.wait(
-                order_id, timeout_seconds, stop_states=stop_states,
+                order_id,
+                timeout_seconds,
+                stop_states=stop_states,
                 poll_interval=poll_interval,
             )
 
@@ -778,7 +825,9 @@ class TradeStreamWaits:
             hub = getattr(self, "_trade_hub", None)
             if hub is not None and hub.is_alive():
                 return hub.wait(
-                    order_id, timeout_seconds, stop_states=stop_states,
+                    order_id,
+                    timeout_seconds,
+                    stop_states=stop_states,
                     poll_interval=poll_interval,
                 )
             logger.info(
@@ -789,13 +838,18 @@ class TradeStreamWaits:
 
         try:
             return self._wait_for_order_status_via_stream_locked(
-                order_id, timeout_seconds, stop_states=stop_states,
+                order_id,
+                timeout_seconds,
+                stop_states=stop_states,
             )
         finally:
             self._release_trade_updates_slot()
 
     def _wait_for_order_status_via_stream_locked(
-        self, order_id: str, timeout_seconds: float, *,
+        self,
+        order_id: str,
+        timeout_seconds: float,
+        *,
         stop_states: frozenset,
     ) -> tuple[str | None, bool]:
         result: dict = {"status": None}
@@ -823,8 +877,7 @@ class TradeStreamWaits:
                 order = getattr(update, "order", None)
                 if str(getattr(order, "id", "") or "") != str(order_id):
                     return
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
+                status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
                 if status in stop_states:
                     result["status"] = status
                     matched.set()
@@ -832,15 +885,25 @@ class TradeStreamWaits:
                     await stream.stop_ws()
                 record_guarded_pass(self._state, "trade_stream.order_fill_handler", context={})
             except Exception as exc:
-                record_guarded_pass(self._state, "trade_stream.order_fill_handler", exc, log=logger,
-                                    context={"order": order_id, "effect": "a fill update was dropped; wait falls back to REST"})
+                record_guarded_pass(
+                    self._state,
+                    "trade_stream.order_fill_handler",
+                    exc,
+                    log=logger,
+                    context={"order": order_id, "effect": "a fill update was dropped; wait falls back to REST"},
+                )
 
         try:
             stream.subscribe_trade_updates(_handler)
             record_guarded_pass(self._state, "trade_stream.order_fill_subscribe", context={})
         except Exception as exc:
-            record_guarded_pass(self._state, "trade_stream.order_fill_subscribe", exc, log=logger,
-                                context={"order": order_id, "effect": "no stream; caller uses REST"})
+            record_guarded_pass(
+                self._state,
+                "trade_stream.order_fill_subscribe",
+                exc,
+                log=logger,
+                context={"order": order_id, "effect": "no stream; caller uses REST"},
+            )
             return None, False
 
         finished = threading.Event()
@@ -856,7 +919,9 @@ class TradeStreamWaits:
                 match_wake.set()
 
         thread = threading.Thread(
-            target=_run, name=f"order-fill-stream-{order_id}", daemon=True,
+            target=_run,
+            name=f"order-fill-stream-{order_id}",
+            daemon=True,
         )
         started = time.monotonic()
         deadline = started + max(0.0, float(timeout_seconds))
@@ -871,18 +936,26 @@ class TradeStreamWaits:
             authed = bool(stream._qamc_authed.is_set() or connected.is_set())
             if not authed:
                 logger.warning(
-                    "trade_updates websocket did not authenticate within %.1fs — "
-                    "falling back to REST for %s",
-                    auth_left, order_id,
+                    "trade_updates websocket did not authenticate within %.1fs — falling back to REST for %s",
+                    auth_left,
+                    order_id,
                 )
                 self._last_stream_warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=True,
+                    ready=False,
+                    handshake_failed=True,
+                    retried=True,
                 )
                 try:
                     stream.stop()
                     record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_unauthed", context={})
                 except Exception as exc:
-                    record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_unauthed", exc, log=logger, context={"effect": "stream may linger; thread joined regardless"})
+                    record_guarded_pass(
+                        self._state,
+                        "trade_stream.order_fill_stream.stop_unauthed",
+                        exc,
+                        log=logger,
+                        context={"effect": "stream may linger; thread joined regardless"},
+                    )
                 thread.join(timeout=2.0)
                 return None, False
         remaining = max(0.0, deadline - time.monotonic())
@@ -891,7 +964,13 @@ class TradeStreamWaits:
             stream.stop()
             record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_final", context={})
         except Exception as exc:
-            record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_final", exc, log=logger, context={"effect": "stream may linger; daemon thread"})
+            record_guarded_pass(
+                self._state,
+                "trade_stream.order_fill_stream.stop_final",
+                exc,
+                log=logger,
+                context={"effect": "stream may linger; daemon thread"},
+            )
         thread.join(timeout=5.0)
 
         if not matched.is_set() and run_error and not connected.is_set():

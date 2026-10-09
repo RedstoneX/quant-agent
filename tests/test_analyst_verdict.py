@@ -33,15 +33,26 @@ from src.agents.portfolio_manager import PortfolioManagerAgent
 # stays pinned to the day its write-up describes.
 _LEVEL_LESS = S.load_frozen_selection(S.LEVEL_LESS_SELECTION_FIXTURE)
 from src.models import (
-    NO_STATED_STRENGTH, RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict,
+    NO_STATED_STRENGTH,
+    RATING_DIRECTION,
+    RATING_MAGNITUDE,
+    AnalystVerdict,
     EarningsAnalysis,
-    NewsIntelligenceReport, StockNewsItem, TechAnalysisResult,
-    TechReasoningChain, VerdictEvidence,
+    NewsIntelligenceReport,
+    StockNewsItem,
+    TechAnalysisResult,
+    TechReasoningChain,
+    VerdictEvidence,
 )
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.verdicts import (
-    CONVICTION_SCORE, RANKING_SIGNALS, SEAT_WEIGHT, level_touches_of,
-    rank_verdicts, score_verdict, seat_weight,
+    CONVICTION_SCORE,
+    RANKING_SIGNALS,
+    SEAT_WEIGHT,
+    level_touches_of,
+    rank_verdicts,
+    score_verdict,
+    seat_weight,
 )
 
 REPO = Path(__file__).parent.parent
@@ -50,31 +61,45 @@ SESSION = date(2026, 9, 1)
 
 def _chain() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="above MA20/50/200", momentum="RSI 58, MACD positive",
-        volatility="mid-band", volume="+15% confirms",
+        trend="above MA20/50/200",
+        momentum="RSI 58, MACD positive",
+        volatility="mid-band",
+        volume="+15% confirms",
         support_resistance="support 95, resistance 112",
     )
 
 
-def _tech(symbol: str, rating: str = "buy", conviction: str = "medium",
-          invalid_if: str = "closes below MA50 on volume",
-          target: float | None = None) -> TechAnalysisResult:
+def _tech(
+    symbol: str,
+    rating: str = "buy",
+    conviction: str = "medium",
+    invalid_if: str = "closes below MA50 on volume",
+    target: float | None = None,
+) -> TechAnalysisResult:
     if rating == "neutral":
         return TechAnalysisResult(
-            symbol=symbol, rating="neutral", conviction=conviction,
-            reasoning="no setup", reasoning_chain=_chain(),
+            symbol=symbol,
+            rating="neutral",
+            conviction=conviction,
+            reasoning="no setup",
+            reasoning_chain=_chain(),
             thesis_invalid_if=invalid_if,
         )
     long = rating in ("buy", "strong_buy")
     # 100 / 95 / 112 is R/R 2.40 long; 100 / 105 / 88 is 2.40 short.
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, conviction=conviction, entry_price=100,
+        symbol=symbol,
+        rating=rating,
+        conviction=conviction,
+        entry_price=100,
         stop_loss=95 if long else 105,
         reference_target=(target if target is not None else (112 if long else 88)),
         support_levels=[95] if long else [88],
         resistance_levels=[112] if long else [105],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="one-line why", reasoning_chain=_chain(),
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="one-line why",
+        reasoning_chain=_chain(),
         thesis_invalid_if=invalid_if,
     )
 
@@ -83,14 +108,20 @@ def _tech(symbol: str, rating: str = "buy", conviction: str = "medium",
 # 1. The shape
 # ==========================================================================
 
+
 def _evidence() -> list[VerdictEvidence]:
     return [VerdictEvidence(label="stop_loss", value=95.0)]
 
 
 def test_a_complete_directional_verdict_validates():
     v = AnalystVerdict(
-        seat="technical", symbol="aapl", direction="bullish", magnitude=0.5,
-        conviction="medium", evidence=_evidence(), invalidation="closes below 95",
+        seat="technical",
+        symbol="aapl",
+        direction="bullish",
+        magnitude=0.5,
+        conviction="medium",
+        evidence=_evidence(),
+        invalidation="closes below 95",
     )
     assert v.symbol == "AAPL"
     assert v.signed_magnitude == 0.5
@@ -98,8 +129,13 @@ def test_a_complete_directional_verdict_validates():
 
 def test_a_bearish_verdict_has_a_negative_signed_magnitude():
     v = AnalystVerdict(
-        seat="technical", symbol="AAPL", direction="bearish", magnitude=1.0,
-        conviction="high", evidence=_evidence(), invalidation="closes above 105",
+        seat="technical",
+        symbol="AAPL",
+        direction="bearish",
+        magnitude=1.0,
+        conviction="high",
+        evidence=_evidence(),
+        invalidation="closes above 105",
     )
     assert v.signed_magnitude == -1.0
 
@@ -108,28 +144,44 @@ def test_a_bearish_verdict_has_a_negative_signed_magnitude():
 def test_a_directional_verdict_without_an_invalidation_is_refused(invalidation):
     with pytest.raises(ValidationError, match="invalidation"):
         AnalystVerdict(
-            seat="technical", symbol="AAPL", direction="bullish", magnitude=0.5,
-            conviction="medium", evidence=_evidence(), invalidation=invalidation,
+            seat="technical",
+            symbol="AAPL",
+            direction="bullish",
+            magnitude=0.5,
+            conviction="medium",
+            evidence=_evidence(),
+            invalidation=invalidation,
         )
 
 
 def test_a_directional_verdict_without_evidence_is_refused():
     with pytest.raises(ValidationError, match="evidence"):
         AnalystVerdict(
-            seat="technical", symbol="AAPL", direction="bullish", magnitude=0.5,
-            conviction="medium", evidence=[], invalidation="closes below 95",
+            seat="technical",
+            symbol="AAPL",
+            direction="bullish",
+            magnitude=0.5,
+            conviction="medium",
+            evidence=[],
+            invalidation="closes below 95",
         )
 
 
 def test_a_neutral_verdict_may_be_blank_but_may_not_lean():
     neutral = AnalystVerdict(
-        seat="technical", symbol="AAPL", direction="neutral", magnitude=0.0,
+        seat="technical",
+        symbol="AAPL",
+        direction="neutral",
+        magnitude=0.0,
         conviction="low",
     )
     assert neutral.signed_magnitude == 0.0
     with pytest.raises(ValidationError, match="neutral"):
         AnalystVerdict(
-            seat="technical", symbol="AAPL", direction="neutral", magnitude=0.3,
+            seat="technical",
+            symbol="AAPL",
+            direction="neutral",
+            magnitude=0.3,
             conviction="low",
         )
 
@@ -138,8 +190,13 @@ def test_magnitude_is_bounded_to_the_unit_interval():
     for bad in (-0.1, 1.1):
         with pytest.raises(ValidationError):
             AnalystVerdict(
-                seat="technical", symbol="AAPL", direction="bullish", magnitude=bad,
-                conviction="medium", evidence=_evidence(), invalidation="x",
+                seat="technical",
+                symbol="AAPL",
+                direction="bullish",
+                magnitude=bad,
+                conviction="medium",
+                evidence=_evidence(),
+                invalidation="x",
             )
 
 
@@ -155,8 +212,13 @@ def test_the_shape_has_exactly_the_four_judgement_fields_plus_identity():
     """The spec names four things. Identity (seat, symbol) is not judgement.
     A fifth judgement field is a design change and should fail here first."""
     assert set(AnalystVerdict.model_fields) == {
-        "seat", "symbol", "direction", "magnitude", "conviction",
-        "evidence", "invalidation",
+        "seat",
+        "symbol",
+        "direction",
+        "magnitude",
+        "conviction",
+        "evidence",
+        "invalidation",
     }
 
 
@@ -164,9 +226,14 @@ def test_the_shape_has_exactly_the_four_judgement_fields_plus_identity():
 # 2. Technical's mapping
 # ==========================================================================
 
+
 def test_rating_encodings_are_equal_spaced_and_symmetric():
     assert RATING_MAGNITUDE == {
-        "strong_buy": 1.0, "buy": 0.5, "neutral": 0.0, "sell": 0.5, "strong_sell": 1.0,
+        "strong_buy": 1.0,
+        "buy": 0.5,
+        "neutral": 0.0,
+        "sell": 0.5,
+        "strong_sell": 1.0,
     }
     assert RATING_DIRECTION["buy"] == RATING_DIRECTION["strong_buy"] == "bullish"
     assert RATING_DIRECTION["sell"] == RATING_DIRECTION["strong_sell"] == "bearish"
@@ -225,27 +292,45 @@ def test_a_missing_soft_invalidation_falls_back_to_the_analysts_own_stop():
 def test_the_production_shaped_tech_response_populates_the_verdict():
     """The exact response body `tests/test_tech_analyst.py` feeds the
     agent, parsed the way `_analyze_chunk` parses it."""
-    body = json.loads(json.dumps([{
-        "symbol": "SPY", "rating": "buy", "conviction": "high",
-        "entry_price": 507.0, "reference_target": 530.0, "stop_loss": 494.0,
-        "support_levels": [494.0], "resistance_levels": [530.0],
-        "setup_type": "range", "expected_horizon_sessions": 10,
-        "thesis_invalid_if": "Price closes below MA50 (492) on above-average volume",
-        "reasoning_chain": {
-            "trend": "Above MA20/50/200 stacked bullish.",
-            "momentum": "RSI 58 neutral-bullish, MACD hist positive.",
-            "volatility": "Mid-band, ATR steady.",
-            "volume": "+15% confirms uptrend.",
-            "support_resistance": "Support MA50 498, resistance upper band 520.",
-        },
-        "reasoning": "Clean bullish alignment.",
-    }]))
+    body = json.loads(
+        json.dumps(
+            [
+                {
+                    "symbol": "SPY",
+                    "rating": "buy",
+                    "conviction": "high",
+                    "entry_price": 507.0,
+                    "reference_target": 530.0,
+                    "stop_loss": 494.0,
+                    "support_levels": [494.0],
+                    "resistance_levels": [530.0],
+                    "setup_type": "range",
+                    "expected_horizon_sessions": 10,
+                    "thesis_invalid_if": "Price closes below MA50 (492) on above-average volume",
+                    "reasoning_chain": {
+                        "trend": "Above MA20/50/200 stacked bullish.",
+                        "momentum": "RSI 58 neutral-bullish, MACD hist positive.",
+                        "volatility": "Mid-band, ATR steady.",
+                        "volume": "+15% confirms uptrend.",
+                        "support_resistance": "Support MA50 498, resistance upper band 520.",
+                    },
+                    "reasoning": "Clean bullish alignment.",
+                }
+            ]
+        )
+    )
     v = TechAnalysisResult(**body[0]).to_verdict()
     assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.5, "high")
     assert v.invalidation.startswith("Price closes below MA50")
     assert {e.label for e in v.evidence} >= {
-        "entry_price", "stop_loss", "reference_target", "risk_reward",
-        "support_level", "resistance_level", "trend", "momentum",
+        "entry_price",
+        "stop_loss",
+        "reference_target",
+        "risk_reward",
+        "support_level",
+        "resistance_level",
+        "trend",
+        "momentum",
     }
 
 
@@ -262,18 +347,30 @@ def test_every_real_technical_read_on_the_fixture_day_maps_to_a_valid_verdict():
 # 2b. Earnings' mapping
 # ==========================================================================
 
-def _earnings(sentiment: str = "bullish", conviction: str = "medium",
-              bull_case: str = "services mix reaccelerates",
-              bear_case: str = "China demand craters",
-              data_quality: str = "complete filing, no estimates") -> EarningsAnalysis:
+
+def _earnings(
+    sentiment: str = "bullish",
+    conviction: str = "medium",
+    bull_case: str = "services mix reaccelerates",
+    bear_case: str = "China demand craters",
+    data_quality: str = "complete filing, no estimates",
+) -> EarningsAnalysis:
     return EarningsAnalysis(
-        symbol="AAPL", form_type="10-Q", filing_date="2026-03-15",
-        revenue={"total": "$95.4B"}, profitability={}, cash_flow={},
-        balance_sheet={}, guidance="flat", data_quality=data_quality,
+        symbol="AAPL",
+        form_type="10-Q",
+        filing_date="2026-03-15",
+        revenue={"total": "$95.4B"},
+        profitability={},
+        cash_flow={},
+        balance_sheet={},
+        guidance="flat",
+        data_quality=data_quality,
         investment_implications={
-            "sentiment": sentiment, "conviction": conviction,
+            "sentiment": sentiment,
+            "conviction": conviction,
             "key_thesis": "services mix offsets hardware softness",
-            "bull_case": bull_case, "bear_case": bear_case,
+            "bull_case": bull_case,
+            "bear_case": bear_case,
             "reasoning_chain": {
                 "fundamental_quality": "gross margin expanding 40bps",
                 "growth_trajectory": "services +12% YoY, hardware flat",
@@ -343,6 +440,7 @@ def test_data_quality_evidence_is_omitted_when_it_is_the_bare_default():
 # 3. The ranking
 # ==========================================================================
 
+
 def test_ranking_reads_two_signals_at_equal_weight():
     assert RANKING_SIGNALS == ("magnitude", "conviction_score")
     assert CONVICTION_SCORE == {"low": 0.0, "medium": 0.5, "high": 1.0}
@@ -355,8 +453,11 @@ def test_seat_weight_is_the_ratified_research_informed_prior():
     because it only reorders already-eligible, already-agreeing candidates;
     it never changes how much money a trade risks."""
     assert SEAT_WEIGHT == {
-        "technical": 1.2, "earnings": 1.2, "news": 1.0,
-        "smart_money": 0.8, "macro": 0.8,
+        "technical": 1.2,
+        "earnings": 1.2,
+        "news": 1.0,
+        "smart_money": 0.8,
+        "macro": 0.8,
     }
     assert seat_weight("technical") == 1.2
     assert seat_weight("some_future_seat_not_yet_reviewed") == 1.0, (
@@ -381,18 +482,11 @@ def test_only_one_seat_weight_table_exists_in_the_ranking_module():
             keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
             if keys & seats:
                 hits.append(node.lineno)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "dict"
-        ):
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
             kw_keys = {kw.arg for kw in node.keywords if kw.arg is not None}
             if kw_keys & seats:
                 hits.append(node.lineno)
-    assert len(hits) == 1, (
-        f"expected exactly one seat-keyed table (SEAT_WEIGHT), found at "
-        f"lines {hits}"
-    )
+    assert len(hits) == 1, f"expected exactly one seat-keyed table (SEAT_WEIGHT), found at lines {hits}"
 
 
 def test_score_is_magnitude_plus_conviction():
@@ -409,11 +503,11 @@ def test_rank_verdicts_orders_by_score_then_symbol_and_skips_neutral():
     aggregation is a weighted SUM, so a lone seat's weight multiplies its own
     score instead of cancelling out of an average. Ordering is unchanged."""
     verdicts = [
-        _tech("CCC", "buy", "medium").to_verdict(),          # 1.0 * 1.2
-        _tech("AAA", "buy", "medium").to_verdict(),          # 1.0 * 1.2 — ties on symbol
-        _tech("BBB", "strong_sell", "high").to_verdict(),    # 2.0 * 1.2
-        _tech("DDD", "buy", "low").to_verdict(),             # 0.5 * 1.2
-        _tech("EEE", "neutral", invalid_if="").to_verdict(), # no lean — not scored
+        _tech("CCC", "buy", "medium").to_verdict(),  # 1.0 * 1.2
+        _tech("AAA", "buy", "medium").to_verdict(),  # 1.0 * 1.2 — ties on symbol
+        _tech("BBB", "strong_sell", "high").to_verdict(),  # 2.0 * 1.2
+        _tech("DDD", "buy", "low").to_verdict(),  # 0.5 * 1.2
+        _tech("EEE", "neutral", invalid_if="").to_verdict(),  # no lean — not scored
     ]
     ranked = rank_verdicts(verdicts)
     assert [c.symbol for c in ranked] == ["BBB", "AAA", "CCC", "DDD"]
@@ -428,10 +522,15 @@ def test_two_seats_on_one_symbol_sum_at_the_research_informed_weight():
     """Same fixture as the old unit-weight test, recomputed for the
     2026-09-13 change from a weighted AVERAGE to a weighted SUM. Technical
     enters at 1.2x, news at 1.0x, and each seat's contribution is ADDED."""
-    tech = _tech("XLE", "buy", "high").to_verdict()             # 0.5 + 1.0, weight 1.2
+    tech = _tech("XLE", "buy", "high").to_verdict()  # 0.5 + 1.0, weight 1.2
     other = AnalystVerdict(
-        seat="news", symbol="XLE", direction="bullish", magnitude=1.0,
-        conviction="low", evidence=_evidence(), invalidation="x",  # 1.0 + 0.0, weight 1.0
+        seat="news",
+        symbol="XLE",
+        direction="bullish",
+        magnitude=1.0,
+        conviction="low",
+        evidence=_evidence(),
+        invalidation="x",  # 1.0 + 0.0, weight 1.0
     )
     [c] = rank_verdicts([tech, other])
     # magnitude: 0.5*1.2 + 1.0*1.0 = 1.6
@@ -445,7 +544,9 @@ def test_two_seats_on_one_symbol_sum_at_the_research_informed_weight():
     # `computed_level_touches`, and neither seat here is one that would
     # carry the evidence anyway besides technical (item 141, 2026-09-20).
     assert c.components == {
-        "magnitude": 1.6, "conviction_score": 1.2, "risk_reward_tiebreak": 2.4,
+        "magnitude": 1.6,
+        "conviction_score": 1.2,
+        "risk_reward_tiebreak": 2.4,
         "level_touches_tiebreak": 0.0,
     }
     assert c.score == 2.8
@@ -467,14 +568,18 @@ def test_a_second_agreeing_seat_can_never_lower_a_candidates_score():
     tech = _tech("XLE", "strong_buy", "high").to_verdict()
     agreeing = [
         AnalystVerdict(
-            seat=seat, symbol="XLE", direction="bullish",
-            magnitude=NO_STATED_STRENGTH, conviction=conviction,
-            evidence=_evidence(), invalidation="x",
+            seat=seat,
+            symbol="XLE",
+            direction="bullish",
+            magnitude=NO_STATED_STRENGTH,
+            conviction=conviction,
+            evidence=_evidence(),
+            invalidation="x",
         )
         for seat, conviction in (
-            ("smart_money", "high"),   # `actionable`, the strongest it states
+            ("smart_money", "high"),  # `actionable`, the strongest it states
             ("macro", "medium"),
-            ("news", "low"),           # the weakest a seat can state
+            ("news", "low"),  # the weakest a seat can state
             ("earnings", "high"),
         )
     ]
@@ -485,8 +590,8 @@ def test_a_second_agreeing_seat_can_never_lower_a_candidates_score():
     assert scores == sorted(scores), scores
     # And strictly higher wherever the added seat actually said something:
     # only the low-conviction news seat contributes exactly zero.
-    assert scores[0] == 2.4                      # technical alone, 2.0 * 1.2
-    assert scores[1] > scores[0]                 # + smart_money `actionable`
+    assert scores[0] == 2.4  # technical alone, 2.0 * 1.2
+    assert scores[1] > scores[0]  # + smart_money `actionable`
     assert scores[4] > scores[1]
 
 
@@ -501,9 +606,13 @@ def test_a_lone_seats_own_weight_now_scales_its_score():
     [c] = rank_verdicts([tech])
     assert c.score == round(score_verdict(tech) * SEAT_WEIGHT["technical"], 4) == 1.8
     macro_like = AnalystVerdict(
-        seat="macro", symbol="XLE", direction="bullish",
-        magnitude=tech.magnitude, conviction=tech.conviction,
-        evidence=_evidence(), invalidation="x",
+        seat="macro",
+        symbol="XLE",
+        direction="bullish",
+        magnitude=tech.magnitude,
+        conviction=tech.conviction,
+        evidence=_evidence(),
+        invalidation="x",
     )
     [m] = rank_verdicts([macro_like])
     assert m.score == round(score_verdict(macro_like) * SEAT_WEIGHT["macro"], 4)
@@ -518,15 +627,20 @@ def test_a_seat_that_looked_and_had_no_lean_is_recorded_not_dropped():
     read whose sector rows contradict each other now resolves to neutral."""
     tech = _tech("XLE", "buy", "high").to_verdict()
     quiet_macro = AnalystVerdict(
-        seat="macro", symbol="XLE", direction="neutral", magnitude=0.0,
-        conviction="medium", evidence=_evidence(), invalidation="",
+        seat="macro",
+        symbol="XLE",
+        direction="neutral",
+        magnitude=0.0,
+        conviction="medium",
+        evidence=_evidence(),
+        invalidation="",
     )
     [bare] = rank_verdicts([tech])
     [with_quiet] = rank_verdicts([tech, quiet_macro])
     assert bare.neutral_seats == []
     assert with_quiet.neutral_seats == ["macro"]
-    assert with_quiet.score == bare.score      # contributes nothing to the score
-    assert with_quiet.seats == ["technical"]   # and is not a scoring seat
+    assert with_quiet.score == bare.score  # contributes nothing to the score
+    assert with_quiet.seats == ["technical"]  # and is not a scoring seat
 
 
 def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
@@ -536,14 +650,24 @@ def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
     to 66.7%, silently. `rank_verdicts` must count at most ONE verdict per
     (symbol, seat) — last one wins, matching the same convention already
     used for the evidence registry."""
-    tech = _tech("XLE", "buy", "high").to_verdict()          # weight 1.2
+    tech = _tech("XLE", "buy", "high").to_verdict()  # weight 1.2
     first_earnings = AnalystVerdict(
-        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.2,
-        conviction="low", evidence=_evidence(), invalidation="x",
+        seat="earnings",
+        symbol="XLE",
+        direction="bullish",
+        magnitude=0.2,
+        conviction="low",
+        evidence=_evidence(),
+        invalidation="x",
     )
     second_earnings = AnalystVerdict(
-        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.9,
-        conviction="high", evidence=_evidence(), invalidation="y",
+        seat="earnings",
+        symbol="XLE",
+        direction="bullish",
+        magnitude=0.9,
+        conviction="high",
+        evidence=_evidence(),
+        invalidation="y",
     )
     [with_one] = rank_verdicts([tech, first_earnings])
     [with_duplicate] = rank_verdicts([tech, first_earnings, second_earnings])
@@ -559,8 +683,13 @@ def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
 def test_seats_disagreeing_on_direction_are_not_ranked():
     tech = _tech("XLE", "buy", "high").to_verdict()
     other = AnalystVerdict(
-        seat="news", symbol="XLE", direction="bearish", magnitude=1.0,
-        conviction="high", evidence=_evidence(), invalidation="x",
+        seat="news",
+        symbol="XLE",
+        direction="bearish",
+        magnitude=1.0,
+        conviction="high",
+        evidence=_evidence(),
+        invalidation="x",
     )
     assert rank_verdicts([tech, other]) == []
 
@@ -576,8 +705,8 @@ def test_tied_score_breaks_on_risk_reward_not_alphabet():
     the opposite of what a symbol-only tiebreak would do — because it is
     genuinely the better-supported call, not because of where its ticker
     falls in the alphabet."""
-    aaa = _tech("AAA", "buy", "medium").to_verdict()               # R/R 2.4
-    zzz = _tech("ZZZ", "buy", "medium", target=130).to_verdict()   # R/R 7.0
+    aaa = _tech("AAA", "buy", "medium").to_verdict()  # R/R 2.4
+    zzz = _tech("ZZZ", "buy", "medium", target=130).to_verdict()  # R/R 7.0
     assert score_verdict(aaa) == score_verdict(zzz) == 1.0
     ranked = rank_verdicts([aaa, zzz])
     assert [c.symbol for c in ranked] == ["ZZZ", "AAA"]
@@ -591,8 +720,13 @@ def test_a_verdict_without_risk_reward_evidence_carries_no_tiebreak_key():
     `_reward_risk_sort_values` places the candidate neutrally instead. It
     must still never crash the ranking."""
     v = AnalystVerdict(
-        seat="news", symbol="AAA", direction="bullish", magnitude=0.5,
-        conviction="medium", evidence=_evidence(), invalidation="x",
+        seat="news",
+        symbol="AAA",
+        direction="bullish",
+        magnitude=0.5,
+        conviction="medium",
+        evidence=_evidence(),
+        invalidation="x",
     )
     [c] = rank_verdicts([v])
     assert "risk_reward_tiebreak" not in c.components
@@ -604,20 +738,22 @@ def test_a_candidate_with_no_ratio_is_placed_neutrally_among_its_tie_group():
     0 for the absence it would lose every tie to a range peer; here it sits
     at the mean of the ratios its tie-group peers do have, so it beats the
     weaker one and loses to the stronger one."""
+
     def _v(symbol: str, rr: float | None) -> AnalystVerdict:
         evidence = list(_evidence())
         if rr is not None:
             evidence.append(VerdictEvidence(label="risk_reward", value=rr))
         return AnalystVerdict(
-            seat="technical", symbol=symbol, direction="bullish",
-            magnitude=0.5, conviction="medium", evidence=evidence,
+            seat="technical",
+            symbol=symbol,
+            direction="bullish",
+            magnitude=0.5,
+            conviction="medium",
+            evidence=evidence,
             invalidation="x",
         )
 
-    order = [
-        c.symbol for c in rank_verdicts([_v("WEAK", 0.5), _v("NONE", None),
-                                         _v("STRONG", 3.0)])
-    ]
+    order = [c.symbol for c in rank_verdicts([_v("WEAK", 0.5), _v("NONE", None), _v("STRONG", 3.0)])]
     assert order == ["STRONG", "NONE", "WEAK"]
 
 
@@ -626,7 +762,10 @@ def test_a_breakout_candidate_carries_no_reward_risk_key_at_all():
     ranking outright, whatever figure its seat happened to attach — there is
     no overhead level for it to mean anything against."""
     v = AnalystVerdict(
-        seat="technical", symbol="AAA", direction="bullish", magnitude=0.5,
+        seat="technical",
+        symbol="AAA",
+        direction="bullish",
+        magnitude=0.5,
         conviction="medium",
         evidence=[*_evidence(), VerdictEvidence(label="risk_reward", value=0.4)],
         invalidation="x",
@@ -643,7 +782,10 @@ def test_the_real_structural_ratio_replaces_the_analysts_guess_in_ranking():
     desk's real, structure-derived preview says 2.2, and THAT is what orders
     the candidate."""
     v = AnalystVerdict(
-        seat="technical", symbol="AAA", direction="bullish", magnitude=0.5,
+        seat="technical",
+        symbol="AAA",
+        direction="bullish",
+        magnitude=0.5,
         conviction="medium",
         evidence=[*_evidence(), VerdictEvidence(label="risk_reward", value=0.4)],
         invalidation="x",
@@ -664,12 +806,18 @@ def test_the_real_structural_ratio_replaces_the_analysts_guess_in_ranking():
 # three halves: the absence is carried, the arithmetic is unchanged, and the
 # placeholder cannot come back.
 
-def _no_strength(seat: str, symbol: str = "XLE", conviction: str = "high",
-                 direction: str = "bullish") -> AnalystVerdict:
+
+def _no_strength(
+    seat: str, symbol: str = "XLE", conviction: str = "high", direction: str = "bullish"
+) -> AnalystVerdict:
     return AnalystVerdict(
-        seat=seat, symbol=symbol, direction=direction,
-        magnitude=NO_STATED_STRENGTH, conviction=conviction,
-        evidence=_evidence(), invalidation="x",
+        seat=seat,
+        symbol=symbol,
+        direction=direction,
+        magnitude=NO_STATED_STRENGTH,
+        conviction=conviction,
+        evidence=_evidence(),
+        invalidation="x",
     )
 
 
@@ -694,9 +842,7 @@ def test_a_seat_that_states_a_strength_carries_it_into_the_ranking():
     term names technical as its only coverage even with four other seats on
     the name."""
     tech = _tech("XLE", "strong_buy", "high").to_verdict()
-    [c] = rank_verdicts([
-        tech, *(_no_strength(s) for s in ("news", "macro", "smart_money", "earnings"))
-    ])
+    [c] = rank_verdicts([tech, *(_no_strength(s) for s in ("news", "macro", "smart_money", "earnings"))])
     assert c.strength_seats == ["technical"]
     assert c.no_strength_seats == ["earnings", "macro", "news", "smart_money"]
     # 1.0 (strong_buy) * 1.2 (technical's prior) — and nothing else, because
@@ -712,15 +858,17 @@ def test_the_score_is_unchanged_by_the_absence_encoding():
     the test that says it was not and still is not. Scored against the
     arithmetic the old literal-0.0 encoding produced, written out longhand:
     a seat with no strength adds `weight * (0 + conviction)`."""
-    tech = _tech("XLE", "buy", "medium").to_verdict()      # 0.5 + 0.5, x1.2
-    group = [tech, _no_strength("news", conviction="low"),      # 0 + 0.0, x1.0
-             _no_strength("earnings", conviction="high")]       # 0 + 1.0, x1.2
+    tech = _tech("XLE", "buy", "medium").to_verdict()  # 0.5 + 0.5, x1.2
+    group = [
+        tech,
+        _no_strength("news", conviction="low"),  # 0 + 0.0, x1.0
+        _no_strength("earnings", conviction="high"),
+    ]  # 0 + 1.0, x1.2
     [c] = rank_verdicts(group)
     expected = 1.2 * (0.5 + 0.5) + 1.0 * (0.0 + 0.0) + 1.2 * (0.0 + 1.0)
     assert c.score == round(expected, 4)
     # Same total through the per-verdict helper the rotation margin reuses.
-    assert round(sum(seat_weight(v.seat) * score_verdict(v) for v in group), 4) \
-        == c.score
+    assert round(sum(seat_weight(v.seat) * score_verdict(v) for v in group), 4) == c.score
 
 
 def test_a_directional_verdict_cannot_state_a_strength_of_zero():
@@ -730,15 +878,26 @@ def test_a_directional_verdict_cannot_state_a_strength_of_zero():
     verdict wearing a direction. The honest encoding of no scale is None."""
     with pytest.raises(ValidationError):
         AnalystVerdict(
-            seat="news", symbol="XLE", direction="bullish", magnitude=0.0,
-            conviction="high", evidence=_evidence(), invalidation="x",
+            seat="news",
+            symbol="XLE",
+            direction="bullish",
+            magnitude=0.0,
+            conviction="high",
+            evidence=_evidence(),
+            invalidation="x",
         )
     # ...and a NEUTRAL verdict may still state 0.0, because a seat that has
     # a scale (technical) genuinely reads zero when it has no lean.
-    assert AnalystVerdict(
-        seat="technical", symbol="XLE", direction="neutral", magnitude=0.0,
-        conviction="low",
-    ).signed_magnitude == 0.0
+    assert (
+        AnalystVerdict(
+            seat="technical",
+            symbol="XLE",
+            direction="neutral",
+            magnitude=0.0,
+            conviction="low",
+        ).signed_magnitude
+        == 0.0
+    )
 
 
 def test_the_recorded_decision_is_that_the_absence_is_the_answer():
@@ -761,16 +920,18 @@ def test_the_recorded_decision_is_that_the_absence_is_the_answer():
 
 # --- eligibility + ranking through the PM -----------------------------------
 
-STATE_CHANGES = (
-    "- [2026-08-31] Anthropic signs $35 billion cloud deal with "
-    "Nvidia-backed Lambda → NVDA\n"
-)
+STATE_CHANGES = "- [2026-08-31] Anthropic signs $35 billion cloud deal with Nvidia-backed Lambda → NVDA\n"
 
 
 def _registry(analyses, extra=None):
     reg = PortfolioManagerAgent.build_evidence_registry(
-        analyses=analyses, positions=[], news_intel=None, earnings_analyses=[],
-        macro_analysis=None, smart_money_findings=[], symbol_sectors={},
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=None,
+        smart_money_findings=[],
+        symbol_sectors={},
     )
     for symbol, sources in (extra or {}).items():
         reg.setdefault(symbol, {}).update(sources)
@@ -785,9 +946,11 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
         _tech("DDD", "buy", "low"),
     ]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
         allowed_buy_symbols={"AAA", "BBB", "CCC", "DDD"},
-        active_state_changes="", asof=SESSION,
+        active_state_changes="",
+        asof=SESSION,
     )
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["AAA", "BBB", "CCC", "DDD"]
@@ -811,14 +974,22 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
 
     def _structured(symbol, *, model_target, computed_levels):
         return TechAnalysisResult(
-            symbol=symbol, rating="buy", conviction="medium",
-            entry_price=100.0, stop_loss=95.0, reference_target=model_target,
-            support_levels=[95.0], resistance_levels=[model_target],
-            computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
-            setup_type="range", expected_horizon_sessions=60,
-            reasoning="test", reasoning_chain=_chain(),
-        thesis_invalid_if="closes below support",
-    )
+            symbol=symbol,
+            rating="buy",
+            conviction="medium",
+            entry_price=100.0,
+            stop_loss=95.0,
+            reference_target=model_target,
+            support_levels=[95.0],
+            resistance_levels=[model_target],
+            computed_levels=computed_levels,
+            atr_14=(100.0 - 95.0) / 3.5,
+            setup_type="range",
+            expected_horizon_sessions=60,
+            reasoning="test",
+            reasoning_chain=_chain(),
+            thesis_invalid_if="closes below support",
+        )
 
     overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
     understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])
@@ -826,10 +997,7 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
     allowed = {"NVDA", "GEV"}
 
     constructor = PortfolioConstructor()
-    real_map = {
-        a.symbol: constructor.real_reward_risk_preview(a, "long")
-        for a in analyses
-    }
+    real_map = {a.symbol: constructor.real_reward_risk_preview(a, "long") for a in analyses}
     # Both are real, measurable numbers now — the preview no longer returns
     # None for a payoff that merely fails a floor.
     assert real_map == {"NVDA": 0.6, "GEV": 1.6}
@@ -837,8 +1005,11 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
     # Neither the size of the ratio nor the disagreement between the two
     # readings blocks anything any more.
     verdicts = PortfolioManagerAgent.candidate_eligibility(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols=allowed,
+        active_state_changes="",
+        asof=SESSION,
         real_reward_risk_by_symbol=real_map,
     )
     assert {sym for sym, why in verdicts.items() if not why} == {"NVDA", "GEV"}
@@ -847,15 +1018,17 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
     # (identical rating and conviction), so the real ratio is what separates
     # them — and it puts the honestly-better payoff first.
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols=allowed,
+        active_state_changes="",
+        asof=SESSION,
         real_reward_risk_by_symbol=real_map,
     )
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["GEV", "NVDA"]
     assert [c.score for c in ranked] == [ranked[0].score] * 2, (
-        "the two must genuinely tie on the composite — otherwise this is "
-        "not testing the reward:risk key at all"
+        "the two must genuinely tie on the composite — otherwise this is not testing the reward:risk key at all"
     )
     assert ranked[0].components["risk_reward_tiebreak"] == 1.6
     assert ranked[1].components["risk_reward_tiebreak"] == 0.6
@@ -865,14 +1038,18 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
 # 2c. All five seats through the real integration path (2026-09-03)
 # ==========================================================================
 
+
 def _news_intel(stock_news: dict) -> "NewsIntelligenceReport":
     return NewsIntelligenceReport(
         macro_narrative={
-            "last_updated": "2026-09-03", "era_themes": ["rates"],
+            "last_updated": "2026-09-03",
+            "era_themes": ["rates"],
             "current_regime": "mid-cycle, rates on hold",
         },
-        stock_news=stock_news, pm_briefing="ok",
-        market_sentiment="neutral", confidence="medium",
+        stock_news=stock_news,
+        pm_briefing="ok",
+        market_sentiment="neutral",
+        confidence="medium",
     )
 
 
@@ -882,28 +1059,39 @@ def test_rank_candidates_combines_all_five_seats_at_their_researched_weight():
     and agree bullish, must outrank a symbol only technical covers at the
     same tech reading — proving the extra seats actually reach the ranking,
     not just exist as unused methods."""
-    solo = _tech("SOLO", "buy", "medium")     # 0.5 + 0.5 = 1.0, alone
+    solo = _tech("SOLO", "buy", "medium")  # 0.5 + 0.5 = 1.0, alone
     covered = _tech("MULTI", "buy", "medium")  # same tech reading as SOLO
     analyses = [solo, covered]
 
-    news_intel = _news_intel({
-        "MULTI": [StockNewsItem(
-            headline="guidance raised", sentiment="bullish", conviction="high",
-            impact_summary="raised full-year guide",
-        )],
-    })
+    news_intel = _news_intel(
+        {
+            "MULTI": [
+                StockNewsItem(
+                    headline="guidance raised",
+                    sentiment="bullish",
+                    conviction="high",
+                    impact_summary="raised full-year guide",
+                )
+            ],
+        }
+    )
     multi_earnings = _earnings("bullish", "high")
     multi_earnings.symbol = "MULTI"
-    earnings_analyses = [{
-        "symbol": "MULTI",
-        "analysis": multi_earnings.model_dump(),
-    }]
+    earnings_analyses = [
+        {
+            "symbol": "MULTI",
+            "analysis": multi_earnings.model_dump(),
+        }
+    ]
 
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
         allowed_buy_symbols={"SOLO", "MULTI"},
-        active_state_changes="", asof=SESSION,
-        news_intel=news_intel, earnings_analyses=earnings_analyses,
+        active_state_changes="",
+        asof=SESSION,
+        news_intel=news_intel,
+        earnings_analyses=earnings_analyses,
     )
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["MULTI", "SOLO"]
@@ -911,9 +1099,7 @@ def test_rank_candidates_combines_all_five_seats_at_their_researched_weight():
     # SOLO is untouched by the new seats: still exactly its own score at its
     # own seat weight, with nothing added and nothing averaged away.
     solo_candidate = ranked[1]
-    assert solo_candidate.score == round(
-        score_verdict(solo.to_verdict()) * SEAT_WEIGHT["technical"], 4
-    )
+    assert solo_candidate.score == round(score_verdict(solo.to_verdict()) * SEAT_WEIGHT["technical"], 4)
 
 
 def test_rank_candidates_survives_a_malformed_earnings_entry():
@@ -922,8 +1108,11 @@ def test_rank_candidates_survives_a_malformed_earnings_entry():
     analyses = [_tech("AAA", "buy", "medium")]
     bad_earnings = [{"symbol": "AAA", "analysis": {"not_a_real_shape": True}}]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         earnings_analyses=bad_earnings,
     )
     assert blocked == {}
@@ -936,12 +1125,18 @@ def test_rank_candidates_drops_earnings_with_no_wrapper_symbol_at_all():
     the LLM's own claimed symbol against — must drop, not trust it anyway.
     Matches `_earnings_stance_rows`'s identical handling of this case."""
     analyses = [_tech("AAA", "buy", "medium")]
-    no_symbol_wrapper = [{
-        "symbol": "", "analysis": _earnings("bullish", "high").model_dump(),
-    }]
+    no_symbol_wrapper = [
+        {
+            "symbol": "",
+            "analysis": _earnings("bullish", "high").model_dump(),
+        }
+    ]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         earnings_analyses=no_symbol_wrapper,
     )
     assert blocked == {}
@@ -958,8 +1153,11 @@ def test_rank_candidates_drops_earnings_on_a_wrapper_vs_analysis_symbol_mismatch
     mismatched = _earnings("bullish", "high")  # symbol="AAPL" by fixture default
     earnings_analyses = [{"symbol": "AAA", "analysis": mismatched.model_dump()}]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         earnings_analyses=earnings_analyses,
     )
     assert blocked == {}
@@ -971,8 +1169,11 @@ def test_rank_candidates_survives_a_malformed_macro_dict():
     """Same contract for macro: garbage input must not take down the run."""
     analyses = [_tech("AAA", "buy", "medium")]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         macro_analysis={"not_a_real_shape": True},
     )
     assert blocked == {}
@@ -994,18 +1195,24 @@ def test_rank_candidates_macro_verdict_applies_uniformly_to_every_symbol():
             "cross_signal_synthesis": "consistent risk-on read across signals",
             "sector_implications": "broad, no strong sector tilt",
         },
-        "regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
+        "regime": "risk-on",
+        "confidence": "high",
+        "equity_outlook": "bullish",
         "position_guidance": {
-            "target_invested_pct": 90, "cash_recommendation_pct": 10,
+            "target_invested_pct": 90,
+            "cash_recommendation_pct": 10,
             "reasoning": "risk-on regime supports full deployment",
         },
         "summary": "broadly constructive",
         "bear_triggers": ["CPI surprises hot"],
     }
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA", "BBB"}, active_state_changes="",
-        asof=SESSION, macro_analysis=macro,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA", "BBB"},
+        active_state_changes="",
+        asof=SESSION,
+        macro_analysis=macro,
     )
     assert blocked == {}
     assert {c.symbol for c in ranked} == {"AAA", "BBB"}
@@ -1016,20 +1223,22 @@ def test_rank_candidates_macro_verdict_applies_uniformly_to_every_symbol():
 def test_pm_never_orders_a_name_a_gate_refused():
     analyses = [
         _tech("GOOD", "buy", "medium"),
-        _tech("NEUT", "neutral", "high", invalid_if=""),          # R2
-        _tech("NOTU", "strong_buy", "high"),                      # R3 — not BUY-eligible
+        _tech("NEUT", "neutral", "high", invalid_if=""),  # R2
+        _tech("NOTU", "strong_buy", "high"),  # R3 — not BUY-eligible
         # R/R 0.8 — thin but REAL. Item 1(d): no longer an R4 block, it is
         # ranked on that number instead (below NVDA, which shares its score
         # but has the same thin payoff, so `symbol` separates them).
         _tech("SUBF", "strong_buy", "high", target=104),
         _tech("NVDA", "strong_buy", "high", target=104),
-        _tech("OPPO", "strong_buy", "high"),                      # R5 — net 0
+        _tech("OPPO", "strong_buy", "high"),  # R5 — net 0
     ]
     registry = _registry(analyses, extra={"OPPO": {"macro": "bearish"}})
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=registry,
+        analyses=analyses,
+        evidence_registry=registry,
         allowed_buy_symbols={"GOOD", "NEUT", "SUBF", "NVDA", "OPPO"},
-        active_state_changes=STATE_CHANGES, asof=SESSION,
+        active_state_changes=STATE_CHANGES,
+        asof=SESSION,
     )
     # Every name a gate REFUSED is still absent from the order. What changed
     # 2026-09-11 (item 1(d)) is which gates refuse: a weak-but-measurable
@@ -1046,8 +1255,11 @@ def test_an_unmeasurable_payoff_is_not_refused_by_r4():
     is still eligible; the missing ratio is ranking information."""
     analyses = [_tech("AAA", "buy", "medium")]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         real_reward_risk_by_symbol={"AAA": None},
     )
     assert blocked == {}
@@ -1061,8 +1273,11 @@ def test_r4_does_not_run_at_all_for_a_breakout_candidate():
     analysis = _tech("AAA", "buy", "medium")
     analysis.setup_type = "breakout"
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=[analysis], evidence_registry=_registry([analysis]),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=[analysis],
+        evidence_registry=_registry([analysis]),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
         real_reward_risk_by_symbol={"AAA": None},
     )
     assert blocked == {}
@@ -1078,12 +1293,16 @@ def test_the_rr_floor_no_longer_decides_eligibility_at_any_value():
     Invented reward:risk floors do not refuse or shrink tickets."""
     analyses = [_tech("AAA", "buy", "high", target=108)]  # R/R 1.6
     kwargs = dict(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"},
+        active_state_changes="",
+        asof=SESSION,
     )
     for floor in (REWARD_RISK_FLOOR, 2.0, 99.0):
         ranked, blocked = PortfolioManagerAgent.rank_candidates(
-            rr_floor=floor, **kwargs,
+            rr_floor=floor,
+            **kwargs,
         )
         assert [c.symbol for c in ranked] == ["AAA"], floor
         assert blocked == {}, floor
@@ -1092,8 +1311,11 @@ def test_the_rr_floor_no_longer_decides_eligibility_at_any_value():
 def test_shorts_are_not_subject_to_the_buy_eligibility_gate():
     analyses = [_tech("NKE", "sell", "medium")]
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols=set(), active_state_changes="", asof=SESSION,
+        analyses=analyses,
+        evidence_registry=_registry(analyses),
+        allowed_buy_symbols=set(),
+        active_state_changes="",
+        asof=SESSION,
     )
     assert [c.symbol for c in ranked] == ["NKE"] and blocked == {}
 
@@ -1106,19 +1328,24 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     rows = evaluate(sel, _LEVEL_LESS.analyses, _LEVEL_LESS.positions, _LEVEL_LESS.news)
     audit = sorted(r["symbol"] for r in rows if r["eligible"])
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=_LEVEL_LESS.analyses, positions=_LEVEL_LESS.positions,
-        news_intel=_LEVEL_LESS.news, earnings_analyses=sel["earnings_analyses"],
-        macro_analysis=sel["macro_analysis"], smart_money_findings=[],
+        analyses=_LEVEL_LESS.analyses,
+        positions=_LEVEL_LESS.positions,
+        news_intel=_LEVEL_LESS.news,
+        earnings_analyses=sel["earnings_analyses"],
+        macro_analysis=sel["macro_analysis"],
+        smart_money_findings=[],
         symbol_sectors={},
     )
     stale = PortfolioManagerAgent.stale_evidence_sources(
         earnings_analyses=sel["earnings_analyses"],
     )
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=_LEVEL_LESS.analyses, evidence_registry=registry,
+        analyses=_LEVEL_LESS.analyses,
+        evidence_registry=registry,
         stale_sources=stale,
         allowed_buy_symbols=set(sel["allowed_buy_symbols"]) | set(sel["transient_admitted_symbols"]),
-        active_state_changes=sel["memory"]["active_state_changes"], asof=SESSION,
+        active_state_changes=sel["memory"]["active_state_changes"],
+        asof=SESSION,
     )
     assert sorted(c.symbol for c in ranked) == audit
     # **12 -> 25, 2026-09-11 (docs/WORK.md item 1(d)).** Removing the
@@ -1138,14 +1365,37 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     # of these 12 names tied on score), and the order below is no longer
     # alphabetical within either tied group; it is ordered by R/R quality.
     assert [c.symbol for c in ranked] == [
-        "SLB", "VLO", "XLE", "NKE", "FLNC", "NUE", "RSG", "V", "DIS", "COP",
-        "CVX", "DE", "KO", "MU", "NVDA", "PATH", "PFE", "CMCSA", "AAPL",
-        "MSFT", "TSM", "JPM", "JNJ", "CHPX", "CRM",
+        "SLB",
+        "VLO",
+        "XLE",
+        "NKE",
+        "FLNC",
+        "NUE",
+        "RSG",
+        "V",
+        "DIS",
+        "COP",
+        "CVX",
+        "DE",
+        "KO",
+        "MU",
+        "NVDA",
+        "PATH",
+        "PFE",
+        "CMCSA",
+        "AAPL",
+        "MSFT",
+        "TSM",
+        "JPM",
+        "JNJ",
+        "CHPX",
+        "CRM",
     ]
 
 
 def test_the_ranking_is_rendered_into_the_pm_prompt(monkeypatch):
     import src.agents.portfolio_manager as pm_module
+
     monkeypatch.setattr(pm_module, "et_today", lambda: SESSION)
     analyses = [
         _tech("CCC", "buy", "medium"),
@@ -1156,19 +1406,32 @@ def test_the_ranking_is_rendered_into_the_pm_prompt(monkeypatch):
     # each rankable name here carries a second, HIGH-conviction bullish seat
     # (news) to clear the bar. That is what makes the rendered scores and seat
     # counts below higher than the pre-mandate single-seat rendering.
-    news_intel = _news_intel({
-        sym: [StockNewsItem(
-            headline="guidance raised", sentiment="bullish", conviction="high",
-            impact_summary="raised full-year guide",
-        )]
-        for sym in ("AAA", "CCC")
-    })
+    news_intel = _news_intel(
+        {
+            sym: [
+                StockNewsItem(
+                    headline="guidance raised",
+                    sentiment="bullish",
+                    conviction="high",
+                    impact_summary="raised full-year guide",
+                )
+            ]
+            for sym in ("AAA", "CCC")
+        }
+    )
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     msg = agent.build_user_message(
-        analyses=analyses, positions=[], macro_analysis=None, cash_balance=10_000,
-        total_value=100_000, news_intel=news_intel, earnings_analyses=[],
-        smart_money_findings=[], allowed_buy_symbols={"AAA", "CCC"},
-        active_state_changes="", rr_floor=REWARD_RISK_FLOOR,
+        analyses=analyses,
+        positions=[],
+        macro_analysis=None,
+        cash_balance=10_000,
+        total_value=100_000,
+        news_intel=news_intel,
+        earnings_analyses=[],
+        smart_money_findings=[],
+        allowed_buy_symbols={"AAA", "CCC"},
+        active_state_changes="",
+        rr_floor=REWARD_RISK_FLOOR,
     )
     section = msg.split("## Candidate Ranking")[1].split("\n## ")[0]
     lines = [ln for ln in section.splitlines() if ln[:2] in ("1.", "2.", "3.")]
@@ -1208,12 +1471,19 @@ def test_the_prompt_reports_no_strength_rather_than_zero_when_no_seat_has_one():
 
 def test_the_prompt_says_nothing_is_ranked_when_nothing_is_eligible(monkeypatch):
     import src.agents.portfolio_manager as pm_module
+
     monkeypatch.setattr(pm_module, "et_today", lambda: SESSION)
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     msg = agent.build_user_message(
-        analyses=[_tech("AAA", "buy", "high")], positions=[], macro_analysis=None,
-        cash_balance=10_000, total_value=100_000, news_intel=None,
-        earnings_analyses=[], smart_money_findings=[], allowed_buy_symbols=set(),
+        analyses=[_tech("AAA", "buy", "high")],
+        positions=[],
+        macro_analysis=None,
+        cash_balance=10_000,
+        total_value=100_000,
+        news_intel=None,
+        earnings_analyses=[],
+        smart_money_findings=[],
+        allowed_buy_symbols=set(),
         active_state_changes="",
     )
     assert "(no name passes every pre-decision rule today)" in msg
@@ -1231,8 +1501,8 @@ def test_the_prompt_says_nothing_is_ranked_when_nothing_is_eligible(monkeypatch)
 # closed for the risk_reward-bearing case, reopened for breakout only.
 # ==========================================================================
 
-def _breakout_tech(symbol: str, touches: int, rating: str = "buy",
-                    conviction: str = "medium") -> TechAnalysisResult:
+
+def _breakout_tech(symbol: str, touches: int, rating: str = "buy", conviction: str = "medium") -> TechAnalysisResult:
     """A Type B / breakout read: no overhead resistance to measure a reward
     against (so `risk_reward` and the `risk_reward_tiebreak` it feeds are
     both absent), but a real, measured support side — `touches` prior
@@ -1247,14 +1517,21 @@ def _breakout_tech(symbol: str, touches: int, rating: str = "buy",
     # comparable reward for ranking, not the absence of the field.
     target = 120.0 if long else 80.0
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, conviction=conviction, entry_price=100,
-        stop_loss=stop, reference_target=target,
+        symbol=symbol,
+        rating=rating,
+        conviction=conviction,
+        entry_price=100,
+        stop_loss=stop,
+        reference_target=target,
         support_levels=[stop] if long else [],
         resistance_levels=[] if long else [stop],
-        computed_levels=[stop], computed_level_touches={stop: touches},
-        setup_type="breakout", expected_horizon_sessions=10,
+        computed_levels=[stop],
+        computed_level_touches={stop: touches},
+        setup_type="breakout",
+        expected_horizon_sessions=10,
         reasoning="measured-move breakout, no overhead structure",
-        reasoning_chain=_chain(), thesis_invalid_if="closes back below breakout level",
+        reasoning_chain=_chain(),
+        thesis_invalid_if="closes back below breakout level",
     )
 
 
@@ -1270,23 +1547,41 @@ def test_level_touches_only_counts_the_risk_side_not_overhead_supply():
     supply in the way of the trade, not evidence for it. Only the level
     below entry (the stop side) contributes."""
     a = TechAnalysisResult(
-        symbol="AAA", rating="buy", conviction="medium", entry_price=100,
-        stop_loss=95, reference_target=112,
-        support_levels=[95], resistance_levels=[112],
-        computed_levels=[95, 112], computed_level_touches={95: 3, 112: 20},
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="x", reasoning_chain=_chain(), thesis_invalid_if="x",
+        symbol="AAA",
+        rating="buy",
+        conviction="medium",
+        entry_price=100,
+        stop_loss=95,
+        reference_target=112,
+        support_levels=[95],
+        resistance_levels=[112],
+        computed_levels=[95, 112],
+        computed_level_touches={95: 3, 112: 20},
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="x",
+        reasoning_chain=_chain(),
+        thesis_invalid_if="x",
     )
     v = a.to_verdict()
     assert level_touches_of(v) == 3.0  # the 20-touch resistance is excluded
     # Mirror check on the short side: only the level ABOVE entry counts.
     b = TechAnalysisResult(
-        symbol="BBB", rating="sell", conviction="medium", entry_price=100,
-        stop_loss=105, reference_target=88,
-        support_levels=[88], resistance_levels=[105],
-        computed_levels=[88, 105], computed_level_touches={88: 20, 105: 4},
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="x", reasoning_chain=_chain(), thesis_invalid_if="x",
+        symbol="BBB",
+        rating="sell",
+        conviction="medium",
+        entry_price=100,
+        stop_loss=105,
+        reference_target=88,
+        support_levels=[88],
+        resistance_levels=[105],
+        computed_levels=[88, 105],
+        computed_level_touches={88: 20, 105: 4},
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="x",
+        reasoning_chain=_chain(),
+        thesis_invalid_if="x",
     )
     assert level_touches_of(b.to_verdict()) == 4.0  # the 20-touch support excluded
 
@@ -1313,7 +1608,9 @@ def test_all_breakout_tied_tier_breaks_on_level_touches_not_alphabet():
     assert [c.components["level_touches_tiebreak"] for c in ranked] == [9.0, 5.0, 2.0]
     # Pure and stable: same input, same order, every time.
     assert [c.symbol for c in rank_verdicts(verdicts, setup_types=setup_types)] == [
-        "Z", "A", "M",
+        "Z",
+        "A",
+        "M",
     ]
 
 
@@ -1348,8 +1645,6 @@ def test_measured_tie_pattern_9_of_12_all_breakout_orders_on_structure():
     # because of its spelling.
     assert [c.symbol for c in tied] == tied_symbols
     # Unweighted — see `level_touches_of`.
-    assert [c.components["level_touches_tiebreak"] for c in tied] == [
-        float(n) for n in range(9, 0, -1)
-    ]
+    assert [c.components["level_touches_tiebreak"] for c in tied] == [float(n) for n in range(9, 0, -1)]
     # Confirms this is NOT the alphabetical order the old fallback produced.
     assert [c.symbol for c in tied] != sorted(tied_symbols)

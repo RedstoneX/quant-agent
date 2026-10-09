@@ -45,9 +45,7 @@ def unreadable_stop_text(rows: Iterable[UnreadableStop]) -> str:
     """
     rows = list(rows)
     detail = "\n".join(
-        f"  {r.symbol}: holding {r.held_qty:.4f}"
-        f"{' (short)' if r.is_short else ''} — {r.reason}"
-        for r in rows
+        f"  {r.symbol}: holding {r.held_qty:.4f}{' (short)' if r.is_short else ''} — {r.reason}" for r in rows
     )
     return (
         "🛑🛑 PROTECTIVE STOP UNREADABLE\n"
@@ -64,6 +62,8 @@ def unreadable_stop_text(rows: Iterable[UnreadableStop]) -> str:
         "day; the condition itself keeps showing in the session messages "
         "for as long as it lasts, the same way a missing stop does."
     )
+
+
 def alert_text(status: CoverageStatus) -> str:
     """Severity in the leading word, never colour alone (`src/notifier.py`
     convention)."""
@@ -105,11 +105,10 @@ def alert_text(status: CoverageStatus) -> str:
         f"{len(status.gaps)} position(s) at the broker have protective-stop "
         "coverage short of what is held, and the session sweep that is "
         f"supposed to re-place it did not run on {status.trading_day} "
-        f"({reason}).\n"
-        + "\n".join(lines) + "\n"
+        f"({reason}).\n" + "\n".join(lines) + "\n"
         f"Total with no stop: ${status.unprotected_total:,.2f}.\n\n"
-        + what_happens +
-        "Your options: resume the desk, place the missing stop by hand "
+        + what_happens
+        + "Your options: resume the desk, place the missing stop by hand "
         "(fractional stops must be DAY orders), or close the uncovered "
         "remainder. Nothing has been sold, resized or cancelled. This "
         "message repeats at most once per trading day while the condition "
@@ -125,16 +124,12 @@ def repair_failure_text(status: CoverageStatus) -> str:
     impossible to miss, and it must not be swallowed by an earlier report
     that merely described the same shares as uncovered.
     """
-    lines = [
-        f"  {r.symbol}: {r.qty:.4f} share(s) still with no stop — {r.detail}"
-        for r in status.repair_failures
-    ]
+    lines = [f"  {r.symbol}: {r.qty:.4f} share(s) still with no stop — {r.detail}" for r in status.repair_failures]
     return (
         "🔴 COULD NOT PUT THE PROTECTIVE STOP BACK\n"
         f"The coverage sweep found {len(status.repair_failures)} position(s) "
         "short of stop coverage during OPEN market hours and tried to place "
-        "the missing protective stop. It did not land.\n"
-        + "\n".join(lines) + "\n\n"
+        "the missing protective stop. It did not land.\n" + "\n".join(lines) + "\n\n"
         "These shares are unprotected right now, during the session, which "
         "is not the expected overnight lapse. Nothing was sold, resized or "
         "cancelled. Place the stop by hand or close the position. This "
@@ -168,14 +163,8 @@ def repair_resolution_text(symbols: Iterable[str]) -> str:
 def repair_performed_text(status: CoverageStatus) -> str:
     """The owner message for a stop this run PUT BACK unprompted."""
     told = {str(s).strip().upper() for s in status.resolution_notice_symbols}
-    rows = [
-        r for r in status.repaired
-        if str(r.symbol).strip().upper() not in told
-    ]
-    detail = "\n".join(
-        f"  {r.symbol}: {r.qty:.4f} share(s) had NO stop; one is now placed"
-        for r in rows
-    )
+    rows = [r for r in status.repaired if str(r.symbol).strip().upper() not in told]
+    detail = "\n".join(f"  {r.symbol}: {r.qty:.4f} share(s) had NO stop; one is now placed" for r in rows)
     return (
         "🛑🛑 A MISSING STOP WAS PUT BACK\n"
         f"The coverage sweep found {len(rows)} position(s) holding shares "
@@ -196,21 +185,17 @@ def status_line(status: CoverageStatus) -> str:
     placed = ""
     if status.repaired:
         placed = (
-            "; RE-PLACED " + ", ".join(
-                f"{r.symbol} {r.qty:.4f}" for r in status.repaired
-            ) + " (DAY over any sub-share part — lapses at the close again)"
+            "; RE-PLACED "
+            + ", ".join(f"{r.symbol} {r.qty:.4f}" for r in status.repaired)
+            + " (DAY over any sub-share part — lapses at the close again)"
         )
     if status.repair_failures:
-        placed += "; FAILED to place " + ", ".join(
-            f"{r.symbol} {r.qty:.4f}" for r in status.repair_failures
-        )
+        placed += "; FAILED to place " + ", ".join(f"{r.symbol} {r.qty:.4f}" for r in status.repair_failures)
     # Board item 172. Appended to EVERY branch below, including the clean
     # one: a pass that could not read one symbol's stops has not checked
     # every held position, and a line saying it has would be false.
     if status.unreadable:
-        placed += "; COULD NOT READ the stops of " + ", ".join(
-            r.symbol for r in status.unreadable
-        )
+        placed += "; COULD NOT READ the stops of " + ", ".join(r.symbol for r in status.unreadable)
     if not status.gaps:
         if status.unreadable:
             return (
@@ -218,10 +203,7 @@ def status_line(status: CoverageStatus) -> str:
                 "UNREADABLE; every position that could be read is fully "
                 "stop-covered" + placed
             )
-        return (
-            "coverage_watchdog: OK — every held position is fully stop-covered"
-            + placed
-        )
+        return "coverage_watchdog: OK — every held position is fully stop-covered" + placed
     if status.session_ran:
         return (
             f"coverage_watchdog: {len(status.gaps)} position(s) short-covered "
@@ -241,7 +223,6 @@ def status_line(status: CoverageStatus) -> str:
     )
 
 
-
 #: The log prefix a reader greps for. One name for both entry points.
 SWEEP_LOG_NAME = "COVERAGE SWEEP"
 #: `agent_name` on the evidence row — distinct from 'pipeline' so the
@@ -250,15 +231,22 @@ SWEEP_AGENT_NAME = "coverage_sweep"
 
 
 def sweep_summary(
-    status: CoverageStatus | None, *, entry: str, run_id: str,
-    alerts: Iterable[str] = (), error: str | None = None,
+    status: CoverageStatus | None,
+    *,
+    entry: str,
+    run_id: str,
+    alerts: Iterable[str] = (),
+    error: str | None = None,
 ) -> dict[str, Any]:
     """Everything one run did, as one flat dict. `status` None means the run
     could not get as far as a check (`error` says why)."""
     if status is None:
         return {
-            "stage": "coverage_sweep", "outcome": "could_not_run",
-            "reason": error or "", "entry": entry, "run_id": run_id,
+            "stage": "coverage_sweep",
+            "outcome": "could_not_run",
+            "reason": error or "",
+            "entry": entry,
+            "run_id": run_id,
         }
     if status.broker_error:
         outcome = "could_not_check"
@@ -289,23 +277,15 @@ def sweep_summary(
         "market_open": status.market_open,
         "positions_checked": status.positions_checked,
         # What the run FOUND, not what is left after it repaired them.
-        "gaps_found": (
-            len(status.gaps) if status.gaps_detected is None
-            else status.gaps_detected
-        ),
+        "gaps_found": (len(status.gaps) if status.gaps_detected is None else status.gaps_detected),
         "gaps_remaining": len(status.gaps),
         "gap_symbols": [g.symbol for g in status.gaps],
         "unprotected_usd": status.unprotected_total,
         "repairs_attempted": len(status.repairs),
         "repairs_succeeded": len(status.repaired),
         "repairs_failed": len(status.repair_failures),
-        "repaired": [
-            {"symbol": r.symbol, "qty": r.qty} for r in status.repaired
-        ],
-        "failed": [
-            {"symbol": r.symbol, "qty": r.qty, "detail": r.detail}
-            for r in status.repair_failures
-        ],
+        "repaired": [{"symbol": r.symbol, "qty": r.qty} for r in status.repaired],
+        "failed": [{"symbol": r.symbol, "qty": r.qty, "detail": r.detail} for r in status.repair_failures],
         "repair_deferred": status.repair_deferred,
         "broker_error": status.broker_error,
         "db_error": status.db_error,
@@ -321,8 +301,10 @@ def sweep_summary(
         "unguarded_count": len(status.unguarded),
         "unguarded": [
             {
-                "symbol": r.symbol, "held_qty": r.held_qty,
-                "is_short": r.is_short, "since_utc": r.since_utc,
+                "symbol": r.symbol,
+                "held_qty": r.held_qty,
+                "is_short": r.is_short,
+                "since_utc": r.since_utc,
                 "approx_seconds_open": r.seconds_open,
                 "measured_bound_seconds": r.bound_seconds,
                 "bound_observations": r.bound_observations,
@@ -357,9 +339,9 @@ def sweep_log_line(summary: dict[str, Any]) -> str:
         + (f", deferred: {summary['repair_deferred']}" if summary.get("repair_deferred") else "")
         + (f", broker error: {summary['broker_error']}" if summary.get("broker_error") else "")
         + (
-            ", UNREADABLE stops: "
-            + ", ".join(summary.get("unreadable_symbols") or [])
-            if summary.get("unreadable_count") else ""
+            ", UNREADABLE stops: " + ", ".join(summary.get("unreadable_symbols") or [])
+            if summary.get("unreadable_count")
+            else ""
         )
         # Board item 193: printed on EVERY run that has one, not only when
         # it is over the bound. A deliberate unguarded window that never
@@ -376,6 +358,7 @@ def sweep_log_line(summary: dict[str, Any]) -> str:
                 + (" OVER LONGEST MEASURED" if row.get("over_measured_bound") else "")
                 for row in (summary.get("unguarded") or [])
             )
-            if summary.get("unguarded_count") else ""
+            if summary.get("unguarded_count")
+            else ""
         )
     )

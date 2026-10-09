@@ -19,6 +19,7 @@ the level to the next open. This module is that memory; the discharge lives in
 (`stop_records`) and applies these rows through it. Nothing here imports the
 funnel, so the funnel can import this module to record a deferral.
 """
+
 from __future__ import annotations
 
 import logging
@@ -51,13 +52,19 @@ def record_deferred_amend(db: Any, symbol: str, new_stop_price: float, order: di
     error, never swallowed silently. Returns the deferred payload unchanged.
     """
     try:
-        _store.record(db._trades(), symbol, new_stop_price,
-                      is_short=bool(is_short), reason="market_closed")
-        logger.warning("stop amend for %s DEFERRED to the next open at $%.4f: the market is closed and a "
-                       "shut tape cannot elect the resting stop", symbol, new_stop_price)
+        _store.record(db._trades(), symbol, new_stop_price, is_short=bool(is_short), reason="market_closed")
+        logger.warning(
+            "stop amend for %s DEFERRED to the next open at $%.4f: the market is closed and a "
+            "shut tape cannot elect the resting stop",
+            symbol,
+            new_stop_price,
+        )
     except Exception as exc:  # noqa: BLE001
-        logger.error("stop amend for %s could not be recorded as pending (%s) - the intended level $%.4f "
-                     "is NOT owed to the next open and must be re-decided", symbol, exc, new_stop_price)
+        logger.error(
+            "stop amend for %s could not be recorded as pending (%s) - the intended level $%.4f "
+            "is NOT owed to the next open and must be re-decided",
+            symbol,
+            exc,
+            new_stop_price,
+        )
     return order
-
-

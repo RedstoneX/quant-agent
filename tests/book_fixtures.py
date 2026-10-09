@@ -100,6 +100,7 @@ def _pos(
 # The control. Every defect in the 2026-09-01 survey is INVISIBLE here.
 # ---------------------------------------------------------------------------
 
+
 def ordinary_long_book() -> Book:
     """Long-only, unlevered, no sweep, all winners — the book the suite had.
 
@@ -127,6 +128,7 @@ def ordinary_long_book() -> Book:
 # ---------------------------------------------------------------------------
 # Trap 1 — the leverage multiplier.
 # ---------------------------------------------------------------------------
+
 
 def leveraged_inverse_book() -> Book:
     """A 3x inverse ETF held long, alongside an ordinary long.
@@ -162,6 +164,7 @@ def leveraged_inverse_book() -> Book:
 # Trap 2 — sign. A net-short book makes `equity - cash` go NEGATIVE.
 # ---------------------------------------------------------------------------
 
+
 def net_short_book() -> Book:
     """Net short: short proceeds inflate cash ABOVE equity.
 
@@ -189,6 +192,7 @@ def net_short_book() -> Book:
 # ---------------------------------------------------------------------------
 # Trap 3 — a winning short, where cost basis is negative.
 # ---------------------------------------------------------------------------
+
 
 def winning_short_book() -> Book:
     """A short that is UP, held next to a long that is up by the same dollars.
@@ -220,6 +224,7 @@ def winning_short_book() -> Book:
 # ---------------------------------------------------------------------------
 # Trap 4 — parked cash-sweep holdings.
 # ---------------------------------------------------------------------------
+
 
 def sweep_parked_book() -> Book:
     """Part of the cash is parked in the sweep vehicle, held as a position.
@@ -253,8 +258,11 @@ def sweep_parked_book() -> Book:
 # Trap 5 — a bar window containing a halted, zero-volume session.
 # ---------------------------------------------------------------------------
 
+
 def halted_session_bars(
-    *, count: int = 30, halted_index_from_end: int = 6,
+    *,
+    count: int = 30,
+    halted_index_from_end: int = 6,
 ) -> list[OHLCV]:
     """Daily bars with one HALTED session: a real print, zero volume.
 

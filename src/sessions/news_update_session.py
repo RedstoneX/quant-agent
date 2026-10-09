@@ -1,4 +1,5 @@
 """News update step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ class NewsUpdateSession:
         self._news_store = news_store
 
     def run(
-        self, run_id: str, session: str = "morning",
+        self,
+        run_id: str,
+        session: str = "morning",
         universe: list[str] | None = None,
         held_symbols: list[str] | None = None,
         candidate_symbols: list[str] | None = None,
@@ -65,16 +68,18 @@ class NewsUpdateSession:
         coverage = None
         try:
             research_universe = universe or self._config.trading.universe
-            per_symbol_symbols = list(dict.fromkeys(
-                [str(s).strip().upper() for s in (held_symbols or []) if str(s).strip()]
-                + [str(s).strip().upper() for s in (candidate_symbols or []) if str(s).strip()]
-            ))
+            per_symbol_symbols = list(
+                dict.fromkeys(
+                    [str(s).strip().upper() for s in (held_symbols or []) if str(s).strip()]
+                    + [str(s).strip().upper() for s in (candidate_symbols or []) if str(s).strip()]
+                )
+            )
             news_items, coverage = self._news_provider.fetch_news(symbols=per_symbol_symbols)
             news_text = self._news_provider.format_for_prompt(
-                news_items, max_items=self._config.news.max_prompt_items,
+                news_items,
+                max_items=self._config.news.max_prompt_items,
             )
-            stock_mentions = self._news_provider.tag_symbol_mentions(
-                news_items, research_universe)
+            stock_mentions = self._news_provider.tag_symbol_mentions(news_items, research_universe)
             previous_narrative = self._news_store.load_macro_narrative()
             # For midday/evening, load the most recent prior session report as
             # a diff baseline. Prefer midday over morning when both exist
@@ -83,10 +88,9 @@ class NewsUpdateSession:
             if session == "midday":
                 prior_session_report = self._news_store.load_daily_report("morning")
             elif session == "evening":
-                prior_session_report = (
-                    self._news_store.load_daily_report("midday")
-                    or self._news_store.load_daily_report("morning")
-                )
+                prior_session_report = self._news_store.load_daily_report(
+                    "midday"
+                ) or self._news_store.load_daily_report("morning")
             intel_report, result = self._news_analyst.analyze(
                 news_text=news_text,
                 universe=research_universe,
@@ -109,24 +113,39 @@ class NewsUpdateSession:
                 # measuring the per-symbol duplicate rate after the fact
                 # shouldn't require re-fetching either.
                 self._news_store.save_raw_headlines(
-                    [{"title": i.title, "source": i.source, "summary": i.summary,
-                      "collapsed_count": getattr(i, "collapsed_count", 1),
-                      "source_count": getattr(i, "source_count", 1),
-                      "per_symbol": getattr(i, "per_symbol", False)}
-                     for i in news_items])
+                    [
+                        {
+                            "title": i.title,
+                            "source": i.source,
+                            "summary": i.summary,
+                            "collapsed_count": getattr(i, "collapsed_count", 1),
+                            "source_count": getattr(i, "source_count", 1),
+                            "per_symbol": getattr(i, "per_symbol", False),
+                        }
+                        for i in news_items
+                    ]
+                )
                 n_changes = len(intel_report.state_changes)
                 n_stocks = len(intel_report.stock_news)
-                logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
-                            session, intel_report.market_sentiment, n_changes, n_stocks)
+                logger.info(
+                    "[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
+                    session,
+                    intel_report.market_sentiment,
+                    n_changes,
+                    n_stocks,
+                )
             self._db.insert_agent_log(
                 **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
-                agent_name=f"news_analyst_{session}", run_id=run_id,
+                agent_name=f"news_analyst_{session}",
+                run_id=run_id,
                 input_summary=(
                     f"{len(news_items)} news items "
                     f"({coverage.describe() if coverage is not None else 'coverage unknown'})"
                 ),
                 input_message=result.user_message,
-                output_summary=f"sentiment={intel_report.market_sentiment}, changes={len(intel_report.state_changes)}" if intel_report else "parse_error",
+                output_summary=f"sentiment={intel_report.market_sentiment}, changes={len(intel_report.state_changes)}"
+                if intel_report
+                else "parse_error",
                 full_response=result.raw_text,
                 model=result.model,
                 tokens_used=result.tokens_used,

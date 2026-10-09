@@ -1,4 +1,5 @@
 """Boundary witness: the entry/stop resolver builds and runs with no host and no pipeline."""
+
 from __future__ import annotations
 
 import functools

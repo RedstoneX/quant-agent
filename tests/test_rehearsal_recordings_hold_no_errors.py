@@ -22,8 +22,12 @@ def _error_shaped(node, where=""):
     found = []
     if isinstance(node, dict):
         status = node.get("status")
-        if (node.get("ok") is False or "error" in node or "error_type" in node
-                or (isinstance(status, int) and not isinstance(status, bool) and status >= 400)):
+        if (
+            node.get("ok") is False
+            or "error" in node
+            or "error_type" in node
+            or (isinstance(status, int) and not isinstance(status, bool) and status >= 400)
+        ):
             found.append(where or "<root>")
         else:
             for key, child in node.items():

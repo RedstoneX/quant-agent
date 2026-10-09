@@ -86,6 +86,7 @@ and CRITICAL line in the window that matches no known family is itself counted
 as a family (`unrecognised_faults`) and reported. The health check cannot
 quietly stop working.
 """
+
 from __future__ import annotations
 
 import json
@@ -299,8 +300,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
         key="research_seat_unavailable",
         short_name="a research desk that could not be reached",
         sentence=(
-            "A research desk could not be reached on {n} occasion{plural} and the "
-            "work had to go ahead short-handed"
+            "A research desk could not be reached on {n} occasion{plural} and the work had to go ahead short-handed"
         ),
         reason=COST_A_DECISION,
         # Deliberately NOT `Agent X attempt N failed ... Retrying` — that line
@@ -313,10 +313,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="stop_missing_or_failed",
         short_name="holdings still without their safety net",
-        sentence=(
-            "The window ended with {n} holding{plural} still missing the "
-            "safety net that limits a loss"
-        ),
+        sentence=("The window ended with {n} holding{plural} still missing the safety net that limits a loss"),
         reason=MONEY_UNPROTECTED,
         # ONLY a gap that is still open when the window closes. On 2026-09-18
         # the desk found nine sub-share stops missing at 09:30 ET, repaired
@@ -384,10 +381,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="broker_turned_us_away",
         short_name="the broker turning the desk away",
-        sentence=(
-            "The broker turned the desk away {n} time{plural} when it tried to "
-            "open its live connection"
-        ),
+        sentence=("The broker turned the desk away {n} time{plural} when it tried to open its live connection"),
         reason=PROVIDER_REJECTED_US,
         patterns=_p(
             r"server rejected WebSocket connection",
@@ -414,8 +408,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
         # (see `_bullet`) instead of asserting a present state the log cannot
         # support.
         sentence=(
-            "The desk found a fill-this-in stand-in where a real broker key "
-            "should be, and said so {n} time{plural}"
+            "The desk found a fill-this-in stand-in where a real broker key should be, and said so {n} time{plural}"
         ),
         reason=PROVIDER_REJECTED_US,
         # The specific alarm text, from the two places that raise it — NOT the
@@ -442,10 +435,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="news_source_dead",
         short_name="a news source that answers nothing",
-        sentence=(
-            "One of the desk's news sources has answered nothing every single "
-            "time it has been asked"
-        ),
+        sentence=("One of the desk's news sources has answered nothing every single time it has been asked"),
         reason=SILENTLY_FAILING,
         patterns=_p(r"^Feed .* fetch failed"),
         measure_duration=True,
@@ -453,10 +443,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="economics_feed_incomplete",
         short_name="economic readings the desk could not get",
-        sentence=(
-            "The desk went ahead without economic readings it had asked for on "
-            "{n} occasion{plural}"
-        ),
+        sentence=("The desk went ahead without economic readings it had asked for on {n} occasion{plural}"),
         reason=SILENTLY_FAILING,
         patterns=_p(
             r"FRED fetch deadline",
@@ -483,10 +470,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="congress_source_unreachable",
         short_name="a congressional trading source that could not be reached",
-        sentence=(
-            "A public source of congressional trading disclosures could not be "
-            "reached on {n} occasion{plural}"
-        ),
+        sentence=("A public source of congressional trading disclosures could not be reached on {n} occasion{plural}"),
         reason=SILENTLY_FAILING,
         patterns=_p(r"^Congressional source unreachable: source=\w+"),
         subject=re.compile(r"source=(\w+)"),
@@ -524,8 +508,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
         key="unrecognised_faults",
         short_name="faults this health check does not recognise",
         sentence=(
-            "The desk recorded {n} fault{plural} of a kind this health check has "
-            "never seen before and cannot describe"
+            "The desk recorded {n} fault{plural} of a kind this health check has never seen before and cannot describe"
         ),
         reason=SILENTLY_FAILING,
         patterns=(),  # populated by exclusion — see `analyse`
@@ -565,10 +548,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="price_rows_unusable",
         short_name="price rows that arrived damaged",
-        sentence=(
-            "The price service sent {n} damaged reading{plural}, which the desk "
-            "spotted and discarded"
-        ),
+        sentence=("The price service sent {n} damaged reading{plural}, which the desk spotted and discarded"),
         reason=HANDLED,
         patterns=_p(
             r"NaN OHLCV",
@@ -578,20 +558,14 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="model_bill_reconciled",
         short_name="research bills that differed from the estimate",
-        sentence=(
-            "The research bill differed from the estimate {n} time{plural} and "
-            "the real figure was used"
-        ),
+        sentence=("The research bill differed from the estimate {n} time{plural} and the real figure was used"),
         reason=HANDLED,
         patterns=_p(r"provider-reported cost \$"),
     ),
     FaultFamily(
         key="optional_fields_defaulted",
         short_name="optional details left blank in an answer",
-        sentence=(
-            "{n} answer{plural} arrived with an optional detail left blank and "
-            "were kept"
-        ),
+        sentence=("{n} answer{plural} arrived with an optional detail left blank and were kept"),
         reason=HANDLED,
         patterns=_p(
             r"dropped explicit null/empty on defaulted field",
@@ -727,9 +701,7 @@ def parse_records(path: Path) -> list[LogRecord]:
         if match:
             records.append(
                 LogRecord(
-                    timestamp=datetime.strptime(
-                        match.group("ts"), "%Y-%m-%d %H:%M:%S"
-                    ).replace(tzinfo=LOG_TZ),
+                    timestamp=datetime.strptime(match.group("ts"), "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOG_TZ),
                     level=match.group("level"),
                     source=match.group("logger"),
                     message=match.group("msg"),
@@ -737,15 +709,11 @@ def parse_records(path: Path) -> list[LogRecord]:
             )
         elif records:
             prev = records[-1]
-            records[-1] = LogRecord(
-                prev.timestamp, prev.level, prev.source, prev.message + "\n" + line
-            )
+            records[-1] = LogRecord(prev.timestamp, prev.level, prev.source, prev.message + "\n" + line)
     return records
 
 
-def read_window(
-    start: datetime, end: datetime, log_dir: Path | None = None
-) -> list[LogRecord]:
+def read_window(start: datetime, end: datetime, log_dir: Path | None = None) -> list[LogRecord]:
     """Every record with `start < timestamp <= end`.
 
     The bounds are half-open at the start ON PURPOSE: the watermark stores the
@@ -788,12 +756,7 @@ def classify(message: str, level: str | None = None) -> FaultFamily | None:
     fail-closed bucket.
     """
     for family in FAMILIES:
-        if (
-            family.reason is not None
-            and level is not None
-            and level not in _SERIOUS_LEVELS
-            and level != "WARNING"
-        ):
+        if family.reason is not None and level is not None and level not in _SERIOUS_LEVELS and level != "WARNING":
             continue
         for pattern in family.patterns:
             if pattern.search(message):
@@ -808,9 +771,7 @@ def _subjects(pattern: re.Pattern[str] | None, message: str) -> set[str]:
     return {m.group(1) for m in pattern.finditer(message)}
 
 
-def _resolved_subjects(
-    family: FaultFamily, records: list[LogRecord], after: datetime
-) -> set[str]:
+def _resolved_subjects(family: FaultFamily, records: list[LogRecord], after: datetime) -> set[str]:
     out: set[str] = set()
     for record in records:
         if record.timestamp < after:
@@ -821,9 +782,7 @@ def _resolved_subjects(
     return out
 
 
-def _is_resolved(
-    family: FaultFamily, record: LogRecord, records: list[LogRecord]
-) -> bool:
+def _is_resolved(family: FaultFamily, record: LogRecord, records: list[LogRecord]) -> bool:
     """Was this occurrence put right later in the same window?
 
     Matched PER SUBJECT where the family names one — nine stops missing and
@@ -936,9 +895,7 @@ def save_state(report: Report, path: Path | None = None) -> None:
     state_path.write_text(
         json.dumps(
             {
-                "through": report.window_end.astimezone(LOG_TZ).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                "through": report.window_end.astimezone(LOG_TZ).strftime("%Y-%m-%d %H:%M:%S"),
                 "reported": {f.family.key: f.count for f in report.reported},
             },
             indent=2,
@@ -947,9 +904,7 @@ def save_state(report: Report, path: Path | None = None) -> None:
     )
 
 
-def window_from_state(
-    now: datetime, state: dict, default_lookback_hours: int = 24
-) -> tuple[datetime, datetime]:
+def window_from_state(now: datetime, state: dict, default_lookback_hours: int = 24) -> tuple[datetime, datetime]:
     """Where the last report stopped, to now.
 
     The fallback matters only on the very first run, before a watermark exists.
@@ -992,9 +947,7 @@ def board_state(work_md: Path | None = None) -> tuple[set[int], set[int]]:
     return on_board, in_tiers
 
 
-def disposition(
-    finding: Finding, on_board: set[int], in_tiers: set[int], is_new: bool
-) -> str:
+def disposition(finding: Finding, on_board: set[int], in_tiers: set[int], is_new: bool) -> str:
     item = finding.family.board_item
     if item is not None and item in in_tiers:
         return "being worked on"
@@ -1032,21 +985,13 @@ def _window_words(report: Report) -> str:
     return f"{fmt_time_12h(start)} to {fmt_time_12h(end)}"
 
 
-def _bullet(
-    finding: Finding, report: Report, on_board: set[int], in_tiers: set[int]
-) -> str:
-    sentence = finding.family.sentence.format(
-        n=finding.count, plural=_plural(finding.count)
-    )
+def _bullet(finding: Finding, report: Report, on_board: set[int], in_tiers: set[int]) -> str:
+    sentence = finding.family.sentence.format(n=finding.count, plural=_plural(finding.count))
     # The duration clause earns its place only when the fault PREDATES this
     # report — that is what makes "it has been like this since August" worth
     # a phone screen. For something that started inside the window, the
     # "last at" clause below already says everything the log supports.
-    if (
-        finding.family.measure_duration
-        and finding.first_seen_ever
-        and finding.first_seen_ever < report.window_start
-    ):
+    if finding.family.measure_duration and finding.first_seen_ever and finding.first_seen_ever < report.window_start:
         sentence += f", {_duration_words(finding.first_seen_ever, report.window_end)}"
     # WHEN IT LAST HAPPENED, on every bullet. A log line is evidence that
     # something happened at a moment, never evidence that it is still true —
@@ -1069,9 +1014,7 @@ def _verdict_line(report: Report) -> str:
     return f"{word} — {worst.family.short_name}."
 
 
-def render(
-    report: Report, work_md: Path | None = None
-) -> list[str]:
+def render(report: Report, work_md: Path | None = None) -> list[str]:
     """The message(s). One normally; two only when the truth does not fit.
 
     The shape is the one already ratified for this desk's owner-facing

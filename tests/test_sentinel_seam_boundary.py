@@ -3,6 +3,7 @@
 Fixtures are synthetic (placeholder symbols, round numbers, a literal
 test key) because the repository is public.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -27,9 +28,17 @@ from tests.boundary_harness import check_boundary
 KEY = b"test-only-key-not-a-secret"
 NOW = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
 EXPECTED_SECTIONS = {
-    "schema_version", "heartbeat_at", "desk_version", "trading_state",
-    "expected_positions", "expected_protections", "risk_state",
-    "last_reconciliation", "recent_trades", "cost_spent", "signature",
+    "schema_version",
+    "heartbeat_at",
+    "desk_version",
+    "trading_state",
+    "expected_positions",
+    "expected_protections",
+    "risk_state",
+    "last_reconciliation",
+    "recent_trades",
+    "cost_spent",
+    "signature",
 }
 
 
@@ -49,6 +58,7 @@ def _payload() -> dict:
 
 # -- boundary clauses -------------------------------------------------------
 
+
 def test_module_passes_the_boundary_harness():
     verdict = check_boundary("src.sentinel_seam.snapshot")
     assert not verdict.failures, verdict.failures
@@ -57,8 +67,7 @@ def test_module_passes_the_boundary_harness():
 def test_constructor_takes_only_keyword_collaborators_and_builds_alone(tmp_path):
     params = inspect.signature(SnapshotPublisher).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
-    SnapshotPublisher(state_reader=_state, output_path=tmp_path / "s.json",
-                      desk_version="v", signing_key=None)
+    SnapshotPublisher(state_reader=_state, output_path=tmp_path / "s.json", desk_version="v", signing_key=None)
 
 
 def test_module_imports_nothing_from_src():
@@ -67,6 +76,7 @@ def test_module_imports_nothing_from_src():
 
 
 # -- payload shape -----------------------------------------------------------
+
 
 def test_payload_shape_carries_every_spec_section_and_the_schema_version():
     env = sign_snapshot(_payload(), key=KEY)
@@ -83,6 +93,7 @@ def test_naive_heartbeat_is_refused():
 
 
 # -- signing -----------------------------------------------------------------
+
 
 def test_signature_verifies_with_the_key_and_not_with_another():
     env = sign_snapshot(_payload(), key=KEY)
@@ -119,10 +130,12 @@ def test_signing_key_comes_from_environment_or_is_absent():
 
 # -- publisher ---------------------------------------------------------------
 
+
 def test_publisher_drops_a_verifiable_file_atomically(tmp_path):
     out = tmp_path / "drop" / "snapshot.json"
-    pub = SnapshotPublisher(state_reader=_state, output_path=out, desk_version="v-test",
-                            signing_key=KEY, clock=lambda: NOW)
+    pub = SnapshotPublisher(
+        state_reader=_state, output_path=out, desk_version="v-test", signing_key=KEY, clock=lambda: NOW
+    )
     written = pub.publish()
     assert pub.is_signed
     on_disk = json.loads(out.read_text(encoding="utf-8"))
@@ -133,8 +146,7 @@ def test_publisher_drops_a_verifiable_file_atomically(tmp_path):
 
 def test_publisher_without_key_writes_an_unsigned_snapshot(tmp_path):
     out = tmp_path / "snapshot.json"
-    pub = SnapshotPublisher(state_reader=_state, output_path=out, desk_version="v",
-                            signing_key=None, clock=lambda: NOW)
+    pub = SnapshotPublisher(state_reader=_state, output_path=out, desk_version="v", signing_key=None, clock=lambda: NOW)
     assert not pub.is_signed
     assert pub.publish()["signature"]["scheme"] == "unsigned"
 
@@ -145,18 +157,18 @@ from src.sentinel_seam.snapshot import UNKNOWN_VERSION, desk_code_version, scrub
 
 LEAKY = {
     "trading_state": {
-        "account_id": "11111111-2222-3333-4444-555555555555",   # by key name
-        "note": "acct PA00000000 rehearsal",                   # account number by shape
-        "api_key": "whatever",                                   # by key name
-        "log": "sent Bearer abcdefghijklmnop to venue",          # bearer token by shape
-        "where": "wal at /home/qamc/data/desk.db",               # filesystem path
-        "key_like": "PKTESTTESTTESTTEST12",                      # provider key prefix
-        "blob": "A" * 40,                                        # long opaque secret
-        "host": "desk-box.internal",                             # by key name
-        "peer": "reaches qamc-box.internal nightly",             # hostname by shape
-        "owner": "someone@example.com",                          # e-mail by shape
-        "ip": "connected from 10.0.0.7",                         # IPv4 by shape
-        "mode": "paper",                                         # must survive
+        "account_id": "11111111-2222-3333-4444-555555555555",  # by key name
+        "note": "acct PA00000000 rehearsal",  # account number by shape
+        "api_key": "whatever",  # by key name
+        "log": "sent Bearer abcdefghijklmnop to venue",  # bearer token by shape
+        "where": "wal at /home/qamc/data/desk.db",  # filesystem path
+        "key_like": "PKTESTTESTTESTTEST12",  # provider key prefix
+        "blob": "A" * 40,  # long opaque secret
+        "host": "desk-box.internal",  # by key name
+        "peer": "reaches qamc-box.internal nightly",  # hostname by shape
+        "owner": "someone@example.com",  # e-mail by shape
+        "ip": "connected from 10.0.0.7",  # IPv4 by shape
+        "mode": "paper",  # must survive
     },
     "expected_positions": [{"symbol": "TEST1", "qty": 10}],
     "nested": [[{"secret_token": "x"}]],
@@ -166,9 +178,18 @@ LEAKY = {
 def test_scrubber_redacts_every_identifying_field_and_keeps_the_rest():
     out = scrub_snapshot(LEAKY)
     flat = json.dumps(out)
-    for leak in ("11111111-2222", "PA00000000", "Bearer abcdefghijklmnop", "/home/qamc",
-                 "PKTESTTESTTESTTEST12", "A" * 40, "desk-box.internal", "qamc-box.internal",
-                 "someone@example.com", "10.0.0.7"):
+    for leak in (
+        "11111111-2222",
+        "PA00000000",
+        "Bearer abcdefghijklmnop",
+        "/home/qamc",
+        "PKTESTTESTTESTTEST12",
+        "A" * 40,
+        "desk-box.internal",
+        "qamc-box.internal",
+        "someone@example.com",
+        "10.0.0.7",
+    ):
         assert leak not in flat, leak
     ts = out["trading_state"]
     assert ts["account_id"] == ts["api_key"] == "[REDACTED]" and ts["host"] == "[HOST REDACTED]"
@@ -184,25 +205,33 @@ def test_publisher_scrubs_before_it_signs(tmp_path):
         s = _state()
         s["trading_state"]["api_key"] = "x"
         return s
-    pub = SnapshotPublisher(state_reader=leaky_state, output_path=tmp_path / "s.json",
-                            desk_version="v", signing_key=KEY, clock=lambda: NOW)
+
+    pub = SnapshotPublisher(
+        state_reader=leaky_state, output_path=tmp_path / "s.json", desk_version="v", signing_key=KEY, clock=lambda: NOW
+    )
     env = pub.publish()
     assert env["trading_state"]["api_key"] == "[REDACTED]"
-    assert verify_snapshot(env, key=KEY)   # the seal covers the scrubbed body
+    assert verify_snapshot(env, key=KEY)  # the seal covers the scrubbed body
 
 
 # -- code version ------------------------------------------------------------
 
+
 class _Run:
-    def __init__(self, stdout="", rc=0): self.stdout, self.returncode = stdout, rc
+    def __init__(self, stdout="", rc=0):
+        self.stdout, self.returncode = stdout, rc
 
 
 def test_code_version_prefers_git_then_falls_back_to_the_explicit_unknown(monkeypatch):
     assert desk_code_version(run=lambda *a, **k: _Run("abc1234\n")) == "abc1234"
     from importlib import metadata
+
     monkeypatch.setattr(metadata, "version", lambda name: (_ for _ in ()).throw(metadata.PackageNotFoundError(name)))
     assert desk_code_version(run=lambda *a, **k: _Run("", rc=128)) == UNKNOWN_VERSION
-    def boom(*a, **k): raise OSError("no git")
+
+    def boom(*a, **k):
+        raise OSError("no git")
+
     assert desk_code_version(run=boom) == UNKNOWN_VERSION
 
 

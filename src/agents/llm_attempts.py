@@ -2,6 +2,7 @@
 
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
+
 import os
 from src.agents.llm_retry import _BACKOFF_CAP_S, _DEFAULT_MAX_RETRIES, _retry_deadline_s
 
@@ -51,8 +52,7 @@ class LLMStreamErrorChunk(RuntimeError):
     it is.
     """
 
-    def __init__(self, message: str, status_code: int | None = None,
-                 error_type: str | None = None):
+    def __init__(self, message: str, status_code: int | None = None, error_type: str | None = None):
         super().__init__(message)
         #: Read by `_is_retryable` and by the cost circuit's zero-cost
         #: classifier, exactly as a provider SDK exception's own status is.
@@ -110,8 +110,7 @@ def capacity_max_attempts() -> int:
     return max(_max_retries(), attempts)
 
 
-def provider_attempt_budget(*, failover_available: bool,
-                            tertiary_available: bool = False) -> int:
+def provider_attempt_budget(*, failover_available: bool, tertiary_available: bool = False) -> int:
     """Worst-case provider attempts ONE logical agent call can make.
 
     This is the single source of truth for that number, and the reason it
@@ -157,6 +156,4 @@ def provider_attempt_budget(*, failover_available: bool,
     entirely, so a demoted call spends at most 2 (secondary + tertiary),
     below this ceiling. The ceiling describes the undemoted worst case.
     """
-    return (capacity_max_attempts()
-            + (1 if failover_available else 0)
-            + (1 if tertiary_available else 0))
+    return capacity_max_attempts() + (1 if failover_available else 0) + (1 if tertiary_available else 0)

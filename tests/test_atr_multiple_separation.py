@@ -39,9 +39,7 @@ _EXIT_GUARD_IDS = (
     "src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE",
 )
 _MIN_STOP_ID = "src.config.RiskConfig.absolute_min_stop_atr_multiple"
-_MIN_STOP_MIRROR_ID = (
-    "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple"
-)
+_MIN_STOP_MIRROR_ID = "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple"
 
 
 def _ledger_entries() -> dict[str, dict]:
@@ -132,9 +130,7 @@ def test_no_ledger_row_says_the_break_margin_is_the_noise_band() -> None:
             continue
         if ident.endswith("NOISE_BAND_ATR_MULTIPLE"):
             continue
-        prose = " ".join(
-            str(entry.get(field, "")) for field in ("note", "source")
-        ).lower()
+        prose = " ".join(str(entry.get(field, "")) for field in ("note", "source")).lower()
         prose = " ".join(prose.split())
         for claim in (
             "break margin is always noise_band_atr_multiple",
@@ -143,10 +139,7 @@ def test_no_ledger_row_says_the_break_margin_is_the_noise_band() -> None:
         ):
             if claim in prose:
                 offenders.append(f"{ident}: {claim!r}")
-    assert not offenders, (
-        "ledger prose re-collapses the break margin into the noise band: "
-        + "; ".join(offenders)
-    )
+    assert not offenders, "ledger prose re-collapses the break margin into the noise band: " + "; ".join(offenders)
 
 
 def test_noise_band_widening_is_uncapped_and_its_null_is_recorded() -> None:
@@ -185,7 +178,4 @@ def test_no_exit_guard_multiple_is_derived_from_another() -> None:
         parent = entries[ident].get("derived_from")
         if isinstance(parent, str) and parent in _EXIT_GUARD_IDS:
             offenders.append(f"{ident} declares derived_from {parent}")
-    assert not offenders, (
-        "exit-path ATR multiples re-tied to each other in the ledger: "
-        + "; ".join(offenders)
-    )
+    assert not offenders, "exit-path ATR multiples re-tied to each other in the ledger: " + "; ".join(offenders)

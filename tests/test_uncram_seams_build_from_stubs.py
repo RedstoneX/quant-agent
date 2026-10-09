@@ -4,6 +4,7 @@ Each piece used to live inside a file too large to hold in one head. The
 boundary test for the split is that none needs the object that owned it: a
 bare sqlite connection, a SimpleNamespace host, a float, a hand-built record.
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,7 +12,8 @@ import sqlite3
 from types import SimpleNamespace
 
 from src.execution.broker_parts.stop_amend_pure import (
-    _is_terminal_broker_rejection, _quantize_price,
+    _is_terminal_broker_rejection,
+    _quantize_price,
 )
 from src.execution.stop_level_report import StopLevelMismatch, report_stop_level_mismatches
 from src.protection.collaborator_builders import _build_repeg_drain, _collab_of
@@ -45,6 +47,7 @@ def test_pure_amend_helpers_need_no_broker():
 def test_mismatch_report_pages_from_hand_built_records(monkeypatch, caplog):
     sent = []
     from src import notifier
+
     monkeypatch.setattr(notifier, "send_owner_alert", lambda body, symbols: sent.append(symbols))
     with caplog.at_level(logging.ERROR):
         report_stop_level_mismatches([StopLevelMismatch("AAA", 1.0, 2.0, False, "differs")])

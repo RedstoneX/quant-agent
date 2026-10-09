@@ -1,4 +1,5 @@
 """src.cost_circuit.breaker -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 import logging
 import sqlite3
@@ -55,15 +56,12 @@ class LLMCostCircuitBreaker:
             # process must see that failure immediately instead of treating a
             # recovered DB connection as permission to spend again.
             db_file = Path(self.db_path)
-            self._emergency_latch_path = db_file.with_name(
-                f"{db_file.name}.llm-circuit-unavailable"
-            )
-            self._emergency_lock_path = db_file.with_name(
-                f"{db_file.name}.llm-circuit.lock"
-            )
+            self._emergency_latch_path = db_file.with_name(f"{db_file.name}.llm-circuit-unavailable")
+            self._emergency_lock_path = db_file.with_name(f"{db_file.name}.llm-circuit.lock")
         self.config = config
         if notifier is None:
             from src.notifier.owner_alert_funnel import build_default_notifier
+
             notifier = build_default_notifier()
         self.notifier = notifier
         # ContextVar keeps overlapping APScheduler job threads isolated.  The
@@ -103,7 +101,8 @@ class LLMCostCircuitBreaker:
                 )
         try:
             self._run_with_infra_retry(
-                self._initialize, agent_name="circuit_startup",
+                self._initialize,
+                agent_name="circuit_startup",
             )
         except Exception as exc:
             self.mark_unavailable(exc, agent_name="circuit_startup")
@@ -139,18 +138,16 @@ class LLMCostCircuitBreaker:
         else:
             self.db_path = str(Path(db_path))
             db_file = Path(self.db_path)
-            self._emergency_latch_path = db_file.with_name(
-                f"{db_file.name}.llm-circuit-unavailable"
-            )
-            self._emergency_lock_path = db_file.with_name(
-                f"{db_file.name}.llm-circuit.lock"
-            )
+            self._emergency_latch_path = db_file.with_name(f"{db_file.name}.llm-circuit-unavailable")
+            self._emergency_lock_path = db_file.with_name(f"{db_file.name}.llm-circuit.lock")
         self.config = config
         if notifier is None:
             try:
                 from src.notifier.owner_alert_funnel import build_default_notifier
+
                 notifier = build_default_notifier()
             except Exception:
+
                 class _LocalOnlyNotifier:
                     enabled = False
 
@@ -160,9 +157,7 @@ class LLMCostCircuitBreaker:
 
                 notifier = _LocalOnlyNotifier()
         self.notifier = notifier
-        self._session_context = ContextVar(
-            f"qamc_cost_session_{id(self)}", default=(run_id, mode)
-        )
+        self._session_context = ContextVar(f"qamc_cost_session_{id(self)}", default=(run_id, mode))
         self._infrastructure_lock = threading.Lock()
         self._infrastructure_error = None
         self._unavailable_sentinel = None
@@ -199,29 +194,60 @@ class LLMCostCircuitBreaker:
     # call time so a part swapped on the breaker is what runs (wired at import,
     # see the foot of this module).
     _DELEGATES = {
-        "_emergency_latch": ("_best_effort_emergency_snapshot", "_read_emergency_latch",
-                             "_sync_emergency_latch", "_emergency_file_lock",
-                             "_write_emergency_latch"),
-        "_infra_retry": ("_infra_retry_backoff_s", "_run_with_infra_retry",
-                         "mark_unavailable", "_raise_if_unavailable"),
-        "_session_lifecycle": ("_initialize", "_validate_accounting_invariants",
-                               "_seed_today", "activate_session", "set_session_context",
-                               "_context"),
-        "_owner_notify": ("_notify_if_needed", "_notify_quota_holds_if_needed",
-                          "_notify_quota_recoveries_if_needed",
-                          "_notify_auto_resets_if_needed"),
-        "_admission": ("_enforce_settled_limits_locked", "enforce_current_limits",
-                       "require_paid_analysis", "begin_call"),
+        "_emergency_latch": (
+            "_best_effort_emergency_snapshot",
+            "_read_emergency_latch",
+            "_sync_emergency_latch",
+            "_emergency_file_lock",
+            "_write_emergency_latch",
+        ),
+        "_infra_retry": (
+            "_infra_retry_backoff_s",
+            "_run_with_infra_retry",
+            "mark_unavailable",
+            "_raise_if_unavailable",
+        ),
+        "_session_lifecycle": (
+            "_initialize",
+            "_validate_accounting_invariants",
+            "_seed_today",
+            "activate_session",
+            "set_session_context",
+            "_context",
+        ),
+        "_owner_notify": (
+            "_notify_if_needed",
+            "_notify_quota_holds_if_needed",
+            "_notify_quota_recoveries_if_needed",
+            "_notify_auto_resets_if_needed",
+        ),
+        "_admission": (
+            "_enforce_settled_limits_locked",
+            "enforce_current_limits",
+            "require_paid_analysis",
+            "begin_call",
+        ),
         "_settlement": ("before_provider_attempt", "complete_call", "fail_call"),
         "_operator_controls": ("status", "reset"),
-        "_episode_wording": ("_self_clear_window_minutes",
-                             "_suspension_still_inside_self_clear_window_locked",
-                             "_episode_already_paged_locked",
-                             "_record_suspension_deferral_locked", "_episode_facts_locked"),
-        "_circuit_state": ("_state_row", "_active_quota_hold_locked",
-                           "_effective_state_locked", "_auto_clear_transient_latch_locked"),
-        "_quota_holds": ("_reconcile_quota_holds_locked", "_hold_quota_locked",
-                         "_refresh_latched_snapshot_locked", "_trip_locked"),
+        "_episode_wording": (
+            "_self_clear_window_minutes",
+            "_suspension_still_inside_self_clear_window_locked",
+            "_episode_already_paged_locked",
+            "_record_suspension_deferral_locked",
+            "_episode_facts_locked",
+        ),
+        "_circuit_state": (
+            "_state_row",
+            "_active_quota_hold_locked",
+            "_effective_state_locked",
+            "_auto_clear_transient_latch_locked",
+        ),
+        "_quota_holds": (
+            "_reconcile_quota_holds_locked",
+            "_hold_quota_locked",
+            "_refresh_latched_snapshot_locked",
+            "_trip_locked",
+        ),
     }
 
     # Pure functions of the parts, re-exported under their old names.
@@ -237,9 +263,7 @@ class LLMCostCircuitBreaker:
     _scope_key = staticmethod(CircuitState._scope_key)
 
     def _connect(self) -> Any:
-        conn = sqlite3.connect(
-            self.db_path, timeout=10.0, uri=self.db_path.startswith("file:qamc-cost-")
-        )
+        conn = sqlite3.connect(self.db_path, timeout=10.0, uri=self.db_path.startswith("file:qamc-cost-"))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
         # Production takes this branch: the clock is the real one, so the
@@ -247,15 +271,14 @@ class LLMCostCircuitBreaker:
         # clock, unchanged. Only a caller that supplied a clock gets the
         # wrapper, and then both clocks are that one instant.
         if _now_utc is not _REAL_NOW_UTC:
-            return _ClockPinnedConnection(
-                conn, _now_utc().strftime("%Y-%m-%d %H:%M:%S")
-            )
+            return _ClockPinnedConnection(conn, _now_utc().strftime("%Y-%m-%d %H:%M:%S"))
         return conn
 
 
 def _delegate(part: str, name: str):
     def forward(self, *args, **kwargs):
         return getattr(getattr(self, part), name)(*args, **kwargs)
+
     forward.__name__, forward.__qualname__ = name, f"LLMCostCircuitBreaker.{name}"
     return forward
 

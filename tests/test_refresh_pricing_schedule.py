@@ -67,6 +67,7 @@ def _parse_unit(path: Path) -> dict[str, list[str]]:
 # 1. The scheduled script refreshes the cache that actually gates paid calls
 # ---------------------------------------------------------------------------
 
+
 def test_refresh_all_refreshes_the_openrouter_cache_not_only_litellm(monkeypatch):
     """The near-miss: a timer wired to the old script would have refreshed
     the cost-reporting cache and left the desk-stopping one untouched."""
@@ -101,6 +102,7 @@ def test_refresh_all_refreshes_the_openrouter_cache_not_only_litellm(monkeypatch
 # ---------------------------------------------------------------------------
 # 2. The verdict is read off the FILE, not off the return value
 # ---------------------------------------------------------------------------
+
 
 def _outcome(**kwargs):
     from scripts.refresh_pricing import RefreshOutcome
@@ -140,8 +142,7 @@ def _outcome(**kwargs):
         (
             dict(accepted_models_priced=False),
             False,
-            "current but missing an accepted model fails the circuit closed "
-            "immediately, freshness notwithstanding",
+            "current but missing an accepted model fails the circuit closed immediately, freshness notwithstanding",
         ),
         (
             dict(litellm_call_ok=False),
@@ -156,7 +157,8 @@ def test_desk_can_open_is_judged_on_the_cache_file(kwargs, can_open, why):
 
 def test_the_stale_alert_names_the_consequence_not_just_the_symptom():
     text = _outcome(
-        openrouter_age_hours=30.0, accepted_models_priced=False,
+        openrouter_age_hours=30.0,
+        accepted_models_priced=False,
     ).alert_text()
     assert "30.0h" in text
     assert "trade nothing" in text
@@ -175,14 +177,17 @@ def test_the_incomplete_catalog_alert_is_a_different_message():
 # 3. Failure is loud
 # ---------------------------------------------------------------------------
 
+
 def test_a_stale_cache_exits_nonzero_and_alerts(monkeypatch, capsys):
     import scripts.refresh_pricing as rp
 
     sent: list[str] = []
     monkeypatch.setattr(
-        rp, "refresh_all",
+        rp,
+        "refresh_all",
         lambda force=False: _outcome(
-            openrouter_age_hours=41.0, accepted_models_priced=False,
+            openrouter_age_hours=41.0,
+            accepted_models_priced=False,
         ),
     )
     monkeypatch.setattr(rp, "send_alert", lambda message: sent.append(message) or True)
@@ -210,9 +215,11 @@ def test_no_telegram_still_exits_nonzero(monkeypatch):
 
     sent: list[str] = []
     monkeypatch.setattr(
-        rp, "refresh_all",
+        rp,
+        "refresh_all",
         lambda force=False: _outcome(
-            openrouter_age_hours=None, accepted_models_priced=False,
+            openrouter_age_hours=None,
+            accepted_models_priced=False,
         ),
     )
     monkeypatch.setattr(rp, "send_alert", lambda message: sent.append(message) or True)
@@ -226,7 +233,9 @@ def test_a_litellm_only_failure_does_not_alert(monkeypatch):
 
     sent: list[str] = []
     monkeypatch.setattr(
-        rp, "refresh_all", lambda force=False: _outcome(litellm_call_ok=False),
+        rp,
+        "refresh_all",
+        lambda force=False: _outcome(litellm_call_ok=False),
     )
     monkeypatch.setattr(rp, "send_alert", lambda message: sent.append(message) or True)
 
@@ -272,6 +281,7 @@ def test_send_alert_reports_rather_than_crashes_when_unconfigured(monkeypatch):
 # 4. The units — installable, and firing on the days that bit
 # ---------------------------------------------------------------------------
 
+
 def test_the_units_are_shipped_as_a_pair():
     assert SERVICE.is_file()
     assert TIMER.is_file()
@@ -302,9 +312,7 @@ def test_no_firing_lands_inside_a_trading_session_window():
         hh, mm = spec.split()[1].split(":")[:2]
         minute_of_day = int(hh) * 60 + int(mm)
         for mode, (lo, hi) in SESSION_WINDOWS.items():
-            assert not (lo <= minute_of_day <= hi), (
-                f"OnCalendar={spec!r} fires inside the {mode} window"
-            )
+            assert not (lo <= minute_of_day <= hi), f"OnCalendar={spec!r} fires inside the {mode} window"
 
 
 def test_the_timer_catches_up_after_a_reboot():
@@ -318,9 +326,7 @@ def test_the_service_runs_the_wrapper_that_exists_and_is_executable():
     command = exec_start[0]
     assert command.split()[0].endswith("scripts/run_pricing_refresh.sh")
     assert WRAPPER.is_file()
-    assert WRAPPER.stat().st_mode & stat.S_IXUSR, (
-        "systemd refuses to start a non-executable ExecStart"
-    )
+    assert WRAPPER.stat().st_mode & stat.S_IXUSR, "systemd refuses to start a non-executable ExecStart"
 
 
 def test_the_service_forces_the_fetch():
@@ -333,9 +339,7 @@ def test_the_service_forces_the_fetch():
 def test_the_service_deploy_path_matches_the_other_qamc_units():
     """One wrong prefix and the refresh writes a pristine cache somewhere no
     session ever reads it — silently, and with a zero exit code."""
-    reference = _parse_unit(
-        SYSTEMD_DIR / "quant-agent-drift-check.service"
-    )["Service.WorkingDirectory"]
+    reference = _parse_unit(SYSTEMD_DIR / "quant-agent-drift-check.service")["Service.WorkingDirectory"]
     assert _parse_unit(SERVICE)["Service.WorkingDirectory"] == reference
     assert _parse_unit(SERVICE)["Service.ExecStart"][0].startswith(reference[0])
 
@@ -351,8 +355,7 @@ def test_the_wrapper_sources_env_so_the_alert_can_actually_send(monkeypatch):
     """An alert path with no credentials is the silent-failure defect one
     level up."""
     body = WRAPPER.read_text()
-    assert "source \"${PROJECT_ROOT}/.env\"" in body
-    assert "cd \"$PROJECT_ROOT\"" in body, (
-        "the cache paths are relative; the wrong cwd writes the cache where "
-        "no session reads it"
+    assert 'source "${PROJECT_ROOT}/.env"' in body
+    assert 'cd "$PROJECT_ROOT"' in body, (
+        "the cache paths are relative; the wrong cwd writes the cache where no session reads it"
     )

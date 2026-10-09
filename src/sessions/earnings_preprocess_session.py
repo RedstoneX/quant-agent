@@ -1,4 +1,5 @@
 """Earnings pre-processing session (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -152,7 +153,9 @@ class EarningsPreprocessSession:
         except Exception as e:
             logger.error("Earnings preprocess: fetch failed: %s", e)
             return {
-                "status": "fetch_error", "run_id": run_id, "error": str(e),
+                "status": "fetch_error",
+                "run_id": run_id,
+                "error": str(e),
                 "smart_money_refresh": smart_money_refresh,
             }
 
@@ -160,7 +163,9 @@ class EarningsPreprocessSession:
         if not new_reports:
             logger.info("Earnings preprocess: no new filings, nothing to analyze.")
             return {
-                "status": "nothing_new", "run_id": run_id, "count": 0,
+                "status": "nothing_new",
+                "run_id": run_id,
+                "count": 0,
                 "smart_money_refresh": smart_money_refresh,
             }
 
@@ -174,8 +179,7 @@ class EarningsPreprocessSession:
         # the owner asked "which one? what's the symbol? what's the
         # company?"). Report-only — nothing reads this back into a decision.
         filings_waiting = [
-            {"symbol": r.symbol, "form_type": r.form_type,
-             "filing_date": r.filing_date, "outcome": "waiting"}
+            {"symbol": r.symbol, "form_type": r.form_type, "filing_date": r.filing_date, "outcome": "waiting"}
             for r in new_reports
         ]
         try:
@@ -188,7 +192,9 @@ class EarningsPreprocessSession:
             # renders "suspended, N filing(s) waiting" instead of the bare
             # counts, which read as "nothing happened" for a real backlog.
             payload = self._paid_suspended_payload(
-                run_id, error=exc, filings_waiting=filings_waiting,
+                run_id,
+                error=exc,
+                filings_waiting=filings_waiting,
             )
             payload["smart_money_refresh"] = smart_money_refresh
             return payload
@@ -201,7 +207,9 @@ class EarningsPreprocessSession:
                 except Exception as re:
                     logger.error("record_failure failed for %s: %s", r.symbol, re)
             return {
-                "status": "analysis_error", "run_id": run_id, "error": str(e),
+                "status": "analysis_error",
+                "run_id": run_id,
+                "error": str(e),
                 "filings": filings_waiting,
             }
 
@@ -220,8 +228,7 @@ class EarningsPreprocessSession:
             if res.get("is_new")
         }
         failed_reports = [
-            r for r in new_reports
-            if _filing_key(r.symbol, r.form_type, r.filing_date) not in successful_keys
+            r for r in new_reports if _filing_key(r.symbol, r.form_type, r.filing_date) not in successful_keys
         ]
         for report in failed_reports:
             try:
@@ -243,11 +250,9 @@ class EarningsPreprocessSession:
                     **seat_acceptance_kwargs("agent_failure" if not analysis else None),
                     agent_name="earnings_analyst_preprocess",
                     run_id=run_id,
-                    input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
+                    input_summary=f"{sym} {res.get('form_type', '?')} filed {res.get('filing_date', '?')}",
                     input_message=agent_result.user_message,
-                    output_summary=(
-                        f"sentiment={sentiment}" if res.get("analysis") else "parse_error"
-                    ),
+                    output_summary=(f"sentiment={sentiment}" if res.get("analysis") else "parse_error"),
                     full_response=agent_result.raw_text,
                     model=agent_result.model,
                     tokens_used=agent_result.tokens_used,
@@ -275,7 +280,9 @@ class EarningsPreprocessSession:
 
         logger.info(
             "Earnings preprocess complete: %d analyzed, %d confirmed, %d failed",
-            analyzed_count, confirmed, len(failed_reports),
+            analyzed_count,
+            confirmed,
+            len(failed_reports),
         )
         # Per-filing outcome for the owner message: the reader's own
         # sentiment / conviction / key_thesis where it produced one, and
@@ -287,9 +294,13 @@ class EarningsPreprocessSession:
             impl = analysis.get("investment_implications") or {}
             if not isinstance(impl, dict):
                 impl = {}
-            verdict_by_key[_filing_key(
-                res.get("symbol"), res.get("form_type"), res.get("filing_date"),
-            )] = {
+            verdict_by_key[
+                _filing_key(
+                    res.get("symbol"),
+                    res.get("form_type"),
+                    res.get("filing_date"),
+                )
+            ] = {
                 "sentiment": impl.get("sentiment"),
                 "conviction": impl.get("conviction"),
                 "key_thesis": impl.get("key_thesis"),
@@ -298,7 +309,8 @@ class EarningsPreprocessSession:
         for r in new_reports:
             key = _filing_key(r.symbol, r.form_type, r.filing_date)
             row = {
-                "symbol": r.symbol, "form_type": r.form_type,
+                "symbol": r.symbol,
+                "form_type": r.form_type,
                 "filing_date": r.filing_date,
                 "outcome": "analyzed" if key in successful_keys else "failed",
             }

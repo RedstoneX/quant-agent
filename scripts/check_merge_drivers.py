@@ -12,6 +12,7 @@ path is written down here. Built-in strategies need no registration.
 
 Usage: check_merge_drivers.py [--install] [repo_dir]   exit 0 ok, 1 missing.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -25,8 +26,7 @@ ATTRIBUTE_STATES = frozenset({"set", "unset", "unspecified"})
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(repo), *args],
-                          capture_output=True, text=True, timeout=20)
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20)
 
 
 def custom_drivers(repo: Path) -> dict[str, list[str]]:
@@ -42,7 +42,7 @@ def custom_drivers(repo: Path) -> dict[str, list[str]]:
         pattern, *tokens = line.split()
         for tok in tokens:
             if tok.startswith("merge="):
-                name = tok[len("merge="):]
+                name = tok[len("merge=") :]
                 if name not in BUILTIN_STRATEGIES | ATTRIBUTE_STATES:
                     found.setdefault(name, []).append(pattern)
     return found
@@ -55,8 +55,7 @@ def unregistered(repo: Path) -> list[str]:
         r = _git(repo, "config", "--get", f"merge.{name}.driver")
         cmd = r.stdout.strip() if r.returncode == 0 else ""
         if not cmd:
-            problems.append(f"merge driver '{name}' (used by {', '.join(patterns)}) "
-                            f"is NOT registered in this clone")
+            problems.append(f"merge driver '{name}' (used by {', '.join(patterns)}) is NOT registered in this clone")
             continue
         script = cmd.split()[0]
         if "/" in script and not (repo / script).exists():
@@ -65,8 +64,9 @@ def unregistered(repo: Path) -> list[str]:
 
 
 def install(repo: Path) -> None:
-    subprocess.run(["bash", str(repo / "scripts/install_git_merge_drivers.sh")],
-                   capture_output=True, text=True, timeout=30)
+    subprocess.run(
+        ["bash", str(repo / "scripts/install_git_merge_drivers.sh")], capture_output=True, text=True, timeout=30
+    )
 
 
 def main(argv: list[str]) -> int:

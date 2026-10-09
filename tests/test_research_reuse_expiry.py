@@ -4,6 +4,7 @@ The getattr peeks were never defined, so news/Form 4 expiry never fired.
 Macro expiry compared the regime label only. An undated snapshot was
 treated as same-session. These pins keep that from regressing.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -69,37 +70,19 @@ def _bind_reuse(obj):
     obj._latest_news_read_today = ResearchContinuityMixin._latest_news_read_today.__get__(obj)
     obj._carry_forward_news = ResearchContinuityMixin._carry_forward_news.__get__(obj)
     obj._carry_forward_insider = ResearchContinuityMixin._carry_forward_insider.__get__(obj)
-    obj._macro_regime_or_print_changed = (
-        ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
-    )
-    obj._macro_history_regime_changed = (
-        ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
-    )
-    obj._macro_series_prints_changed = (
-        ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
-    )
-    obj._live_macro_series_prints = (
-        ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
-    )
-    obj._news_has_newer_material_wire = (
-        ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
-    )
-    obj._watched_research_symbols = (
-        ResearchContinuityMixin._watched_research_symbols.__get__(obj)
-    )
+    obj._macro_regime_or_print_changed = ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
+    obj._macro_history_regime_changed = ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
+    obj._macro_series_prints_changed = ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
+    obj._live_macro_series_prints = ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
+    obj._news_has_newer_material_wire = ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
+    obj._watched_research_symbols = ResearchContinuityMixin._watched_research_symbols.__get__(obj)
     obj._peek_news_headlines = ResearchContinuityMixin._peek_news_headlines.__get__(obj)
     obj._form4_freshness = ResearchContinuityMixin._form4_freshness.__get__(obj)
     obj._insider_same_session = ResearchContinuityMixin._insider_same_session.__get__(obj)
-    obj._specialist_insider_as_of = (
-        ResearchContinuityMixin._specialist_insider_as_of.__get__(obj)
-    )
-    obj._load_remembered_insider_findings = (
-        ResearchContinuityMixin._load_remembered_insider_findings.__get__(obj)
-    )
+    obj._specialist_insider_as_of = ResearchContinuityMixin._specialist_insider_as_of.__get__(obj)
+    obj._load_remembered_insider_findings = ResearchContinuityMixin._load_remembered_insider_findings.__get__(obj)
     obj._form4_known_accessions = ResearchContinuityMixin._form4_known_accessions.__get__(obj)
-    obj._findings_from_specialist_evidence = (
-        ResearchContinuityMixin._findings_from_specialist_evidence.__get__(obj)
-    )
+    obj._findings_from_specialist_evidence = ResearchContinuityMixin._findings_from_specialist_evidence.__get__(obj)
     return obj
 
 
@@ -119,18 +102,25 @@ def test_same_session_requires_a_trustworthy_date():
 
 
 def test_dated_same_session_macro_still_reuses():
-    state = dict(MACRO, date=str(et_today()), series_prints={
-        "values": {"inflation.core_cpi_yoy": 3.1},
-        "observations": {"CPILFESL": "2026-08-01"},
-    })
+    state = dict(
+        MACRO,
+        date=str(et_today()),
+        series_prints={
+            "values": {"inflation.core_cpi_yoy": 3.1},
+            "observations": {"CPILFESL": "2026-08-01"},
+        },
+    )
     obj = SimpleNamespace(
         macro_store=_MacroStore(state),
         news_store=_NewsStore(),
-        macro=SimpleNamespace(get_macro_summary=lambda: {
-            "inflation": {"core_cpi_yoy": 3.1},
-        }, _run_freshness={
-            "CPILFESL": SimpleNamespace(latest_observation=__import__("datetime").date(2026, 8, 1)),
-        }),
+        macro=SimpleNamespace(
+            get_macro_summary=lambda: {
+                "inflation": {"core_cpi_yoy": 3.1},
+            },
+            _run_freshness={
+                "CPILFESL": SimpleNamespace(latest_observation=__import__("datetime").date(2026, 8, 1)),
+            },
+        ),
     )
     _bind_reuse(obj)
     carried = obj._carry_forward_macro()
@@ -198,10 +188,14 @@ def test_unchanged_prints_do_not_invent_churn():
 
 
 def test_failed_print_fetch_is_not_a_change():
-    state = dict(MACRO, date=str(et_today()), series_prints={
-        "values": {"inflation.core_cpi_yoy": 3.1},
-        "observations": {},
-    })
+    state = dict(
+        MACRO,
+        date=str(et_today()),
+        series_prints={
+            "values": {"inflation.core_cpi_yoy": 3.1},
+            "observations": {},
+        },
+    )
 
     def _boom():
         raise RuntimeError("FRED down")
@@ -221,17 +215,24 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
 
     stored = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-17", era_themes=["AI capex"],
+            last_updated="2026-09-17",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
         state_changes=[],
-        stock_news={"AAPL": [{
-            "headline": "Apple beats",
-            "sentiment": "bullish",
-            "conviction": "high",
-            "impact_summary": "beat",
-        }]},
-        pm_briefing="ok", market_sentiment="bullish", confidence="medium",
+        stock_news={
+            "AAPL": [
+                {
+                    "headline": "Apple beats",
+                    "sentiment": "bullish",
+                    "conviction": "high",
+                    "impact_summary": "beat",
+                }
+            ]
+        },
+        pm_briefing="ok",
+        market_sentiment="bullish",
+        confidence="medium",
     ).model_dump()
 
     class _Provider:
@@ -267,9 +268,11 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
     assert ignored.status == STATUS_CARRIED_FROM_MORNING
     assert ignored.payload is not None
 
-    obj.news_provider = _Provider([
-        SimpleNamespace(title="Guidance cut after close", summary="AAPL cuts FY outlook"),
-    ])
+    obj.news_provider = _Provider(
+        [
+            SimpleNamespace(title="Guidance cut after close", summary="AAPL cuts FY outlook"),
+        ]
+    )
     from_summary = obj._carry_forward_news()
     assert from_summary.status == "expired"
 
@@ -277,8 +280,12 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
 def _freshness(new_filings, *, ok=True, reason="stub"):
     """A provider freshness verdict: "what was FILED since our last read"."""
     return {
-        "ok": ok, "new_filings": sorted(new_filings), "read_through": "2026-09-18",
-        "checked": 1, "unchecked": [], "reason": reason,
+        "ok": ok,
+        "new_filings": sorted(new_filings),
+        "read_through": "2026-09-18",
+        "checked": 1,
+        "unchecked": [],
+        "reason": reason,
     }
 
 
@@ -294,9 +301,11 @@ def test_insider_peek_expires_on_a_new_form4_accession():
         def peek_accessions(self):
             return set(self._peek)
 
-    ctx = SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ])
+    ctx = SimpleNamespace(
+        smart_money_findings=[
+            {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+        ]
+    )
     obj = SimpleNamespace(
         macro_store=_MacroStore(None),
         news_store=_NewsStore(),
@@ -326,17 +335,26 @@ def test_insider_seat_expires_when_freshness_cannot_be_established():
     network that found unread backlog refused the decision — backwards in
     both directions.
     """
+
     class _Form4:
         def known_accessions(self):
             return {"0001-26-000001"}
 
-    ctx = SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ])
+    ctx = SimpleNamespace(
+        smart_money_findings=[
+            {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+        ]
+    )
     for verdict in (
         _freshness([], ok=False, reason="probe failed: ConnectionError"),
-        {"ok": False, "new_filings": [], "read_through": "",
-         "checked": 0, "unchecked": ["1045810"], "reason": "1 name unchecked"},
+        {
+            "ok": False,
+            "new_filings": [],
+            "read_through": "",
+            "checked": 0,
+            "unchecked": ["1045810"],
+            "reason": "1 name unchecked",
+        },
     ):
         obj = SimpleNamespace(
             macro_store=_MacroStore(None),
@@ -358,7 +376,8 @@ def test_insider_seat_expires_when_freshness_cannot_be_established():
         macro_store=_MacroStore(None),
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
-            providers=[_Form4()], form4_freshness=_boom,
+            providers=[_Form4()],
+            form4_freshness=_boom,
         ),
         db=None,
     )
@@ -373,22 +392,29 @@ def test_an_empty_insider_seat_is_not_clean_when_coverage_is_partial():
     `chose_not_to_refetch`, an integrity-clean status saying "remembered; no
     new filing". So with watched names never read through, the seat
     reported clean over filings nobody had read."""
+
     class _Form4:
         def known_accessions(self):
             return set()
 
     ctx = SimpleNamespace(smart_money_findings=[])
     partial = {
-        "ok": False, "new_filings": [], "read_through": "",
-        "checked": 82, "covered": 60, "unread_names": ["104169"],
-        "unread_filings": 193, "unchecked": [],
+        "ok": False,
+        "new_filings": [],
+        "read_through": "",
+        "checked": 82,
+        "covered": 60,
+        "unread_names": ["104169"],
+        "unread_filings": 193,
+        "unchecked": [],
         "reason": "22 of 82 watched name(s) not yet fully read",
     }
     obj = SimpleNamespace(
         macro_store=_MacroStore(None),
         news_store=_NewsStore(),
         smart_money_provider=SimpleNamespace(
-            providers=[_Form4()], form4_freshness=lambda _s=None: partial,
+            providers=[_Form4()],
+            form4_freshness=lambda _s=None: partial,
         ),
         db=None,
     )
@@ -405,6 +431,7 @@ def test_intraday_freshness_does_not_expire_on_backlog_alone():
     information. It must not expire the seat, and answering the question
     must not require a full-text crawl.
     """
+
     class _Form4:
         """Answers only from its own filing history — no EFTS crawl."""
 
@@ -424,9 +451,11 @@ def test_intraday_freshness_does_not_expire_on_backlog_alone():
             return _freshness([], reason="nothing filed since 2026-09-18")
 
     provider = _Form4()
-    ctx = SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ])
+    ctx = SimpleNamespace(
+        smart_money_findings=[
+            {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+        ]
+    )
     obj = SimpleNamespace(
         macro_store=_MacroStore(None),
         news_store=_NewsStore(),
@@ -441,6 +470,7 @@ def test_intraday_freshness_does_not_expire_on_backlog_alone():
 
 def test_insider_loader_uses_processed_accessions_not_just_findings():
     """A filing already in the cache is not 'new' just because it was not material."""
+
     class _Form4:
         def known_accessions(self):
             return {"0001-26-000001", "0001-26-000099"}
@@ -448,9 +478,11 @@ def test_insider_loader_uses_processed_accessions_not_just_findings():
         def peek_accessions(self):
             return {"0001-26-000001", "0001-26-000099"}
 
-    ctx = SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ])
+    ctx = SimpleNamespace(
+        smart_money_findings=[
+            {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+        ]
+    )
     obj = SimpleNamespace(
         macro_store=_MacroStore(None),
         news_store=_NewsStore(),
@@ -531,24 +563,33 @@ def test_dated_insider_finding_is_same_session_and_undated_is_not():
         db=None,
     )
     _bind_reuse(obj)
-    undated = obj._carry_forward_insider(SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ]))
+    undated = obj._carry_forward_insider(
+        SimpleNamespace(
+            smart_money_findings=[
+                {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+            ]
+        )
+    )
     assert undated.same_session is False
     assert undated.payload
-    dated = obj._carry_forward_insider(SimpleNamespace(smart_money_findings=[
-        {
-            "symbol": "FTK",
-            "as_of": str(et_today()),
-            "observations": [{"accession_number": "0001-26-000001"}],
-        },
-    ]))
+    dated = obj._carry_forward_insider(
+        SimpleNamespace(
+            smart_money_findings=[
+                {
+                    "symbol": "FTK",
+                    "as_of": str(et_today()),
+                    "observations": [{"accession_number": "0001-26-000001"}],
+                },
+            ]
+        )
+    )
     assert dated.same_session is True
     assert dated.status == STATUS_CARRIED_FROM_MORNING
 
 
 def test_specialist_evidence_timestamp_is_the_insider_same_session_date():
     """Production findings have no as_of; the producing row's timestamp is the date."""
+
     class _Form4:
         def known_accessions(self):
             return {"0001-26-000001"}
@@ -560,6 +601,7 @@ def test_specialist_evidence_timestamp_is_the_insider_same_session_date():
         def execute(self, sql, params=None):
             class _Row(dict):
                 pass
+
             if "timestamp" in sql:
                 row = _Row(timestamp=f"{et_today()} 14:05:00")
                 return SimpleNamespace(fetchone=lambda: row)
@@ -575,8 +617,12 @@ def test_specialist_evidence_timestamp_is_the_insider_same_session_date():
         db=_DB(),
     )
     _bind_reuse(obj)
-    carried = obj._carry_forward_insider(SimpleNamespace(smart_money_findings=[
-        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
-    ]))
+    carried = obj._carry_forward_insider(
+        SimpleNamespace(
+            smart_money_findings=[
+                {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+            ]
+        )
+    )
     assert carried.same_session is True
     assert carried.status == STATUS_CARRIED_FROM_MORNING

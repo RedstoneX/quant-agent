@@ -1,4 +1,5 @@
 """Scanner-shape tests split out of test_number_sources.py: what `collect_sites` sees."""
+
 from __future__ import annotations
 
 from src.number_sources import NEUTRAL_VALUES, collect_sites

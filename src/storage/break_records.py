@@ -23,14 +23,21 @@ class BreakRecords:
         self._lock = lock
 
     def _insert_evidence(
-        self, *, run_id: str, agent_name: str, kind: str, scope: str,
-        evidence_json: str, symbol: str | None = None,
+        self,
+        *,
+        run_id: str,
+        agent_name: str,
+        kind: str,
+        scope: str,
+        evidence_json: str,
+        symbol: str | None = None,
     ) -> int:
         """Persist one evidence row under the retrying process write lock.
 
         This is the only WRITE path in this store; every `get_*` below takes
         the plain lock and never commits, so read and write stay telling
         apart at a glance."""
+
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO specialist_evidence "
@@ -40,14 +47,21 @@ class BreakRecords:
             )
             self.conn.commit()
             return cur.lastrowid or 0
+
         return locked_write(self._lock, _do, label="insert_specialist_evidence")
 
     HOLDING_PROTECTION_BREAK_KIND = "holding_protection_break"
 
     def save_holding_protection_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        raw_broken: bool,
+        bar_date: str,
         close: float | None = None,
-        basis: str | None = None, detail: str | None = None,
+        basis: str | None = None,
+        detail: str | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
@@ -82,14 +96,20 @@ class BreakRecords:
         except (TypeError, ValueError):
             pass
         return self._insert_evidence(
-            run_id=run_id, agent_name="risk_manager",
-            kind=self.HOLDING_PROTECTION_BREAK_KIND, scope="symbol",
+            run_id=run_id,
+            agent_name="risk_manager",
+            kind=self.HOLDING_PROTECTION_BREAK_KIND,
+            scope="symbol",
             symbol=symbol.upper(),
             evidence_json=json.dumps(payload),
         )
 
     def get_prior_holding_protection_break(
-        self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+        self,
+        symbols,
+        *,
+        today_bar_date: str,
+        exclude_run_id: str | None = None,
     ) -> dict[str, bool]:
         """The most recent `raw_broken` flag per symbol from a close dated
         STRICTLY BEFORE `today_bar_date` — i.e. the last completed prior
@@ -105,13 +125,19 @@ class BreakRecords:
         # Body shared with the target-side twin below (`_prior_break_flags`)
         # so the two cross-day confirmation reads cannot drift apart.
         return self._prior_break_flags(
-            symbols, kind=self.HOLDING_PROTECTION_BREAK_KIND,
-            today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+            symbols,
+            kind=self.HOLDING_PROTECTION_BREAK_KIND,
+            today_bar_date=today_bar_date,
+            exclude_run_id=exclude_run_id,
         )
 
     def get_recent_holding_protection_breaks(
-        self, symbol: str, *, before_bar_date: str,
-        exclude_run_id: str | None = None, limit: int = 30,
+        self,
+        symbol: str,
+        *,
+        before_bar_date: str,
+        exclude_run_id: str | None = None,
+        limit: int = 30,
     ) -> list[dict]:
         """The recent per-session holding-protection break records for one
         `symbol`, dated STRICTLY BEFORE `before_bar_date`, most-recent first and
@@ -128,10 +154,7 @@ class BreakRecords:
         sym = str(symbol).strip().upper()
         if not sym:
             return []
-        sql = (
-            "SELECT evidence_json FROM specialist_evidence "
-            "WHERE agent_name='risk_manager' AND kind=? AND symbol=?"
-        )
+        sql = "SELECT evidence_json FROM specialist_evidence WHERE agent_name='risk_manager' AND kind=? AND symbol=?"
         params: list = [self.HOLDING_PROTECTION_BREAK_KIND, sym]
         if exclude_run_id:
             sql += " AND run_id != ?"
@@ -170,7 +193,10 @@ class BreakRecords:
     DELEVER_CEILING_STATE_KIND = "delever_ceiling_state"
 
     def save_delever_ceiling_state(
-        self, *, run_id: str, over_ceiling: bool,
+        self,
+        *,
+        run_id: str,
+        over_ceiling: bool,
     ) -> int:
         """Record whether this session's gross-exposure de-lever finished with
         the book still over its ceiling.
@@ -180,13 +206,17 @@ class BreakRecords:
         still-over apart from a book that has sat over the ceiling for days.
         Observability/state only — no order, sizing or sequencing reads it."""
         return self._insert_evidence(
-            run_id=run_id, agent_name="pipeline",
-            kind=self.DELEVER_CEILING_STATE_KIND, scope="run",
+            run_id=run_id,
+            agent_name="pipeline",
+            kind=self.DELEVER_CEILING_STATE_KIND,
+            scope="run",
             evidence_json=json.dumps({"over_ceiling": bool(over_ceiling)}),
         )
 
     def get_last_delever_over_ceiling(
-        self, *, exclude_run_id: str | None = None,
+        self,
+        *,
+        exclude_run_id: str | None = None,
     ) -> bool | None:
         """The most recent recorded de-lever ceiling state — True (still over),
         False (cleared), or None when there is no prior record.
@@ -231,8 +261,13 @@ class BreakRecords:
     TARGET_LEVEL_BREAK_KIND = "target_level_break"
 
     def save_target_level_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool | None,
-        bar_date: str, raw_reach: bool | None = None,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        raw_broken: bool | None,
+        bar_date: str,
+        raw_reach: bool | None = None,
         raw_wall: bool | None = None,
     ) -> int:
         """Record the close dated `bar_date`'s RAW trigger state, so a
@@ -257,14 +292,20 @@ class BreakRecords:
             if val is not None:
                 payload[key] = bool(val)
         return self._insert_evidence(
-            run_id=run_id, agent_name="risk_manager",
-            kind=self.TARGET_LEVEL_BREAK_KIND, scope="symbol",
+            run_id=run_id,
+            agent_name="risk_manager",
+            kind=self.TARGET_LEVEL_BREAK_KIND,
+            scope="symbol",
             symbol=symbol.upper(),
             evidence_json=json.dumps(payload),
         )
 
     def get_prior_target_level_break(
-        self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+        self,
+        symbols,
+        *,
+        today_bar_date: str,
+        exclude_run_id: str | None = None,
         flag: str = "raw_broken",
     ) -> dict[str, bool]:
         """The most recent target-revision trigger flag per symbol from a
@@ -280,14 +321,21 @@ class BreakRecords:
         a confirmed break, exactly as for the stop-side twin above.
         """
         return self._prior_break_flags(
-            symbols, kind=self.TARGET_LEVEL_BREAK_KIND,
-            today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+            symbols,
+            kind=self.TARGET_LEVEL_BREAK_KIND,
+            today_bar_date=today_bar_date,
+            exclude_run_id=exclude_run_id,
             flag=flag,
         )
 
     def _prior_break_flags(
-        self, symbols, *, kind: str, today_bar_date: str,
-        exclude_run_id: str | None = None, flag: str = "raw_broken",
+        self,
+        symbols,
+        *,
+        kind: str,
+        today_bar_date: str,
+        exclude_run_id: str | None = None,
+        flag: str = "raw_broken",
     ) -> dict[str, bool]:
         """Shared body of the prior-close break reads."""
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
@@ -349,7 +397,9 @@ class BreakRecords:
 
 
 def build_break_records(
-    *, conn: sqlite3.Connection, lock: threading.Lock,
+    *,
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
 ) -> BreakRecords:
     """Build the store from its collaborators BY VALUE."""
     return BreakRecords(conn=conn, lock=lock)

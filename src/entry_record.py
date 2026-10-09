@@ -53,19 +53,28 @@ def insert_pending_entry(
     # value the constructor already classified, carried on the
     # decision.
     _prior_row, pinned_setup_type, pinned_structural_ceiling = resolve_entry_pins(
-        db, decision, is_short=is_short,
+        db,
+        decision,
+        is_short=is_short,
         is_scale_in=add_prep is not None and add_prep.is_scale_in,
     )
     entry_side = "sell_short" if is_short else "buy"
     pending_row_id = db.insert_trade(
-        symbol=decision.symbol, action=decision.action, qty=qty,
-        price=executed_price, reasoning=decision.reasoning, run_id=run_id,
-        stop_loss=stop_price, take_profit=decision.take_profit,
+        symbol=decision.symbol,
+        action=decision.action,
+        qty=qty,
+        price=executed_price,
+        reasoning=decision.reasoning,
+        run_id=run_id,
+        stop_loss=stop_price,
+        take_profit=decision.take_profit,
         broker_order_id=None,
         fill_status="pending_submit",
         decision_id=decision_id,
         expected_horizon_sessions=getattr(
-            entry_analysis, "expected_horizon_sessions", None,
+            entry_analysis,
+            "expected_horizon_sessions",
+            None,
         ),
         setup_type=pinned_setup_type,
         # Item 82: the MEASURED half of the same verdict, pinned at

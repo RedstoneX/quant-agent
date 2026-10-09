@@ -93,9 +93,7 @@ def test_every_line_parses_or_attaches_to_the_one_above():
     ],
 )
 def test_family_fires_on_a_genuine_line(key):
-    found = {
-        f.key for r in _records() if (f := L.classify(r.message, r.level)) is not None
-    }
+    found = {f.key for r in _records() if (f := L.classify(r.message, r.level)) is not None}
     assert key in found, f"{key} matched no real production line in the fixture"
 
 
@@ -105,17 +103,11 @@ def test_the_only_unclassified_line_is_the_fail_closed_proof():
     It is in the fixture so the fail-closed path is exercised by real text
     rather than by a line written to trip it.
     """
-    unknown = [
-        r
-        for r in _records()
-        if L.classify(r.message, r.level) is None and r.level in L._SERIOUS_LEVELS
-    ]
+    unknown = [r for r in _records() if L.classify(r.message, r.level) is None and r.level in L._SERIOUS_LEVELS]
     assert len(unknown) == 1
     assert unknown[0].level == "ERROR"
     report = _report()
-    catchall = next(
-        f for f in report.reported if f.family.key == L.UNRECOGNISED_KEY
-    )
+    catchall = next(f for f in report.reported if f.family.key == L.UNRECOGNISED_KEY)
     assert catchall.count == 1
 
 
@@ -130,13 +122,9 @@ def test_an_owner_alert_is_not_counted_twice():
         "OWNER ALERT\nDECISION SKIPPED — no evidence from news, smart_money\n"
         "decision skipped: 2 seat(s) were asked and their answer never arrived",
     )
-    primary = L.LogRecord(
-        datetime(2026, 9, 18, 13, 47, 27, tzinfo=UTC), "ERROR", "src.pipeline", gate
-    )
+    primary = L.LogRecord(datetime(2026, 9, 18, 13, 47, 27, tzinfo=UTC), "ERROR", "src.pipeline", gate)
     report = _report(records=[primary, echo])
-    finding = next(
-        f for f in report.reported if f.family.key == "decision_skipped_no_evidence"
-    )
+    finding = next(f for f in report.reported if f.family.key == "decision_skipped_no_evidence")
     assert finding.count == 1
 
 
@@ -182,9 +170,7 @@ def test_an_unprotected_holding_always_drives_the_verdict():
 
 
 def test_a_provider_rejection_alone_is_degraded_not_hurt():
-    rejected = next(
-        r for r in _records() if "server rejected WebSocket" in r.message
-    )
+    rejected = next(r for r in _records() if "server rejected WebSocket" in r.message)
     report = _report(records=[rejected])
     assert report.verdict == "degraded"
 
@@ -260,11 +246,7 @@ def test_the_number_of_bullets_is_whatever_is_wrong_not_a_cap():
     """There is no bullet limit to test, and that is the point — this asserts
     the absence of one. Every finding that meets the bar gets a line."""
     report = _report()
-    bullets = [
-        line
-        for line in "\n".join(L.render(report)).splitlines()
-        if line.startswith("•")
-    ]
+    bullets = [line for line in "\n".join(L.render(report)).splitlines() if line.startswith("•")]
     assert len(bullets) == len(report.reported)
     assert len(bullets) > 6, "the real fixture has more findings than the withdrawn cap"
 
@@ -300,10 +282,7 @@ def test_an_over_long_report_splits_instead_of_dropping_a_finding(monkeypatch):
     joined = "\n".join(messages)
     # Every reportable family still has a line somewhere.
     for finding in report.reported:
-        assert (
-            finding.family.short_name in joined
-            or finding.family.sentence.split("{")[0].strip() in joined
-        )
+        assert finding.family.short_name in joined or finding.family.sentence.split("{")[0].strip() in joined
     # The serious half comes first.
     assert "still missing the safety net" in messages[0]
 
@@ -326,18 +305,9 @@ def test_the_watermark_neither_skips_nor_double_counts(tmp_path):
     assert start == split  # picks up exactly where the last report stopped
     second = _report(records=records, start=start, end=end)
 
-    for key in {f.family.key for f in first.reported} | {
-        f.family.key for f in second.reported
-    }:
-        whole = next(
-            (f.count for f in _report().findings if f.family.key == key), 0
-        )
-        part = sum(
-            f.count
-            for report in (first, second)
-            for f in report.findings
-            if f.family.key == key
-        )
+    for key in {f.family.key for f in first.reported} | {f.family.key for f in second.reported}:
+        whole = next((f.count for f in _report().findings if f.family.key == key), 0)
+        part = sum(f.count for report in (first, second) for f in report.findings if f.family.key == key)
         assert part == whole, f"{key}: {part} counted across two reports, {whole} total"
 
 
@@ -376,9 +346,9 @@ def test_a_disposition_never_claims_work_that_is_not_happening():
     assert on_board, "docs/WORK.md item numbers should parse"
     for family in L.FAMILIES:
         if family.board_item is not None:
-            assert (
-                family.board_item in on_board
-            ), f"{family.key} points at item {family.board_item}, which is not on the board"
+            assert family.board_item in on_board, (
+                f"{family.key} points at item {family.board_item}, which is not on the board"
+            )
 
 
 def test_a_family_with_no_board_item_says_so():
@@ -417,9 +387,7 @@ def test_a_healthy_line_that_merely_contains_the_words_is_not_a_fault():
     """`Macro coverage: 15/15 FRED series returned data. Full coverage.` is the
     macro seat's own prompt, at INFO, stating everything arrived. The first
     version counted it as an economics failure eight times."""
-    prompt = next(
-        r for r in _records() if "Macro coverage: 15/15" in r.message
-    )
+    prompt = next(r for r in _records() if "Macro coverage: 15/15" in r.message)
     assert prompt.level == "INFO"
     assert L.classify(prompt.message, prompt.level) is None
     report = _report(records=[prompt])
@@ -430,9 +398,7 @@ def test_the_word_placeholder_in_a_healthy_line_is_not_a_credential_fault():
     """`0 unanalyzed placeholders` is a routine line about earnings analyses
     and appeared 26 times on 2026-09-18. The credential family matches the
     alarm text, not the word."""
-    earnings = next(
-        r for r in _records() if "unanalyzed placeholders" in r.message
-    )
+    earnings = next(r for r in _records() if "unanalyzed placeholders" in r.message)
     assert L.classify(earnings.message, earnings.level) is None
 
 
@@ -443,21 +409,13 @@ def test_a_credential_alarm_is_cleared_by_a_later_successful_broker_write():
     exactly what happened, three minutes after the owner wrote the real keys.
     """
     alarm = next(r for r in _records() if "PLACEHOLDER CREDENTIAL" in r.message)
-    proof = next(
-        r for r in _records() if "sell stop-limit placed for" in r.message
-    )
-    later = L.LogRecord(
-        alarm.timestamp + timedelta(minutes=30), proof.level, proof.source, proof.message
-    )
+    proof = next(r for r in _records() if "sell stop-limit placed for" in r.message)
+    later = L.LogRecord(alarm.timestamp + timedelta(minutes=30), proof.level, proof.source, proof.message)
     report = _report(records=[alarm, later])
-    assert "broker_not_sure_who_we_are" not in {
-        f.family.key for f in report.reported
-    }
+    assert "broker_not_sure_who_we_are" not in {f.family.key for f in report.reported}
     # Without the proof it is still reported — the guard clears a fault, it
     # does not suppress one.
-    assert "broker_not_sure_who_we_are" in {
-        f.family.key for f in _report(records=[alarm]).reported
-    }
+    assert "broker_not_sure_who_we_are" in {f.family.key for f in _report(records=[alarm]).reported}
 
 
 def test_a_credential_bullet_never_asserts_a_present_state():
@@ -472,9 +430,7 @@ def test_a_stop_gap_repaired_in_the_window_is_not_reported():
     """Nine sub-share stops went missing at 09:30 ET on 2026-09-18 and were
     repaired in the same second. The first version made that the headline and
     set the verdict to HURT."""
-    missing = next(
-        r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message
-    )
+    missing = next(r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message)
     repaired = next(r for r in _records() if "COVERAGE REPAIRED: AAPL" in r.message)
     report = _report(records=[missing, repaired])
     assert "stop_missing_or_failed" not in {f.family.key for f in report.reported}
@@ -482,9 +438,7 @@ def test_a_stop_gap_repaired_in_the_window_is_not_reported():
 
 
 def test_a_stop_gap_left_open_is_still_reported():
-    missing = next(
-        r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message
-    )
+    missing = next(r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message)
     report = _report(records=[missing])
     assert report.verdict == "hurt"
     assert report.reported[0].family.reason == L.MONEY_UNPROTECTED
@@ -493,29 +447,19 @@ def test_a_stop_gap_left_open_is_still_reported():
 def test_a_repair_for_one_holding_does_not_clear_another():
     """Per holding, not in bulk — seven repaired out of nine is two still
     missing, not none."""
-    aapl = next(
-        r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message
-    )
-    other = L.LogRecord(
-        aapl.timestamp, aapl.level, aapl.source, aapl.message.replace("AAPL", "NVDA")
-    )
+    aapl = next(r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message)
+    other = L.LogRecord(aapl.timestamp, aapl.level, aapl.source, aapl.message.replace("AAPL", "NVDA"))
     repaired = next(r for r in _records() if "COVERAGE REPAIRED: AAPL" in r.message)
     report = _report(records=[aapl, other, repaired])
-    finding = next(
-        f for f in report.reported if f.family.key == "stop_missing_or_failed"
-    )
+    finding = next(f for f in report.reported if f.family.key == "stop_missing_or_failed")
     assert finding.count == 1
 
 
 def test_a_broker_read_showing_stops_clears_the_gap():
     """RSG read as unprotected all day although the broker was holding two
     stops against it fifteen minutes later."""
-    missing = next(
-        r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message
-    )
-    broker = next(
-        r for r in _records() if "get_current_stop_price: RSG carries" in r.message
-    )
+    missing = next(r for r in _records() if "FRACTIONAL STOP MISSING" in r.message and "AAPL" in r.message)
+    broker = next(r for r in _records() if "get_current_stop_price: RSG carries" in r.message)
     later = L.LogRecord(
         missing.timestamp + timedelta(minutes=15),
         broker.level,
@@ -548,9 +492,7 @@ def test_a_rule_stopping_an_order_is_not_the_broker_rejecting_us():
 
 
 def test_overnight_exposure_is_reported_until_the_next_session_repairs_it():
-    overnight = next(
-        r for r in _records() if "OVERNIGHT FRACTIONAL EXPOSURE" in r.message
-    )
+    overnight = next(r for r in _records() if "OVERNIGHT FRACTIONAL EXPOSURE" in r.message)
     assert _report(records=[overnight]).verdict == "hurt"
     repaired = next(r for r in _records() if "COVERAGE REPAIRED: AAPL" in r.message)
     after = L.LogRecord(
@@ -560,9 +502,7 @@ def test_overnight_exposure_is_reported_until_the_next_session_repairs_it():
         repaired.message,
     )
     report = _report(records=[overnight, after])
-    assert "overnight_fractional_exposure" not in {
-        f.family.key for f in report.reported
-    }
+    assert "overnight_fractional_exposure" not in {f.family.key for f in report.reported}
 
 
 def test_every_bullet_says_when_it_last_happened():
@@ -595,10 +535,7 @@ def test_a_capitalised_parse_failure_is_no_longer_invisible():
     existing pattern was the lowercase literal `failed to parse`, an exact
     string match that had matched every OTHER seat's failure line but never
     this one, silently, since the day it was written."""
-    record = next(
-        r for r in _records()
-        if r.message.startswith("Failed to parse tech analysis item for KLAR")
-    )
+    record = next(r for r in _records() if r.message.startswith("Failed to parse tech analysis item for KLAR"))
     assert record.level == "ERROR"
     family = L.classify(record.message, record.level)
     assert family is not None and family.key == "seat_answer_unreadable"
@@ -609,10 +546,7 @@ def test_the_batch_level_unresolved_line_is_classified():
     — explicit failed outcomes: [...]` — the multi-chunk batch's own final
     loss line, a different ending from the `unresolved after retry` the old
     pattern named."""
-    record = next(
-        r for r in _records()
-        if "unresolved after the single shared recovery" in r.message
-    )
+    record = next(r for r in _records() if "unresolved after the single shared recovery" in r.message)
     assert record.level == "ERROR"
     family = L.classify(record.message, record.level)
     assert family is not None and family.key == "names_dropped_from_answer"
@@ -625,9 +559,7 @@ def test_a_partial_tech_batch_is_classified_not_double_counted():
     `names_dropped_from_answer`. It must still be classified (never fall
     into the unrecognised bucket) but as HANDLED, so one lost batch is not
     reported as two."""
-    record = next(
-        r for r in _records() if r.message.startswith("Tech batch partial:")
-    )
+    record = next(r for r in _records() if r.message.startswith("Tech batch partial:"))
     assert record.level == "WARNING"
     family = L.classify(record.message, record.level)
     assert family is not None
@@ -638,10 +570,7 @@ def test_phantom_rows_for_unsubmitted_symbols_are_classified():
     """`Tech analyst emitted 1 row(s) for symbols not in the submitted
     chunk — dropped: ['CHP']` — the model answered about a symbol nobody
     asked about; the row is thrown away exactly like a malformed one."""
-    record = next(
-        r for r in _records()
-        if "emitted 1 row(s) for symbols not in the submitted chunk" in r.message
-    )
+    record = next(r for r in _records() if "emitted 1 row(s) for symbols not in the submitted chunk" in r.message)
     assert record.level == "WARNING"
     family = L.classify(record.message, record.level)
     assert family is not None and family.key == "seat_answer_unreadable"
@@ -656,8 +585,7 @@ def test_tech_returning_non_json_is_classified():
         datetime(2026, 9, 19, 14, 0, 0, tzinfo=UTC),
         "ERROR",
         "src.agents.tech_analyst",
-        "Tech analyst returned non-JSON for batch analysis (5 symbols "
-        "submitted: ['AAPL', 'MSFT'])",
+        "Tech analyst returned non-JSON for batch analysis (5 symbols submitted: ['AAPL', 'MSFT'])",
     )
     family = L.classify(record.message, record.level)
     assert family is not None and family.key == "seat_answer_unreadable"
@@ -679,8 +607,7 @@ def test_news_seat_final_validation_failure_is_classified():
         datetime(2026, 9, 25, 9, 0, 0, tzinfo=UTC),
         "ERROR",
         "src.agents.news_analyst",
-        "News analysis failed to parse after one heal retry: 1 validation "
-        "error for NewsIntelligenceReport",
+        "News analysis failed to parse after one heal retry: 1 validation error for NewsIntelligenceReport",
     )
     family = L.classify(record.message, record.level)
     assert family is not None and family.key == "seat_answer_unreadable"
@@ -721,11 +648,15 @@ def test_classify_is_case_insensitive_generally():
     cased copy of any family's real trigger line must classify the same
     way, because the desk's own logger calls are not a casing contract."""
     lower = L.LogRecord(
-        datetime(2026, 9, 19, tzinfo=UTC), "WARNING", "alpaca.trading.stream",
+        datetime(2026, 9, 19, tzinfo=UTC),
+        "WARNING",
+        "alpaca.trading.stream",
         "server rejected websocket connection: http 429",
     )
     upper = L.LogRecord(
-        datetime(2026, 9, 19, tzinfo=UTC), "WARNING", "alpaca.trading.stream",
+        datetime(2026, 9, 19, tzinfo=UTC),
+        "WARNING",
+        "alpaca.trading.stream",
         "SERVER REJECTED WEBSOCKET CONNECTION: HTTP 429",
     )
     fl = L.classify(lower.message, lower.level)

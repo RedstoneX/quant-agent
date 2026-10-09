@@ -28,6 +28,7 @@ from tests.pipeline_factory import build_pipeline
 # _extract_intro
 # ---------------------------------------------------------------------------
 
+
 def test_extract_intro_returns_text_before_first_h2():
     from src.evolution.quarterly_digest import _extract_intro
 
@@ -64,12 +65,14 @@ def test_extract_intro_truncates_over_budget():
 
 def test_extract_intro_empty_when_only_title():
     from src.evolution.quarterly_digest import _extract_intro
+
     assert _extract_intro("# Title only\n") == ""
 
 
 # ---------------------------------------------------------------------------
 # _extract_agent_prompt_snapshot — section picking + budget
 # ---------------------------------------------------------------------------
+
 
 def test_snapshot_picks_interesting_sections_only():
     """Sections with rule/discipline/memory/output/framework keywords in
@@ -186,14 +189,15 @@ short intro.
     out = _extract_agent_prompt_snapshot(md, char_budget=1500)
     assert out["truncated"] is True
     # First one or two sections fit; later ones are dropped, not butchered
-    assert all(
-        len((s.get("body") or "")) >= 100 for s in out["key_sections"]
-    ), "sections must be whole, not mid-body truncated"
+    assert all(len((s.get("body") or "")) >= 100 for s in out["key_sections"]), (
+        "sections must be whole, not mid-body truncated"
+    )
     assert len(out["key_sections"]) < 4
 
 
 def test_snapshot_empty_input_returns_empty_shape():
     from src.evolution.quarterly_digest import _extract_agent_prompt_snapshot
+
     out = _extract_agent_prompt_snapshot("")
     assert out["intro"] == ""
     assert out["key_sections"] == []
@@ -239,16 +243,17 @@ intro.
 # _build_agent_prompts_snapshot — wrapper across all 6 agents
 # ---------------------------------------------------------------------------
 
+
 def test_build_snapshot_reads_all_six_agents(tmp_path):
     """Happy path: six stub prompt files → six snapshot entries with
     their intro paragraphs visible."""
     from src.evolution.quarterly_digest import (
-        _SNAPSHOT_AGENTS, _build_agent_prompts_snapshot,
+        _SNAPSHOT_AGENTS,
+        _build_agent_prompts_snapshot,
     )
+
     for agent in _SNAPSHOT_AGENTS:
-        (tmp_path / f"{agent}.md").write_text(
-            f"# {agent}\n\nYou are the {agent}.\n\n## Rules\n\nbe good.\n"
-        )
+        (tmp_path / f"{agent}.md").write_text(f"# {agent}\n\nYou are the {agent}.\n\n## Rules\n\nbe good.\n")
     out = _build_agent_prompts_snapshot(prompts_dir=tmp_path)
     assert set(out.keys()) == set(_SNAPSHOT_AGENTS)
     for agent in _SNAPSHOT_AGENTS:
@@ -261,9 +266,7 @@ def test_build_snapshot_missing_file_produces_error_entry(tmp_path):
     entry; other agents' entries are still returned normally."""
     from src.evolution.quarterly_digest import _build_agent_prompts_snapshot
 
-    (tmp_path / "tech_analyst.md").write_text(
-        "# tech\n\nPersona.\n\n## Rules\n\nbody.\n"
-    )
+    (tmp_path / "tech_analyst.md").write_text("# tech\n\nPersona.\n\n## Rules\n\nbody.\n")
     # news_analyst.md intentionally not created
     out = _build_agent_prompts_snapshot(prompts_dir=tmp_path)
     assert "tech_analyst" in out
@@ -276,6 +279,7 @@ def test_build_snapshot_missing_file_produces_error_entry(tmp_path):
 # ---------------------------------------------------------------------------
 # build_quarterly_digest — end-to-end with snapshot key
 # ---------------------------------------------------------------------------
+
 
 def _make_db_for_empty_digest(tmp_path):
     """Skeletal Database with the methods quarterly_digest calls —
@@ -296,20 +300,21 @@ def test_build_quarterly_digest_includes_agent_prompts_snapshot(tmp_path):
     from datetime import date
 
     from src.evolution.quarterly_digest import (
-        _SNAPSHOT_AGENTS, build_quarterly_digest,
+        _SNAPSHOT_AGENTS,
+        build_quarterly_digest,
     )
+
     prompts_root = tmp_path / "prompts"
     prompts_root.mkdir()
     for agent in _SNAPSHOT_AGENTS:
         (prompts_root / f"{agent}.md").write_text(
-            f"# {agent}\n\nPersona for {agent}.\n\n"
-            f"## Rules\n\nSome rule body.\n\n"
-            f"## Learnings (system-evolved)\n\n"
+            f"# {agent}\n\nPersona for {agent}.\n\n## Rules\n\nSome rule body.\n\n## Learnings (system-evolved)\n\n"
         )
 
     db = _make_db_for_empty_digest(tmp_path)
     digest = build_quarterly_digest(
-        db, market=None,
+        db,
+        market=None,
         period_end=date(2026, 3, 31),
         lookback_days=90,
         prev_digest=None,
@@ -321,17 +326,17 @@ def test_build_quarterly_digest_includes_agent_prompts_snapshot(tmp_path):
     for agent in _SNAPSHOT_AGENTS:
         entry = snap[agent]
         assert "Persona for" in entry["intro"]
-        assert any(
-            s["heading"] == "Rules" for s in entry["key_sections"]
-        )
+        assert any(s["heading"] == "Rules" for s in entry["key_sections"])
 
 
 # ---------------------------------------------------------------------------
 # Meta-reflector prompt rendering — snapshot appears in user message
 # ---------------------------------------------------------------------------
 
+
 def _make_meta_agent():
     from src.agents.meta_reflector import MetaReflectorAgent
+
     with patch("anthropic.Anthropic"):
         return MetaReflectorAgent(api_key="k", model="gpt-5.4")
 
@@ -345,15 +350,21 @@ def _digest_with_snapshot(snapshot_payload: dict | None = None) -> dict:
         "period_end": "2026-03-31",
         "lookback_days": 90,
         "period_performance": {
-            "n_days": 60, "total_return_pct": 1.2,
-            "alpha_vs_spy_pct": -3.6, "spy_return_pct": 4.8,
-            "max_drawdown_pct": -5.2, "winning_days": 32, "losing_days": 28,
-            "best_day_pct": 2.0, "worst_day_pct": -2.0,
+            "n_days": 60,
+            "total_return_pct": 1.2,
+            "alpha_vs_spy_pct": -3.6,
+            "spy_return_pct": 4.8,
+            "max_drawdown_pct": -5.2,
+            "winning_days": 32,
+            "losing_days": 28,
+            "best_day_pct": 2.0,
+            "worst_day_pct": -2.0,
         },
         "calibration_by_size": {"n": 0},
         "missed_themes": {"by_theme": {}, "by_category": {}, "total_real_misses": 0},
         "loss_patterns": {
-            "by_cause": {}, "total_wrong_buys": 0,
+            "by_cause": {},
+            "total_wrong_buys": 0,
             "alpha_destruction_pct": None,
         },
         "agent_signal_activity": {},
@@ -370,11 +381,13 @@ def test_meta_prompt_renders_snapshot_when_present():
     snap = {
         "portfolio_manager": {
             "intro": "You are the PM.",
-            "key_sections": [{
-                "heading": "Step 5: Position Sizing",
-                "body": "Size by conviction × R/R.",
-                "level": "##",
-            }],
+            "key_sections": [
+                {
+                    "heading": "Step 5: Position Sizing",
+                    "body": "Size by conviction × R/R.",
+                    "level": "##",
+                }
+            ],
             "learnings": "- [2026-Q1] prior edit on risk_reward scaling.",
             "total_chars": 200,
             "truncated": False,
@@ -421,12 +434,17 @@ def test_meta_prompt_flags_per_agent_error_entries():
     snap = {
         "tech_analyst": {
             "intro": "tech persona.",
-            "key_sections": [], "learnings": "",
-            "total_chars": 10, "truncated": False,
+            "key_sections": [],
+            "learnings": "",
+            "total_chars": 10,
+            "truncated": False,
         },
         "news_analyst": {
-            "intro": "", "key_sections": [], "learnings": "",
-            "total_chars": 0, "truncated": False,
+            "intro": "",
+            "key_sections": [],
+            "learnings": "",
+            "total_chars": 0,
+            "truncated": False,
             "error": "prompt_file_missing",
         },
     }
@@ -444,9 +462,13 @@ def test_meta_prompt_shows_truncation_marker():
     snap = {
         "portfolio_manager": {
             "intro": "intro.",
-            "key_sections": [{
-                "heading": "Rules", "body": "body.", "level": "##",
-            }],
+            "key_sections": [
+                {
+                    "heading": "Rules",
+                    "body": "body.",
+                    "level": "##",
+                }
+            ],
             "learnings": "",
             "total_chars": 3000,
             "truncated": True,
@@ -459,6 +481,7 @@ def test_meta_prompt_shows_truncation_marker():
 # ---------------------------------------------------------------------------
 # Schema: new MetaReasoningChain fields enforced
 # ---------------------------------------------------------------------------
+
 
 def test_meta_reasoning_chain_requires_all_seven_new_fields():
     """All seven new steps must be non-empty strings. Missing any →
@@ -498,9 +521,9 @@ def test_meta_reasoning_chain_rejects_old_field_names():
         "performance_vs_benchmark": "x",
         "secular_theme_audit": "x",
         "loss_autopsy_audit": "x",
-        "agent_hit_rate_audit": "x",          # old
-        "missed_theme_diagnosis": "x",         # old
-        "style_bias_identification": "x",      # old
+        "agent_hit_rate_audit": "x",  # old
+        "missed_theme_diagnosis": "x",  # old
+        "style_bias_identification": "x",  # old
         "prompt_edit_reasoning": "x",
     }
     with pytest.raises(ValidationError):
@@ -510,6 +533,7 @@ def test_meta_reasoning_chain_rejects_old_field_names():
 # ---------------------------------------------------------------------------
 # Pipeline wiring — prompts_dir threads through to the digest
 # ---------------------------------------------------------------------------
+
 
 def test_run_quarterly_meta_threads_prompts_dir_into_digest(tmp_path):
     """Regression: pre-fix, `prompts_dir` was accepted by
@@ -532,9 +556,7 @@ def test_run_quarterly_meta_threads_prompts_dir_into_digest(tmp_path):
     # read from this dir, not the real config/.
     for agent in _SNAPSHOT_AGENTS:
         (prompts_root / f"{agent}.md").write_text(
-            f"# {agent}\n\n"
-            f"FIXTURE SENTINEL {agent.upper()} persona.\n\n"
-            f"## Rules\n\nrule body.\n"
+            f"# {agent}\n\nFIXTURE SENTINEL {agent.upper()} persona.\n\n## Rules\n\nrule body.\n"
         )
 
     p = build_pipeline(db=Database(str(tmp_path / "t.db")))
@@ -546,8 +568,12 @@ def test_run_quarterly_meta_threads_prompts_dir_into_digest(tmp_path):
     p.config.llm.meta_reflector_model = "gpt-5.4"
 
     from src.agents.base import AgentResult
+
     ag_result = AgentResult(
-        raw_text="{}", tokens_used=10, model="gpt-5.4", user_message="x",
+        raw_text="{}",
+        tokens_used=10,
+        model="gpt-5.4",
+        user_message="x",
     )
     p.meta_reflector = MagicMock()
     p.meta_reflector.analyze.return_value = (None, ag_result)

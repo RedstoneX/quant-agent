@@ -22,6 +22,7 @@ the wrong question. See `tests/test_number_sources.py` for the gate that every
 number is in the ledger at all; this file only polices what the ledger's own
 open questions promise.
 """
+
 from __future__ import annotations
 
 import re
@@ -99,8 +100,7 @@ def test_no_ledger_open_question_promises_a_fitted_resolution() -> None:
             bad.append(f"{row['id']}: promises {hit!r}")
     assert not bad, (
         "ledger open questions that can only be answered by fitting to this "
-        "desk's own trade record (docs/OUTCOME.md bars this):\n  "
-        + "\n  ".join(bad)
+        "desk's own trade record (docs/OUTCOME.md bars this):\n  " + "\n  ".join(bad)
     )
 
 
@@ -111,8 +111,7 @@ def test_no_ledger_open_question_promises_a_fitted_resolution() -> None:
         "Settle it by backtesting the last forty trades.",
         "Measured on our own fills once there are enough of them.",
         # The exact wording that slipped past the first version of this file.
-        "At what R of open profit does the stop stop costing more than it "
-        "saves, on this desk's own closed trades?",
+        "At what R of open profit does the stop stop costing more than it saves, on this desk's own closed trades?",
         "Settle it against this desk's own closed positions.",
         # ...and the wording that the over-broad "bars" exemption excused.
         "What do this desk's own fills say, measured off daily bars?",
@@ -140,10 +139,7 @@ def test_the_three_regime_scalers_are_the_rows_this_came_from() -> None:
     every stop AND into `widest_reachable_stop_atr_multiple`, so its open
     question is the one most likely to be answered by someone reaching for the
     desk's own trade history."""
-    ids = {
-        f"src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[{i}][1]"
-        for i in (0, 1, 2)
-    }
+    ids = {f"src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[{i}][1]" for i in (0, 1, 2)}
     seen = {row["id"] for row in _rows()} & ids
     assert seen == ids, f"regime scaler rows missing from the ledger: {ids - seen}"
     for row in _rows():

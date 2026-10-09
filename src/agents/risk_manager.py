@@ -7,11 +7,17 @@ from src.agents import risk_review_mode
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import LiveLimitPrompt
 from src.agents.risk_verdict_canon import (
-    canonical_modifications, canonical_rejections, drop_invalid_modifications,
+    canonical_modifications,
+    canonical_rejections,
+    drop_invalid_modifications,
 )
 from src.models import (
-    ExitRiskVerdict, NewsIntelligenceReport, PortfolioDecision, Position,
-    RiskVerdict, TechAnalysisResult,
+    ExitRiskVerdict,
+    NewsIntelligenceReport,
+    PortfolioDecision,
+    Position,
+    RiskVerdict,
+    TechAnalysisResult,
 )
 from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import HARD_BLOCK_RULES, RiskViolation
@@ -70,9 +76,7 @@ def _format_engine_findings(rule_violations: list[RiskViolation]) -> str:
             "the order; nothing here is yours to approve or wave through."
         )
         lines.extend(
-            f"- HARD LIMIT BREACHED [{v.rule}]: {v.message} "
-            f"(value: {v.value}, limit: {v.limit})"
-            for v in hard
+            f"- HARD LIMIT BREACHED [{v.rule}]: {v.message} (value: {v.value}, limit: {v.limit})" for v in hard
         )
     if advisory:
         if hard:
@@ -86,11 +90,11 @@ def _format_engine_findings(rule_violations: list[RiskViolation]) -> str:
             "`reasoning_chain` field."
         )
         lines.extend(
-            f"- ADVISORY (nothing blocked) [{v.rule}]: {v.message} "
-            f"(value: {v.value}, limit: {v.limit})"
+            f"- ADVISORY (nothing blocked) [{v.rule}]: {v.message} (value: {v.value}, limit: {v.limit})"
             for v in advisory
         )
     return "\n".join(lines)
+
 
 PROMPT_PATH = PROJECT_ROOT / "config" / "prompts" / "risk_manager.md"
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
@@ -159,10 +163,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         # `risk.max_portfolio_risk_pct` that nothing kept in step with the
         # setting. It now reads the live value, so a caller that passes
         # nothing shows the reviewer the ceiling the engine enforces.
-        risk_ceiling_pct: float = float(
-            kwargs.get("risk_ceiling_pct")
-            or self.risk_config.max_portfolio_risk_pct
-        )
+        risk_ceiling_pct: float = float(kwargs.get("risk_ceiling_pct") or self.risk_config.max_portfolio_risk_pct)
         # `reasoning_chain.event_risk` is a REQUIRED field asking whether an
         # earnings report or a macro release lands in the next few sessions.
         # Until this block existed nothing fetched either fact, so the answer
@@ -183,8 +184,12 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         event_risk_block: str = str(kwargs.get("event_risk_block") or "").strip()
         if not event_risk_block:
             from src.data.event_calendar import format_event_risk_block
+
             event_risk_block = format_event_risk_block(
-                earnings=None, events=None, coverage=None, horizon_days=0,
+                earnings=None,
+                events=None,
+                coverage=None,
+                horizon_days=0,
             ).strip()
 
         # audit round 2 #5: RM's rr_audit / sizing_sanity / concentration
@@ -211,9 +216,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         for _p in positions or []:
             _sym = str(getattr(_p, "symbol", "") or "").strip().upper()
             if _sym:
-                held_raw_by_symbol[_sym] = (
-                    held_raw_by_symbol.get(_sym, 0.0) + (_p.market_value or 0.0)
-                )
+                held_raw_by_symbol[_sym] = held_raw_by_symbol.get(_sym, 0.0) + (_p.market_value or 0.0)
 
         # audit round 2 #6: allocation_pct has TWO meanings — %-of-portfolio
         # for BUY vs %-of-current-position for SELL (100 = full close,
@@ -289,11 +292,10 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 # uses. No constant is introduced: the multiple comes from
                 # `ETF_LEVERAGE`, the ceiling from `RiskConfig`, the weights
                 # from the equity denominator already rendered below.
-                held_raw = held_raw_by_symbol.get(
-                    str(d.symbol or "").strip().upper(), 0.0
-                )
+                held_raw = held_raw_by_symbol.get(str(d.symbol or "").strip().upper(), 0.0)
                 if d.action in ("BUY", "SHORT") and denom > 0:
                     from src.risk.rules import _gross_multiplier, weight_pct_of
+
                     # Same-side only. A SHORT proposed against a name the desk
                     # is LONG is a reduction of net exposure, not an add to a
                     # short, and the constructor does not route it through the
@@ -301,8 +303,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                     # to an existing position would be a new false statement.
                     same_side_raw = (
                         held_raw
-                        if (d.action == "BUY" and held_raw > 0)
-                        or (d.action == "SHORT" and held_raw < 0)
+                        if (d.action == "BUY" and held_raw > 0) or (d.action == "SHORT" and held_raw < 0)
                         else 0.0
                     )
                     # Unsigned throughout: `max_position_pct` is measured on
@@ -311,13 +312,13 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                     held_pct = abs(weight_pct_of(same_side_raw, d.symbol, denom))
                     increment_pct = abs(
                         weight_pct_of(
-                            denom * (d.allocation_pct / 100.0), d.symbol, denom,
+                            denom * (d.allocation_pct / 100.0),
+                            d.symbol,
+                            denom,
                         )
                     )
                     resulting_pct = held_pct + increment_pct
-                    gross_mul = _gross_multiplier(
-                        str(d.symbol or "").strip().upper()
-                    )
+                    gross_mul = _gross_multiplier(str(d.symbol or "").strip().upper())
                     side_word = "position" if d.action == "BUY" else "short"
                     if held_pct > 0:
                         alloc = (
@@ -389,9 +390,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 f"Stop: ${d.stop_loss} | Target: ${d.take_profit}{rr}\n  Reasoning: {d.reasoning}"
             )
 
-        decisions_text = "\n".join(
-            _fmt_decision(d) for d in portfolio_decision.decisions
-        )
+        decisions_text = "\n".join(_fmt_decision(d) for d in portfolio_decision.decisions)
 
         if (total_value or 0) > 0:
             cash_bit = ""
@@ -404,9 +403,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                     f"cash-equivalent sweep vehicle; it is NOT sold to fund "
                     f"a BUY and is NOT part of the cash above)"
                 )
-            account_section = (
-                f"## Account\n- Total equity: ${total_value:,.0f}{cash_bit}\n"
-            )
+            account_section = f"## Account\n- Total equity: ${total_value:,.0f}{cash_bit}\n"
         elif approx_book > 0:
             account_section = (
                 f"## Account\n- Total book (approx = sum of listed positions; "
@@ -427,26 +424,22 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             r5 = recent_performance.get("rolling_5d_pct")
             r20 = recent_performance.get("rolling_20d_pct")
             trailing = recent_performance.get("trailing_days")
-            sample_bit = (
-                f", {trailing} trailing sessions" if trailing is not None else ""
-            )
+            sample_bit = f", {trailing} trailing sessions" if trailing is not None else ""
             account_section += (
-                f"- System performance: 5d {_fmt_or_na(r5, '%')} | "
-                f"20d {_fmt_or_na(r20, '%')}{sample_bit}\n"
+                f"- System performance: 5d {_fmt_or_na(r5, '%')} | 20d {_fmt_or_na(r20, '%')}{sample_bit}\n"
             )
         else:
-            account_section += (
-                "- System performance: not provided "
-                "(drawdown state unknown this run)\n"
-            )
+            account_section += "- System performance: not provided (drawdown state unknown this run)\n"
 
         # Audit §1.3 — the book's actual risk, in dollars and in % of equity,
         # with each position's R-multiple. `sizing_sanity` is asked whether any
         # bet is outsized; this is the number that answers it.
         if heat is not None:
             from src.risk.metrics import format_heat_block
+
             risk_section = format_heat_block(
-                heat, risk_ceiling_pct,
+                heat,
+                risk_ceiling_pct,
                 title="Portfolio Risk (deterministic, computed in Python)",
             )
         else:
@@ -460,10 +453,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         def _fmt_position(p: Position) -> str:
             weight_bit = ""
             if denom > 0:
-                weight_bit = (
-                    f" | Value: ${p.market_value:,.0f} "
-                    f"({p.market_value / denom * 100:.1f}% of book)"
-                )
+                weight_bit = f" | Value: ${p.market_value:,.0f} ({p.market_value / denom * 100:.1f}% of book)"
             # days_held is informational only (spec item 25, 2026-09-03/04):
             # holding-discipline protection is NO LONGER a function of age.
             # It replaced a flat <5d/5-15d/>15d day-count tier (no backtest
@@ -487,9 +477,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 f"{weight_bit}{age_bit} | Sector: {p.sector}"
             )
 
-        positions_text = "\n".join(
-            _fmt_position(p) for p in positions
-        ) if positions else "No current positions."
+        positions_text = "\n".join(_fmt_position(p) for p in positions) if positions else "No current positions."
 
         violations_text = _format_engine_findings(rule_violations)
 
@@ -519,6 +507,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
         # mandatory step did not happen", which is a finding RM can act on.
         rc = portfolio_decision.reasoning_chain
         if rc:
+
             def _field(label: str, value: str, *, mandatory_prompt_only: bool = False) -> str:
                 text = (value or "").strip()
                 if text:
@@ -536,17 +525,12 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
             # On the exit path the chain is the position reviewer's, whose
             # schema has no such fields — banner-ing them as NOT PERFORMED
             # there told the seat a falsehood on every single run.
-            chain_title, chain_preamble = (
-                risk_review_mode.reasoning_chain_heading(review_mode)
-            )
+            chain_title, chain_preamble = risk_review_mode.reasoning_chain_heading(review_mode)
             chain_rows = [
-                _field(label, getattr(rc, attr, ""),
-                       mandatory_prompt_only=mandatory)
+                _field(label, getattr(rc, attr, ""), mandatory_prompt_only=mandatory)
                 for label, attr, mandatory in risk_review_mode.chain_rows(review_mode)
             ]
-            reasoning_section = "\n".join(
-                [chain_title, "", chain_preamble, ""] + chain_rows + [""]
-            )
+            reasoning_section = "\n".join([chain_title, "", chain_preamble, ""] + chain_rows + [""])
         else:
             reasoning_section = (
                 "## PM Reasoning Chain\n"
@@ -594,8 +578,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 "constructor computes the ratio for ranking and logging only, "
                 "so no size has been adjusted for it before you see it. It is "
                 "information; the sizing judgement is yours. A low number is "
-                "not, on its own, grounds to refuse anything.\n"
-                + "\n".join(tech_lines)
+                "not, on its own, grounds to refuse anything.\n" + "\n".join(tech_lines)
             )
         else:
             tech_section = risk_review_mode.absent_block("tech", review_mode)
@@ -617,9 +600,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 if sym not in trade_syms:
                     continue
                 for a in sorted(alerts, key=lambda x: conv_order.get(x.conviction, 9))[:2]:
-                    alert_lines.append(
-                        f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}"
-                    )
+                    alert_lines.append(f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}")
             alerts_text = "\n".join(alert_lines) or "No alerts on traded symbols."
             lost_text = news_intel.format_dropped_symbols_block()
             news_section = f"""## News Intelligence (use to verify PM hasn't contradicted today's events)
@@ -643,15 +624,15 @@ Overall sentiment: {news_intel.format_market_sentiment()} ({news_intel.confidenc
                 sym = ea.get("symbol", "?")
                 if ea.get("queued"):
                     earn_lines.append(
-                        f"- {sym}: [JUST FILED {ea.get('form_type','?')} {ea.get('filing_date','?')} — "
+                        f"- {sym}: [JUST FILED {ea.get('form_type', '?')} {ea.get('filing_date', '?')} — "
                         f"ANALYSIS PENDING; cap BUY ≤ 5%]"
                     )
                 else:
                     analysis = ea.get("analysis") or {}
                     impl = analysis.get("investment_implications") or {}
                     earn_lines.append(
-                        f"- {sym}: {impl.get('sentiment','?')} ({impl.get('conviction','?')}) — "
-                        f"{impl.get('key_thesis','')[:120]}"
+                        f"- {sym}: {impl.get('sentiment', '?')} ({impl.get('conviction', '?')}) — "
+                        f"{impl.get('key_thesis', '')[:120]}"
                     )
             earnings_section = "## Earnings (verify PM respected queued-filing cap)\n" + "\n".join(earn_lines) + "\n"
         else:
@@ -710,11 +691,11 @@ Portfolio View: {portfolio_decision.portfolio_view}
 {earnings_section}{event_risk_block}
 
 ## Macro Context
-- VIX: {_fmt_or_na(vix.get('current'))} (5d avg: {_fmt_or_na(vix.get('mean_5d'))}, trend: {_fmt_or_na(vix.get('trend'))})
-- 2Y Treasury: {_fmt_or_na(treasury.get('us2y'), '%')}
-- 10Y Treasury: {_fmt_or_na(treasury.get('us10y'), '%')}
-- 2Y-10Y Spread: {_fmt_or_na(treasury.get('spread_2_10'), '%')} (inverted: {_fmt_or_na(treasury.get('inverted'))})
-- Fed Funds Rate: {_fmt_or_na(fed_funds, '%')}
+- VIX: {_fmt_or_na(vix.get("current"))} (5d avg: {_fmt_or_na(vix.get("mean_5d"))}, trend: {_fmt_or_na(vix.get("trend"))})
+- 2Y Treasury: {_fmt_or_na(treasury.get("us2y"), "%")}
+- 10Y Treasury: {_fmt_or_na(treasury.get("us10y"), "%")}
+- 2Y-10Y Spread: {_fmt_or_na(treasury.get("spread_2_10"), "%")} (inverted: {_fmt_or_na(treasury.get("inverted"))})
+- Fed Funds Rate: {_fmt_or_na(fed_funds, "%")}
 
 {reasoning_section}
 ## Engine Risk Check Results
@@ -722,21 +703,25 @@ Portfolio View: {portfolio_decision.portfolio_view}
 
 Review these proposed trades and provide your verdict as JSON."""
 
-    def review(self, portfolio_decision: PortfolioDecision, positions: list[Position],
-               macro_summary: dict, rule_violations: list[RiskViolation],
-               tech_analyses: list[TechAnalysisResult] | None = None,
-               news_intel: NewsIntelligenceReport | None = None,
-               earnings_analyses: list[dict] | None = None,
-               total_value: float | None = None,
-               cash: float | None = None,
-               reserve_balance: float = 0.0,
-               position_history: dict | None = None,
-               recent_performance: dict | None = None,
-               heat=None,
-               risk_ceiling_pct: float | None = None,
-               event_risk_block: str | None = None,
-               review_mode: str = risk_review_mode.MORNING_PLAN,
-               ) -> tuple["RiskVerdict | ExitRiskVerdict | None", "AgentResult"]:
+    def review(
+        self,
+        portfolio_decision: PortfolioDecision,
+        positions: list[Position],
+        macro_summary: dict,
+        rule_violations: list[RiskViolation],
+        tech_analyses: list[TechAnalysisResult] | None = None,
+        news_intel: NewsIntelligenceReport | None = None,
+        earnings_analyses: list[dict] | None = None,
+        total_value: float | None = None,
+        cash: float | None = None,
+        reserve_balance: float = 0.0,
+        position_history: dict | None = None,
+        recent_performance: dict | None = None,
+        heat=None,
+        risk_ceiling_pct: float | None = None,
+        event_risk_block: str | None = None,
+        review_mode: str = risk_review_mode.MORNING_PLAN,
+    ) -> tuple["RiskVerdict | ExitRiskVerdict | None", "AgentResult"]:
         # WHICH verdict shape this path returns, computed BEFORE the call so
         # `result_model` can be set for it (see BaseAgent.result_model /
         # _openai_wire_call's response_format). The exit review's schema is
@@ -785,9 +770,7 @@ Review these proposed trades and provide your verdict as JSON."""
         # so a repair that "changed" one changed nothing that can reach the
         # broker — treating that as an unauthorized re-decision would fail a
         # sound verdict closed, and on THIS path failing closed blocks a SALE.
-        decision_fields = (
-            self._EXIT_DECISION_FIELDS if exit_mode else self._DECISION_FIELDS
-        )
+        decision_fields = self._EXIT_DECISION_FIELDS if exit_mode else self._DECISION_FIELDS
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Risk manager returned non-JSON response")
@@ -836,7 +819,8 @@ Review these proposed trades and provide your verdict as JSON."""
                     "Risk verdict validation failure is rooted in a "
                     "decision-bearing field (%s) — not schema-repairable; "
                     "failing closed: %s",
-                    ", ".join(decision_fields), e,
+                    ", ".join(decision_fields),
+                    e,
                 )
                 result.gate_reason = "risk_decision_field_validation_failure"
                 return None, result
@@ -846,7 +830,9 @@ Review these proposed trades and provide your verdict as JSON."""
                 if not exit_mode:
                     reparsed = self._drop_invalid_modifications(reparsed)
                 if not self._decision_fields_unchanged(
-                    parsed, reparsed, fields=decision_fields,
+                    parsed,
+                    reparsed,
+                    fields=decision_fields,
                 ):
                     logger.error(
                         "Risk verdict repair changed decision-bearing "
@@ -860,9 +846,9 @@ Review these proposed trades and provide your verdict as JSON."""
                 try:
                     verdict = verdict_model(**reparsed)
                     logger.info(
-                        "%s repair succeeded (approved=%s, %d mods, "
-                        "%d per-symbol refusals)",
-                        schema_name, verdict.approved,
+                        "%s repair succeeded (approved=%s, %d mods, %d per-symbol refusals)",
+                        schema_name,
+                        verdict.approved,
                         len(getattr(verdict, "modifications", ())),
                         len(verdict.rejected_symbols),
                     )
@@ -871,7 +857,8 @@ Review these proposed trades and provide your verdict as JSON."""
                 except Exception as e2:  # noqa: BLE001
                     record_guarded_pass(self, "risk_manager.verdict_repair_parse", e2, log=logger)
                     logger.error(
-                        "Failed to parse risk verdict after repair: %s", e2,
+                        "Failed to parse risk verdict after repair: %s",
+                        e2,
                     )
                     repaired.gate_reason = "risk_repair_schema_error"
                     return None, repaired
@@ -894,8 +881,11 @@ Review these proposed trades and provide your verdict as JSON."""
     # re-deciding — both fail closed, refusing the whole plan, which is the
     # conservative direction.
     _DECISION_FIELDS = (
-        "approved", "modifications", "rejected_symbols",
-        "scale_all_buys", "reason_category",
+        "approved",
+        "modifications",
+        "rejected_symbols",
+        "scale_all_buys",
+        "reason_category",
     )
 
     #: The same list on the EXIT-REVIEW path, minus the two levers that are
@@ -905,7 +895,9 @@ Review these proposed trades and provide your verdict as JSON."""
     #: exit leaves a broken-thesis position on the book (the exact asymmetry
     #: `_risk_review_exits` fails OPEN for, owner-ratified 2026-08-27).
     _EXIT_DECISION_FIELDS = (
-        "approved", "rejected_symbols", "reason_category",
+        "approved",
+        "rejected_symbols",
+        "reason_category",
     )
 
     _canonical_rejections = staticmethod(canonical_rejections)
@@ -914,7 +906,11 @@ Review these proposed trades and provide your verdict as JSON."""
 
     @classmethod
     def _decision_fields_unchanged(
-        cls, original: dict, repaired: dict, *, fields: tuple[str, ...] | None = None,
+        cls,
+        original: dict,
+        repaired: dict,
+        *,
+        fields: tuple[str, ...] | None = None,
     ) -> bool:
         """True iff every decision-bearing field survived a schema
         repair unchanged. `original` and `repaired` are both already

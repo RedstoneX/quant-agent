@@ -80,7 +80,9 @@ def heal_targets_from_raw(targets, raw) -> tuple[list, list[str]]:
     """
     from src.models.base import stated_soft_exit
     from src.seat_heal import (
-        _set_target_falsifier, _target_field, _target_symbol,
+        _set_target_falsifier,
+        _target_field,
+        _target_symbol,
     )
 
     if not targets:
@@ -97,16 +99,11 @@ def heal_targets_from_raw(targets, raw) -> tuple[list, list[str]]:
             continue
         symbol = _target_symbol(target)
         raw_target = by_symbol.get(symbol) if symbol else None
-        raw_value = (
-            raw_target.get("thesis_invalid_if")
-            if isinstance(raw_target, dict) else None
-        )
+        raw_value = raw_target.get("thesis_invalid_if") if isinstance(raw_target, dict) else None
         # A non-string raw value is not a sentence the model wrote. It is
         # ignored rather than coerced: stringifying a number would be
         # inventing a falsifier out of punctuation.
-        stated = (
-            stated_soft_exit(raw_value) if isinstance(raw_value, str) else None
-        )
+        stated = stated_soft_exit(raw_value) if isinstance(raw_value, str) else None
         if not stated:
             out.append(target)
             continue
@@ -125,9 +122,7 @@ def refusal_tally(symbols, heals: dict | None = None) -> dict:
     record is counted under `none_recorded` rather than dropped — an
     absent record is a fact about the run, not a zero.
     """
-    unique = list(dict.fromkeys(
-        str(s).strip().upper() for s in (symbols or []) if str(s).strip()
-    ))
+    unique = list(dict.fromkeys(str(s).strip().upper() for s in (symbols or []) if str(s).strip()))
     lookup = heals if isinstance(heals, dict) else {}
     outcomes: Counter[str] = Counter()
     for symbol in unique:
@@ -151,14 +146,9 @@ def soft_exit_heal_detail(ctx, symbol: str) -> str:
     including names whose retry was never attempted. It now states what the
     heal record says, and says plainly when there is no heal record at all.
     """
-    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(
-        str(symbol).strip().upper()
-    )
+    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(str(symbol).strip().upper())
     if isinstance(heal, dict) and (heal.get("detail") or heal.get("outcome")):
-        return (
-            f"heal outcome '{heal.get('outcome') or 'unknown'}': "
-            f"{heal.get('detail') or ''}".strip()
-        )
+        return f"heal outcome '{heal.get('outcome') or 'unknown'}': {heal.get('detail') or ''}".strip()
     return (
         "no soft-exit heal was recorded for this name — the mechanical "
         "restore did not fill it and no paid retry outcome was filed"
@@ -179,7 +169,8 @@ def apply_mechanical_heal(decision, result, missing, record_heal, log) -> list:
     except Exception:  # noqa: BLE001 — an unparseable raw just means no heal
         raw_payload = None
     healed, healed_symbols = heal_targets_from_raw(
-        list(getattr(decision, "targets", None) or []), raw_payload,
+        list(getattr(decision, "targets", None) or []),
+        raw_payload,
     )
     if not healed_symbols:
         return missing
@@ -187,10 +178,12 @@ def apply_mechanical_heal(decision, result, missing, record_heal, log) -> list:
     log.info(
         "Soft-exit mechanical heal restored thesis_invalid_if from "
         "the model's own raw output for %s — not invented and not "
-        "paid for", healed_symbols,
+        "paid for",
+        healed_symbols,
     )
     record_heal(
-        healed_symbols, HEAL_MECHANICAL,
+        healed_symbols,
+        HEAL_MECHANICAL,
         "the falsifier the model itself already wrote was restored "
         "from the raw seat output after a later wipe blanked it; no "
         "text was invented and no retry was bought",
@@ -229,9 +222,7 @@ def soft_exit_fill_coda(missing) -> str:
 
 def add_constructor_dropped(portfolio_decision, symbols) -> None:
     """Add refused names to `constructor_dropped`, keeping order, no repeats."""
-    existing = list(
-        getattr(portfolio_decision, "constructor_dropped", None) or []
-    )
+    existing = list(getattr(portfolio_decision, "constructor_dropped", None) or [])
     for symbol in symbols:
         if symbol not in existing:
             existing.append(symbol)
@@ -249,13 +240,18 @@ def record_refusal_count(record_event, log, pipeline, ctx, symbols) -> None:
     """
     try:
         tally = refusal_tally(
-            symbols, getattr(ctx, "soft_exit_heals", None),
+            symbols,
+            getattr(ctx, "soft_exit_heals", None),
         )
         if not tally["refused_count"]:
             return
         record_event(
-            pipeline, ctx, None, REFUSAL_COUNT_STAGE,
-            str(tally["refused_count"]), REFUSAL_COUNT_REASON,
+            pipeline,
+            ctx,
+            None,
+            REFUSAL_COUNT_STAGE,
+            str(tally["refused_count"]),
+            REFUSAL_COUNT_REASON,
             **tally,
         )
     except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade

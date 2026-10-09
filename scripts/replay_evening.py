@@ -69,7 +69,9 @@ def _reconstruct_kwargs(kwargs_dict: dict) -> dict:
     pass through unchanged.
     """
     from src.models import (
-        MissedOpportunitySnapshot, NewsIntelligenceReport, Position,
+        MissedOpportunitySnapshot,
+        NewsIntelligenceReport,
+        Position,
     )
 
     out = dict(kwargs_dict)
@@ -125,27 +127,33 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--date", required=True, help="Replay date (YYYY-MM-DD)")
     parser.add_argument(
-        "--prompt", default="config/prompts/evening_analyst.md",
+        "--prompt",
+        default="config/prompts/evening_analyst.md",
         help="Candidate prompt .md (default: current live prompt)",
     )
     parser.add_argument(
-        "--model", default=None,
+        "--model",
+        default=None,
         help="LLM model override (default: settings.yaml evening_analyst_model)",
     )
     parser.add_argument(
-        "--tag", default=None,
+        "--tag",
+        default=None,
         help="Output filename suffix; defaults to the prompt file stem",
     )
     parser.add_argument(
-        "--replay-dir", default="data/evening_replays",
+        "--replay-dir",
+        default="data/evening_replays",
         help="Directory holding frozen inputs",
     )
     parser.add_argument(
-        "--output-dir", default="data/shadow_evenings",
+        "--output-dir",
+        default="data/shadow_evenings",
         help="Directory to write replay outputs",
     )
     parser.add_argument(
-        "--config", default="config/settings.yaml",
+        "--config",
+        default="config/settings.yaml",
         help="Path to settings.yaml",
     )
     args = parser.parse_args()
@@ -180,6 +188,7 @@ def main():
 
     # Load config (for API keys + default model)
     from src.config import load_config
+
     cfg_path = Path(args.config)
     if not cfg_path.is_absolute():
         cfg_path = PROJECT_ROOT / cfg_path
@@ -210,14 +219,19 @@ def main():
     # Cleaner than subclassing — keeps all analyze()/build_user_message
     # behavior identical to production.
     agent = EveningAnalystAgent(
-        api_key=api_key, model=model, max_tokens=max_tokens, provider=provider,
+        api_key=api_key,
+        model=model,
+        max_tokens=max_tokens,
+        provider=provider,
         fallback_api_key=config.api_keys.anthropic,
     )
     _orig_prop = type(agent).system_prompt
     type(agent).system_prompt = property(lambda self: prompt_text)
     from src.cost_circuit import protect_paid_agent
+
     protect_paid_agent(
-        agent, config,
+        agent,
+        config,
         run_id=f"evening-replay-{uuid.uuid4().hex[:8]}",
         mode="replay_evening",
     )
@@ -236,6 +250,7 @@ def main():
             type(agent).system_prompt = _orig_prop
     except Exception as exc:
         import traceback as _tb
+
         replay_error = {
             "error_type": type(exc).__name__,
             "message": str(exc),
@@ -266,17 +281,21 @@ def main():
     print(f"Replay output written → {out_file}")
     if report:
         print(f"  tokens_used={result.tokens_used} model={model}")
-        print(f"  report valid: reasoning_chain + "
-              f"{len(report.missed_opportunities)} missed_ops + "
-              f"{len(report.sell_grades)} sell_grades + "
-              f"{len(report.buy_grades)} buy_grades")
+        print(
+            f"  report valid: reasoning_chain + "
+            f"{len(report.missed_opportunities)} missed_ops + "
+            f"{len(report.sell_grades)} sell_grades + "
+            f"{len(report.buy_grades)} buy_grades"
+        )
     elif replay_error:
         print(f"  ERROR: {replay_error['error_type']}: {replay_error['message']}")
         # Non-zero exit so batch runners (shell loops / CI) notice.
         sys.exit(2)
     else:
-        print("  WARNING: candidate prompt produced an invalid / unparseable "
-              "EveningReport. Check raw_response field for details.")
+        print(
+            "  WARNING: candidate prompt produced an invalid / unparseable "
+            "EveningReport. Check raw_response field for details."
+        )
 
 
 if __name__ == "__main__":

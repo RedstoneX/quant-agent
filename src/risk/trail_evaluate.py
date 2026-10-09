@@ -6,6 +6,7 @@ types stay in `src/risk/trailing.py`; read its module docstring first.
 `compute_trailing_stop` and `evaluate_trailing_stop` remain reachable as
 `src.risk.trailing.compute_trailing_stop` / `evaluate_trailing_stop`.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace as _replace
@@ -78,10 +79,17 @@ def compute_trailing_stop(
     the exact behaviour this argument replaces.
     """
     return evaluate_trailing_stop(
-        symbol=symbol, setup_type=setup_type, entry=entry,
-        current_price=current_price, current_stop=current_stop,
-        reference_target=reference_target, bars=bars, atr=atr,
-        min_ratchet_ticks=min_ratchet_ticks, qty=qty, initial_stop=initial_stop,
+        symbol=symbol,
+        setup_type=setup_type,
+        entry=entry,
+        current_price=current_price,
+        current_stop=current_stop,
+        reference_target=reference_target,
+        bars=bars,
+        atr=atr,
+        min_ratchet_ticks=min_ratchet_ticks,
+        qty=qty,
+        initial_stop=initial_stop,
         structural_ceiling=structural_ceiling,
     ).proposal
 
@@ -153,15 +161,27 @@ def evaluate_trailing_stop(
         # breakeven step (fix #3) decides. Both fail closed without an
         # initial stop, and neither ever loosens a stop.
         second = _range_second_ratchet(
-            symbol=symbol, ent=ent, cur=cur, stop=stop,
-            initial_stop=initial_stop, is_short=is_short,
+            symbol=symbol,
+            ent=ent,
+            cur=cur,
+            stop=stop,
+            initial_stop=initial_stop,
+            is_short=is_short,
             setup_type=setup_type,
         )
-        range_fallback = second if second.proposal is not None else (
-            _range_breakeven_ratchet(
-                symbol=symbol, ent=ent, cur=cur, stop=stop,
-                initial_stop=initial_stop, is_short=is_short,
-                setup_type=setup_type,
+        range_fallback = (
+            second
+            if second.proposal is not None
+            else (
+                _range_breakeven_ratchet(
+                    symbol=symbol,
+                    ent=ent,
+                    cur=cur,
+                    stop=stop,
+                    initial_stop=initial_stop,
+                    is_short=is_short,
+                    setup_type=setup_type,
+                )
             )
         )
 
@@ -173,8 +193,7 @@ def evaluate_trailing_stop(
         once this says yes, because the alternative is placing a stop inside
         the very daily-noise band the structural leg was just refused for.
         Returns the refusal code, or None when the level is placeable."""
-        floor = min_ratchet_floor(stop, is_short=is_short,
-                                  min_ratchet_ticks=min_ratchet_ticks)
+        floor = min_ratchet_floor(stop, is_short=is_short, min_ratchet_ticks=min_ratchet_ticks)
         # Half-a-tick tolerance is the float<->Decimal round-trip this repo
         # already allows in `_prices_match`, not a threshold: a level that
         # quantizes ONTO the floor is a real one-tick improvement.
@@ -233,10 +252,7 @@ def evaluate_trailing_stop(
     # the noise band's own edge: a level read off today's price is a pure
     # price-follower, which is a different exit rule from the ratified one and
     # needs an argued decision, not a quiet patch here.
-    _usable_bars = [
-        b for b in (bars or [])
-        if _finite(getattr(b, "low" if is_short else "high", None)) is not None
-    ]
+    _usable_bars = [b for b in (bars or []) if _finite(getattr(b, "low" if is_short else "high", None)) is not None]
     if len(_usable_bars) < MIN_BARS_FOR_A_READING:
         return _or_range(TrailEvaluation(None, TRAIL_CODE_TOO_FEW_BARS))
 
@@ -273,9 +289,7 @@ def evaluate_trailing_stop(
                 if cur < chandelier < stop:
                     candidates.append((chandelier, "chandelier"))
         else:
-            highs = [
-                _finite(getattr(b, "high", None)) for b in (bars or [])
-            ]
+            highs = [_finite(getattr(b, "high", None)) for b in (bars or [])]
             highs = [h for h in highs if h is not None]
             if highs:
                 chandelier = max(highs) - CHANDELIER_ATR_MULTIPLE * atr_f
@@ -304,9 +318,7 @@ def evaluate_trailing_stop(
             first_refusal = _refusal
 
     if candidate is None:
-        return _or_range(
-            TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE)
-        )
+        return _or_range(TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE))
 
     candidate = round(candidate, 2)
     if is_short:
@@ -345,12 +357,17 @@ def evaluate_trailing_stop(
     else:
         if candidate >= ent:
             locked = " — at or above entry, so this position stops consuming risk budget"
-    return TrailEvaluation(TrailProposal(
-        symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
-        source=source,
-        reason=(
-            f"deterministic trail ({source}): {setup_type or 'unknown'} setup, "
-            f"stop ${stop:.2f} -> ${candidate:.2f} with price ${cur:.2f}"
-            f"{locked}"
+    return TrailEvaluation(
+        TrailProposal(
+            symbol=symbol.upper(),
+            new_stop=candidate,
+            previous_stop=stop,
+            source=source,
+            reason=(
+                f"deterministic trail ({source}): {setup_type or 'unknown'} setup, "
+                f"stop ${stop:.2f} -> ${candidate:.2f} with price ${cur:.2f}"
+                f"{locked}"
+            ),
         ),
-    ), TRAIL_CODE_TRAILED)
+        TRAIL_CODE_TRAILED,
+    )

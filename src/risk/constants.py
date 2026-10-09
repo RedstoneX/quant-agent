@@ -37,7 +37,9 @@ machinery below keeps applying.
 
 
 def is_trend_trade(
-    setup_type: str | None, *, structural_ceiling: bool | None = None,
+    setup_type: str | None,
+    *,
+    structural_ceiling: bool | None = None,
 ) -> bool:
     """Is there nothing overhead that is expected to stop this trade?
 
@@ -77,7 +79,9 @@ def is_trend_trade(
 
 
 def reward_risk_floor_applies(
-    setup_type: str | None, *, structural_ceiling: bool | None = None,
+    setup_type: str | None,
+    *,
+    structural_ceiling: bool | None = None,
 ) -> bool:
     """Does any reward:risk comparison apply to this trade at all?
 
@@ -122,7 +126,8 @@ def reward_risk_floor_applies(
     exemption then rests on that fact rather than on the analyst's wording.
     """
     return not is_trend_trade(
-        setup_type, structural_ceiling=structural_ceiling,
+        setup_type,
+        structural_ceiling=structural_ceiling,
     )
 
 
@@ -258,9 +263,11 @@ Consumers (must stay aligned — if you edit one, verify the others):
 """
 
 
-
 def risk_budget_allocation_pct(
-    *, entry_price: float, stop_price: float, total_value: float,
+    *,
+    entry_price: float,
+    stop_price: float,
+    total_value: float,
     risk_budget_pct: float,
 ) -> float | None:
     """How big this ONE name's OWN stop distance lets it be, as a RAW
@@ -301,8 +308,7 @@ def risk_budget_allocation_pct(
         budget = float(risk_budget_pct)
     except (TypeError, ValueError):
         return None
-    if not (math.isfinite(entry) and math.isfinite(stop)
-            and math.isfinite(equity) and math.isfinite(budget)):
+    if not (math.isfinite(entry) and math.isfinite(stop) and math.isfinite(equity) and math.isfinite(budget)):
         return None
     if equity <= 0:
         return None

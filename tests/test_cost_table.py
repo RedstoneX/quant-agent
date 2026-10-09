@@ -1,4 +1,5 @@
 """src/cost_table.py: per-model pricing + estimate_cost + fmt_cost."""
+
 from src.cost_table import PRICING, estimate_cost, fmt_cost
 
 
@@ -67,8 +68,7 @@ def test_estimate_cost_haiku_significantly_cheaper():
     cost_opus = estimate_cost("claude-opus-4-7", 100_000, 10_000)
     cost_haiku = estimate_cost("claude-haiku-4-5", 100_000, 10_000)
     assert cost_haiku < cost_opus * 0.3, (
-        f"Haiku should be much cheaper than Opus; "
-        f"got opus=${cost_opus}, haiku=${cost_haiku}"
+        f"Haiku should be much cheaper than Opus; got opus=${cost_opus}, haiku=${cost_haiku}"
     )
 
 
@@ -90,6 +90,7 @@ def test_fmt_cost_dollar_plus_uses_two_decimals_with_separator():
 
 
 # === Defensive token extraction (R7 audit follow-up) ===
+
 
 def test_extract_anthropic_usage_handles_missing_usage_object():
     """Some Anthropic SDK error paths return a response with no .usage
@@ -150,6 +151,7 @@ def test_extract_openai_usage_normal_path():
 
 # === LiteLLM pricing refresh (R7 follow-up: prices must come from upstream) ===
 
+
 def test_apply_litellm_data_converts_per_token_to_per_million(monkeypatch):
     """LiteLLM stores cost per single token; our PRICING uses per-million-token
     units so the math in estimate_cost is readable. Pin the conversion."""
@@ -161,9 +163,9 @@ def test_apply_litellm_data_converts_per_token_to_per_million(monkeypatch):
         # Realistic LiteLLM shape — they store cost per token (not per million).
         fake_data = {
             "claude-opus-4-7": {
-                "input_cost_per_token": 5e-6,    # $5 / M
+                "input_cost_per_token": 5e-6,  # $5 / M
                 "output_cost_per_token": 25e-6,  # $25 / M
-                "max_input_tokens": 200000,      # ignored by us
+                "max_input_tokens": 200000,  # ignored by us
             },
         }
         n = _apply_litellm_data(fake_data)
@@ -209,19 +211,25 @@ def test_refresh_pricing_falls_back_to_cache_when_network_fails(tmp_path, monkey
 
     # Redirect cache to a temp path with a known-good snapshot.
     cache = tmp_path / "pricing_cache.json"
-    cache.write_text(_json.dumps({
-        "claude-opus-4-7": {
-            "input_cost_per_token": 7e-6,
-            "output_cost_per_token": 33e-6,
-        },
-    }))
+    cache.write_text(
+        _json.dumps(
+            {
+                "claude-opus-4-7": {
+                    "input_cost_per_token": 7e-6,
+                    "output_cost_per_token": 33e-6,
+                },
+            }
+        )
+    )
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)
     monkeypatch.setattr(cost_table, "_CACHE_MAX_AGE_SECONDS", 0)  # always stale
 
     # Make `requests.get` raise.
     import requests
+
     def _explode(*a, **kw):
         raise requests.ConnectionError("simulated DNS failure")
+
     monkeypatch.setattr("src.cost_table.requests.get" if False else "requests.get", _explode)
 
     original = {k: dict(v) for k, v in cost_table.PRICING.items()}
@@ -310,9 +318,14 @@ def test_refresh_pricing_atomic_write(tmp_path, monkeypatch):
 
     # Mock requests.get to return our fake payload.
     import requests
+
     class _R:
-        def raise_for_status(self): pass
-        def json(self): return fake_payload
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return fake_payload
+
     monkeypatch.setattr("requests.get", lambda *a, **k: _R())
 
     original = {k: dict(v) for k, v in cost_table.PRICING.items()}
@@ -340,8 +353,10 @@ def test_refresh_pricing_returns_false_when_no_cache_and_network_fails(tmp_path,
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)
 
     import requests
+
     def _explode(*a, **kw):
         raise requests.ConnectionError("no network")
+
     monkeypatch.setattr("requests.get", _explode)
 
     assert cost_table.refresh_pricing(force=True) is False
@@ -378,6 +393,7 @@ def test_fmt_cost_zero_uses_two_decimal_consistent_with_cents():
     the sub-cent branch, which looked inconsistent next to "$0.30 (3 calls)"
     in Telegram lines. Sub-cent POSITIVE values keep 4-decimal precision."""
     from src.cost_table import fmt_cost
+
     assert fmt_cost(0.0) == "$0.00"
     # Sub-cent positives keep precision so $0.0001 doesn't round to $0.00.
     assert fmt_cost(0.0001) == "$0.0001"
@@ -397,6 +413,7 @@ def _restore_pricing():
     _UNKNOWN_MODELS memo) so on-demand-resolution tests don't leak resolved
     rates / negative memos into the rest of the session."""
     from src import cost_table
+
     pricing_snap = {k: dict(v) for k, v in cost_table.PRICING.items()}
     unknown_snap = set(cost_table._UNKNOWN_MODELS)
     yield
@@ -427,14 +444,14 @@ def test_resolves_unknown_model_from_cache_without_network(tmp_path, monkeypatch
     """A model in NEITHER fallback NOR PRICING but present in the local
     LiteLLM cache resolves from cache — and must NOT touch the network."""
     from src import cost_table
+
     cache = tmp_path / "pricing_cache.json"
-    cache.write_text(_json_mod.dumps(
-        {"nova-test-1": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6}}
-    ))
+    cache.write_text(_json_mod.dumps({"nova-test-1": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6}}))
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)
 
     def _boom():
         raise AssertionError("cache hit must not trigger a network fetch")
+
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", _boom)
 
     cost = cost_table.estimate_cost("nova-test-1", 1_000_000, 1_000_000)
@@ -447,9 +464,11 @@ def test_resolves_unknown_model_via_live_fetch_when_cache_missing(tmp_path, monk
     """No cache (e.g. fresh CI checkout / a brand-new model) → exactly one
     live fetch resolves it. This is 'look it up on first run'."""
     from src import cost_table
+
     monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(
-        cost_table, "_fetch_litellm_dataset",
+        cost_table,
+        "_fetch_litellm_dataset",
         lambda: {"nova-test-2": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6}},
     )
     cost = cost_table.estimate_cost("nova-test-2", 1_000_000, 1_000_000)
@@ -461,10 +480,9 @@ def test_unknown_model_absent_from_dataset_is_memoised(tmp_path, monkeypatch, _r
     """A model genuinely not in LiteLLM → None (honest '$?.??', never a
     fabricated price) and is memoised so we never re-read for it."""
     from src import cost_table
+
     cache = tmp_path / "pricing_cache.json"
-    cache.write_text(_json_mod.dumps(
-        {"some-other": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}}
-    ))
+    cache.write_text(_json_mod.dumps({"some-other": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}}))
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)  # fresh (just written)
 
     assert cost_table.estimate_cost("ghost-model", 100, 50) is None
@@ -473,6 +491,7 @@ def test_unknown_model_absent_from_dataset_is_memoised(tmp_path, monkeypatch, _r
     # Second call must short-circuit on the memo — prove no cache re-read.
     def _boom():
         raise AssertionError("memoised miss must not re-read the dataset")
+
     monkeypatch.setattr(cost_table, "_read_cache_dataset", _boom)
     assert cost_table.estimate_cost("ghost-model", 100, 50) is None
 
@@ -482,6 +501,7 @@ def test_unknown_model_not_memoised_when_dataset_unreachable(tmp_path, monkeypat
     network down), do NOT memoise — so it can resolve once connectivity
     returns instead of being stuck at '$?.??' forever."""
     from src import cost_table
+
     monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)  # network down
     assert cost_table.estimate_cost("temp-outage-model", 100, 50) is None
@@ -492,12 +512,14 @@ def test_fresh_cache_lacking_model_skips_redundant_fetch(tmp_path, monkeypatch, 
     """A FRESH cache that lacks the model must NOT trigger a fetch (re-fetching
     the same upstream snapshot can't surface it) — it's memoised as unknown."""
     from src import cost_table
+
     cache = tmp_path / "pricing_cache.json"
     cache.write_text(_json_mod.dumps({"x": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}}))
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)
 
     def _boom():
         raise AssertionError("fresh cache lacking the model must not fetch")
+
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", _boom)
     assert cost_table.estimate_cost("not-in-fresh-cache", 100, 50) is None
 
@@ -506,6 +528,7 @@ def test_litellm_entry_resolves_provider_prefixed_key():
     """LiteLLM sometimes keys a model as 'openai/<id>' rather than the bare id.
     The resolver tries provider-prefixed variants."""
     from src.cost_table import _litellm_entry
+
     data = {"openai/exotic-model": {"input_cost_per_token": 2e-6, "output_cost_per_token": 4e-6}}
     assert _litellm_entry(data, "exotic-model") == {"input": 2.0, "output": 4.0}
 
@@ -514,7 +537,11 @@ def test_rates_from_entry_validation():
     """The shared validator rejects malformed / bool / non-positive entries
     and converts per-token → per-million on the happy path."""
     from src.cost_table import _rates_from_entry
-    assert _rates_from_entry({"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6}) == {"input": 5.0, "output": 30.0}
+
+    assert _rates_from_entry({"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6}) == {
+        "input": 5.0,
+        "output": 30.0,
+    }
     assert _rates_from_entry({"input_cost_per_token": 0, "output_cost_per_token": 30e-6}) is None  # non-positive
     assert _rates_from_entry({"input_cost_per_token": True, "output_cost_per_token": 30e-6}) is None  # bool
     assert _rates_from_entry({"input_cost_per_token": "x", "output_cost_per_token": 30e-6}) is None  # non-numeric
@@ -540,10 +567,12 @@ def test_deepseek_pinned_survives_cache_refresh(tmp_path, monkeypatch, _restore_
     """A cache refresh carrying LiteLLM's stale deepseek-chat ($0.28/$0.42) must
     NOT overwrite the pinned official rate."""
     from src import cost_table
+
     cache = tmp_path / "pricing_cache.json"
     monkeypatch.setattr(cost_table, "_CACHE_PATH", cache)
     monkeypatch.setattr(
-        cost_table, "_fetch_litellm_dataset",
+        cost_table,
+        "_fetch_litellm_dataset",
         lambda: {"deepseek-chat": {"input_cost_per_token": 0.28e-6, "output_cost_per_token": 0.42e-6}},
     )
     cost_table.refresh_pricing(force=True)
@@ -569,6 +598,7 @@ def test_openrouter_policy_models_are_all_priced():
     """Every model the accepted policy can route to must price offline —
     cost reporting cannot depend on reaching a catalog mid-session."""
     from src.cost_table import _PRICING_OPENROUTER
+
     for model in _PRICING_OPENROUTER:
         assert estimate_cost(model, 1000, 1000) is not None, model
 
@@ -578,10 +608,11 @@ def test_openrouter_rates_beat_litellm_for_routed_traffic(monkeypatch, _restore_
     that is the wrong number, so a cache refresh must not be able to move a
     pinned OpenRouter row."""
     from src import cost_table
+
     monkeypatch.setattr(
-        cost_table, "_fetch_litellm_dataset",
-        lambda: {"openai/gpt-5.5": {"input_cost_per_token": 99e-6,
-                                    "output_cost_per_token": 99e-6}},
+        cost_table,
+        "_fetch_litellm_dataset",
+        lambda: {"openai/gpt-5.5": {"input_cost_per_token": 99e-6, "output_cost_per_token": 99e-6}},
     )
     cost_table.refresh_pricing(force=True)
     assert cost_table.PRICING["openai/gpt-5.5"] == {"input": 5.0, "output": 30.0}
@@ -591,12 +622,14 @@ def test_unpinned_openrouter_id_resolves_from_catalog_cache(tmp_path, monkeypatc
     """An operator experimenting with a model the policy hasn't adopted still
     gets a real cost — from OpenRouter's catalog, without a network call."""
     from src import cost_table
+
     cache = tmp_path / "openrouter_pricing_cache.json"
     cache.write_text(_json_mod.dumps({"acme/experimental-1": {"input": 2.0, "output": 8.0}}))
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
 
     def _boom():
         raise AssertionError("cache hit must not trigger a network fetch")
+
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", _boom)
 
     cost = cost_table.estimate_cost("acme/experimental-1", 1_000_000, 1_000_000)
@@ -607,6 +640,7 @@ def test_openrouter_free_tier_rates_are_not_priced_as_zero(tmp_path, monkeypatch
     """OpenRouter's `:free` tiers quote 0/0. Accepting that would log a
     confident $0.00 into daily totals; honest answer is "$?.??"."""
     from src import cost_table
+
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)
@@ -618,14 +652,15 @@ def test_openrouter_free_tier_rates_are_not_priced_as_zero(tmp_path, monkeypatch
 
         @staticmethod
         def json():
-            return {"data": [
-                {"id": "vendor/free-model:free",
-                 "pricing": {"prompt": "0", "completion": "0"}},
-                {"id": "vendor/paid-model",
-                 "pricing": {"prompt": "0.000001", "completion": "0.000004"}},
-            ]}
+            return {
+                "data": [
+                    {"id": "vendor/free-model:free", "pricing": {"prompt": "0", "completion": "0"}},
+                    {"id": "vendor/paid-model", "pricing": {"prompt": "0.000001", "completion": "0.000004"}},
+                ]
+            }
 
     import requests
+
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
 
     assert cost_table.estimate_cost("vendor/free-model:free", 1_000, 1_000) is None
@@ -636,6 +671,7 @@ def test_openrouter_fetch_failure_never_raises(tmp_path, monkeypatch, _restore_p
     """Pricing is telemetry. An unreachable catalog must degrade to "$?.??",
     never take a trading session down."""
     from src import cost_table
+
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", lambda: None)
@@ -644,6 +680,7 @@ def test_openrouter_fetch_failure_never_raises(tmp_path, monkeypatch, _restore_p
 
     def _explode(*a, **k):
         raise requests.ConnectionError("network down")
+
     monkeypatch.setattr(requests, "get", _explode)
 
     assert cost_table.estimate_cost("vendor/whatever", 1_000, 1_000) is None
@@ -656,13 +693,15 @@ def test_openrouter_stale_cache_is_refreshed_not_trusted(tmp_path, monkeypatch, 
     import os as _os
     import time as _time
     from src import cost_table
+
     cache = tmp_path / "openrouter_pricing_cache.json"
     cache.write_text(_json_mod.dumps({"acme/drifted": {"input": 1.0, "output": 1.0}}))
     old = _time.time() - (cost_table._CACHE_MAX_AGE_SECONDS + 60)
     _os.utime(cache, (old, old))
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
     monkeypatch.setattr(
-        cost_table, "_fetch_openrouter_pricing",
+        cost_table,
+        "_fetch_openrouter_pricing",
         lambda: {"acme/drifted": {"input": 3.0, "output": 9.0}},
     )
     assert cost_table.estimate_cost("acme/drifted", 1_000_000, 0) == 3.0
@@ -674,6 +713,7 @@ def test_openrouter_stale_cache_is_last_resort_when_catalog_is_down(tmp_path, mo
     import os as _os
     import time as _time
     from src import cost_table
+
     cache = tmp_path / "openrouter_pricing_cache.json"
     cache.write_text(_json_mod.dumps({"acme/drifted": {"input": 1.0, "output": 1.0}}))
     old = _time.time() - (cost_table._CACHE_MAX_AGE_SECONDS + 60)
@@ -694,7 +734,9 @@ def test_openrouter_stale_cache_is_last_resort_when_catalog_is_down(tmp_path, mo
 
 
 def test_openrouter_id_never_falls_through_to_a_colliding_litellm_row(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """THE blocker. OpenRouter's catalog is readable and does not list the
     model; LiteLLM carries a row under the very same key. The cost must stay
@@ -707,10 +749,13 @@ def test_openrouter_id_never_falls_through_to_a_colliding_litellm_row(
 
     # LiteLLM has an exact-key collision at a completely different rate.
     litellm_cache = tmp_path / "pricing_cache.json"
-    litellm_cache.write_text(_json_mod.dumps({
-        "acme/routed-model": {"input_cost_per_token": 99e-6,
-                              "output_cost_per_token": 99e-6},
-    }))
+    litellm_cache.write_text(
+        _json_mod.dumps(
+            {
+                "acme/routed-model": {"input_cost_per_token": 99e-6, "output_cost_per_token": 99e-6},
+            }
+        )
+    )
     monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
 
     assert cost_table.estimate_cost("acme/routed-model", 1_000_000, 1_000_000) is None, (
@@ -721,7 +766,9 @@ def test_openrouter_id_never_falls_through_to_a_colliding_litellm_row(
 
 
 def test_openrouter_id_ignores_the_provider_prefixed_litellm_probe(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """The subtler collision: `_litellm_entry` also probes `openai/<id>`, so
     a LiteLLM row at `openai/acme/routed-2` would have matched an id that has
@@ -733,17 +780,22 @@ def test_openrouter_id_ignores_the_provider_prefixed_litellm_probe(
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", or_cache)
 
     litellm_cache = tmp_path / "pricing_cache.json"
-    litellm_cache.write_text(_json_mod.dumps({
-        "openai/acme/routed-2": {"input_cost_per_token": 42e-6,
-                                 "output_cost_per_token": 42e-6},
-    }))
+    litellm_cache.write_text(
+        _json_mod.dumps(
+            {
+                "openai/acme/routed-2": {"input_cost_per_token": 42e-6, "output_cost_per_token": 42e-6},
+            }
+        )
+    )
     monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
 
     assert cost_table.estimate_cost("acme/routed-2", 1_000_000, 1_000_000) is None
 
 
 def test_openrouter_id_miss_never_reaches_the_litellm_path_at_all(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """Not just "the answer is None" — the LiteLLM lookup must not even run.
     A fall-through that happened to miss today would still be a live bug the
@@ -756,6 +808,7 @@ def test_openrouter_id_miss_never_reaches_the_litellm_path_at_all(
 
     def _boom():
         raise AssertionError("an OpenRouter id must not consult LiteLLM")
+
     monkeypatch.setattr(cost_table, "_read_cache_dataset", _boom)
     monkeypatch.setattr(cost_table, "_fetch_litellm_dataset", _boom)
 
@@ -763,7 +816,9 @@ def test_openrouter_id_miss_never_reaches_the_litellm_path_at_all(
 
 
 def test_openrouter_id_miss_is_memoised_when_the_catalog_was_read(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """A catalog we DID read and that lacks the model is a permanent answer —
     memoise it so every subsequent call is a set lookup, matching the
@@ -779,12 +834,15 @@ def test_openrouter_id_miss_is_memoised_when_the_catalog_was_read(
 
     def _boom():
         raise AssertionError("memoised miss must not re-read the catalog")
+
     monkeypatch.setattr(cost_table, "_read_openrouter_cache", _boom)
     assert cost_table.estimate_cost("acme/ghost-4", 100, 50) is None
 
 
 def test_openrouter_id_miss_is_not_memoised_when_the_catalog_is_unreachable(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """No cache and no network is a TRANSIENT failure. Memoising it would
     strand the model at '$?.??' for the life of the process even after
@@ -792,7 +850,9 @@ def test_openrouter_id_miss_is_not_memoised_when_the_catalog_is_unreachable(
     from src import cost_table
 
     monkeypatch.setattr(
-        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent-openrouter.json",
+        cost_table,
+        "_OPENROUTER_CACHE_PATH",
+        tmp_path / "absent-openrouter.json",
     )
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
     monkeypatch.setattr(cost_table, "_CACHE_PATH", tmp_path / "absent-litellm.json")
@@ -808,15 +868,21 @@ def test_bare_vendor_ids_still_resolve_through_litellm(tmp_path, monkeypatch, _r
     from src import cost_table
 
     litellm_cache = tmp_path / "pricing_cache.json"
-    litellm_cache.write_text(_json_mod.dumps({
-        "bare-model-6": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6},
-    }))
+    litellm_cache.write_text(
+        _json_mod.dumps(
+            {
+                "bare-model-6": {"input_cost_per_token": 5e-6, "output_cost_per_token": 30e-6},
+            }
+        )
+    )
     monkeypatch.setattr(cost_table, "_CACHE_PATH", litellm_cache)
     assert cost_table.estimate_cost("bare-model-6", 1_000_000, 1_000_000) == 35.0
 
 
 def test_mandatory_openrouter_refresh_uses_fresh_official_cache(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     import json
     from src import cost_table
@@ -827,18 +893,22 @@ def test_mandatory_openrouter_refresh_uses_fresh_official_cache(
     cache.write_text(json.dumps(rates))
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
     monkeypatch.setattr(
-        cost_table, "_fetch_openrouter_pricing",
+        cost_table,
+        "_fetch_openrouter_pricing",
         lambda: (_ for _ in ()).throw(AssertionError("fresh cache must avoid network")),
     )
 
     assert cost_table.refresh_openrouter_pricing() is True
     assert cost_table.PRICING["openai/gpt-5.5"] == {
-        "input": 5.25, "output": 31.0,
+        "input": 5.25,
+        "output": 31.0,
     }
 
 
 def test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     import json
     import os
@@ -856,20 +926,25 @@ def test_mandatory_openrouter_refresh_rejects_stale_cache_when_network_is_down(
 
 
 def test_mandatory_openrouter_refresh_applies_live_catalog_rates(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     from src import cost_table
 
     live = {model: dict(value) for model, value in cost_table._PRICING_OPENROUTER.items()}
     live["google/gemini-3.5-flash-lite"] = {"input": 0.11, "output": 0.44}
     monkeypatch.setattr(
-        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "absent.json",
+        cost_table,
+        "_OPENROUTER_CACHE_PATH",
+        tmp_path / "absent.json",
     )
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
 
     assert cost_table.refresh_openrouter_pricing(force=True) is True
     assert cost_table.PRICING["google/gemini-3.5-flash-lite"] == {
-        "input": 0.11, "output": 0.44,
+        "input": 0.11,
+        "output": 0.44,
     }
 
 
@@ -904,18 +979,25 @@ def test_grace_window_fresh_cache_behaviour_is_unchanged(tmp_path, monkeypatch, 
     cache.write_text(_json_mod.dumps(rates))
     monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
     monkeypatch.setattr(
-        cost_table, "_fetch_openrouter_pricing",
+        cost_table,
+        "_fetch_openrouter_pricing",
         lambda: (_ for _ in ()).throw(AssertionError("fresh cache must avoid network")),
     )
 
     ok = cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
     assert ok is True
     assert cost_table.PRICING["openai/gpt-5.5"] == {"input": 5.25, "output": 31.0}
-    assert cost_table.openrouter_pricing_reservation_multiplier(
-        1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
-    ) == 1.05
+    assert (
+        cost_table.openrouter_pricing_reservation_multiplier(
+            1.05,
+            grace_period_hours=24.0,
+            max_stale_multiplier=1.5,
+        )
+        == 1.05
+    )
 
 
 def test_stale_within_grace_proceeds_with_widened_multiplier(tmp_path, monkeypatch, _restore_pricing):
@@ -939,16 +1021,21 @@ def test_stale_within_grace_proceeds_with_widened_multiplier(tmp_path, monkeypat
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
 
     ok = cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
     assert ok is True
     assert cost_table.PRICING["openai/gpt-5.5"] == cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
 
     fresh_multiplier = cost_table.openrouter_pricing_reservation_multiplier(
-        1.05, grace_period_hours=0.0, max_stale_multiplier=1.5,
+        1.05,
+        grace_period_hours=0.0,
+        max_stale_multiplier=1.5,
     )
     stale_multiplier = cost_table.openrouter_pricing_reservation_multiplier(
-        1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+        1.05,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
     assert fresh_multiplier == 1.05
     assert stale_multiplier > fresh_multiplier
@@ -959,10 +1046,7 @@ def test_stale_within_grace_proceeds_with_widened_multiplier(tmp_path, monkeypat
     rate = cost_table.PRICING["openai/gpt-5.5"]
 
     def _reservation(multiplier):
-        return multiplier * (
-            input_tokens * rate["input"] / 1_000_000
-            + output_tokens * rate["output"] / 1_000_000
-        )
+        return multiplier * (input_tokens * rate["input"] / 1_000_000 + output_tokens * rate["output"] / 1_000_000)
 
     assert _reservation(stale_multiplier) > _reservation(fresh_multiplier)
 
@@ -984,7 +1068,8 @@ def test_beyond_grace_window_fails_closed(tmp_path, monkeypatch, _restore_pricin
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
 
     ok = cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
     assert ok is False
 
@@ -996,12 +1081,15 @@ def test_no_cache_at_all_fails_closed_even_with_grace_configured(tmp_path, monke
     from src import cost_table
 
     monkeypatch.setattr(
-        cost_table, "_OPENROUTER_CACHE_PATH", tmp_path / "never_written.json",
+        cost_table,
+        "_OPENROUTER_CACHE_PATH",
+        tmp_path / "never_written.json",
     )
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
 
     ok = cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
     assert ok is False
 
@@ -1017,8 +1105,11 @@ def test_no_cache_at_all_fails_closed_even_with_grace_configured(tmp_path, monke
 # dated, drift-checked rate for it always exists: it degrades to that instead.
 # ============================================================================
 
+
 def test_stale_cache_missing_a_configured_model_prices_it_from_the_pinned_baseline(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """The unpriced model falls back to its pinned rate; every model the
     cache DID price still takes the cached rate; the refresh succeeds."""
@@ -1038,23 +1129,25 @@ def test_stale_cache_missing_a_configured_model_prices_it_from_the_pinned_baseli
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: None)
 
     ok = cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
+        grace_period_hours=24.0,
+        max_stale_multiplier=1.5,
     )
 
     assert ok is True
-    assert cost_table.PRICING["openai/gpt-5.5"] == (
-        cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
-    )
+    assert cost_table.PRICING["openai/gpt-5.5"] == (cost_table._PRICING_OPENROUTER["openai/gpt-5.5"])
     # Not "everything reverts to pinned": the models the map did price keep
     # the rate that was actually read, or a live repricing would be silently
     # discarded whenever any single id went missing.
     assert cost_table.PRICING["qwen/qwen3-235b-a22b-2507"] == {
-        "input": 0.0875, "output": 0.35,
+        "input": 0.0875,
+        "output": 0.35,
     }
 
 
 def test_fresh_catalog_missing_a_model_keeps_trading_instead_of_latching(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """The unrecoverable shape: a LIVE fetch succeeds and writes a fresh
     cache that no longer carries a retired model id. Before 2026-09-02 this
@@ -1074,21 +1167,32 @@ def test_fresh_catalog_missing_a_model_keeps_trading_instead_of_latching(
 
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", _fetch)
 
-    assert cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
-    ) is True
+    assert (
+        cost_table.refresh_openrouter_pricing(
+            grace_period_hours=24.0,
+            max_stale_multiplier=1.5,
+        )
+        is True
+    )
     # And again on the next session, now reading the fresh cache it wrote --
     # the step that used to make this permanent.
-    assert cost_table.refresh_openrouter_pricing(
-        grace_period_hours=24.0, max_stale_multiplier=1.5,
-    ) is True
-    assert cost_table.PRICING["google/gemini-2.5-flash-lite"] == (
-        cost_table._PRICING_OPENROUTER["google/gemini-2.5-flash-lite"]
+    assert (
+        cost_table.refresh_openrouter_pricing(
+            grace_period_hours=24.0,
+            max_stale_multiplier=1.5,
+        )
+        is True
+    )
+    assert (
+        cost_table.PRICING["google/gemini-2.5-flash-lite"]
+        == (cost_table._PRICING_OPENROUTER["google/gemini-2.5-flash-lite"])
     )
 
 
 def test_degraded_model_is_still_priced_so_the_ceiling_still_binds(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """The point of degrading rather than latching is that the call stays
     BUDGETED. A model left unpriced would reach the cost circuit as
@@ -1109,7 +1213,9 @@ def test_degraded_model_is_still_priced_so_the_ceiling_still_binds(
 
 
 def test_corrupt_rate_for_one_model_degrades_without_poisoning_the_others(
-    tmp_path, monkeypatch, _restore_pricing,
+    tmp_path,
+    monkeypatch,
+    _restore_pricing,
 ):
     """`_valid_rates` rejects a malformed entry the same way it rejects an
     absent one -- a string, a bool, a negative -- and that must take the same
@@ -1123,9 +1229,7 @@ def test_corrupt_rate_for_one_model_degrades_without_poisoning_the_others(
     monkeypatch.setattr(cost_table, "_fetch_openrouter_pricing", lambda: live)
 
     assert cost_table.refresh_openrouter_pricing(grace_period_hours=24.0) is True
-    assert cost_table.PRICING["openai/gpt-5.5"] == (
-        cost_table._PRICING_OPENROUTER["openai/gpt-5.5"]
-    )
+    assert cost_table.PRICING["openai/gpt-5.5"] == (cost_table._PRICING_OPENROUTER["openai/gpt-5.5"])
 
 
 def test_stale_multiplier_scales_monotonically_with_age(tmp_path, monkeypatch):
@@ -1146,15 +1250,17 @@ def test_stale_multiplier_scales_monotonically_with_age(tmp_path, monkeypatch):
         mtime = time.time() - age_hours * 3600
         os.utime(cache, (mtime, mtime))
         return cost_table.openrouter_pricing_reservation_multiplier(
-            1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
+            1.05,
+            grace_period_hours=24.0,
+            max_stale_multiplier=1.5,
         )
 
     fresh_hours = cost_table._CACHE_MAX_AGE_SECONDS / 3600.0
-    at_boundary = _multiplier_at(fresh_hours)          # exactly at the freshness edge
-    quarter = _multiplier_at(fresh_hours + 6)          # 25% into the grace window
-    half = _multiplier_at(fresh_hours + 12)            # 50% into the grace window
-    at_grace_edge = _multiplier_at(fresh_hours + 24)   # 100% into the grace window
-    beyond_grace = _multiplier_at(fresh_hours + 48)    # past the grace window entirely
+    at_boundary = _multiplier_at(fresh_hours)  # exactly at the freshness edge
+    quarter = _multiplier_at(fresh_hours + 6)  # 25% into the grace window
+    half = _multiplier_at(fresh_hours + 12)  # 50% into the grace window
+    at_grace_edge = _multiplier_at(fresh_hours + 24)  # 100% into the grace window
+    beyond_grace = _multiplier_at(fresh_hours + 48)  # past the grace window entirely
 
     assert at_boundary == pytest.approx(1.05)
     assert quarter == pytest.approx(1.05 + 0.25 * (1.5 - 1.05))

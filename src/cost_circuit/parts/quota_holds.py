@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_holds.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, time as dt_time, timezone
@@ -11,7 +12,8 @@ from src.cost_circuit.classification import _trigger_scope
 
 class QuotaHolds:
     def __init__(
-        self, *,
+        self,
+        *,
         config,
         auto_clear_transient_latch_locked,
         scope_key,
@@ -60,9 +62,7 @@ class QuotaHolds:
             (current_day,),
         ).fetchone()
         if day_row is None:
-            raise RuntimeError(
-                f"cost-circuit day accounting row is missing for {current_day}"
-            )
+            raise RuntimeError(f"cost-circuit day accounting row is missing for {current_day}")
         current_date = date.fromisoformat(current_day)
 
         cross_day_holds = conn.execute(
@@ -95,14 +95,8 @@ class QuotaHolds:
         #
         # Scope restored to what it protects: no cross-day hold, nothing to
         # rearm, nothing to be exact about.
-        if cross_day_holds and (
-            int(day_row["unknown_cost_rows"] or 0)
-            or not bool(day_row["costs_exact"])
-        ):
-            raise RuntimeError(
-                f"cost-circuit cannot rearm {current_day}: current-day accounting "
-                "is not exact"
-            )
+        if cross_day_holds and (int(day_row["unknown_cost_rows"] or 0) or not bool(day_row["costs_exact"])):
+            raise RuntimeError(f"cost-circuit cannot rearm {current_day}: current-day accounting is not exact")
         holds = []
         for hold in cross_day_holds:
             try:
@@ -151,8 +145,12 @@ class QuotaHolds:
                 "session_cost_usd, daily_cost_usd) VALUES "
                 "('quota_rearmed', ?, ?, ?, ?, 'budget_rollover', ?, ?, ?)",
                 (
-                    hold["trigger_code"], reason, hold["run_id"], hold["mode"],
-                    hold["attempts"], hold["session_cost_usd"],
+                    hold["trigger_code"],
+                    reason,
+                    hold["run_id"],
+                    hold["mode"],
+                    hold["attempts"],
+                    hold["session_cost_usd"],
                     hold["daily_cost_usd"],
                 ),
             )
@@ -175,11 +173,13 @@ class QuotaHolds:
         daily_cost: float,
     ) -> bool:
         scope_key = self._scope_key(
-            scope, day=day, run_id=run_id, mode=mode,
+            scope,
+            day=day,
+            run_id=run_id,
+            mode=mode,
         )
         existing = conn.execute(
-            "SELECT id FROM llm_quota_holds WHERE active=1 AND scope=? "
-            "AND scope_key=? AND day=?",
+            "SELECT id FROM llm_quota_holds WHERE active=1 AND scope=? AND scope_key=? AND day=?",
             (scope, scope_key, day),
         ).fetchone()
         if existing is not None:
@@ -191,9 +191,20 @@ class QuotaHolds:
             "daily_cost_usd, session_limit_usd, daily_limit_usd) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                scope, scope_key, day, code, detail, run_id, mode, agent_name,
-                attempts, int(attempts_exact), int(costs_exact), session_cost,
-                daily_cost, float(self.config.session_cost_limit_usd),
+                scope,
+                scope_key,
+                day,
+                code,
+                detail,
+                run_id,
+                mode,
+                agent_name,
+                attempts,
+                int(attempts_exact),
+                int(costs_exact),
+                session_cost,
+                daily_cost,
+                float(self.config.session_cost_limit_usd),
                 float(self.config.daily_cost_limit_usd),
             ),
         )
@@ -205,13 +216,11 @@ class QuotaHolds:
             (code, detail, run_id, mode, agent_name, attempts, session_cost, daily_cost),
         )
         updated_session = conn.execute(
-            "UPDATE llm_budget_sessions SET status='quota_held', "
-            "updated_at=datetime('now') WHERE run_id=?", (run_id,),
+            "UPDATE llm_budget_sessions SET status='quota_held', updated_at=datetime('now') WHERE run_id=?",
+            (run_id,),
         )
         if updated_session.rowcount != 1:
-            raise RuntimeError(
-                f"cost-circuit could not mark missing session {run_id} quota-held"
-            )
+            raise RuntimeError(f"cost-circuit could not mark missing session {run_id} quota-held")
         return True
 
     def _refresh_latched_snapshot_locked(self, conn: sqlite3.Connection) -> None:
@@ -227,25 +236,18 @@ class QuotaHolds:
             return
         run_id = str(state.get("run_id") or "")
         session_row = conn.execute(
-            "SELECT day, actual_cost_usd, provider_attempts, costs_exact "
-            "FROM llm_budget_sessions "
-            "WHERE run_id=?",
+            "SELECT day, actual_cost_usd, provider_attempts, costs_exact FROM llm_budget_sessions WHERE run_id=?",
             (run_id,),
         ).fetchone()
         if session_row is None:
-            raise RuntimeError(
-                f"cost-circuit session row is missing for latched run {run_id}"
-            )
+            raise RuntimeError(f"cost-circuit session row is missing for latched run {run_id}")
         day = str(session_row["day"])
         day_row = conn.execute(
-            "SELECT baseline_cost_usd + incremental_cost_usd AS cost, costs_exact "
-            "FROM llm_budget_days WHERE day=?",
+            "SELECT baseline_cost_usd + incremental_cost_usd AS cost, costs_exact FROM llm_budget_days WHERE day=?",
             (day,),
         ).fetchone()
         if day_row is None:
-            raise RuntimeError(
-                f"cost-circuit day row is missing for latched run {run_id}"
-            )
+            raise RuntimeError(f"cost-circuit day row is missing for latched run {run_id}")
         session_cost = float(session_row["actual_cost_usd"] or 0.0)
         daily_cost = float(day_row["cost"] if day_row else 0.0)
         costs_exact = (
@@ -285,13 +287,9 @@ class QuotaHolds:
 
         scope = _trigger_scope(code)
         if scope != "hard":
-            session_row = conn.execute(
-                "SELECT day FROM llm_budget_sessions WHERE run_id=?", (run_id,)
-            ).fetchone()
+            session_row = conn.execute("SELECT day FROM llm_budget_sessions WHERE run_id=?", (run_id,)).fetchone()
             if session_row is None:
-                raise RuntimeError(
-                    f"cost-circuit session row is missing while holding {run_id}"
-                )
+                raise RuntimeError(f"cost-circuit session row is missing while holding {run_id}")
             return self._hold_quota_locked(
                 conn,
                 scope=scope,
@@ -319,9 +317,16 @@ class QuotaHolds:
             "session_limit_usd=?, daily_limit_usd=?, suspended_at=datetime('now'), "
             "alert_state=0, updated_at=datetime('now') WHERE singleton=1",
             (
-                code, detail, run_id, mode, agent_name, attempts,
-                int(attempts_exact), int(costs_exact),
-                session_cost, daily_cost,
+                code,
+                detail,
+                run_id,
+                mode,
+                agent_name,
+                attempts,
+                int(attempts_exact),
+                int(costs_exact),
+                session_cost,
+                daily_cost,
                 float(self.config.session_cost_limit_usd),
                 float(self.config.daily_cost_limit_usd),
             ),
@@ -336,11 +341,8 @@ class QuotaHolds:
             (code, detail, run_id, mode, agent_name, attempts, session_cost, daily_cost),
         )
         updated_session = conn.execute(
-            "UPDATE llm_budget_sessions SET status='suspended', updated_at=datetime('now') "
-            "WHERE run_id=?", (run_id,)
+            "UPDATE llm_budget_sessions SET status='suspended', updated_at=datetime('now') WHERE run_id=?", (run_id,)
         )
         if updated_session.rowcount != 1:
-            raise RuntimeError(
-                f"cost-circuit could not mark missing session {run_id} suspended"
-            )
+            raise RuntimeError(f"cost-circuit could not mark missing session {run_id} suspended")
         return True

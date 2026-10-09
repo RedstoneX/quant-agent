@@ -21,7 +21,9 @@ from src.models import Nomination
 
 def _nom(symbol: str, conviction: str = "medium") -> Nomination:
     return Nomination(
-        symbol=symbol, conviction=conviction, observation=f"{symbol} obs",
+        symbol=symbol,
+        conviction=conviction,
+        observation=f"{symbol} obs",
     )
 
 
@@ -30,7 +32,8 @@ def test_cap_demand_reports_no_binding_when_demand_is_under_both_caps():
 
     out = measure_cap_demand(
         {"news_analyst": [_nom("AAA"), _nom("BBB")]},
-        max_per_seat=3, max_total=6,
+        max_per_seat=3,
+        max_total=6,
     )
     assert out["per_seat_bound"] == []
     assert out["total_bound"] is False
@@ -47,8 +50,10 @@ def test_cap_demand_names_every_symbol_each_cap_dropped():
 
     by_seat = {
         "news_analyst": [
-            _nom("AAA", "high"), _nom("BBB", "high"),
-            _nom("CCC", "high"), _nom("DDD", "low"),
+            _nom("AAA", "high"),
+            _nom("BBB", "high"),
+            _nom("CCC", "high"),
+            _nom("DDD", "low"),
         ],
         "macro_analyst": [_nom("EEE", "high"), _nom("FFF", "high")],
         "earnings_analyst": [_nom("GGG", "high")],
@@ -68,9 +73,14 @@ def test_cap_demand_names_every_symbol_each_cap_dropped():
     assert out["distinct_after_merge"] == 6
     assert out["total_bound"] is True
     dropped = sorted(d["symbol"] for d in out["total_dropped"])
-    kept = sorted(c.symbol for c in select_nominations(
-        by_seat, max_per_seat=3, max_total=4,
-    ))
+    kept = sorted(
+        c.symbol
+        for c in select_nominations(
+            by_seat,
+            max_per_seat=3,
+            max_total=4,
+        )
+    )
     assert len(kept) == 4
     assert set(dropped).isdisjoint(kept)
     assert sorted(dropped + kept) == ["AAA", "BBB", "CCC", "EEE", "FFF", "GGG"]
@@ -83,12 +93,22 @@ def test_cap_demand_does_not_change_what_select_nominations_returns():
         "news_analyst": [_nom("AAA", "high"), _nom("BBB"), _nom("CCC")],
         "macro_analyst": [_nom("AAA", "low"), _nom("DDD", "high")],
     }
-    before = [c.symbol for c in select_nominations(
-        by_seat, max_per_seat=2, max_total=3,
-    )]
+    before = [
+        c.symbol
+        for c in select_nominations(
+            by_seat,
+            max_per_seat=2,
+            max_total=3,
+        )
+    ]
     measure_cap_demand(by_seat, max_per_seat=2, max_total=3)
-    after = [c.symbol for c in select_nominations(
-        by_seat, max_per_seat=2, max_total=3,
-    )]
+    after = [
+        c.symbol
+        for c in select_nominations(
+            by_seat,
+            max_per_seat=2,
+            max_total=3,
+        )
+    ]
     assert before == after
     assert by_seat["news_analyst"][0].symbol == "AAA"

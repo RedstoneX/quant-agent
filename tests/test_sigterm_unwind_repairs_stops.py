@@ -5,6 +5,7 @@ wrapper SIGTERMs a slow session and SIGKILLs it 30s later. The SIGTERM unwind
 now runs the broker-truth stop-coverage repair BEFORE it settles anything, in
 every session that can buy (morning and the intraday scan).
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,16 +56,19 @@ def test_morning_kill_repairs_stops_before_any_settle_step():
         p.run_morning()
     # Session-start repair, then the kill's repair, THEN the settle steps.
     assert calls == [
-        "session-start reconcile", "kill repair",
-        "discharge", "settle", "sync", "restore",
+        "session-start reconcile",
+        "kill repair",
+        "discharge",
+        "settle",
+        "sync",
+        "restore",
     ]
 
 
 def test_a_failed_repair_is_loud_and_the_unwind_still_runs(caplog):
     calls: list[str] = []
     p = _morning_pipeline(calls, repair_fails_on_kill=True)
-    with caplog.at_level(logging.ERROR, logger="src.pipeline"), \
-            pytest.raises(SessionTerminated):
+    with caplog.at_level(logging.ERROR, logger="src.pipeline"), pytest.raises(SessionTerminated):
         p.run_morning()
     assert calls[2:] == ["discharge", "settle", "sync", "restore"]
     failed = [r for r in caplog.records if "repair FAILED" in r.getMessage()]
@@ -97,17 +101,22 @@ def _coverage_pipeline(resting):
     return p
 
 
-@pytest.mark.parametrize(("resting", "placed"), [
-    ([{"qty": 12.0, "stop_price": 90.0}], 0),  # a stop rests: never a second
-    ([], 1),                                    # naked: covered once
-])
+@pytest.mark.parametrize(
+    ("resting", "placed"),
+    [
+        ([{"qty": 12.0, "stop_price": 90.0}], 0),  # a stop rests: never a second
+        ([], 1),  # naked: covered once
+    ],
+)
 def test_the_kill_repair_reads_the_broker_and_never_duplicates(resting, placed):
     p = _coverage_pipeline(resting)
     owed_levels = MagicMock(side_effect=AssertionError("owed-level replace ran"))
-    with patch("time.sleep"), \
-            patch("src.pipeline_protection._market_is_open_now", return_value=True), \
-            patch("src.pipeline_protection.drain_owed_stop_levels", owed_levels), \
-            patch("src.execution.pending_stop_drain.drain_safely", owed_levels):
+    with (
+        patch("time.sleep"),
+        patch("src.pipeline_protection._market_is_open_now", return_value=True),
+        patch("src.pipeline_protection.drain_owed_stop_levels", owed_levels),
+        patch("src.execution.pending_stop_drain.drain_safely", owed_levels),
+    ):
         p._repair_stops_on_kill("test")
     assert p.broker._submit_protective_stop_retrying.call_count == placed
     assert not owed_levels.called
@@ -148,5 +157,8 @@ def test_the_intraday_session_itself_installs_repairs_and_restores():
     with pytest.raises(SessionTerminated):
         session.run_intra_check()
     assert calls == [
-        "install:intra_check", "body", "repair:intra_check", "restore:prior",
+        "install:intra_check",
+        "body",
+        "repair:intra_check",
+        "restore:prior",
     ]

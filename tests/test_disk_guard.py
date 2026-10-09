@@ -1,10 +1,12 @@
 """disk_guard must refuse when tight and when it cannot measure."""
+
 import importlib.util
 from collections import namedtuple
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
-    "disk_guard", Path(__file__).resolve().parents[1] / "scripts" / "disk_guard.py")
+    "disk_guard", Path(__file__).resolve().parents[1] / "scripts" / "disk_guard.py"
+)
 dg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dg)
 
@@ -35,6 +37,7 @@ def test_refuses_when_space_tight(monkeypatch, tmp_path, capsys):
 def test_refuses_when_filesystem_unreadable(monkeypatch, tmp_path, capsys):
     def boom(p):
         raise OSError("no such device")
+
     assert _run(monkeypatch, tmp_path, boom) == 2
     assert "CANNOT MEASURE" in capsys.readouterr().err
 

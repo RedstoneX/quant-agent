@@ -10,6 +10,7 @@ The snapshot is written by `scripts/check_deploy_drift.py` (which owns the
 write side) and read by the /health API, so a checkout that is behind
 origin/main is visible on the desk's own board, not only in a Telegram message.
 """
+
 from __future__ import annotations
 
 import json

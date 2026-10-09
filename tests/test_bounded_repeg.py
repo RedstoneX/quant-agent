@@ -14,6 +14,7 @@ that: no replacement was attempted.
 No network. The broker is a MagicMock in every test; `submit_order`,
 `replace_order_by_id` and friends are never reachable.
 """
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -21,7 +22,10 @@ from src.config import ExecutionConfig
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
-    ExecutionStage, _WAL_REPEG_SENTINEL, _repeg_entry_order, _repeg_settings,
+    ExecutionStage,
+    _WAL_REPEG_SENTINEL,
+    _repeg_entry_order,
+    _repeg_settings,
 )
 from src.storage.db import Database
 
@@ -30,8 +34,8 @@ from src.storage.db import Database
 # harness
 # --------------------------------------------------------------------------
 
-REFERENCE = 100.0          # verified reference price at submission
-CEILING_40BPS = 100.40     # REFERENCE * (1 + 40/10_000)
+REFERENCE = 100.0  # verified reference price at submission
+CEILING_40BPS = 100.40  # REFERENCE * (1 + 40/10_000)
 
 
 @pytest.fixture
@@ -44,7 +48,8 @@ def db(tmp_path):
 
 def _exec_cfg(**overrides) -> ExecutionConfig:
     base = dict(
-        max_entry_slippage_bps=40.0, repeg_enabled=True,
+        max_entry_slippage_bps=40.0,
+        repeg_enabled=True,
         repeg_poll_seconds=1.0,
     )
     base.update(overrides)
@@ -60,6 +65,7 @@ def _pipeline(db, cfg: ExecutionConfig | None = None):
     # `_TERMINAL_ORDER_STATES` is read off the broker; a MagicMock attribute
     # would make every `in` check raise.
     from src.execution.broker import AlpacaBroker
+
     broker._TERMINAL_ORDER_STATES = AlpacaBroker._TERMINAL_ORDER_STATES
     broker._ORDER_REPLACEABLE_STATES = AlpacaBroker._ORDER_REPLACEABLE_STATES
     broker._ORDER_PRE_EXCHANGE_STATES = AlpacaBroker._ORDER_PRE_EXCHANGE_STATES
@@ -69,7 +75,9 @@ def _pipeline(db, cfg: ExecutionConfig | None = None):
     broker.wait_for_order_terminal.return_value = "new"
     broker.wait_for_order_at_exchange.return_value = "new"
     broker.get_order_fill_info.return_value = {
-        "status": "new", "filled_qty": 0.0, "filled_avg_price": 0.0,
+        "status": "new",
+        "filled_qty": 0.0,
+        "filled_avg_price": 0.0,
     }
     broker.get_latest_quote.return_value = {"ask_price": 100.30, "bid_price": 100.20}
     broker.cancel_entry_order.return_value = True
@@ -85,20 +93,31 @@ def _ctx() -> RunContext:
 def _spec(db, *, order_id="ord-1", limit_price=100.10, qty=10):
     """A working entry order plus the trades row that tracks it."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=qty, price=limit_price,
-        reasoning="repeg test", run_id="run-x", broker_order_id=order_id,
-        fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=qty,
+        price=limit_price,
+        reasoning="repeg test",
+        run_id="run-x",
+        broker_order_id=order_id,
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     return {
-        "symbol": "NVDA", "order_id": order_id, "stop_price": 95.0,
-        "qty": qty, "reference_price": REFERENCE, "limit_price": limit_price,
+        "symbol": "NVDA",
+        "order_id": order_id,
+        "stop_price": 95.0,
+        "qty": qty,
+        "reference_price": REFERENCE,
+        "limit_price": limit_price,
         "trade_row_id": row_id,
     }
 
 
 def _tracked_order_id(db, row_id) -> str:
     row = db.execute(
-        "SELECT broker_order_id FROM trades WHERE id = ?", (row_id,),
+        "SELECT broker_order_id FROM trades WHERE id = ?",
+        (row_id,),
     ).fetchone()
     return row[0]
 
@@ -112,6 +131,7 @@ def _replace_returns(*ids):
 # --------------------------------------------------------------------------
 # off by default
 # --------------------------------------------------------------------------
+
 
 def test_repeg_is_off_by_default():
     """A fresh ExecutionConfig must not chase anything."""
@@ -160,6 +180,7 @@ def test_the_deleted_attempt_cap_key_is_rejected_loudly():
 # the happy path
 # --------------------------------------------------------------------------
 
+
 def test_clean_repeg_to_fill(db):
     """Limit below the ceiling, market away, ONE replacement, then a fill."""
     pipeline = _pipeline(db)
@@ -177,7 +198,7 @@ def test_clean_repeg_to_fill(db):
     assert args[0] == "ord-1"
     # Straight to the ceiling — the decisive price, crossing the 100.30 ask.
     assert args[1] == pytest.approx(CEILING_40BPS)
-    assert kwargs["qty"] == 10                # explicit, not defaulted
+    assert kwargs["qty"] == 10  # explicit, not defaulted
 
 
 def test_new_order_id_is_written_to_the_trades_row(db):
@@ -218,6 +239,7 @@ def test_order_that_fills_before_the_first_attempt_is_never_replaced(db):
 # ONE reprice — not a ladder (2026-09-12 rebuild)
 # --------------------------------------------------------------------------
 
+
 def test_a_stalling_order_gets_exactly_one_reprice(db):
     """A market that keeps running must produce ONE replace, not a chain —
     Alpaca's community practice is a single decisive replace, and every
@@ -226,7 +248,9 @@ def test_a_stalling_order_gets_exactly_one_reprice(db):
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3", "ord-4")
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": 100.10}, {"ask_price": 100.20}, {"ask_price": 100.30},
+        {"ask_price": 100.10},
+        {"ask_price": 100.20},
+        {"ask_price": 100.30},
     ]
     # Still working after the reprice — a ladder would go round again.
     pipeline.broker.wait_for_order_terminal.return_value = "new"
@@ -262,6 +286,7 @@ def test_the_one_reprice_crosses_the_market(db):
 # bound 2: the slippage ceiling
 # --------------------------------------------------------------------------
 
+
 def test_ceiling_clamps_the_repeg_price(db):
     """The ask is beyond the ceiling; the one reprice goes to the ceiling and
     NOT past it — the ceiling is absolute, never exceeded to force a fill."""
@@ -274,9 +299,7 @@ def test_ceiling_clamps_the_repeg_price(db):
 
     # One replacement, priced AT the ceiling — and never a second.
     assert pipeline.broker.replace_entry_limit.call_count == 1
-    assert pipeline.broker.replace_entry_limit.call_args[0][1] == pytest.approx(
-        CEILING_40BPS
-    )
+    assert pipeline.broker.replace_entry_limit.call_args[0][1] == pytest.approx(CEILING_40BPS)
     assert order_id == "ord-2"
 
 
@@ -341,18 +364,21 @@ def test_missing_reference_price_disables_the_chase(db):
 # partial fills — the over-buy footgun
 # --------------------------------------------------------------------------
 
+
 def test_partially_filled_order_is_never_replaced(db):
     """Replacing a partly-executed order is how one idea gets bought twice."""
     pipeline = _pipeline(db)
     spec = _spec(db, qty=10)
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0, "filled_avg_price": 100.05,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
+        "filled_avg_price": 100.05,
     }
 
     order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert order_id == "ord-1"          # the working remainder, untouched
-    assert carried == 0.0               # nothing superseded — same order id
+    assert order_id == "ord-1"  # the working remainder, untouched
+    assert carried == 0.0  # nothing superseded — same order id
     pipeline.broker.replace_entry_limit.assert_not_called()
     assert db.get_pending_repegs() == []
 
@@ -365,8 +391,8 @@ def test_fill_landing_inside_the_replace_window_cancels_the_replacement(db):
     spec = _spec(db, limit_price=100.00, qty=10)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
     pipeline.broker.get_order_fill_info.side_effect = [
-        {"status": "new", "filled_qty": 0.0},                # pre-replace
-        {"status": "partially_filled", "filled_qty": 6.0},   # ancestor, after
+        {"status": "new", "filled_qty": 0.0},  # pre-replace
+        {"status": "partially_filled", "filled_qty": 6.0},  # ancestor, after
     ]
 
     order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
@@ -397,12 +423,15 @@ def test_raced_fill_still_repoints_the_trades_row(db):
 # a rejected replacement
 # --------------------------------------------------------------------------
 
+
 def test_replacement_rejected_because_the_order_already_filled(db):
     """The broker refuses; the ORIGINAL id stays authoritative and we stop."""
     pipeline = _pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit.return_value = {
-        "id": None, "status": "replace_rejected", "detail": "order is not cancelable",
+        "id": None,
+        "status": "replace_rejected",
+        "detail": "order is not cancelable",
     }
     pipeline.broker.resolve_replacement_chain.return_value = "ord-1"
 
@@ -419,7 +448,9 @@ def test_lost_response_whose_patch_actually_landed_adopts_the_real_id(db):
     pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit.return_value = {
-        "id": None, "status": "replace_rejected", "detail": "read timeout",
+        "id": None,
+        "status": "replace_rejected",
+        "detail": "read timeout",
     }
     pipeline.broker.resolve_replacement_chain.return_value = "ord-99"
 
@@ -462,10 +493,16 @@ def test_a_wal_write_failure_forbids_the_replacement(db):
 # broker read failures never escalate
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("attr", [
-    "wait_for_order_terminal", "wait_for_order_at_exchange",
-    "get_order_fill_info", "get_latest_quote",
-])
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        "wait_for_order_terminal",
+        "wait_for_order_at_exchange",
+        "get_order_fill_info",
+        "get_latest_quote",
+    ],
+)
 def test_a_raising_broker_read_leaves_the_order_working(db, attr):
     pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
@@ -490,9 +527,11 @@ def test_a_missing_quote_stops_the_chase(db):
 # crash between replace and record — the drain
 # --------------------------------------------------------------------------
 
+
 def _pipeline_with_drain(db):
     """A real `_drain_pending_repegs` bound to a fake pipeline."""
     from src.pipeline import TradingPipeline
+
     p = MagicMock()
     p.db = db
     p._drain_pending_repegs = TradingPipeline._drain_pending_repegs.__get__(p, MagicMock)
@@ -503,12 +542,22 @@ def _pipeline_with_drain(db):
 def test_crash_between_replace_and_record_is_recovered(db):
     """SIGKILL after the PATCH landed: the WAL row is all that survives."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="crash",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
-        new_order_id=_WAL_REPEG_SENTINEL, run_id="run-x",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
+        new_order_id=_WAL_REPEG_SENTINEL,
+        run_id="run-x",
     )
     p = _pipeline_with_drain(db)
     p.broker.resolve_replacement_chain.return_value = "ord-2"
@@ -520,15 +569,24 @@ def test_crash_between_replace_and_record_is_recovered(db):
 
 def test_crash_where_the_patch_never_landed_clears_cleanly(db):
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="crash",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
         new_order_id=_WAL_REPEG_SENTINEL,
     )
     p = _pipeline_with_drain(db)
-    p.broker.resolve_replacement_chain.return_value = "ord-1"   # never replaced
+    p.broker.resolve_replacement_chain.return_value = "ord-1"  # never replaced
 
     assert p._drain_pending_repegs() == 1
     assert _tracked_order_id(db, row_id) == "ord-1"
@@ -537,11 +595,20 @@ def test_crash_where_the_patch_never_landed_clears_cleanly(db):
 
 def test_drain_leaves_the_row_when_the_broker_cannot_be_read(db):
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="crash",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
         new_order_id=_WAL_REPEG_SENTINEL,
     )
     p = _pipeline_with_drain(db)
@@ -555,11 +622,20 @@ def test_drain_leaves_the_row_when_the_broker_cannot_be_read(db):
 def test_drain_recovers_a_crash_after_the_id_was_known(db):
     """Crash between `resolve_pending_repeg` and the trades-row repoint."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="crash",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
         new_order_id="ord-2",
     )
     p = _pipeline_with_drain(db)
@@ -571,11 +647,20 @@ def test_drain_recovers_a_crash_after_the_id_was_known(db):
 
 def test_drain_is_idempotent(db):
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="crash",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
         new_order_id=_WAL_REPEG_SENTINEL,
     )
     p = _pipeline_with_drain(db)
@@ -591,11 +676,20 @@ def test_drain_is_idempotent(db):
 def test_drain_does_not_clobber_a_newer_repeg(db):
     """A stale WAL row replayed after the chain moved on must be inert."""
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="stale",
-        run_id="run-x", broker_order_id="ord-3", fill_status="submitted", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=10,
+        price=100.10,
+        reasoning="stale",
+        run_id="run-x",
+        broker_order_id="ord-3",
+        fill_status="submitted",
+        stop_loss=90.0,
     )
     db.insert_pending_repeg(
-        trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
+        trade_row_id=row_id,
+        symbol="NVDA",
+        old_order_id="ord-1",
         new_order_id="ord-2",
     )
     p = _pipeline_with_drain(db)
@@ -615,23 +709,31 @@ def test_drain_is_a_noop_with_an_empty_queue(db):
 # db layer
 # --------------------------------------------------------------------------
 
+
 def test_repoint_is_guarded_on_the_old_id(db):
     row_id = db.insert_trade(
-        symbol="NVDA", action="BUY", qty=1, price=1.0, reasoning="r",
-        run_id="run-x", broker_order_id="ord-1", stop_loss=90.0,
+        symbol="NVDA",
+        action="BUY",
+        qty=1,
+        price=1.0,
+        reasoning="r",
+        run_id="run-x",
+        broker_order_id="ord-1",
+        stop_loss=90.0,
     )
-    assert db.repoint_trade_broker_order_id(
-        row_id, old_order_id="ord-1", new_order_id="ord-2") == 1
+    assert db.repoint_trade_broker_order_id(row_id, old_order_id="ord-1", new_order_id="ord-2") == 1
     # Replay: the row no longer holds ord-1, so nothing is touched.
-    assert db.repoint_trade_broker_order_id(
-        row_id, old_order_id="ord-1", new_order_id="ord-9") == 0
+    assert db.repoint_trade_broker_order_id(row_id, old_order_id="ord-1", new_order_id="ord-9") == 0
     assert _tracked_order_id(db, row_id) == "ord-2"
 
 
 def test_pending_repeg_crud_roundtrip(db):
     rid = db.insert_pending_repeg(
-        trade_row_id=7, symbol="NVDA", old_order_id="a",
-        new_order_id=_WAL_REPEG_SENTINEL, run_id="run-x",
+        trade_row_id=7,
+        symbol="NVDA",
+        old_order_id="a",
+        new_order_id=_WAL_REPEG_SENTINEL,
+        run_id="run-x",
     )
     rows = db.get_pending_repegs()
     assert len(rows) == 1 and rows[0]["trade_row_id"] == 7
@@ -642,13 +744,11 @@ def test_pending_repeg_crud_roundtrip(db):
 
 
 def test_prune_pending_repegs_drops_only_stale_rows(db):
-    fresh = db.insert_pending_repeg(
-        trade_row_id=1, symbol="NVDA", old_order_id="a", new_order_id="b")
-    stale = db.insert_pending_repeg(
-        trade_row_id=2, symbol="AMD", old_order_id="c", new_order_id="d")
+    fresh = db.insert_pending_repeg(trade_row_id=1, symbol="NVDA", old_order_id="a", new_order_id="b")
+    stale = db.insert_pending_repeg(trade_row_id=2, symbol="AMD", old_order_id="c", new_order_id="d")
     db.execute(
-        "UPDATE pending_repegs SET created_at = datetime('now', '-40 days') "
-        "WHERE id = ?", (stale,),
+        "UPDATE pending_repegs SET created_at = datetime('now', '-40 days') WHERE id = ?",
+        (stale,),
     )
     db.conn.commit()
 
@@ -662,8 +762,7 @@ def test_prune_pending_repegs_refuses_to_wipe_the_queue(db):
 
 
 def test_pending_repegs_table_and_index_exist(db):
-    names = {r[0] for r in db.execute(
-        "SELECT name FROM sqlite_master").fetchall()}
+    names = {r[0] for r in db.execute("SELECT name FROM sqlite_master").fetchall()}
     assert "pending_repegs" in names
     assert "idx_pending_repegs_created_at" in names
 
@@ -672,8 +771,10 @@ def test_pending_repegs_table_and_index_exist(db):
 # broker primitives
 # --------------------------------------------------------------------------
 
+
 def _broker():
     from src.execution.broker import AlpacaBroker
+
     b = AlpacaBroker.__new__(AlpacaBroker)
     b.client = MagicMock()
     return b
@@ -681,13 +782,12 @@ def _broker():
 
 def test_replace_entry_limit_returns_the_new_id_and_passes_qty():
     b = _broker()
-    b.client.replace_order_by_id.return_value = MagicMock(
-        id="ord-2", status="accepted")
+    b.client.replace_order_by_id.return_value = MagicMock(id="ord-2", status="accepted")
 
     out = b.replace_entry_limit("ord-1", 100.404, qty=10)
 
     assert out["id"] == "ord-2" and out["replaces"] == "ord-1"
-    assert out["limit_price"] == 100.40          # quantized to the tick
+    assert out["limit_price"] == 100.40  # quantized to the tick
     req = b.client.replace_order_by_id.call_args[0][1]
     assert req.qty == 10 and req.limit_price == 100.40
 
@@ -698,8 +798,7 @@ def test_replace_entry_limit_reports_a_broker_refusal_without_raising():
 
     out = b.replace_entry_limit("ord-1", 100.40, qty=10)
 
-    assert out == {"id": None, "status": "replace_rejected",
-                   "detail": "order is not cancelable"}
+    assert out == {"id": None, "status": "replace_rejected", "detail": "order is not cancelable"}
 
 
 def test_replace_entry_limit_never_sends_an_unquotable_price():
@@ -729,8 +828,7 @@ def test_resolve_replacement_chain_walks_to_the_live_order():
 
 def test_resolve_replacement_chain_returns_the_input_when_never_replaced():
     b = _broker()
-    b.client.get_order_by_id.return_value = MagicMock(
-        status="accepted", replaced_by=None)
+    b.client.get_order_by_id.return_value = MagicMock(status="accepted", replaced_by=None)
     assert b.resolve_replacement_chain("a") == "a"
 
 
@@ -743,11 +841,9 @@ def test_resolve_replacement_chain_returns_none_on_a_failed_read():
 
 def test_resolve_replacement_chain_refuses_to_walk_forever():
     b = _broker()
-    b.client.get_order_by_id.return_value = MagicMock(
-        status="replaced", replaced_by="loop-next")
+    b.client.get_order_by_id.return_value = MagicMock(status="replaced", replaced_by="loop-next")
     # Every hop points somewhere new-looking; the hop cap must stop it.
-    b.client.get_order_by_id.side_effect = lambda oid: MagicMock(
-        status="replaced", replaced_by=oid + "x")
+    b.client.get_order_by_id.side_effect = lambda oid: MagicMock(status="replaced", replaced_by=oid + "x")
     assert b.resolve_replacement_chain("a") is None
 
 
@@ -761,12 +857,17 @@ def test_cancel_entry_order_reports_failure_instead_of_raising():
 # protection must cover every filled share in the chain
 # --------------------------------------------------------------------------
 
+
 def _protection_broker(filled_qty):
     b = _broker()
     b.wait_for_order_terminal = MagicMock(return_value="filled")
-    b.get_order_fill_info = MagicMock(return_value={
-        "status": "filled", "filled_qty": filled_qty, "filled_avg_price": 100.0,
-    })
+    b.get_order_fill_info = MagicMock(
+        return_value={
+            "status": "filled",
+            "filled_qty": filled_qty,
+            "filled_avg_price": 100.0,
+        }
+    )
     b._submit_stop_limit_order = MagicMock(return_value={"id": "stop-1"})
     return b
 
@@ -775,8 +876,7 @@ def test_stop_covers_shares_filled_under_a_superseded_order_id():
     """The ancestor's fill is invisible to the new order. It is still ours."""
     b = _protection_broker(filled_qty=4.0)
 
-    b.place_entry_protection(
-        "NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0)
+    b.place_entry_protection("NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0)
 
     assert b._submit_stop_limit_order.call_args.kwargs["qty"] == 10.0
 
@@ -786,8 +886,7 @@ def test_protection_is_placed_when_only_the_superseded_order_filled():
     filled everything. Without the carry this position goes naked."""
     b = _protection_broker(filled_qty=0.0)
 
-    out = b.place_entry_protection(
-        "NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0)
+    out = b.place_entry_protection("NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0)
 
     assert out == {"id": "stop-1"}
     assert b._submit_stop_limit_order.call_args.kwargs["qty"] == 6.0
@@ -801,8 +900,7 @@ def test_protection_default_is_unchanged_for_non_repeg_callers():
 
 def test_zero_everywhere_places_no_stop():
     b = _protection_broker(filled_qty=0.0)
-    assert b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10, superseded_filled_qty=0.0) is None
+    assert b.place_entry_protection("NVDA", "ord-1", 95.0, requested_qty=10, superseded_filled_qty=0.0) is None
     b._submit_stop_limit_order.assert_not_called()
 
 
@@ -810,10 +908,15 @@ def test_zero_everywhere_places_no_stop():
 # end to end through ExecutionStage
 # --------------------------------------------------------------------------
 
+
 def _rc():
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="b",
         cash_target="c",
     )
 
@@ -825,14 +928,19 @@ def _stage_pipeline(db, cfg):
     pipeline.broker.get_latest_price.return_value = 100.0
     pipeline.broker.get_latest_quote.return_value = {"ask_price": 100.02}
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted", "pending_stop_price": 95.0,
+        "id": "ord-1",
+        "status": "accepted",
+        "pending_stop_price": 95.0,
     }
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        [],
+        {},
     )
     from src.execution.broker import AlpacaBroker
+
     pipeline.broker._TERMINAL_ORDER_STATES = AlpacaBroker._TERMINAL_ORDER_STATES
     pipeline.broker._ORDER_REPLACEABLE_STATES = AlpacaBroker._ORDER_REPLACEABLE_STATES
     pipeline.broker._ORDER_PRE_EXCHANGE_STATES = AlpacaBroker._ORDER_PRE_EXCHANGE_STATES
@@ -848,12 +956,19 @@ def _stage_ctx():
     ctx.positions = []
     ctx.decision_id = "run-x-dec-e2e"
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_rc(), portfolio_view="t",
-        decisions=[TradeDecision(
-            action="BUY", symbol="NVDA", allocation_pct=10,
-            entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-            reasoning="e2e",
-        )],
+        reasoning_chain=_rc(),
+        portfolio_view="t",
+        decisions=[
+            TradeDecision(
+                action="BUY",
+                symbol="NVDA",
+                allocation_pct=10,
+                entry_price=100.0,
+                stop_loss=95.0,
+                take_profit=115.0,
+                reasoning="e2e",
+            )
+        ],
     )
     ctx.symbols_bars = {}
     return ctx
@@ -864,15 +979,17 @@ def test_execution_stage_protects_the_repegged_order_id(db):
     pipeline = _stage_pipeline(db, _exec_cfg())
     # Force room to chase: submitted limit below the ceiling.
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": None},              # submission: no usable ask
-        {"ask_price": 100.30},            # re-peg: market has moved
+        {"ask_price": None},  # submission: no usable ask
+        {"ask_price": 100.30},  # re-peg: market has moved
     ]
     pipeline.broker.wait_for_order_terminal.return_value = "accepted"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "accepted", "filled_qty": 0.0,
+        "status": "accepted",
+        "filled_qty": 0.0,
     }
     pipeline.broker.replace_entry_limit.return_value = {
-        "id": "ord-2", "status": "accepted",
+        "id": "ord-2",
+        "status": "accepted",
     }
 
     ExecutionStage(pipeline=pipeline).run(_stage_ctx())
@@ -897,11 +1014,11 @@ def test_a_repeg_that_explodes_still_protects_the_original_order(db):
     """Protection is not optional. A broken chase must not skip the stop."""
     pipeline = _stage_pipeline(db, _exec_cfg())
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": None}, {"ask_price": 100.30},
+        {"ask_price": None},
+        {"ask_price": 100.30},
     ]
     pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError("boom")
-    pipeline.broker.replace_entry_limit.side_effect = AssertionError(
-        "must not replace after a failed read")
+    pipeline.broker.replace_entry_limit.side_effect = AssertionError("must not replace after a failed read")
 
     ExecutionStage(pipeline=pipeline).run(_stage_ctx())
 
@@ -920,6 +1037,7 @@ def test_a_repeg_that_explodes_still_protects_the_original_order(db):
 # one-replace-at-a-time gate Alpaca actually requires, the wall-clock bound,
 # and the exhaustion alert.
 # ==========================================================================
+
 
 def _alerting_pipeline(db, cfg=None):
     """A pipeline whose replacement confirmations succeed, as a live broker's
@@ -940,6 +1058,7 @@ def alerts(monkeypatch):
         return True
 
     import src.notifier as notifier
+
     monkeypatch.setattr(notifier, "send_owner_alert", _capture)
     return sent
 
@@ -947,6 +1066,7 @@ def alerts(monkeypatch):
 # --------------------------------------------------------------------------
 # the reprice happens AFTER the wait, never before
 # --------------------------------------------------------------------------
+
 
 def test_the_order_is_left_to_work_before_any_reprice(db, alerts):
     """The cheapest re-peg is the one never sent: rest first, replace after."""
@@ -959,9 +1079,9 @@ def test_the_order_is_left_to_work_before_any_reprice(db, alerts):
     names = [c[0] for c in pipeline.broker.mock_calls]
     assert "wait_for_order_terminal" in names
     assert "replace_entry_limit" in names
-    assert names.index("wait_for_order_terminal") < names.index(
-        "replace_entry_limit"
-    ), "replaced the order before letting it work"
+    assert names.index("wait_for_order_terminal") < names.index("replace_entry_limit"), (
+        "replaced the order before letting it work"
+    )
 
 
 def test_a_fast_filling_order_triggers_none_of_this(db, alerts):
@@ -983,9 +1103,12 @@ def test_a_fast_filling_order_triggers_none_of_this(db, alerts):
 # (b) the exchange must have the order before a replace is attempted
 # --------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("stuck_status", ["accepted", "pending_new"])
 def test_an_order_the_exchange_has_not_acknowledged_is_not_repriced(
-    db, alerts, stuck_status,
+    db,
+    alerts,
+    stuck_status,
 ):
     """Alpaca rejects a replace on an order it has accepted but the venue
     has not ("order isn't sent to exchange yet"). Sending one anyway is the
@@ -1000,15 +1123,12 @@ def test_an_order_the_exchange_has_not_acknowledged_is_not_repriced(
 
     assert (order_id, carried) == ("ord-1", 0.0)
     pipeline.broker.replace_entry_limit.assert_not_called()
-    assert db.get_pending_repegs() == []          # no WAL row was even opened
+    assert db.get_pending_repegs() == []  # no WAL row was even opened
     assert spec["repeg_outcome"] == "not_at_exchange"
     assert spec["attempted_prices"] == []
     # The honest reason is on the evidence stream, not just in a log line.
-    rows = db.execute(
-        "SELECT evidence_json FROM specialist_evidence WHERE symbol = 'NVDA'"
-    ).fetchall()
-    assert any("repeg_not_at_exchange" in r[0] and stuck_status in r[0]
-               for r in rows)
+    rows = db.execute("SELECT evidence_json FROM specialist_evidence WHERE symbol = 'NVDA'").fetchall()
+    assert any("repeg_not_at_exchange" in r[0] and stuck_status in r[0] for r in rows)
     # The reprice function itself never pages — the end-of-session cancel
     # alert (with this reason in it) is the single message the owner gets.
     assert alerts == []
@@ -1043,9 +1163,7 @@ def test_an_order_acknowledged_late_but_inside_the_window_is_repriced(db, alerts
     assert pipeline.broker.replace_entry_limit.call_count == 1
     pipeline.broker.wait_for_order_at_exchange.assert_called_once()
     names = [c[0] for c in pipeline.broker.mock_calls]
-    assert names.index("wait_for_order_at_exchange") < names.index(
-        "replace_entry_limit"
-    )
+    assert names.index("wait_for_order_at_exchange") < names.index("replace_entry_limit")
 
 
 def test_the_ack_window_is_not_paid_when_the_venue_already_has_it(db, alerts):
@@ -1091,8 +1209,9 @@ def test_the_ack_wait_is_bounded_by_the_configured_window(db, alerts):
 # the reprice function never pages by itself any more
 # --------------------------------------------------------------------------
 
+
 def test_a_replaced_but_still_unfilled_order_does_not_page_here(db, alerts):
-    """"Repricing exhausted" and "cancelled at end of session" are the same
+    """ "Repricing exhausted" and "cancelled at end of session" are the same
     event now, and the cancel path owns the one alert. Paging here as well
     would send two messages for one dead order."""
     pipeline = _alerting_pipeline(db)
@@ -1126,7 +1245,8 @@ def test_a_partial_fill_does_not_alert(db, alerts):
     pipeline = _alerting_pipeline(db)
     spec = _spec(db, qty=10)
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "partially_filled", "filled_qty": 4.0,
+        "status": "partially_filled",
+        "filled_qty": 4.0,
     }
 
     _repeg_entry_order(pipeline, _ctx(), spec)
@@ -1147,8 +1267,10 @@ def test_a_broken_alert_channel_cannot_break_the_cancel_path(db, monkeypatch):
     """An alerting bug must not break the execution path it reports on."""
     import src.notifier as notifier
     from src.pipeline_stages import _alert_owner_entry_cancelled
+
     monkeypatch.setattr(
-        notifier, "send_owner_alert",
+        notifier,
+        "send_owner_alert",
         MagicMock(side_effect=RuntimeError("telegram down")),
     )
     pipeline = _alerting_pipeline(db, _exec_cfg())
@@ -1157,7 +1279,9 @@ def test_a_broken_alert_channel_cannot_break_the_cancel_path(db, monkeypatch):
     spec["repeg_outcome"] = "replaced"
 
     _alert_owner_entry_cancelled(
-        pipeline, spec, {"order_id": "ord-2", "status": "canceled"},
+        pipeline,
+        spec,
+        {"order_id": "ord-2", "status": "canceled"},
     )  # must not raise
 
 
@@ -1165,13 +1289,13 @@ def test_a_broken_alert_channel_cannot_break_the_cancel_path(db, monkeypatch):
 # stream trouble must not double-place
 # --------------------------------------------------------------------------
 
+
 def test_a_dead_stream_during_the_wait_places_nothing(db, alerts):
     """PR #287's own fallback is inside `wait_for_order_terminal`; if even
     that raises, the chase stops without sending anything."""
     pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError(
-        "stream and REST both gone")
+    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError("stream and REST both gone")
 
     order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
 
@@ -1186,15 +1310,19 @@ def test_a_dead_stream_during_the_wait_places_nothing(db, alerts):
 # prices that were tried.
 # ==========================================================================
 
+
 def _cancel_broker(*, statuses, filled_qty, cancel_raises=None):
     """A REAL AlpacaBroker with a mocked client: the terminal wait answers
     `statuses` in order (pre-cancel wait, then post-cancel wait)."""
     b = _broker()
     b.wait_for_order_terminal = MagicMock(side_effect=list(statuses))
-    b.get_order_fill_info = MagicMock(return_value={
-        "status": statuses[-1], "filled_qty": filled_qty,
-        "filled_avg_price": 100.0,
-    })
+    b.get_order_fill_info = MagicMock(
+        return_value={
+            "status": statuses[-1],
+            "filled_qty": filled_qty,
+            "filled_avg_price": 100.0,
+        }
+    )
     b._submit_stop_limit_order = MagicMock(return_value={"id": "stop-1"})
     if cancel_raises is not None:
         b.client.cancel_order_by_id.side_effect = cancel_raises
@@ -1206,7 +1334,10 @@ def test_an_unfilled_entry_is_cancelled_at_the_end_of_its_session():
     seen = []
 
     out = b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
         on_unfilled_cancel=seen.append,
     )
 
@@ -1222,7 +1353,11 @@ def test_the_cancel_is_reported_even_when_the_last_status_was_pre_exchange():
     seen = []
 
     b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
+        on_unfilled_cancel=seen.append,
     )
 
     assert len(seen) == 1 and seen[0]["order_id"] == "ord-1"
@@ -1235,7 +1370,11 @@ def test_a_partial_fill_is_protected_and_does_not_page_as_cancelled():
     seen = []
 
     out = b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
+        on_unfilled_cancel=seen.append,
     )
 
     assert out == {"id": "stop-1"}
@@ -1250,7 +1389,11 @@ def test_a_fill_under_a_superseded_id_is_not_reported_as_unfilled():
     seen = []
 
     out = b.place_entry_protection(
-        "NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0,
+        "NVDA",
+        "ord-2",
+        95.0,
+        requested_qty=10,
+        superseded_filled_qty=6.0,
         on_unfilled_cancel=seen.append,
     )
 
@@ -1263,7 +1406,11 @@ def test_a_normal_fast_fill_cancels_nothing_and_pages_nothing():
     seen = []
 
     b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
+        on_unfilled_cancel=seen.append,
     )
 
     b.client.cancel_order_by_id.assert_not_called()
@@ -1275,13 +1422,18 @@ def test_a_cancel_the_broker_refused_is_not_reported_as_cancelled():
     """Honesty: if the cancel did not land the order may still be working,
     and telling the owner it was cancelled would be a lie."""
     b = _cancel_broker(
-        statuses=["new", "new"], filled_qty=0.0,
+        statuses=["new", "new"],
+        filled_qty=0.0,
         cancel_raises=RuntimeError("alpaca 500"),
     )
     seen = []
 
     b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
+        on_unfilled_cancel=seen.append,
     )
 
     assert seen == []
@@ -1291,7 +1443,10 @@ def test_a_raising_cancel_callback_cannot_break_protection():
     b = _cancel_broker(statuses=["new", "canceled"], filled_qty=0.0)
 
     out = b.place_entry_protection(
-        "NVDA", "ord-1", 95.0, requested_qty=10,
+        "NVDA",
+        "ord-1",
+        95.0,
+        requested_qty=10,
         on_unfilled_cancel=MagicMock(side_effect=RuntimeError("boom")),
     )
 
@@ -1312,6 +1467,7 @@ def test_the_cancel_is_never_sent_twice():
 # the alert: content, and the whole thing end to end through the stage
 # --------------------------------------------------------------------------
 
+
 def _stage_with_cancelling_protection(db, cfg, *, info):
     """The stage pipeline, with `place_entry_protection` standing in for the
     real one by invoking the cancel callback the way the real one does."""
@@ -1328,7 +1484,8 @@ def _stage_with_cancelling_protection(db, cfg, *, info):
     # otherwise the auto-MagicMock reads as "shares filled, no stop" and the
     # separate naked-position alert fires too.
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled", "filled_qty": 0.0,
+        "status": "canceled",
+        "filled_qty": 0.0,
     }
     return pipeline
 
@@ -1337,19 +1494,22 @@ def test_the_cycle_end_cancel_pages_the_owner_with_what_was_tried(db, alerts):
     """The full story in one message: repriced once to the ceiling, still
     unfilled, CANCELLED (not left working), nothing resubmitted."""
     pipeline = _stage_with_cancelling_protection(
-        db, _exec_cfg(), info={"order_id": "ord-2", "status": "canceled",
-                              "filled_qty": 0.0},
+        db,
+        _exec_cfg(),
+        info={"order_id": "ord-2", "status": "canceled", "filled_qty": 0.0},
     )
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": None},              # submission: no usable ask
-        {"ask_price": 100.30},            # reprice: market has moved away
+        {"ask_price": None},  # submission: no usable ask
+        {"ask_price": 100.30},  # reprice: market has moved away
     ]
     pipeline.broker.wait_for_order_terminal.return_value = "new"
     pipeline.broker.get_order_fill_info.return_value = {
-        "status": "new", "filled_qty": 0.0,     # working, unfilled, at the venue
+        "status": "new",
+        "filled_qty": 0.0,  # working, unfilled, at the venue
     }
     pipeline.broker.replace_entry_limit.return_value = {
-        "id": "ord-2", "status": "accepted",
+        "id": "ord-2",
+        "status": "accepted",
     }
 
     ExecutionStage(pipeline=pipeline).run(_stage_ctx())
@@ -1360,12 +1520,12 @@ def test_the_cycle_end_cancel_pages_the_owner_with_what_was_tried(db, alerts):
     assert "ENTRY DID NOT FILL" in text
     assert "cancelled at the end of its session" in text
     assert "repriced ONCE" in text
-    assert "$100.00 → $100.40" in text          # submitted limit → the one reprice
-    assert "$100.40" in text                    # the ceiling
+    assert "$100.00 → $100.40" in text  # submitted limit → the one reprice
+    assert "$100.40" in text  # the ceiling
     assert "ord-2" in text and "CANCELLED" in text
     assert "NOT left working" in text
     assert "will not resubmit" in text
-    assert "next session" in text               # the derivation, in plain words
+    assert "next session" in text  # the derivation, in plain words
     # The reprice function itself did not also page.
     assert pipeline.broker.replace_entry_limit.call_count == 1
 
@@ -1374,7 +1534,8 @@ def test_the_cycle_end_cancel_pages_even_with_repricing_off(db, alerts):
     """Production today: repeg off. The cancel still fires and the owner is
     still told — and told that no reprice was attempted, and why."""
     pipeline = _stage_with_cancelling_protection(
-        db, _exec_cfg(repeg_enabled=False),
+        db,
+        _exec_cfg(repeg_enabled=False),
         info={"order_id": "ord-1", "status": "canceled", "filled_qty": 0.0},
     )
 
@@ -1390,11 +1551,13 @@ def test_the_cancel_alert_names_the_unacknowledged_reason(db, alerts):
     """Open-market case end to end: the venue never acknowledged the order,
     so no reprice went out, and the alert says exactly that."""
     pipeline = _stage_with_cancelling_protection(
-        db, _exec_cfg(),
+        db,
+        _exec_cfg(),
         info={"order_id": "ord-1", "status": "canceled", "filled_qty": 0.0},
     )
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": None}, {"ask_price": 100.30},
+        {"ask_price": None},
+        {"ask_price": 100.30},
     ]
     pipeline.broker.wait_for_order_terminal.return_value = "pending_new"
     pipeline.broker.wait_for_order_at_exchange.return_value = "pending_new"
@@ -1405,7 +1568,7 @@ def test_the_cancel_alert_names_the_unacknowledged_reason(db, alerts):
     assert len(alerts) == 1
     assert "had not acknowledged" in alerts[0]
     assert "NOT attempted" in alerts[0]
-    assert "$100.00" in alerts[0]              # the only price ever on the book
+    assert "$100.00" in alerts[0]  # the only price ever on the book
 
 
 def test_a_stage_with_a_filled_entry_pages_nothing(db, alerts):
@@ -1422,18 +1585,18 @@ def test_a_stage_with_a_filled_entry_pages_nothing(db, alerts):
 # a websocket outage degrades to the fallback — never a double action
 # --------------------------------------------------------------------------
 
+
 def test_a_dead_stream_and_dead_rest_places_nothing_and_cancels_nothing(db, alerts):
     """If even the REST fallback inside the waits raises, the reprice stops
     without sending anything, protection is still called exactly once, and
     the reprice path issues no cancel of its own."""
     pipeline = _stage_pipeline(db, _exec_cfg())
     pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": None}, {"ask_price": 100.30},
+        {"ask_price": None},
+        {"ask_price": 100.30},
     ]
-    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError(
-        "stream and REST both gone")
-    pipeline.broker.wait_for_order_at_exchange.side_effect = RuntimeError(
-        "stream and REST both gone")
+    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError("stream and REST both gone")
+    pipeline.broker.wait_for_order_at_exchange.side_effect = RuntimeError("stream and REST both gone")
 
     ExecutionStage(pipeline=pipeline).run(_stage_ctx())
 
@@ -1465,7 +1628,8 @@ def test_short_entry_repegs_DOWN_to_the_floor_never_up(db):
     spec = _short_spec(db, limit_price=99.90)
     # Bid is below our 99.90 offer, so the resting short is not marketable.
     pipeline.broker.get_latest_quote.return_value = {
-        "ask_price": 99.60, "bid_price": 99.50,
+        "ask_price": 99.60,
+        "bid_price": 99.50,
     }
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
     pipeline.broker.wait_for_order_terminal.side_effect = ["accepted", "filled"]
@@ -1499,7 +1663,8 @@ def test_short_already_marketable_is_left_alone(db):
     pipeline = _pipeline(db)
     spec = _short_spec(db, limit_price=99.90)
     pipeline.broker.get_latest_quote.return_value = {
-        "ask_price": 100.10, "bid_price": 99.95,
+        "ask_price": 100.10,
+        "bid_price": 99.95,
     }
 
     order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)

@@ -51,11 +51,7 @@ def test_the_three_newly_scoped_modules_have_exact_ledger_coverage() -> None:
 
 def test_every_new_arbitrary_row_has_an_actionable_route_not_a_fourth_state() -> None:
     ledger = load_ledger()
-    arbitrary = {
-        site_id: ledger[site_id]
-        for site_id, status in EXPECTED_STATUS.items()
-        if status == "arbitrary"
-    }
+    arbitrary = {site_id: ledger[site_id] for site_id, status in EXPECTED_STATUS.items() if status == "arbitrary"}
 
     assert len(arbitrary) == 13
     for site_id, entry in arbitrary.items():

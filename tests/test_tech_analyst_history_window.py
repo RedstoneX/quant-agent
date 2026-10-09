@@ -31,6 +31,7 @@ between `config/settings.yaml` and the `AppConfig` that parses it, and the
 history claim moved into the Python-assembled user message where no prompt-file
 scan can see it.
 """
+
 from __future__ import annotations
 
 import re
@@ -90,14 +91,42 @@ _DEPTH = (
 #: against thirteen rewordings and ten innocent sentences: thirteen caught,
 #: zero false positives.
 _HISTORY_CLAIM_RE = re.compile(
-    r"(?:" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT
-    + r"\s+(?:of|worth\s+of)\s+(?:\w+\s+){0,2}?" + _DEPTH
-    + r"|" + _N + r"[\s~]*-\s*" + _UNIT[:-2] + r"\s+" + _DEPTH
-    + r"|" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT + r"\s+(?:upstream|of\s+it|back)\b"
-    + r"|" + _DEPTH + r"\s*[:=]\s*" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT
-    + r"|" + _DEPTH + r"\s+(?:\w+\s+){0,2}?"
+    r"(?:"
+    + _N
+    + r"[\s~-]*"
+    + _QUALIFIER
+    + _UNIT
+    + r"\s+(?:of|worth\s+of)\s+(?:\w+\s+){0,2}?"
+    + _DEPTH
+    + r"|"
+    + _N
+    + r"[\s~]*-\s*"
+    + _UNIT[:-2]
+    + r"\s+"
+    + _DEPTH
+    + r"|"
+    + _N
+    + r"[\s~-]*"
+    + _QUALIFIER
+    + _UNIT
+    + r"\s+(?:upstream|of\s+it|back)\b"
+    + r"|"
+    + _DEPTH
+    + r"\s*[:=]\s*"
+    + _N
+    + r"[\s~-]*"
+    + _QUALIFIER
+    + _UNIT
+    + r"|"
+    + _DEPTH
+    + r"\s+(?:\w+\s+){0,2}?"
     + r"(?:of|is|was|covers?|reach\w*|goes?\s+back|spans?)\s+"
-    + r"(?:\w+\s+){0,2}?" + _N + r"[\s~-]*" + _QUALIFIER + _UNIT + r")",
+    + r"(?:\w+\s+){0,2}?"
+    + _N
+    + r"[\s~-]*"
+    + _QUALIFIER
+    + _UNIT
+    + r")",
     re.IGNORECASE,
 )
 
@@ -165,7 +194,10 @@ def _bars(count: int) -> list[OHLCV]:
     return [
         OHLCV(
             date=start + timedelta(days=i),
-            open=float(i), high=float(i), low=float(i), close=float(i),
+            open=float(i),
+            high=float(i),
+            low=float(i),
+            close=float(i),
             volume=1_000_000,
         )
         for i in range(count)
@@ -174,17 +206,27 @@ def _bars(count: int) -> list[OHLCV]:
 
 def _indicators() -> TechnicalIndicators:
     return TechnicalIndicators(
-        symbol="SPY", ma_20=505.0, ma_50=498.0, ma_200=450.0, rsi_14=58.0,
-        macd=1.0, macd_signal=0.5, macd_hist=0.5,
-        bb_upper=520.0, bb_middle=505.0, bb_lower=490.0,
-        atr_14=8.5, volume_change_pct=15.0,
+        symbol="SPY",
+        ma_20=505.0,
+        ma_50=498.0,
+        ma_200=450.0,
+        rsi_14=58.0,
+        macd=1.0,
+        macd_signal=0.5,
+        macd_hist=0.5,
+        bb_upper=520.0,
+        bb_middle=505.0,
+        bb_lower=490.0,
+        atr_14=8.5,
+        volume_change_pct=15.0,
     )
 
 
 def _agent(lookback_days: int | None = None) -> TechAnalystAgent:
     with patch("anthropic.Anthropic"):
         return TechAnalystAgent(
-            api_key="test", model="claude-sonnet-4-6-20250514",
+            api_key="test",
+            model="claude-sonnet-4-6-20250514",
             lookback_days=lookback_days,
         )
 
@@ -192,6 +234,7 @@ def _agent(lookback_days: int | None = None) -> TechAnalystAgent:
 # --------------------------------------------------------------------------
 # The sheet: one home for the number
 # --------------------------------------------------------------------------
+
 
 def test_data_sufficiency_rule_is_still_present_and_untouched() -> None:
     """The exemption above must describe something that actually exists."""
@@ -234,7 +277,7 @@ def test_input_section_tells_the_seat_its_history_depth() -> None:
     """
     source = _prompt_source()
     start = source.index("\n## Input\n")
-    section = source[start:source.index("\n## ", start + 5)]
+    section = source[start : source.index("\n## ", start + 5)]
     assert _HISTORY_PLACEHOLDER_RE.search(section), (
         f"the `## Input` section of {PROMPT_PATH.name} no longer states how "
         f"much price history the seat's indicators and structural levels are "
@@ -256,6 +299,7 @@ def test_prompt_source_actually_uses_the_placeholder() -> None:
 # --------------------------------------------------------------------------
 # Rendering: reconstructed from the setting, not from today's value
 # --------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("pretend", _PRETEND_LOOKBACKS)
 def test_rendered_sheet_reconstructs_exactly_from_the_setting(pretend: int) -> None:
@@ -292,17 +336,14 @@ def test_rendered_numbers_are_the_setting_and_its_weekday_subset(pretend: int) -
     numbers = [int(n) for n in re.findall(r"\d+", phrase)]
     sessions = weekday_sessions_in(pretend)
     assert numbers == [pretend, sessions], (
-        f"{phrase!r} states {numbers}; the setting is {pretend} calendar days "
-        f"and its weekday subset is {sessions}."
+        f"{phrase!r} states {numbers}; the setting is {pretend} calendar days and its weekday subset is {sessions}."
     )
     assert "calendar day" in phrase and "weekday session" in phrase, (
         f"{phrase!r} does not label which figure is calendar days and which is "
         f"sessions. The unlabelled version of this sentence is what let the "
         f"seat read a calendar-day span as a bar count."
     )
-    assert sessions < pretend, (
-        "the weekday subset of a calendar span cannot be larger than the span"
-    )
+    assert sessions < pretend, "the weekday subset of a calendar span cannot be larger than the span"
     assert phrase.index(str(pretend)) < phrase.index(str(sessions)) or sessions == pretend, (
         f"{phrase!r} states the two figures in an order that does not match "
         f"their labels — check the units have not been swapped."
@@ -328,6 +369,7 @@ def test_weekday_arithmetic_matches_the_desks_own_session_counter() -> None:
     desk's own doctrine forbids.
     """
     from src.trading_calendar import trading_sessions_held
+
     for span in (37, 411, 999, 1800, 2555):
         reals = [
             trading_sessions_held(
@@ -366,7 +408,8 @@ def test_weekday_arithmetic_matches_the_desks_own_session_counter() -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", [None, 0, -5, "1800", 1800.0, True, False, object()],
+    "bad",
+    [None, 0, -5, "1800", 1800.0, True, False, object()],
 )
 def test_unresolvable_depth_states_no_number_at_all(bad: object) -> None:
     """A depth that cannot be read must produce prose, never a guess.
@@ -402,7 +445,8 @@ def test_placeholder_tolerates_inner_whitespace() -> None:
     every test still green. Same trap, same guard.
     """
     rendered = render_tech_placeholders(
-        "history: {{ tech.history_window }}", lookback_days=411,
+        "history: {{ tech.history_window }}",
+        lookback_days=411,
     )
     assert rendered == f"history: {format_history_window(411)}"
 
@@ -410,6 +454,7 @@ def test_placeholder_tolerates_inner_whitespace() -> None:
 # --------------------------------------------------------------------------
 # The live path: agent, pipeline, and the settings file itself
 # --------------------------------------------------------------------------
+
 
 def test_agent_system_prompt_states_the_depth_it_was_built_with() -> None:
     """The rendering is on the live path, not only in the helper above."""
@@ -440,7 +485,7 @@ def test_pipeline_passes_the_configured_depth_to_the_seat() -> None:
     """
     source = (Path(__file__).resolve().parents[1] / "src" / "pipeline.py").read_text()
     start = source.index("self.tech_analyst = TechAnalystAgent(")
-    block = source[start:source.index("self.portfolio_manager", start)]
+    block = source[start : source.index("self.portfolio_manager", start)]
     assert "lookback_days=config.trading.lookback_days" in block, (
         "src/pipeline.py builds TechAnalystAgent without passing "
         "`config.trading.lookback_days`, so the seat's brief and the OHLCV "
@@ -458,6 +503,7 @@ def test_settings_file_and_parsed_config_agree() -> None:
     fetch.
     """
     import yaml
+
     raw = yaml.safe_load(_SETTINGS_PATH.read_text())["trading"]
     parsed = TradingConfig(**raw).lookback_days
     assert settings_lookback_days() == parsed, (
@@ -543,7 +589,7 @@ def _analyze_batch_calls() -> list[str]:
                 elif source[j] == ")":
                     depth -= 1
                     if depth == 0:
-                        calls.append(source[at:j + 1])
+                        calls.append(source[at : j + 1])
                         break
             at = source.find("analyze_batch(", at + 1)
     return calls
@@ -577,11 +623,16 @@ def test_every_sent_block_is_explained_in_the_sheet(marker: str, heading: str) -
         ],
         prior_macro_regime="risk_off",
         prior_macro_outlook="cautious",
-        intraday_context={"SPY": {
-            "live_price": 300.0, "prev_close": 295.0,
-            "session_open": 296.0, "session_high": 301.0,
-            "session_low": 295.5, "session_volume": 4_000_000,
-        }},
+        intraday_context={
+            "SPY": {
+                "live_price": 300.0,
+                "prev_close": 295.0,
+                "session_open": 296.0,
+                "session_high": 301.0,
+                "session_low": 295.5,
+                "session_volume": 4_000_000,
+            }
+        },
     )
     assert marker in msg, (
         f"the technical seat is no longer sent the {marker!r} block, but "
@@ -608,6 +659,7 @@ _PRETEND_INDICATOR_WINDOWS = (13, 77, 321)
 
 def test_longest_indicator_window_is_rendered_not_typed() -> None:
     from src.data.technical import LONGEST_INDICATOR_WINDOW
+
     source = _prompt_source()
     assert _LONGEST_INDICATOR_PLACEHOLDER_RE.search(source), (
         f"{PROMPT_PATH.name} no longer renders the deepest indicator window "
@@ -622,11 +674,15 @@ def test_longest_indicator_window_is_rendered_not_typed() -> None:
 def test_longest_indicator_window_tracks_the_constant(pretend: int, monkeypatch) -> None:
     """Rendered against depths no indicator on this desk has ever used."""
     import src.data.technical as technical
+
     monkeypatch.setattr(technical, "LONGEST_INDICATOR_WINDOW", pretend)
     rendered = render_tech_placeholders(_prompt_source(), lookback_days=1800)
-    stated = set(re.findall(
-        r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+(\d+)\s+sessions", rendered,
-    ))
+    stated = set(
+        re.findall(
+            r"(?:longest|deepest)(?:\s+of\s+them)?(?:\s+reach\w+)?\s+(\d+)\s+sessions",
+            rendered,
+        )
+    )
     assert stated == {str(pretend)}, (
         f"with `LONGEST_INDICATOR_WINDOW` = {pretend} the sheet states "
         f"{sorted(stated)}. Some indicator-depth claim is hard-coded."
@@ -636,6 +692,7 @@ def test_longest_indicator_window_tracks_the_constant(pretend: int, monkeypatch)
 # --------------------------------------------------------------------------
 # The scan itself, in both directions
 # --------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("text", _MUST_CATCH)
 def test_the_residue_scan_catches_every_known_rewording(text: str) -> None:

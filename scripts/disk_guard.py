@@ -3,6 +3,7 @@
 Usage: disk_guard.py [--scratch DIR]   (default DIR: $DISK_GUARD_SCRATCH or /tmp/claude-1000)
 Exit 0 = enough space on both; 1 = tight; 2 = could not measure (refuses, never passes blind).
 """
+
 import argparse
 import os
 import shutil
@@ -20,8 +21,13 @@ FALLBACK_CHECKOUT_BYTES = 52 * 1024 * 1024
 
 def checkout_bytes(repo=REPO):
     try:
-        out = subprocess.run(["du", "-sb", "--exclude=.git", "--exclude=.venv", str(repo)],
-                             capture_output=True, text=True, timeout=60, check=True).stdout
+        out = subprocess.run(
+            ["du", "-sb", "--exclude=.git", "--exclude=.venv", str(repo)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        ).stdout
         return int(out.split()[0])
     except Exception:
         return FALLBACK_CHECKOUT_BYTES
@@ -60,8 +66,10 @@ def check(paths, need):
         seen.add(st.st_dev)
         pct = 100.0 * u.free / u.total if u.total else 0.0
         if u.total <= 0 or u.free < need:
-            problems.append(f"LOW DISK on filesystem holding {label} ({path}): "
-                            f"{gib(u.free)} free = {pct:.1f}% of {gib(u.total)}; need {gib(need)}")
+            problems.append(
+                f"LOW DISK on filesystem holding {label} ({path}): "
+                f"{gib(u.free)} free = {pct:.1f}% of {gib(u.total)}; need {gib(need)}"
+            )
     return problems
 
 

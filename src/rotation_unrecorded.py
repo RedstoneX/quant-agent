@@ -6,6 +6,7 @@ all, and the reader used to coerce the absent field to zero and tell the owner
 "the book is empty, so nothing could be cut" - an untrue sentence that looks
 like a clean pass. Absent means NOT RECORDED; only a written zero means empty.
 """
+
 from __future__ import annotations
 
 
@@ -27,7 +28,4 @@ def empty_pass_lines(record: dict | None) -> list[str]:
             "the examined-holdings field, so what it examined was not "
             "recorded — it does not say the book was empty."
         ]
-    return [
-        "✂️ Pruning pass: ran, and there were no holdings to "
-        "examine — the book is empty, so nothing could be cut."
-    ]
+    return ["✂️ Pruning pass: ran, and there were no holdings to examine — the book is empty, so nothing could be cut."]

@@ -21,10 +21,7 @@ def uncovered_stop_gaps(result: dict | None) -> list[dict]:
         return []
     gaps = [g for g in (result.get("stop_coverage_gaps") or []) if isinstance(g, dict)]
     return [
-        g for g in gaps
-        if not _gap_is_expected_fractional(g)
-        and not _gap_is_unreadable(g)
-        and _gap_is_uncovered(g)
+        g for g in gaps if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g) and _gap_is_uncovered(g)
     ]
 
 
@@ -56,10 +53,7 @@ def protection_undetermined_alert(result: dict | None) -> str | None:
     # Plain words only: no status token, no run id. A raw state string is
     # not something the owner can read, and the machine reason is unchanged
     # in the result dict, the event rows and the log line.
-    reason = (
-        " (it ended early)" if isinstance(result, dict)
-        else " (it failed before it finished)"
-    )
+    reason = " (it ended early)" if isinstance(result, dict) else " (it failed before it finished)"
     return (
         "⚠️ PROTECTION UNDETERMINED: this session ended without auditing "
         f"stops at the broker{reason}, so the desk CANNOT say whether any "
@@ -115,21 +109,19 @@ def send_naked_position_alert(notifier, result: dict | None, owner=None) -> bool
     with a traceback only.
     """
     try:
-        text = naked_position_alert(result) or protection_undetermined_alert(
-            result
-        )
+        text = naked_position_alert(result) or protection_undetermined_alert(result)
         if not text:
             return False
-        symbols = [
-            str(g.get("symbol")) for g in uncovered_stop_gaps(result)
-            if g.get("symbol")
-        ]
+        symbols = [str(g.get("symbol")) for g in uncovered_stop_gaps(result) if g.get("symbol")]
         run_id = result.get("run_id") if isinstance(result, dict) else None
         from src.notifier.owner_alert import send_owner_alert_with_outcome
 
         return send_owner_alert_with_outcome(
-            text, notifier=notifier, symbols=symbols,
-            kind="no_stop_at_all", run_id=run_id,
+            text,
+            notifier=notifier,
+            symbols=symbols,
+            kind="no_stop_at_all",
+            run_id=run_id,
         )[0]
     except Exception as exc:  # noqa: BLE001
         import logging
@@ -137,7 +129,9 @@ def send_naked_position_alert(notifier, result: dict | None, owner=None) -> bool
         from src.sentinel.guarded import record_guarded_pass
 
         record_guarded_pass(
-            owner, "trader_feed.naked_position_alert", exc,
+            owner,
+            "trader_feed.naked_position_alert",
+            exc,
             log=logging.getLogger(__name__),
         )
         return False

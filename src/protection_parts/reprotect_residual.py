@@ -16,7 +16,8 @@ class ReprotectResidual:
     """The residual re-protection after a partial sell; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         broker=None,
         format_qty=None,
         alert_owner_reprotect_left_naked=None,
@@ -35,15 +36,19 @@ class ReprotectResidual:
 
     @property
     def db(self):
-        return self._state.get('db')
+        return self._state.get("db")
 
     @db.setter
     def db(self, value) -> None:
-        self._state.set('db', value)
+        self._state.set("db", value)
 
     def _reprotect_residual_after_partial_sell(
-        self, symbol: str, residual_qty: float, cancelled_specs: list[dict],
-        *, side: str = "sell",
+        self,
+        symbol: str,
+        residual_qty: float,
+        cancelled_specs: list[dict],
+        *,
+        side: str = "sell",
     ) -> bool:
         """After a partial exit (REDUCE / PARTIAL_SELL), place a
         fresh stop on the residual qty using the most-protective price among
@@ -86,21 +91,22 @@ class ReprotectResidual:
         # so "no usable price among them" is a REFUSAL, not an absence.
         from src.execution.stop_records import usable_stop_prices
 
-        usable = usable_stop_prices(
-            s.get("stop_price") for s in cancelled_specs
-        )
+        usable = usable_stop_prices(s.get("stop_price") for s in cancelled_specs)
         if not usable:
             logger.error(
                 "Reprotect REFUSED for %s: %d cancelled stop spec(s) carried "
                 "no usable trigger price (%r) — the residual %s share(s) are "
                 "UNPROTECTED and the recovery intent is kept so the next "
                 "drain retries. A garbage stop is not 'no stop needed'.",
-                symbol, len(cancelled_specs),
+                symbol,
+                len(cancelled_specs),
                 [s.get("stop_price") for s in cancelled_specs],
                 self._format_qty(residual_qty),
             )
             self._alert_owner_reprotect_left_naked(
-                symbol, residual_qty, 0.0,
+                symbol,
+                residual_qty,
+                0.0,
                 "cancelled stop specs carried no usable trigger price",
             )
             return False
@@ -158,6 +164,7 @@ class ReprotectResidual:
             PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES as _IN_FLIGHT_STATUSES,
             real_broker_order_id as _real_order_id,
         )
+
         # `_snapshot_stop_order` stamps `str(order.id)`, so an absent id
         # arrives here as the TRUTHY string "None". Filtering on
         # truthiness let such a spec count toward `ids_complete` and then
@@ -194,7 +201,9 @@ class ReprotectResidual:
             logger.warning(
                 "Reprotect idempotency check failed for %s: %s — "
                 "proceeding with submit (may duplicate if a stop already "
-                "exists)", symbol, exc,
+                "exists)",
+                symbol,
+                exc,
             )
             existing = []
         # HOISTED out of the per-order loop (adversary round 2, defect 4).
@@ -227,7 +236,10 @@ class ReprotectResidual:
                 "is NOT measured anywhere in this repo, so this branch "
                 "does not rank them -- it records the ambiguity and fails "
                 "toward the position having a stop.",
-                symbol, len(existing), missing_ids, len(cancelled_specs),
+                symbol,
+                len(existing),
+                missing_ids,
+                len(cancelled_specs),
             )
             self._record_reprotect_identity_gap(
                 symbol,
@@ -243,9 +255,14 @@ class ReprotectResidual:
         # the 2026-09-30 duplicate-stop incident) lives in reprotect_scan.py, lifted verbatim.
         # A `return` inside it comes back as `done` and is returned from here unchanged.
         _scan = scan_existing_stops(
-            self, symbol=symbol, residual_qty=residual_qty, existing=existing,
-            cancelled_ids=cancelled_ids, identity_unprovable=identity_unprovable,
-            best_stop=best_stop, side=side,
+            self,
+            symbol=symbol,
+            residual_qty=residual_qty,
+            existing=existing,
+            cancelled_ids=cancelled_ids,
+            identity_unprovable=identity_unprovable,
+            best_stop=best_stop,
+            side=side,
         )
         if _scan.done:
             return _scan.value
@@ -285,34 +302,43 @@ class ReprotectResidual:
         # than escaping into the drain caller.
         try:
             placed = self.broker._submit_protective_stop_retrying(
-                symbol=symbol, qty=residual_qty, stop_price=best_stop,
-                limit_price=None, side=side,
+                symbol=symbol,
+                qty=residual_qty,
+                stop_price=best_stop,
+                limit_price=None,
+                side=side,
             )
         except Exception as exc:  # noqa: BLE001
             record_protection_fault(self, "reprotect.residual_submit", exc, symbol=symbol)
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
                 "is unprotected until the next session re-attaches a stop",
-                symbol, self._format_qty(residual_qty), best_stop, exc,
+                symbol,
+                self._format_qty(residual_qty),
+                best_stop,
+                exc,
             )
             self._alert_owner_reprotect_left_naked(
-                symbol, residual_qty, 0.0,
+                symbol,
+                residual_qty,
+                0.0,
                 f"the protective stop submit at ${best_stop:.2f} raised: {exc}",
             )
             return False
-        if placed is None or (
-            isinstance(placed, dict) and not accepted_stop_order(placed)
-        ):
+        if placed is None or (isinstance(placed, dict) and not accepted_stop_order(placed)):
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f — the "
                 "protective submit placed nothing the broker acknowledged; "
                 "the position is unprotected until it is re-attached",
-                symbol, self._format_qty(residual_qty), best_stop,
+                symbol,
+                self._format_qty(residual_qty),
+                best_stop,
             )
             self._alert_owner_reprotect_left_naked(
-                symbol, residual_qty, 0.0,
-                f"the protective stop submit at ${best_stop:.2f} placed "
-                "nothing the broker acknowledged",
+                symbol,
+                residual_qty,
+                0.0,
+                f"the protective stop submit at ${best_stop:.2f} placed nothing the broker acknowledged",
             )
             return False
         # Whole-share submits return the broker's own response untouched
@@ -325,7 +351,9 @@ class ReprotectResidual:
         # A stop IS live at this trigger, so record it either way -- the
         # write-back is what the next sweep compares the book against.
         write_back_stop_loss(
-            getattr(self, "db", None), symbol, best_stop,
+            getattr(self, "db", None),
+            symbol,
+            best_stop,
             is_short=(side == "buy"),
         )
         if uncovered_qty > 0:
@@ -333,18 +361,23 @@ class ReprotectResidual:
                 "Re-protect for %s is PARTIAL @ stop $%.2f: %s of %s "
                 "share(s) are covered, %s are NOT — reporting the real "
                 "coverage rather than a naked-or-covered guess.",
-                symbol, best_stop, self._format_qty(covered_qty),
+                symbol,
+                best_stop,
+                self._format_qty(covered_qty),
                 self._format_qty(residual_qty),
                 self._format_qty(uncovered_qty),
             )
             self._alert_owner_reprotect_left_naked(
-                symbol, residual_qty, covered_qty,
-                f"the stop at ${best_stop:.2f} covers only part of the "
-                "residual after a partial exit",
+                symbol,
+                residual_qty,
+                covered_qty,
+                f"the stop at ${best_stop:.2f} covers only part of the residual after a partial exit",
             )
             return False
         logger.info(
             "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
-            symbol, self._format_qty(residual_qty), best_stop,
+            symbol,
+            self._format_qty(residual_qty),
+            best_stop,
         )
         return True

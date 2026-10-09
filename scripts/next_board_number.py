@@ -65,6 +65,7 @@ Exit codes:
        re-run when GitHub is reachable, or pass
        `--accept-unchecked-number` to take one anyway
 """
+
 from __future__ import annotations
 
 import argparse
@@ -89,22 +90,24 @@ DEFAULT_BOARD_REF = "origin/main"
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--work-md", default=None,
+        "--work-md",
+        default=None,
         help="The board file. Default: located by its shape; refuses if it cannot be.",
     )
     parser.add_argument(
-        "--board-ref", default=DEFAULT_BOARD_REF,
+        "--board-ref",
+        default=DEFAULT_BOARD_REF,
         help="The shared ref holding the authoritative board (default: "
-             "origin/main). Read with `git show` only - never fetched.",
+        "origin/main). Read with `git show` only - never fetched.",
     )
     parser.add_argument(
-        "--accept-unchecked-number", action="store_true",
+        "--accept-unchecked-number",
+        action="store_true",
         help="Skip the open-pull-request read and accept a number that "
-             "may already be claimed on somebody else's branch. The "
-             "printed number is labelled UNCHECKED.",
+        "may already be claimed on somebody else's branch. The "
+        "printed number is labelled UNCHECKED.",
     )
     args = parser.parse_args(argv)
 
@@ -123,8 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 
     retired = retired_item_numbers(text)
     if retired.error:
-        print(f"next_board_number: could not read the retired-numbers line: "
-              f"{retired.error}", file=sys.stderr)
+        print(f"next_board_number: could not read the retired-numbers line: {retired.error}", file=sys.stderr)
         return 3
 
     # THE SHARED COPY OF A SHARED FILE. See `read_ref_work_md` for the
@@ -136,8 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         ref_retired = retired_item_numbers(ref_board.text)
         if ref_retired.error:
             ref_board.text = None
-            ref_board.problem = ("its retired-numbers line could not be "
-                                 f"read: {ref_retired.error}")
+            ref_board.problem = f"its retired-numbers line could not be read: {ref_retired.error}"
         else:
             extra_texts.append(ref_board.text)
 
@@ -146,8 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     if not unchecked:
         claims = read_open_pr_claims()
 
-    result = next_free_number(text, pr_claims=claims,
-                              extra_texts=extra_texts)
+    result = next_free_number(text, pr_claims=claims, extra_texts=extra_texts)
 
     # FAIL CLOSED. The caller did not opt out, and the half of the check
     # that catches the parallel-agent race could not run. Printing the
@@ -172,27 +172,32 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Next free board item number{label}: {result.next_number}")
     print(f"  (highest number known to this check: {result.highest_known})")
     if extra_texts:
-        print(f"  Board read from {ref_board.ref} (the shared, authoritative "
-              "copy) AND from the working tree.")
+        print(f"  Board read from {ref_board.ref} (the shared, authoritative copy) AND from the working tree.")
     else:
-        print(f"  Board read from the WORKING TREE ONLY - {ref_board.ref} "
-              f"could not be read ({ref_board.problem}). A shared working "
-              "tree can sit many commits behind, so a number that already "
-              "landed on the board may not be visible here.")
+        print(
+            f"  Board read from the WORKING TREE ONLY - {ref_board.ref} "
+            f"could not be read ({ref_board.problem}). A shared working "
+            "tree can sit many commits behind, so a number that already "
+            "landed on the board may not be visible here."
+        )
     if unchecked:
-        print("  UNCHECKED: open pull requests were NOT read "
-              "(--accept-unchecked-number), so another agent may already "
-              "have claimed this number on a branch. Do not write it down "
-              "without checking open branches yourself.")
+        print(
+            "  UNCHECKED: open pull requests were NOT read "
+            "(--accept-unchecked-number), so another agent may already "
+            "have claimed this number on a branch. Do not write it down "
+            "without checking open branches yourself."
+        )
     else:
         n = len(claims.by_pr) if claims else 0
         print(f"  Checked {n} open pull request(s) with a docs/WORK.md diff.")
     print()
-    print("This is still not a guarantee against another agent claiming the "
-          "same number at the same moment — write the item and open the "
-          "pull request promptly. If two items still collide, the "
-          "`pytest` check on the pull request will fail the merge; whoever "
-          "merges second renumbers.")
+    print(
+        "This is still not a guarantee against another agent claiming the "
+        "same number at the same moment — write the item and open the "
+        "pull request promptly. If two items still collide, the "
+        "`pytest` check on the pull request will fail the merge; whoever "
+        "merges second renumbers."
+    )
     return 0
 
 

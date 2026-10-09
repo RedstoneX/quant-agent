@@ -11,6 +11,7 @@ for every path that never reaches the Tier 2 like-for-like check), and
 `src/verdicts.py`'s own arithmetic, so a Tier 2 scenario's coverage and its
 score cannot silently disagree.
 """
+
 from src.models import AnalystVerdict, VerdictEvidence
 from src.rotation import (
     ROTATION_MARGIN_PCT,
@@ -35,17 +36,21 @@ def _rc(symbol: str, score: float, direction: str = "bullish") -> RankedCandidat
 # smart_money and earnings always send. It scores the same as the literal
 # 0.0 these fixtures used to pass, which is the point: the rotation margins
 # below are unchanged by the item-65 encoding change.
-def _verdict(symbol: str, seat: str, magnitude: float | None, conviction: str,
-             direction: str = "bullish") -> AnalystVerdict:
+def _verdict(
+    symbol: str, seat: str, magnitude: float | None, conviction: str, direction: str = "bullish"
+) -> AnalystVerdict:
     return AnalystVerdict(
-        seat=seat, symbol=symbol, direction=direction, magnitude=magnitude,
-        conviction=conviction, invalidation="the level breaks",
+        seat=seat,
+        symbol=symbol,
+        direction=direction,
+        magnitude=magnitude,
+        conviction=conviction,
+        invalidation="the level breaks",
         evidence=[VerdictEvidence(label="close", value=100.0)],
     )
 
 
-def _rcv(symbol: str, seats: dict[str, tuple[float, str]],
-         direction: str = "bullish") -> RankedCandidate:
+def _rcv(symbol: str, seats: dict[str, tuple[float, str]], direction: str = "bullish") -> RankedCandidate:
     """A candidate whose score is DERIVED from its own seat coverage.
 
     `seats` maps seat name -> (magnitude, conviction), and the score is
@@ -54,17 +59,19 @@ def _rcv(symbol: str, seats: dict[str, tuple[float, str]],
     real relationship between coverage and score rather than asserting one.
     """
     verdicts = [
-        _verdict(symbol, seat, magnitude, conviction, direction)
-        for seat, (magnitude, conviction) in seats.items()
+        _verdict(symbol, seat, magnitude, conviction, direction) for seat, (magnitude, conviction) in seats.items()
     ]
     score = round(sum(seat_weight(v.seat) * score_verdict(v) for v in verdicts), 4)
     return RankedCandidate(
-        symbol=symbol, direction=direction, score=score,
+        symbol=symbol,
+        direction=direction,
+        score=score,
         verdicts=sorted(verdicts, key=lambda v: v.seat),
     )
 
 
 # --- (a) clearly-stronger new candidate vs clearly-weaker/stale holding ----
+
 
 def test_stronger_new_candidate_rotates_out_a_stale_ineligible_holding():
     """STALE is caught categorically: OLD fails the desk's own eligibility
@@ -77,8 +84,11 @@ def test_stronger_new_candidate_rotates_out_a_stale_ineligible_holding():
     ranked = [_rc("NEW", 1.8)]
     blocked = {"OLD": ["R4 R/R 0.80 under the 1.50 floor and no current state-change row names it"]}
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked=blocked, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked=blocked,
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is not None
     assert opp.tier == "ineligible_hold"
@@ -96,12 +106,15 @@ def test_stronger_new_candidate_rotates_out_a_weak_but_still_eligible_holding():
     like-for-like sub-score is the whole score and the two checks coincide.
     """
     ranked = [
-        _rcv("NEW", {"technical": (1.0, "medium")}),   # 1.2 * 1.5 = 1.8
-        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75 = 0.9
+        _rcv("NEW", {"technical": (1.0, "medium")}),  # 1.2 * 1.5 = 1.8
+        _rcv("OLD", {"technical": (0.75, "low")}),  # 1.2 * 0.75 = 0.9
     ]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is not None
     assert opp.tier == "ranked_margin"
@@ -118,16 +131,20 @@ def test_stronger_new_candidate_rotates_out_a_weak_but_still_eligible_holding():
 
 # --- (b) marginally-better new candidate does NOT trigger (respects margin) -
 
+
 def test_marginal_edge_does_not_trigger_rotation():
     """NEW beats OLD but by less than the 25% margin: 0.9 * 1.25 = 1.125,
     and 1.08 falls short of that — no churn on a noise-level difference."""
     ranked = [
-        _rcv("NEW", {"technical": (0.9, "low")}),      # 1.2 * 0.9  = 1.08
-        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75 = 0.9
+        _rcv("NEW", {"technical": (0.9, "low")}),  # 1.2 * 0.9  = 1.08
+        _rcv("OLD", {"technical": (0.75, "low")}),  # 1.2 * 0.75 = 0.9
     ]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -136,12 +153,15 @@ def test_exactly_at_the_margin_does_trigger():
     """The margin is a floor (>=), not a strict inequality: exactly 25%
     higher clears it. 0.9 * 1.25 = 1.125 exactly."""
     ranked = [
-        _rcv("NEW", {"technical": (0.9375, "low")}),   # 1.2 * 0.9375 = 1.125
-        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75   = 0.9
+        _rcv("NEW", {"technical": (0.9375, "low")}),  # 1.2 * 0.9375 = 1.125
+        _rcv("OLD", {"technical": (0.75, "low")}),  # 1.2 * 0.75   = 0.9
     ]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is not None
     assert opp.tier == "ranked_margin"
@@ -149,14 +169,18 @@ def test_exactly_at_the_margin_does_trigger():
 
 # --- (c) capital NOT constrained -> no comparison runs at all --------------
 
+
 def test_real_headroom_means_no_rotation_check_at_all():
     """Even an enormous, obviously-qualifying gap is not surfaced when the
     book has real room left — refusal-driven comparison only activates when
     it is actually needed, never as a standing "could we do better" nudge."""
     ranked = [_rc("NEW", 5.0), _rc("OLD", 0.1)]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=10.0, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=10.0,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -166,19 +190,26 @@ def test_headroom_exactly_at_the_floor_is_not_constrained():
     fits" — the boundary itself is not yet a constraint."""
     ranked = [_rc("NEW", 5.0), _rc("OLD", 0.1)]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=FLOOR_PCT, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=FLOOR_PCT,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
 
 # --- (d) nothing to recommend -> no change to existing behaviour ----------
 
+
 def test_no_new_candidate_means_nothing_to_recommend():
     ranked = [_rc("OLD", 0.9)]  # only a held name is even ranked
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -188,8 +219,11 @@ def test_no_held_position_ranked_or_blocked_means_nothing_to_compare():
     against (e.g. an empty book) — there is no rotation to propose."""
     ranked = [_rc("NEW", 1.8)]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols=set(),
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols=set(),
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -203,8 +237,11 @@ def test_empty_blocked_reasons_are_not_treated_as_a_blocking_row():
         _rcv("OLD", {"technical": (0.75, "low")}),
     ]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={"OLD": []}, held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={"OLD": []},
+        held_symbols={"OLD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None  # falls through to the ranked-margin tier, which the
     # 1.08 vs 0.9 gap (same as the marginal test above) still does not clear
@@ -219,8 +256,11 @@ def test_multiple_ineligible_holdings_pick_the_worse_one_deterministically():
         "BBB": ["R4 one reason", "R5 net evidence -1 if long — no rung"],
     }
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked=blocked, held_symbols={"AAA", "BBB"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked=blocked,
+        held_symbols={"AAA", "BBB"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is not None
     assert opp.held_symbol == "BBB"
@@ -237,8 +277,11 @@ def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_ag
     rotate into, since the new-candidate pool excludes anything held."""
     ranked = [_rc("HELD", 5.0), _rc("NEW", 1.0)]
     opp = evaluate_rotation_opportunity(
-        ranked=ranked, blocked={}, held_symbols={"HELD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=ranked,
+        blocked={},
+        held_symbols={"HELD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     # NEW (1.0) vs HELD (5.0): 5.0 * 1.25 = 6.25 > 1.0, well under margin.
     assert opp is None
@@ -253,6 +296,7 @@ def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_ag
 # — and Tier 2 compares exactly two such names. These pin that the margin
 # must now also clear on the seats that scored BOTH names.
 
+
 def test_coverage_decay_alone_does_not_rotate_a_held_name_out():
     """The item-66 case, end to end. HELD and NEW carry an IDENTICAL
     technical read — the strongest one that seat can give. NEW additionally
@@ -263,11 +307,14 @@ def test_coverage_decay_alone_does_not_rotate_a_held_name_out():
     so nothing is surfaced.
     """
     held = _rcv("HELD", {"technical": (1.0, "high")})
-    new = _rcv("NEW", {
-        "technical": (1.0, "high"),      # 1.2 * 2.0 = 2.4, identical to HELD
-        "earnings": (None, "high"),      # 1.2 * 1.0 = 1.2, coverage HELD lost
-        "smart_money": (None, "medium"), # 0.8 * 0.5 = 0.4, coverage HELD lost
-    })
+    new = _rcv(
+        "NEW",
+        {
+            "technical": (1.0, "high"),  # 1.2 * 2.0 = 2.4, identical to HELD
+            "earnings": (None, "high"),  # 1.2 * 1.0 = 1.2, coverage HELD lost
+            "smart_money": (None, "medium"),  # 0.8 * 0.5 = 0.4, coverage HELD lost
+        },
+    )
     assert held.score == 2.4
     assert new.score == 4.0
     # The pre-fix comparison, spelled out so this test fails loudly if the
@@ -275,8 +322,11 @@ def test_coverage_decay_alone_does_not_rotate_a_held_name_out():
     assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
 
     opp = evaluate_rotation_opportunity(
-        ranked=[new, held], blocked={}, held_symbols={"HELD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=[new, held],
+        blocked={},
+        held_symbols={"HELD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -286,13 +336,16 @@ def test_no_shared_scoring_seat_declines_rather_than_comparing():
     technical alone; the full composites clear the margin (1.2 vs 2.4) but
     there is no seat that has an opinion on both, so there is nothing
     like-for-like to compare and Tier 2 declines."""
-    held = _rcv("HELD", {"earnings": (None, "high")})    # 1.2
-    new = _rcv("NEW", {"technical": (1.0, "high")})      # 2.4
+    held = _rcv("HELD", {"earnings": (None, "high")})  # 1.2
+    new = _rcv("NEW", {"technical": (1.0, "high")})  # 2.4
     assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
 
     opp = evaluate_rotation_opportunity(
-        ranked=[new, held], blocked={}, held_symbols={"HELD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=[new, held],
+        blocked={},
+        held_symbols={"HELD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is None
 
@@ -302,14 +355,20 @@ def test_a_real_like_for_like_gap_still_rotates_and_records_the_comparison():
     NEW's is strong, so the gap survives on the shared seat and the
     rotation is surfaced — with the seats and both sub-scores recorded, so
     the audit trail shows which comparison was actually cleared."""
-    held = _rcv("HELD", {"technical": (0.75, "low")})    # 0.9
-    new = _rcv("NEW", {
-        "technical": (1.0, "high"),                      # 2.4
-        "earnings": (None, "high"),                      # 1.2
-    })
+    held = _rcv("HELD", {"technical": (0.75, "low")})  # 0.9
+    new = _rcv(
+        "NEW",
+        {
+            "technical": (1.0, "high"),  # 2.4
+            "earnings": (None, "high"),  # 1.2
+        },
+    )
     opp = evaluate_rotation_opportunity(
-        ranked=[new, held], blocked={}, held_symbols={"HELD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+        ranked=[new, held],
+        blocked={},
+        held_symbols={"HELD"},
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
     )
     assert opp is not None
     assert opp.tier == "ranked_margin"
@@ -346,32 +405,30 @@ def test_the_like_for_like_check_can_only_remove_rotations_never_add_one():
             for magnitude in magnitudes:
                 for conviction in convictions:
                     held = _rcv(
-                        "HELD", {s: (0.5, "low") for s in held_seats},
+                        "HELD",
+                        {s: (0.5, "low") for s in held_seats},
                     )
                     new = _rcv(
-                        "NEW", {s: (magnitude, conviction) for s in new_seats},
+                        "NEW",
+                        {s: (magnitude, conviction) for s in new_seats},
                     )
                     opp = evaluate_rotation_opportunity(
-                        ranked=[new, held], blocked={},
+                        ranked=[new, held],
+                        blocked={},
                         held_symbols={"HELD"},
-                        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+                        headroom_pct=0.1,
+                        floor_pct=FLOOR_PCT,
                     )
                     if opp is None:
                         continue
                     surfaced += 1
                     assert opp.tier == "ranked_margin"
                     # (1) the original full-composite margin still holds
-                    assert new.score >= held.score * (
-                        1.0 + ROTATION_MARGIN_PCT
-                    )
+                    assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
                     # (2) and so does the like-for-like one
-                    assert opp.new_shared_score >= opp.held_shared_score * (
-                        1.0 + ROTATION_MARGIN_PCT
-                    )
+                    assert opp.new_shared_score >= opp.held_shared_score * (1.0 + ROTATION_MARGIN_PCT)
                     # (3) which was computed over a genuinely shared set
-                    assert set(opp.shared_seats) == (
-                        set(held_seats) & set(new_seats)
-                    )
+                    assert set(opp.shared_seats) == (set(held_seats) & set(new_seats))
     assert surfaced > 0, "grid surfaced nothing — it is not testing anything"
 
 
@@ -525,8 +582,10 @@ MIN_ORDER_USD = 500.0
 def _today_ladder_full_kwargs(**over):
     """The 2026-09-23 book: real risk-budget room, no funding room at all."""
     kwargs = dict(
-        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
-        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=TODAY_RISK_HEADROOM_PCT,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD,
+        min_order_usd=MIN_ORDER_USD,
     )
     kwargs.update(over)
     return kwargs
@@ -545,9 +604,7 @@ def test_a_book_full_on_the_gross_ladder_reaches_the_comparison():
         held_symbols={"OLD"},
         **_today_ladder_full_kwargs(),
     )
-    assert outcome.opportunity is not None, (
-        "the book could not fund a $500 order; the comparison must be made"
-    )
+    assert outcome.opportunity is not None, "the book could not fund a $500 order; the comparison must be made"
     assert outcome.opportunity.tier == "ineligible_hold"
     assert outcome.opportunity.held_symbol == "OLD"
     assert outcome.opportunity.new_symbol == "NEW"
@@ -564,8 +621,10 @@ def test_the_risk_budget_test_still_binds_on_its_own():
         ranked=[_rc("NEW", 1.8)],
         blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
         held_symbols={"OLD"},
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
-        entry_budget_usd=25_000.0, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=25_000.0,
+        min_order_usd=MIN_ORDER_USD,
     )
     assert outcome.opportunity is not None
     assert outcome.refusal is None
@@ -582,8 +641,10 @@ def test_a_below_bar_holding_is_culled_even_with_room_on_every_constraint():
         ranked=[_rc("NEW", 1.8)],
         blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
         held_symbols={"OLD"},
-        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
-        entry_budget_usd=9_000.0, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=TODAY_RISK_HEADROOM_PCT,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=9_000.0,
+        min_order_usd=MIN_ORDER_USD,
     )
     assert outcome.refusal is None
     assert outcome.opportunity is not None
@@ -600,8 +661,10 @@ def test_a_below_bar_holding_is_culled_with_no_replacement_candidate():
         ranked=[_rc("OLD", 0.4)],  # every ranked name is already held
         blocked={"OLD": ["R3 not BUY-eligible"]},
         held_symbols={"OLD"},
-        headroom_pct=0.2, floor_pct=FLOOR_PCT,
-        entry_budget_usd=10.0, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=0.2,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=10.0,
+        min_order_usd=MIN_ORDER_USD,
     )
     assert outcome.opportunity is not None
     assert outcome.opportunity.new_symbol is None
@@ -617,8 +680,10 @@ def test_room_everywhere_and_nothing_below_the_bar_is_still_silence():
         ranked=[_rc("NEW", 1.8), _rc("OLD", 1.0)],
         blocked={},
         held_symbols={"OLD"},
-        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
-        entry_budget_usd=9_000.0, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=TODAY_RISK_HEADROOM_PCT,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=9_000.0,
+        min_order_usd=MIN_ORDER_USD,
     )
     assert outcome.opportunity is None
     assert outcome.refusal is not None
@@ -631,21 +696,32 @@ def test_an_unresolvable_funding_view_does_not_read_as_room_or_as_full():
     (which would rotate on an unread number) nor silently assert room."""
     from src.rotation import rotation_binding_constraints
 
+    assert (
+        rotation_binding_constraints(
+            headroom_pct=14.5,
+            floor_pct=FLOOR_PCT,
+            entry_budget_usd=None,
+            min_order_usd=MIN_ORDER_USD,
+        )
+        == ()
+    )
     assert rotation_binding_constraints(
-        headroom_pct=14.5, floor_pct=FLOOR_PCT,
-        entry_budget_usd=None, min_order_usd=MIN_ORDER_USD,
-    ) == ()
-    assert rotation_binding_constraints(
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
-        entry_budget_usd=None, min_order_usd=None,
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=None,
+        min_order_usd=None,
     ) == ("risk_budget",)
     assert rotation_binding_constraints(
-        headroom_pct=14.5, floor_pct=FLOOR_PCT,
-        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=14.5,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD,
+        min_order_usd=MIN_ORDER_USD,
     ) == ("funding",)
     assert rotation_binding_constraints(
-        headroom_pct=0.1, floor_pct=FLOOR_PCT,
-        entry_budget_usd=TODAY_DEPLOYABLE_USD, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=0.1,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=TODAY_DEPLOYABLE_USD,
+        min_order_usd=MIN_ORDER_USD,
     ) == ("risk_budget", "funding")
 
 
@@ -654,19 +730,27 @@ def test_exactly_the_minimum_order_is_not_constrained():
     order, so the book is not full — strictly less than, not at-or-below."""
     from src.rotation import rotation_binding_constraints
 
+    assert (
+        rotation_binding_constraints(
+            headroom_pct=14.5,
+            floor_pct=FLOOR_PCT,
+            entry_budget_usd=MIN_ORDER_USD,
+            min_order_usd=MIN_ORDER_USD,
+        )
+        == ()
+    )
     assert rotation_binding_constraints(
-        headroom_pct=14.5, floor_pct=FLOOR_PCT,
-        entry_budget_usd=MIN_ORDER_USD, min_order_usd=MIN_ORDER_USD,
-    ) == ()
-    assert rotation_binding_constraints(
-        headroom_pct=14.5, floor_pct=FLOOR_PCT,
-        entry_budget_usd=MIN_ORDER_USD - 0.01, min_order_usd=MIN_ORDER_USD,
+        headroom_pct=14.5,
+        floor_pct=FLOOR_PCT,
+        entry_budget_usd=MIN_ORDER_USD - 0.01,
+        min_order_usd=MIN_ORDER_USD,
     ) == ("funding",)
 
 
 # ---------------------------------------------------------------------------
 # 2026-09-23 — every refusal point writes its durable row.
 # ---------------------------------------------------------------------------
+
 
 def _refusal(**over):
     from src.rotation import evaluate_rotation
@@ -685,12 +769,14 @@ def test_no_refusal_point_is_silent_and_every_one_is_reachable():
     from src.rotation import ROTATION_REFUSAL_POINTS
 
     # `_rcv` scores: technical weight 1.2, earnings weight 1.2 here.
-    weak = _rcv("OLD", {"technical": (0.75, "low")})            # 0.9
-    strong = _rcv("NEW", {"technical": (1.0, "medium")})        # 1.8
+    weak = _rcv("OLD", {"technical": (0.75, "low")})  # 0.9
+    strong = _rcv("NEW", {"technical": (1.0, "medium")})  # 1.8
     seen = {
         # (a) the precondition
         _refusal(
-            ranked=[strong], blocked={}, held_symbols={"OLD"},
+            ranked=[strong],
+            blocked={},
+            held_symbols={"OLD"},
             entry_budget_usd=9_000.0,
         ).point,
         # (b) nothing to rotate INTO
@@ -699,44 +785,51 @@ def test_no_refusal_point_is_silent_and_every_one_is_reachable():
         _refusal(ranked=[strong], blocked={}, held_symbols={"GONE"}).point,
         # (d) the weakest holding scores zero or below
         _refusal(
-            ranked=[strong, _rc("OLD", 0.0)], blocked={},
+            ranked=[strong, _rc("OLD", 0.0)],
+            blocked={},
             held_symbols={"OLD"},
         ).point,
         # (e) the full composite margin is not cleared (1.0 < 0.9 * 1.25)
         _refusal(
             ranked=[_rcv("NEW", {"technical": (0.83, "low")}), weak],
-            blocked={}, held_symbols={"OLD"},
+            blocked={},
+            held_symbols={"OLD"},
         ).point,
         # (f) no seat scored both names
         _refusal(
             ranked=[_rcv("NEW", {"earnings": (1.0, "high")}), weak],
-            blocked={}, held_symbols={"OLD"},
+            blocked={},
+            held_symbols={"OLD"},
         ).point,
         # (g) the shared sub-score's denominator is non-positive: OLD's
         # whole score comes from `news`, which does not cover NEW, and the
         # one seat they share rates it zero (magnitude 0, conviction low).
         _refusal(
             ranked=[
-                _rcv("NEW", {"technical": (1.0, "high"),
-                             "earnings": (1.0, "high")}),      # 4.8
-                _rcv("OLD", {"technical": (None, "low"),       # 0.0
-                             "news": (0.5, "low")}),           # 0.5
+                _rcv("NEW", {"technical": (1.0, "high"), "earnings": (1.0, "high")}),  # 4.8
+                _rcv(
+                    "OLD",
+                    {
+                        "technical": (None, "low"),  # 0.0
+                        "news": (0.5, "low"),
+                    },
+                ),  # 0.5
             ],
-            blocked={}, held_symbols={"OLD"},
+            blocked={},
+            held_symbols={"OLD"},
         ).point,
         # (h) cleared on the full composite, not on the shared seats
         _refusal(
             ranked=[
-                _rcv("NEW", {"technical": (0.8, "low"),
-                             "earnings": (1.0, "high")}),
+                _rcv("NEW", {"technical": (0.8, "low"), "earnings": (1.0, "high")}),
                 _rcv("OLD", {"technical": (0.75, "low")}),
             ],
-            blocked={}, held_symbols={"OLD"},
+            blocked={},
+            held_symbols={"OLD"},
         ).point,
     }
     assert seen == set(ROTATION_REFUSAL_POINTS), (
-        f"unreached: {set(ROTATION_REFUSAL_POINTS) - seen}; "
-        f"unlisted: {seen - set(ROTATION_REFUSAL_POINTS)}"
+        f"unreached: {set(ROTATION_REFUSAL_POINTS) - seen}; unlisted: {seen - set(ROTATION_REFUSAL_POINTS)}"
     )
 
 
@@ -748,7 +841,8 @@ def test_the_refusal_row_carries_the_named_fields():
             _rcv("NEW", {"technical": (0.8, "low"), "earnings": (1.0, "high")}),
             _rcv("OLD", {"technical": (0.75, "low")}),
         ],
-        blocked={}, held_symbols={"OLD"},
+        blocked={},
+        held_symbols={"OLD"},
     )
     assert refusal.point == "shared_composite_margin_not_cleared"
     assert refusal.held_symbol == "OLD"
@@ -774,7 +868,8 @@ def test_the_row_describes_the_comparison_even_when_the_book_had_room():
             _rcv("NEW", {"technical": (1.0, "medium")}),
             _rcv("OLD", {"technical": (0.75, "low")}),
         ],
-        blocked={}, held_symbols={"OLD"},
+        blocked={},
+        held_symbols={"OLD"},
         entry_budget_usd=9_000.0,
     )
     assert refusal.point == "book_not_constrained"
@@ -789,7 +884,9 @@ def test_the_refusal_payload_is_flat_json_safe_scalars():
     import json
 
     payload = _refusal(
-        ranked=[_rc("NEW", 1.8)], blocked={}, held_symbols={"GONE"},
+        ranked=[_rc("NEW", 1.8)],
+        blocked={},
+        held_symbols={"GONE"},
     ).event_kwargs()
     assert payload["stage"] == "rotation"
     assert payload["outcome"] == "not_surfaced"
@@ -848,6 +945,7 @@ def test_the_prompt_names_the_constraint_that_is_actually_binding():
 # session so the desk can see how many of its own names have stopped earning
 # their place; see `holdings_below_entry_bar` and `precheck_record`.
 
+
 def test_holdings_below_entry_bar_is_held_names_that_fail_the_entry_bar():
     from src.rotation import holdings_below_entry_bar
 
@@ -894,7 +992,9 @@ def test_precheck_records_the_holdings_below_the_entry_bar_every_session():
     assert precheck.opportunity.tier == "ineligible_hold"
     assert precheck.held_below_entry_bar == ("OLD",)
     record = precheck_record(
-        precheck, execute_enabled=True, ranked_margin_enabled=False,
+        precheck,
+        execute_enabled=True,
+        ranked_margin_enabled=False,
     )
     assert record["held_below_entry_bar"] == "OLD"
     assert record["held_below_entry_bar_count"] == 1

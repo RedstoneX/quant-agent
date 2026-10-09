@@ -4,6 +4,7 @@ Lifted out of `ExDividends` in `src/pipeline_protection.py` and out of
 `src/execution/exit_path_records.py`, which re-exports every name here so each
 existing importer keeps working.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,8 +37,13 @@ def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: in
 
 
 def record_shift_outcome(
-    db: Any, symbol: str, amount: float, order: dict, run_id: str | None,
-    on_fault: Callable[[str, Exception], None], record_legs: Callable[..., Any],
+    db: Any,
+    symbol: str,
+    amount: float,
+    order: dict,
+    run_id: str | None,
+    on_fault: Callable[[str, Exception], None],
+    record_legs: Callable[..., Any],
 ) -> None:
     """Item 201: the per-leg outcome is a ROW whatever the outcome, and a
     shift that did not fully land is an owner-visible change in protection.
@@ -48,13 +54,20 @@ def record_shift_outcome(
     shifted = int(order.get("shifted") or 0)
     total = int(order.get("total") or 0)
     record_legs(
-        db, symbol=symbol, amount=amount,
-        mode=str(order.get("mode") or ""), status=status,
-        shifted=shifted, total=total, legs=order.get("legs"), run_id=run_id,
+        db,
+        symbol=symbol,
+        amount=amount,
+        mode=str(order.get("mode") or ""),
+        status=status,
+        shifted=shifted,
+        total=total,
+        legs=order.get("legs"),
+        run_id=run_id,
     )
     if status in ("partial", "refused", "unknown", "naked", "market_closed"):
         try:
             from src.notifier import send_owner_alert
+
             send_owner_alert(
                 stop_shift_incomplete_text(symbol, status, shifted, total),
                 symbols=[symbol],

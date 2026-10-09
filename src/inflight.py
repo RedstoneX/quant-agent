@@ -86,6 +86,7 @@ _etag_cache: dict[str, tuple[str, Any]] = {}
 # the data
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class InFlightItem:
     number: int
@@ -120,20 +121,17 @@ class InFlightItem:
         if self.checks is not None:
             if any(status != "completed" for _n, status, _c in self.checks):
                 return "being tested now"
-            if any(conc in ("failure", "timed_out", "cancelled", "action_required")
-                   for _n, _s, conc in self.checks):
+            if any(conc in ("failure", "timed_out", "cancelled", "action_required") for _n, _s, conc in self.checks):
                 return "tests failed; being fixed before it can go in"
         state = self.mergeable_state
         if state == "dirty":
-            return ("blocked: it clashes with work already merged and needs "
-                    "untangling first")
+            return "blocked: it clashes with work already merged and needs untangling first"
         if self.checks is not None and not self.checks:
             return "no tests have run on it yet"
         if state == "clean":
             return "tests passed; ready to go in, waiting to be merged"
         if state == "behind":
-            return ("tests passed; waiting to be merged, needs the latest "
-                    "changes pulled in first")
+            return "tests passed; waiting to be merged, needs the latest changes pulled in first"
         if state == "blocked":
             return "tests passed; waiting on a review before it can go in"
         if state == "unstable":
@@ -156,6 +154,7 @@ class OpenPR:
     is deliberately distinct from "touches no files": a caller enforcing a
     rule must never treat a failed read as proof of a violation.
     """
+
     number: int
     title: str
     body: str
@@ -173,6 +172,7 @@ class InFlight:
     GitHub reported at `read_at`; or `problem` says why nothing could be
     read, and `items` is meaningless (and rendered as such).
     """
+
     items: list[InFlightItem] = field(default_factory=list)
     read_at: datetime | None = None
     problem: str | None = None
@@ -190,6 +190,7 @@ NOT_ATTEMPTED = InFlight(problem="this page was built without asking GitHub")
 # --------------------------------------------------------------------------
 # reading GitHub
 # --------------------------------------------------------------------------
+
 
 def _http_get(url: str, headers: dict[str, str]) -> Response:
     """One conditional GET. Never raises for an HTTP error status: the
@@ -222,8 +223,7 @@ def _get_json(url: str, fetch: Fetch) -> Any:
     if status == 304 and cached:
         return cached[1]
     if status == 403 or status == 429:
-        raise RuntimeError("GitHub refused the read: the request limit for "
-                           "this machine is used up for now")
+        raise RuntimeError("GitHub refused the read: the request limit for this machine is used up for now")
     if status != 200:
         raise RuntimeError(f"GitHub answered with status {status}")
     try:
@@ -242,8 +242,7 @@ def _when(iso: str | None) -> datetime:
     return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
-def read_in_flight(fetch: Fetch = _http_get, repo: str = REPO,
-                   now: datetime | None = None) -> InFlight:
+def read_in_flight(fetch: Fetch = _http_get, repo: str = REPO, now: datetime | None = None) -> InFlight:
     """Read every open pull request and, for each, whether it can go in and
     how its tests stand. Never raises.
 
@@ -284,11 +283,14 @@ def read_in_flight(fetch: Fetch = _http_get, repo: str = REPO,
             item.mergeable_state = str(state) if state else None
             if head_sha:
                 runs = _get_json(f"{API}/repos/{repo}/commits/{head_sha}/check-runs", fetch)
-                item.checks = tuple(
-                    (str(r.get("name", "")), str(r.get("status", "")),
-                     r.get("conclusion"))
-                    for r in (runs.get("check_runs") or [])
-                ) if isinstance(runs, dict) else None
+                item.checks = (
+                    tuple(
+                        (str(r.get("name", "")), str(r.get("status", "")), r.get("conclusion"))
+                        for r in (runs.get("check_runs") or [])
+                    )
+                    if isinstance(runs, dict)
+                    else None
+                )
             else:
                 item.checks = None
         except RuntimeError as exc:
@@ -304,8 +306,10 @@ WORK_MD = "docs/WORK.md"
 RETIRED_LINE = "Retired item numbers"
 
 
-def read_open_pull_requests(fetch: Fetch = _http_get, repo: str = REPO,
-                            ) -> tuple[list[OpenPR], str | None]:
+def read_open_pull_requests(
+    fetch: Fetch = _http_get,
+    repo: str = REPO,
+) -> tuple[list[OpenPR], str | None]:
     """Every open pull request with its description and the files it touches.
 
     Returns `(items, problem)`. Exactly one is meaningful: a problem string
@@ -327,12 +331,9 @@ def read_open_pull_requests(fetch: Fetch = _http_get, repo: str = REPO,
             number = int(p["number"])
         except (KeyError, TypeError, ValueError):
             continue
-        item = OpenPR(number=number,
-                      title=str(p.get("title") or ""),
-                      body=str(p.get("body") or ""))
+        item = OpenPR(number=number, title=str(p.get("title") or ""), body=str(p.get("body") or ""))
         try:
-            files = _get_json(
-                f"{API}/repos/{repo}/pulls/{number}/files?per_page=100", fetch)
+            files = _get_json(f"{API}/repos/{repo}/pulls/{number}/files?per_page=100", fetch)
         except RuntimeError as exc:
             item.detail_problem = str(exc)
             out.append(item)
@@ -373,15 +374,14 @@ def _stamp(t: datetime) -> str:
 
 
 def _opened(t: datetime, now: datetime) -> str:
-    """"opened 2026-10-04 1:05 PM ET". Every timestamp carries a date
+    """ "opened 2026-10-04 1:05 PM ET". Every timestamp carries a date
     so the owner can scroll back hours later and know when something was
     opened (item 231)."""
     local = t.astimezone(ET)
     return f"opened {fmt_time_12h(local)}"
 
 
-def render_in_flight(inf: InFlight, now: datetime | None = None,
-                     last_good: InFlight | None = None) -> str:
+def render_in_flight(inf: InFlight, now: datetime | None = None, last_good: InFlight | None = None) -> str:
     """The section body: what is under construction, or an explicit account
     of why that could not be read. Wrapped in `START_MARK`/`END_MARK`.
 
@@ -395,22 +395,21 @@ def render_in_flight(inf: InFlight, now: datetime | None = None,
     if not inf.readable:
         parts.append(
             '<div class="note inflight-unread"><b>Could not read what is in '
-            f'flight.</b> {_esc(inf.problem)}. This does not mean nothing is '
-            'in flight &mdash; it means the page could not look.</div>')
+            f"flight.</b> {_esc(inf.problem)}. This does not mean nothing is "
+            "in flight &mdash; it means the page could not look.</div>"
+        )
         if last_good is not None and last_good.readable and last_good.read_at:
-            parts.append(
-                f'<p class="lede">The last successful read, at '
-                f'{_stamp(last_good.read_at)}, showed:</p>')
+            parts.append(f'<p class="lede">The last successful read, at {_stamp(last_good.read_at)}, showed:</p>')
             parts.append(_rows(last_good.items, now))
     else:
         assert inf.read_at is not None
         parts.append(
             f'<p class="lede inflight-stamp">Read from GitHub at '
-            f'{_stamp(inf.read_at)}. Anything that changed after that is not '
-            'here yet.</p>')
+            f"{_stamp(inf.read_at)}. Anything that changed after that is not "
+            "here yet.</p>"
+        )
         if not inf.items:
-            parts.append('<div class="note">Nothing is in flight: no change '
-                         'is open and unmerged right now.</div>')
+            parts.append('<div class="note">Nothing is in flight: no change is open and unmerged right now.</div>')
         else:
             parts.append(_rows(inf.items, now))
     parts.append(END_MARK)
@@ -426,9 +425,10 @@ def _rows(items: list[InFlightItem], now: datetime) -> str:
         rows.append(
             '<div class="ol ol-inhand ol-inflight">'
             f'<span class="q-n">PR {it.number}</span>'
-            f'<span>{_esc(it.title)} '
-            f'<em>&mdash; {tail}; {_opened(it.opened_at, now)}.</em>'
-            '</span></div>')
+            f"<span>{_esc(it.title)} "
+            f"<em>&mdash; {tail}; {_opened(it.opened_at, now)}.</em>"
+            "</span></div>"
+        )
     return "\n".join(rows)
 
 
@@ -439,4 +439,4 @@ def refresh_in_flight_html(page: str, fresh: str) -> str:
     end = page.find(END_MARK, start)
     if start == -1 or end == -1:
         return page
-    return page[:start] + fresh + page[end + len(END_MARK):]
+    return page[:start] + fresh + page[end + len(END_MARK) :]

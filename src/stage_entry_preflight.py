@@ -10,6 +10,7 @@ session's own slot ends (``src.price_feed_preflight.wait_for_today_prints``).
 A name that prints late runs through this SAME pass, so it is sized, risk-
 bounded and funded exactly like a name that printed first time.
 """
+
 from __future__ import annotations
 
 from src.pipeline_stages import (
@@ -30,28 +31,45 @@ from src import pipeline_stages as _pipeline_stages
 _pipeline_stages._STAGE_CLASS_MODULES["entry_viability_preflight"] = __name__
 
 
-def entry_viability_preflight(pipeline, ctx, buy_decisions: list, *, total_value: float,
-                              price_map: dict, fundable_notional: dict) -> list:
+def entry_viability_preflight(
+    pipeline, ctx, buy_decisions: list, *, total_value: float, price_map: dict, fundable_notional: dict
+) -> list:
     """The approved entries that will survive the submit loop, in order, with
     ``fundable_notional`` filled for each BUY. Names with no today print wait
     for the batched re-ask and, once printed, take the same pass."""
     waiting: list = []
-    survivors = _viability_pass(pipeline, ctx, buy_decisions, total_value=total_value,
-                                price_map=price_map, fundable_notional=fundable_notional,
-                                waiting=waiting)
+    survivors = _viability_pass(
+        pipeline,
+        ctx,
+        buy_decisions,
+        total_value=total_value,
+        price_map=price_map,
+        fundable_notional=fundable_notional,
+        waiting=waiting,
+    )
     if not waiting:
         return survivors
     printed, skipped = wait_for_today_prints(pipeline, ctx, waiting)
     for decision, reason, detail in skipped:
         _record_execution_skip(pipeline, ctx, decision.symbol, reason, detail)
     late: list = []
-    survivors += _viability_pass(pipeline, ctx, printed, total_value=total_value,
-                                 price_map=price_map, fundable_notional=fundable_notional,
-                                 waiting=late)
+    survivors += _viability_pass(
+        pipeline,
+        ctx,
+        printed,
+        total_value=total_value,
+        price_map=price_map,
+        fundable_notional=fundable_notional,
+        waiting=late,
+    )
     for decision in late:  # printed in the batch, then not through the sizing chain
-        _record_execution_skip(pipeline, ctx, decision.symbol, NO_SIZING_PRINT,
-                               "printed in the batched re-ask but the sizing read "
-                               "found no today print")
+        _record_execution_skip(
+            pipeline,
+            ctx,
+            decision.symbol,
+            NO_SIZING_PRINT,
+            "printed in the batched re-ask but the sizing read found no today print",
+        )
     return survivors
 
 
@@ -64,7 +82,10 @@ def _unpriced(pipeline, ctx, symbol: str, market_price) -> bool:
         _record_execution_skip(pipeline, ctx, symbol, *classified)
     else:
         _record_execution_skip(
-            pipeline, ctx, symbol, "no_price",
+            pipeline,
+            ctx,
+            symbol,
+            "no_price",
             "no verifiable live price (daily bar close is not a fill reference)",
         )
     return True
@@ -78,9 +99,7 @@ def _stale_entry_detail(decision, market_price: float) -> str | None:
     deviation = abs(decision.entry_price - market_price) / market_price
     if deviation <= 0.05:
         return None
-    return (f"entry ${decision.entry_price:.2f} is "
-            f"{deviation * 100:.1f}% from market "
-            f"${market_price:.2f} (threshold 5%)")
+    return f"entry ${decision.entry_price:.2f} is {deviation * 100:.1f}% from market ${market_price:.2f} (threshold 5%)"
 
 
 def _preflight_price(pipeline, ctx, decision, price_map: dict, waiting: list) -> float | None:
@@ -99,7 +118,10 @@ def _preflight_price(pipeline, ctx, decision, price_map: dict, waiting: list) ->
     # mid. No print -> the submit loop will refuse this name, so the
     # sweep must not sell SGOV to fund it.
     sizing_print, why, detail = sizing_price_or_refusal(
-        _today_sizing_price, pipeline, decision.symbol, "buy",
+        _today_sizing_price,
+        pipeline,
+        decision.symbol,
+        "buy",
     )
     if sizing_print is None and why == NO_SIZING_PRINT:
         # No today print YET: the name waits for the batched re-ask
@@ -113,8 +135,9 @@ def _preflight_price(pipeline, ctx, decision, price_map: dict, waiting: list) ->
     return max(sizing_print, decision.entry_price or 0)
 
 
-def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
-                    price_map: dict, fundable_notional: dict, waiting: list) -> list:
+def _viability_pass(
+    pipeline, ctx, buy_decisions: list, *, total_value: float, price_map: dict, fundable_notional: dict, waiting: list
+) -> list:
     # Run the cheap deterministic entry-viability checks BEFORE selling
     # SGOV. Production evidence showed the sweep funding names that were
     # guaranteed to die moments later on stale-entry / no-price / qty-zero
@@ -136,7 +159,9 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
         # is a legitimate position rather than nothing.
         preflight_short = decision.action == "SHORT"
         preflight_fractional = _fractional_sizing_allowed(
-            pipeline, decision.symbol, is_short=preflight_short,
+            pipeline,
+            decision.symbol,
+            is_short=preflight_short,
         )
         preflight_qty = _size_shares(
             pipeline,
@@ -145,9 +170,11 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
         )
         if preflight_qty <= 0:
             _record_execution_skip(
-                pipeline, ctx, decision.symbol, "qty_zero",
-                f"allocation {decision.allocation_pct:.2f}% at "
-                f"${preflight_price:.2f} rounds to zero shares",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "qty_zero",
+                f"allocation {decision.allocation_pct:.2f}% at ${preflight_price:.2f} rounds to zero shares",
             )
             continue
         # Fund what the submit loop will SPEND, not what the allocation
@@ -169,10 +196,12 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
         # budget allows. So this is an upper bound on what will be
         # spent, which is the safe side to be wrong on.
         preflight_risk_qty = _qty_by_risk_budget(
-            pipeline, total_value=total_value,
+            pipeline,
+            total_value=total_value,
             sizing_price=preflight_price,
             stop_price=decision.stop_loss,
-            is_short=preflight_short, fractional=preflight_fractional,
+            is_short=preflight_short,
+            fractional=preflight_fractional,
         )
         if preflight_risk_qty is not None and preflight_risk_qty < preflight_qty:
             preflight_qty = preflight_risk_qty
@@ -181,9 +210,11 @@ def _viability_pass(pipeline, ctx, buy_decisions: list, *, total_value: float,
             # submit loop will reach the same conclusion and skip; there
             # is nothing here for the sweep to fund.
             _record_execution_skip(
-                pipeline, ctx, decision.symbol, "qty_zero",
-                f"risk budget at ${preflight_price:.2f} entry / "
-                f"${decision.stop_loss:.2f} stop rounds to zero shares",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "qty_zero",
+                f"risk budget at ${preflight_price:.2f} entry / ${decision.stop_loss:.2f} stop rounds to zero shares",
             )
             continue
         # A SHORT is deliberately excluded from the funding total: it

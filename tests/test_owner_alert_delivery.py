@@ -1,4 +1,5 @@
 """A failed owner alert is retried, then recorded as a counted durable row."""
+
 import sqlite3
 
 import pytest
@@ -30,6 +31,7 @@ class _Fake:
 def _fast(monkeypatch, tmp_path):
     monkeypatch.setattr(d, "RETRY_DELAYS_S", (0, 0))
     import src.notifier.base as base
+
     monkeypatch.setattr(base, "_DB_PATH", tmp_path / "n.db")
 
 
@@ -70,14 +72,14 @@ def test_failing_alert_does_not_abort_caller(monkeypatch):
         def _safe_record_send(self, **kw):
             raise RuntimeError("db down")
 
-    monkeypatch.setattr(owner_alert, "TelegramNotifier",
-                        lambda: Boom([RuntimeError("net")] * 3))
+    monkeypatch.setattr(owner_alert, "TelegramNotifier", lambda: Boom([RuntimeError("net")] * 3))
     assert owner_alert.send_owner_alert("heading\nbody") is False
 
 
 def test_funnel_never_raises_when_notifier_cannot_build(monkeypatch):
     def _bad():
         raise RuntimeError("no token")
+
     monkeypatch.setattr(owner_alert, "TelegramNotifier", _bad)
     assert owner_alert.send_owner_alert("x\ny") is False
 

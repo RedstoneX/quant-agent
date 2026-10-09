@@ -24,6 +24,7 @@ pins that ruling.
 
 No threshold moves here.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,15 +36,17 @@ import pytest
 from src.agents.base import AgentResult
 from src.agents.risk_manager import RiskManagerAgent
 from src.models import (
-    PortfolioDecision, ReasoningChain, RiskReasoningChain,
-    RiskVerdict, SymbolRejection, TradeDecision,
+    PortfolioDecision,
+    ReasoningChain,
+    RiskReasoningChain,
+    RiskVerdict,
+    SymbolRejection,
+    TradeDecision,
 )
 from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
 
-PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "config" / "prompts" / "risk_manager.md"
-)
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "config" / "prompts" / "risk_manager.md"
 from tests.pipeline_factory import build_pipeline
 
 # The two legs of run-64290730, with the geometry that produced each R/R.
@@ -53,15 +56,23 @@ CHPX_RR = "R/R 3.03:1"
 
 def _rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x", portfolio_balance="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
         cash_target="x",
     )
 
@@ -69,8 +80,13 @@ def _pm_rc() -> ReasoningChain:
 def _xle() -> TradeDecision:
     """R/R (90.11 - 87.40) / (87.40 - 85.10) = 1.18 — under the floor."""
     return TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=5.0, entry_price=87.40,
-        stop_loss=85.10, take_profit=90.11, reasoning="energy rotation",
+        action="BUY",
+        symbol="XLE",
+        allocation_pct=5.0,
+        entry_price=87.40,
+        stop_loss=85.10,
+        take_profit=90.11,
+        reasoning="energy rotation",
         thesis_invalid_if="closes below support",
     )
 
@@ -78,8 +94,13 @@ def _xle() -> TradeDecision:
 def _chpx() -> TradeDecision:
     """R/R (28.55 - 24.00) / (24.00 - 22.50) = 3.03 — comfortably passing."""
     return TradeDecision(
-        action="BUY", symbol="CHPX", allocation_pct=6.0, entry_price=24.00,
-        stop_loss=22.50, take_profit=28.55, reasoning="breakout, unrelated thesis",
+        action="BUY",
+        symbol="CHPX",
+        allocation_pct=6.0,
+        entry_price=24.00,
+        stop_loss=22.50,
+        take_profit=28.55,
+        reasoning="breakout, unrelated thesis",
         thesis_invalid_if="closes below support",
     )
 
@@ -94,7 +115,16 @@ def _stage_pipeline(*, verdict, decisions):
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), risk_manager=MagicMock())
+    pipeline = build_pipeline(
+        db=MagicMock(),
+        _sweeper=MagicMock(return_value=None),
+        _filter_supported_symbols=MagicMock(return_value=(decisions, [])),
+        _refuse_queued_earnings_buys=MagicMock(return_value=decisions),
+        _filter_hard_risk_decisions=MagicMock(
+            side_effect=lambda d, *a, **kw: (list(d), [], []),
+        ),
+        risk_manager=MagicMock(),
+    )
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
     return pipeline
 
@@ -106,7 +136,9 @@ def _ctx(decisions) -> RunContext:
     ctx.last_equity = 100_000.0
     ctx.cash = 50_000.0
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
     return ctx
 
@@ -123,10 +155,14 @@ def _events(pipeline) -> list[tuple[str, str, str, str]]:
         if kwargs.get("kind") != "pipeline_event":
             continue
         payload = json.loads(kwargs["evidence_json"])
-        out.append((
-            kwargs.get("symbol"), payload.get("stage"),
-            payload.get("outcome"), payload.get("reason"),
-        ))
+        out.append(
+            (
+                kwargs.get("symbol"),
+                payload.get("stage"),
+                payload.get("outcome"),
+                payload.get("reason"),
+            )
+        )
     return out
 
 
@@ -134,13 +170,16 @@ def _events(pipeline) -> list[tuple[str, str, str, str]]:
 # The defect itself
 # ---------------------------------------------------------------------------
 
+
 def test_refusing_xle_no_longer_kills_chpx():
     """run-64290730, reproduced. One leg fails its own R/R floor; the other
     is in a different sector on an unrelated thesis and passes. Before this
     change the only lever available took both."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="rr_fail",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
         reasoning=f"XLE refused on R/R. CHPX stands on its own at {CHPX_RR}.",
     )
@@ -151,16 +190,16 @@ def test_refusing_xle_no_longer_kills_chpx():
 
     # None == "carry on to execution". A dict would be a terminal refusal.
     assert result is None
-    assert _symbols(ctx) == ["CHPX"], (
-        "the passing leg must survive a refusal aimed at a different symbol"
-    )
+    assert _symbols(ctx) == ["CHPX"], "the passing leg must survive a refusal aimed at a different symbol"
 
 
 def test_the_refused_symbol_carries_its_own_reason_not_the_runs():
     """The audit trail has to answer 'why did THIS name die', per name."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="rr_fail",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
         reasoning="run-level narrative that is NOT the per-symbol reason",
     )
@@ -174,8 +213,7 @@ def test_the_refused_symbol_carries_its_own_reason_not_the_runs():
 
     # And a durable per-symbol evidence row, the same way a modification gets one.
     rejection_rows = [
-        c.kwargs for c in pipeline.db.insert_specialist_evidence.call_args_list
-        if c.kwargs.get("kind") == "rejection"
+        c.kwargs for c in pipeline.db.insert_specialist_evidence.call_args_list if c.kwargs.get("kind") == "rejection"
     ]
     assert len(rejection_rows) == 1
     assert rejection_rows[0]["symbol"] == "XLE"
@@ -189,7 +227,9 @@ def test_every_leg_refused_individually_still_ends_the_run():
     own reason rather than one shared sentence about a different symbol."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="rr_fail",
         rejected_symbols=[
             {"symbol": "XLE", "reason": XLE_RR},
             {"symbol": "CHPX", "reason": "stop sits inside the daily range"},
@@ -209,7 +249,9 @@ def test_every_leg_refused_individually_still_ends_the_run():
 def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
     decisions = [_chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="rr_fail",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
         reasoning="XLE is not in this plan",
     )
@@ -218,6 +260,7 @@ def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
 
     assert RiskStage(pipeline=pipeline).run(ctx) is None
     assert _symbols(ctx) == ["CHPX"]
+
 
 # ---------------------------------------------------------------------------
 # Owner ruling 2026-09-24 (final): the risk seat has NO whole-batch veto.
@@ -229,19 +272,30 @@ def test_refusal_naming_a_symbol_outside_the_plan_is_a_noop():
 # holding can NEVER be dropped or blocked by the seat, under any path.
 # ---------------------------------------------------------------------------
 
+
 def _sell(symbol: str = "HELD") -> TradeDecision:
     """A protective exit PM proposed — a SELL that must always reach execution."""
     return TradeDecision(
-        action="SELL", symbol=symbol, allocation_pct=100.0, entry_price=50.0,
-        stop_loss=0.0, take_profit=0.0, reasoning="thesis played out; take profit",
+        action="SELL",
+        symbol=symbol,
+        allocation_pct=100.0,
+        entry_price=50.0,
+        stop_loss=0.0,
+        take_profit=0.0,
+        reasoning="thesis played out; take profit",
     )
 
 
 def _cover(symbol: str = "SHRT") -> TradeDecision:
     """A protective COVER — closing a short — that must always reach execution."""
     return TradeDecision(
-        action="COVER", symbol=symbol, allocation_pct=100.0, entry_price=50.0,
-        stop_loss=0.0, take_profit=0.0, reasoning="short thesis done; cover",
+        action="COVER",
+        symbol=symbol,
+        allocation_pct=100.0,
+        entry_price=50.0,
+        stop_loss=0.0,
+        take_profit=0.0,
+        reasoning="short thesis done; cover",
     )
 
 
@@ -259,7 +313,9 @@ def test_approved_false_no_longer_rejects_the_batch():
     as batch_veto_ignored, not enforced."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
+        approved=False,
+        reasoning_chain=_rc(),
+        reason_category="correlation_risk",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
         reasoning="uneasy about the book, dropping XLE",
     )
@@ -279,7 +335,8 @@ def test_approved_false_alone_lets_the_whole_batch_through():
     proposed entry proceeds."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(),
+        approved=False,
+        reasoning_chain=_rc(),
         reasoning="the whole plan feels aggressive but I name nothing",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
@@ -300,7 +357,9 @@ def test_scale_all_buys_zero_is_advisory_and_does_not_stop_new_buying():
     concern is recorded as a `scale_advisory` event per entry (never a drop)."""
     decisions = [_xle(), _chpx(), _sell("HELD")]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), scale_all_buys=0.0,
+        approved=False,
+        reasoning_chain=_rc(),
+        scale_all_buys=0.0,
         reasoning="stop all new buying in this regime",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
@@ -325,7 +384,8 @@ def test_a_proposed_protective_sell_is_never_dropped_by_the_seat():
     and can NEVER be dropped/blocked; it is kept and the attempt is recorded."""
     decisions = [_xle(), _sell("HELD")]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(),
+        approved=False,
+        reasoning_chain=_rc(),
         rejected_symbols=[
             {"symbol": "XLE", "reason": XLE_RR},
             {"symbol": "HELD", "reason": "seat wrongly tries to cancel the exit"},
@@ -342,17 +402,17 @@ def test_a_proposed_protective_sell_is_never_dropped_by_the_seat():
     assert _symbols(ctx) == ["HELD"], "XLE (a new entry) is dropped; the SELL survives"
     prot = _exit_protected_events(pipeline)
     assert [e[0] for e in prot] == ["HELD"], "the ignored exit-refusal is recorded"
-    assert not [
-        e for e in _events(pipeline)
-        if e[0] == "HELD" and e[2] == "rejected"
-    ], "the exit must never carry a 'rejected' event"
+    assert not [e for e in _events(pipeline) if e[0] == "HELD" and e[2] == "rejected"], (
+        "the exit must never carry a 'rejected' event"
+    )
 
 
 def test_a_proposed_cover_is_never_dropped_by_the_seat():
     """Ruling test 3 (COVER variant) — a COVER is a protective exit too."""
     decisions = [_cover("SHRT"), _chpx()]
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(),
+        approved=False,
+        reasoning_chain=_rc(),
         rejected_symbols=[{"symbol": "SHRT", "reason": "seat tries to cancel the cover"}],
         reasoning="tries to cancel the cover",
     )
@@ -371,13 +431,20 @@ def test_correlation_cluster_is_handled_by_dropping_the_named_names():
     the correlated NAMES; an unrelated name in the same batch still trades."""
     decisions = [_xle(), _chpx()]  # treat XLE+one more as the cluster
     unrelated = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=4.0, entry_price=200.0,
-        stop_loss=190.0, take_profit=230.0, reasoning="unrelated tech name",
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=4.0,
+        entry_price=200.0,
+        stop_loss=190.0,
+        take_profit=230.0,
+        reasoning="unrelated tech name",
         thesis_invalid_if="closes below support",
     )
     decisions.append(unrelated)
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(), reason_category="correlation_risk",
+        approved=False,
+        reasoning_chain=_rc(),
+        reason_category="correlation_risk",
         rejected_symbols=[
             {"symbol": "XLE", "reason": "energy cluster leg 1"},
             {"symbol": "CHPX", "reason": "energy cluster leg 2"},
@@ -399,7 +466,9 @@ def test_hard_gate_still_enforced_after_scale():
     never touched it."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), scale_all_buys=0.5,
+        approved=True,
+        reasoning_chain=_rc(),
+        scale_all_buys=0.5,
         reasoning="trim the entry side",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
@@ -417,11 +486,10 @@ def test_hard_gate_still_enforced_after_scale():
 
     result = RiskStage(pipeline=pipeline).run(_ctx(decisions))
 
-    assert pipeline.risk_gate._filter_hard_risk_decisions.call_count == 2, (
-        "the hard gate re-runs after scaling"
-    )
+    assert pipeline.risk_gate._filter_hard_risk_decisions.call_count == 2, "the hard gate re-runs after scaling"
     assert result == {
-        "status": "hard_risk_block", "orders": [],
+        "status": "hard_risk_block",
+        "orders": [],
         "reason": "max_gross_exposure breach after scaling",
     }
 
@@ -433,9 +501,12 @@ def test_scale_all_buys_does_not_resize_the_survivors():
     against it instead."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reason_category="rr_fail",
+        approved=True,
+        reasoning_chain=_rc(),
+        reason_category="rr_fail",
         rejected_symbols=[{"symbol": "XLE", "reason": XLE_RR}],
-        scale_all_buys=0.5, reasoning="XLE refused; scale flagged, advisory only",
+        scale_all_buys=0.5,
+        reasoning="XLE refused; scale flagged, advisory only",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
     ctx = _ctx(decisions)
@@ -453,7 +524,9 @@ def test_an_empty_verdict_behaves_exactly_as_before():
     must replay with byte-identical behaviour."""
     decisions = [_xle(), _chpx()]
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reasoning="clean",
+        approved=True,
+        reasoning_chain=_rc(),
+        reasoning="clean",
     )
     assert verdict.rejected_symbols == []
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
@@ -467,42 +540,55 @@ def test_an_empty_verdict_behaves_exactly_as_before():
 # Schema: a refusal must never be lost to a formatting slip
 # ---------------------------------------------------------------------------
 
+
 def test_bare_symbol_string_is_normalized_into_a_refusal():
     """Dropping a malformed refusal is fail-OPEN — the refused name would
     trade. Anything that still names a symbol is normalized instead."""
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reasoning="r",
+        approved=True,
+        reasoning_chain=_rc(),
+        reasoning="r",
         rejected_symbols=["xle"],
     )
     assert list(verdict.rejections_by_symbol()) == ["XLE"]
     assert verdict.rejected_symbols[0].reason  # a stated absence, never empty
 
 
-@pytest.mark.parametrize("raw", (
-    {"XLE": "R/R below floor"},                     # mapping shorthand
-    {"symbol": "XLE", "reason": "R/R below floor"},  # a single bare object
-    "XLE",                                           # a bare string
-))
+@pytest.mark.parametrize(
+    "raw",
+    (
+        {"XLE": "R/R below floor"},  # mapping shorthand
+        {"symbol": "XLE", "reason": "R/R below floor"},  # a single bare object
+        "XLE",  # a bare string
+    ),
+)
 def test_container_shorthands_still_refuse_the_symbol(raw):
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reasoning="r",
+        approved=True,
+        reasoning_chain=_rc(),
+        reasoning="r",
         rejected_symbols=raw,
     )
     assert "XLE" in verdict.rejections_by_symbol()
 
 
-@pytest.mark.parametrize("raw", (
-    [{"reason": "no symbol named"}],
-    [{"symbol": ""}],
-    7,
-))
+@pytest.mark.parametrize(
+    "raw",
+    (
+        [{"reason": "no symbol named"}],
+        [{"symbol": ""}],
+        7,
+    ),
+)
 def test_a_refusal_naming_no_symbol_fails_the_verdict_closed(raw):
     """We know a refusal was intended and cannot tell which name it was for.
     Failing the whole verdict closed refuses everything — the conservative
     direction — instead of silently trading a name that was refused."""
     with pytest.raises(Exception) as exc:
         RiskVerdict(
-            approved=True, reasoning_chain=_rc(), reasoning="r",
+            approved=True,
+            reasoning_chain=_rc(),
+            reasoning="r",
             rejected_symbols=raw,
         )
     assert any(e["loc"][0] == "rejected_symbols" for e in exc.value.errors())
@@ -510,7 +596,9 @@ def test_a_refusal_naming_no_symbol_fails_the_verdict_closed(raw):
 
 def test_rejections_by_symbol_keeps_the_first_reason_per_name():
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(), reasoning="r",
+        approved=True,
+        reasoning_chain=_rc(),
+        reasoning="r",
         rejected_symbols=[
             SymbolRejection(symbol="XLE", reason="first"),
             SymbolRejection(symbol="xle", reason="second"),
@@ -559,16 +647,19 @@ def _run_review(agent, first: str, repaired: str | None):
     def fake_execute(user_message, **kwargs):
         calls.append(user_message)
         raw = first if len(calls) == 1 else repaired
-        return AgentResult(raw_text=raw or "", tokens_used=0, model="t",
-                           user_message=user_message)
+        return AgentResult(raw_text=raw or "", tokens_used=0, model="t", user_message=user_message)
 
-    agent.run = lambda **kw: fake_execute("first")          # type: ignore[assignment]
-    agent._execute = fake_execute                            # type: ignore[assignment]
+    agent.run = lambda **kw: fake_execute("first")  # type: ignore[assignment]
+    agent._execute = fake_execute  # type: ignore[assignment]
     verdict, _ = agent.review(
         portfolio_decision=PortfolioDecision(
-            reasoning_chain=_pm_rc(), targets=[], portfolio_view="v",
+            reasoning_chain=_pm_rc(),
+            targets=[],
+            portfolio_view="v",
         ),
-        positions=[], macro_summary={}, rule_violations=[],
+        positions=[],
+        macro_summary={},
+        rule_violations=[],
     )
     return verdict, calls
 
@@ -576,7 +667,9 @@ def _run_review(agent, first: str, repaired: str | None):
 def test_repair_preserving_the_refusal_is_accepted():
     agent = _rm()
     verdict, calls = _run_review(
-        agent, json.dumps(_BASE_VERDICT), json.dumps(_complete(_BASE_VERDICT)),
+        agent,
+        json.dumps(_BASE_VERDICT),
+        json.dumps(_complete(_BASE_VERDICT)),
     )
     assert verdict is not None
     assert verdict.rejections_by_symbol() == {"XLE": XLE_RR}
@@ -624,6 +717,7 @@ def test_malformed_refusal_skips_the_repair_call_entirely():
 # The exit path gets the same split
 # ---------------------------------------------------------------------------
 
+
 def _exit_pipeline(verdict):
     """Mirrors tests/test_phase3_exit_rework.py's `_risk_pipeline`, kept local
     so the Phase 10.1 behaviour reads in one file."""
@@ -633,10 +727,18 @@ def _exit_pipeline(verdict):
     p.broker.get_current_stop_price.return_value = None
     p._atr_for_symbol = MagicMock(return_value=2.0)
     p._build_portfolio_heat = MagicMock(return_value=None)
-    p.risk_manager.review.return_value = (verdict, MagicMock(
-        user_message="u", raw_text="r", model="m", tokens_used=1,
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    p.risk_manager.review.return_value = (
+        verdict,
+        MagicMock(
+            user_message="u",
+            raw_text="r",
+            model="m",
+            tokens_used=1,
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
     return p
 
 
@@ -644,8 +746,13 @@ def _position(symbol):
     from src.models import Position
 
     return Position(
-        symbol=symbol, qty=10, avg_entry=100.0, current_price=110.0,
-        market_value=1100.0, unrealized_pnl=100.0, sector="Technology",
+        symbol=symbol,
+        qty=10,
+        avg_entry=100.0,
+        current_price=110.0,
+        market_value=1100.0,
+        unrealized_pnl=100.0,
+        sector="Technology",
     )
 
 
@@ -654,18 +761,19 @@ def _two_exits():
 
     return PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="stable", thesis_progress_check="broken",
+            macro_continuity_check="stable",
+            thesis_progress_check="broken",
             thesis_integrity_check="invalidation hit",
-            winners_discipline_check="n/a", session_disposition_check="midday",
+            winners_discipline_check="n/a",
+            session_disposition_check="midday",
             execution_rationale="exit",
         ),
         actions=[
-            PositionAction(action="SELL", symbol="AAA",
-                           reason="thesis_invalid triggered"),
-            PositionAction(action="SELL", symbol="BBB",
-                           reason="thesis_invalid triggered"),
+            PositionAction(action="SELL", symbol="AAA", reason="thesis_invalid triggered"),
+            PositionAction(action="SELL", symbol="BBB", reason="thesis_invalid triggered"),
         ],
-        overall_assessment="two exits", risk_level="moderate",
+        overall_assessment="two exits",
+        risk_level="moderate",
     )
 
 
@@ -689,15 +797,18 @@ def test_a_per_symbol_refusal_is_advisory_on_that_exit():
     # 2026-09-19 decision: the seat may not block an exit. A per-name
     # rejection now proceeds and leaves that name's own objection row.
     verdict = RiskVerdict(
-        approved=True, reasoning_chain=_rc(),
+        approved=True,
+        reasoning_chain=_rc(),
         rejected_symbols=[{"symbol": "AAA", "reason": "invalidation not confirmed"}],
         reasoning="BBB may exit",
     )
     pipeline = _exit_pipeline(verdict)
 
     vetoed, returned = pipeline._risk_review_exits(
-        _two_exits(), [_position("AAA"), _position("BBB")],
-        run_id="r1", total_value=100_000.0,
+        _two_exits(),
+        [_position("AAA"), _position("BBB")],
+        run_id="r1",
+        total_value=100_000.0,
     )
 
     assert vetoed == set()
@@ -712,14 +823,17 @@ def test_a_per_symbol_refusal_is_advisory_on_that_exit():
 
 def test_book_level_reject_holds_no_exit_and_records_each():
     verdict = RiskVerdict(
-        approved=False, reasoning_chain=_rc(),
+        approved=False,
+        reasoning_chain=_rc(),
         reasoning="drawdown state — hold everything",
     )
     pipeline = _exit_pipeline(verdict)
 
     vetoed, _ = pipeline._risk_review_exits(
-        _two_exits(), [_position("AAA"), _position("BBB")],
-        run_id="r1", total_value=100_000.0,
+        _two_exits(),
+        [_position("AAA"), _position("BBB")],
+        run_id="r1",
+        total_value=100_000.0,
     )
 
     assert vetoed == set()
@@ -729,6 +843,7 @@ def test_book_level_reject_holds_no_exit_and_records_each():
 # ---------------------------------------------------------------------------
 # The model has to know the field exists
 # ---------------------------------------------------------------------------
+
 
 def test_prompt_teaches_the_field_and_the_book_wide_handling():
     """A schema the model does not know about produces malformed responses,

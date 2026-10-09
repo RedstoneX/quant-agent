@@ -3,6 +3,7 @@
 Split out of `pipeline_intraday.py`, which is tracked by the shrink-only
 file-size baseline and may not grow.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,8 +68,9 @@ def failed_scan_result(e: Exception, run_id: str) -> dict:
         from src.llm_balance_runway import balance_line
 
         logger.error(
-            "Intraday opportunity scan refused: the paid research "
-            "account is out of credit (non-fatal): %s. %s", e, balance_line(),
+            "Intraday opportunity scan refused: the paid research account is out of credit (non-fatal): %s. %s",
+            e,
+            balance_line(),
         )
         status = "intraday_scan_out_of_credit"
     else:

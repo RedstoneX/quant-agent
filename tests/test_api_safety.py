@@ -62,8 +62,7 @@ def test_api_source_scan_is_not_silently_empty():
             loaded.add(Path(filename).resolve())
     missing = sorted(str(p) for p in loaded - scanned)
     assert not missing, (
-        "the API package imports modules the structural scan never reads, so "
-        f"they are unguarded: {missing}"
+        f"the API package imports modules the structural scan never reads, so they are unguarded: {missing}"
     )
 
 
@@ -117,9 +116,7 @@ _FORBIDDEN_BROKER_ATTRS = {
 @pytest.mark.parametrize("path", _api_source_files(), ids=lambda p: p.name)
 def test_no_write_capable_broker_calls_in_api_source(path: Path):
     tree = _parse(path)
-    found_attrs = {
-        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-    }
+    found_attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     offenders = found_attrs & _FORBIDDEN_BROKER_ATTRS
     assert not offenders, (
         f"{path.relative_to(REPO_ROOT)} references forbidden write-capable "
@@ -237,10 +234,7 @@ def test_trading_critical_set_is_not_silently_empty():
     """The derivation must actually find the split modules, not quietly yield none."""
     split = _pipeline_split_modules()
     assert "src/pipeline.py" in split
-    assert len(split) >= 2, (
-        "the pipeline split produced extra modules but the glob found none of "
-        f"them: {split}"
-    )
+    assert len(split) >= 2, f"the pipeline split produced extra modules but the glob found none of them: {split}"
     for rel in _ALWAYS_TRADING_CRITICAL:
         assert rel in _TRADING_CRITICAL_FILES
 
@@ -291,11 +285,7 @@ def _imported_module_names(tree: ast.AST) -> list[str]:
 
 def _api_imports(tree: ast.AST) -> list[str]:
     """Imports of the API layer found in `tree`, in source order."""
-    return [
-        name
-        for name in _imported_module_names(tree)
-        if name == "src.api" or name.startswith("src.api.")
-    ]
+    return [name for name in _imported_module_names(tree) if name == "src.api" or name.startswith("src.api.")]
 
 
 @pytest.mark.parametrize("rel_path", _TRADING_CRITICAL_FILES)
@@ -304,10 +294,7 @@ def test_api_package_never_imports_trading_critical_modules(rel_path: str):
     assert path.is_file(), f"expected trading-critical file to exist: {path}"
     tree = _parse(path)
     offenders = _api_imports(tree)
-    assert not offenders, (
-        f"{rel_path} imports src.api, which trading-critical code must never "
-        f"depend on: {offenders}"
-    )
+    assert not offenders, f"{rel_path} imports src.api, which trading-critical code must never depend on: {offenders}"
 
 
 def test_trading_critical_import_guard_can_fail():
@@ -338,12 +325,9 @@ def test_api_source_files_never_import_pipeline_or_risk(path: Path):
     tree = _parse(path)
     imported = _imported_module_names(tree)
     offenders = [
-        m for m in imported
-        if any(m == prefix or m.startswith(prefix + ".") for prefix in _FORBIDDEN_IMPORT_PREFIXES)
+        m for m in imported if any(m == prefix or m.startswith(prefix + ".") for prefix in _FORBIDDEN_IMPORT_PREFIXES)
     ]
-    assert not offenders, (
-        f"{path.relative_to(REPO_ROOT)} imports forbidden pipeline/risk module(s): {offenders}"
-    )
+    assert not offenders, f"{path.relative_to(REPO_ROOT)} imports forbidden pipeline/risk module(s): {offenders}"
 
     # Sibling assertion, same test: no file under src/api/ may import the
     # read/WRITE Database class from src.storage.db (db_reads.py is
@@ -352,8 +336,7 @@ def test_api_source_files_never_import_pipeline_or_risk(path: Path):
         if isinstance(node, ast.ImportFrom) and node.module == "src.storage.db":
             imported_names = {alias.name for alias in node.names}
             assert "Database" not in imported_names, (
-                f"{path.relative_to(REPO_ROOT)} imports src.storage.db.Database "
-                f"(the write-capable class) directly"
+                f"{path.relative_to(REPO_ROOT)} imports src.storage.db.Database (the write-capable class) directly"
             )
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -406,16 +389,12 @@ def test_no_sql_write_statements_in_db_reads():
             execute_calls += 1
             stripped = sql_text.strip()
             assert stripped.upper().startswith("SELECT") or stripped.upper().startswith("PRAGMA"), (
-                f"conn.execute(...) call in db_reads.py does not start with "
-                f"SELECT/PRAGMA: {sql_text!r}"
+                f"conn.execute(...) call in db_reads.py does not start with SELECT/PRAGMA: {sql_text!r}"
             )
     assert execute_calls > 0, "expected to find at least one conn.execute(...) call to check"
 
     # Belt-and-suspenders: also confirm no .commit() call site exists at all.
-    commit_calls = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute) and node.attr == "commit"
-    ]
+    commit_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "commit"]
     assert not commit_calls, "db_reads.py should never call .commit()"
 
 
@@ -473,9 +452,7 @@ def test_read_only_sqlite_connection_actually_refuses_writes(tmp_path, monkeypat
         with pytest.raises(sqlite3.OperationalError) as excinfo:
             conn.execute("INSERT INTO probe (v) VALUES ('written')")
             conn.commit()
-        assert "readonly" in str(excinfo.value).lower(), (
-            f"write failed for the wrong reason: {excinfo.value}"
-        )
+        assert "readonly" in str(excinfo.value).lower(), f"write failed for the wrong reason: {excinfo.value}"
     finally:
         conn.close()
 
@@ -677,9 +654,7 @@ def test_cockpit_index_html_only_references_committed_assets():
     # file that index.html does NOT reference is a leftover from a stale
     # commit (e.g. an old hashed bundle that a rebuild forgot to `git rm`).
     committed_bundle_files = {
-        f"assets/{p.name}"
-        for p in (cockpit / "assets").glob("index-*.*")
-        if p.suffix in {".js", ".css"}
+        f"assets/{p.name}" for p in (cockpit / "assets").glob("index-*.*") if p.suffix in {".js", ".css"}
     }
     orphaned = committed_bundle_files - referenced
     assert not orphaned, (

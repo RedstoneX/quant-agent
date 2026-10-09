@@ -22,16 +22,25 @@ def _pipeline(tmp_path, name="t.db"):
 def _target(db, run_id, decision_id, symbol, risk=1.0, days_ago=1):
     """A PM target — one proposal."""
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="portfolio_manager",
-        kind="target", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({
-            "symbol": symbol, "risk_allocation_pct": risk,
-            "conviction": "high", "thesis": "t", "thesis_invalid_if": "x",
-        }),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps(
+            {
+                "symbol": symbol,
+                "risk_allocation_pct": risk,
+                "conviction": "high",
+                "thesis": "t",
+                "thesis_invalid_if": "x",
+            }
+        ),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
     return row_id
@@ -39,75 +48,102 @@ def _target(db, run_id, decision_id, symbol, risk=1.0, days_ago=1):
 
 def _proposed_order(db, run_id, decision_id, symbol, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="portfolio_manager",
-        kind="proposed_order", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({"action": "BUY", "symbol": symbol,
-                                  "allocation_pct": 5.0}),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps({"action": "BUY", "symbol": symbol, "allocation_pct": 5.0}),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
 def _skip(db, run_id, decision_id, symbol, reason, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="execution",
-        kind="execution_skip", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({"symbol": symbol, "reason": reason,
-                                  "detail": "d"}),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="execution",
+        kind="execution_skip",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps({"symbol": symbol, "reason": reason, "detail": "d"}),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
-def _constructor_drop(db, run_id, decision_id, symbol, detail="widened past noise band",
-                       days_ago=1):
+def _constructor_drop(db, run_id, decision_id, symbol, detail="widened past noise band", days_ago=1):
     """The `pipeline_event` row `DecisionStage` persists when the
     deterministic constructor drops a target before it ever becomes a
     `proposed_order` row — see `PortfolioConstructor.last_drop_reasons`.
     """
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="pipeline",
-        kind="pipeline_event", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({
-            "stage": "deterministic_gate", "outcome": "blocked",
-            "reason": "constructor_dropped", "detail": detail,
-        }),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps(
+            {
+                "stage": "deterministic_gate",
+                "outcome": "blocked",
+                "reason": "constructor_dropped",
+                "detail": detail,
+            }
+        ),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
-def _verdict(db, run_id, decision_id, *, approved, category="rr_fail",
-             modifications=None, days_ago=1):
+def _verdict(db, run_id, decision_id, *, approved, category="rr_fail", modifications=None, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="risk_manager",
-        kind="verdict", scope="run", symbol=None,
-        evidence_json=json.dumps({
-            "approved": approved, "reason_category": category,
-            "modifications": modifications or [], "scale_all_buys": 1.0,
-            "reasoning": "r",
-        }),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="risk_manager",
+        kind="verdict",
+        scope="run",
+        symbol=None,
+        evidence_json=json.dumps(
+            {
+                "approved": approved,
+                "reason_category": category,
+                "modifications": modifications or [],
+                "scale_all_buys": 1.0,
+                "reasoning": "r",
+            }
+        ),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
 def _trade(db, run_id, decision_id, symbol, fill_status, days_ago=1):
     row_id = db.insert_trade(
-        symbol=symbol, action="BUY", qty=10, price=100.0, reasoning="r",
-        run_id=run_id, decision_id=decision_id, fill_status=fill_status, stop_loss=90.0,
+        symbol=symbol,
+        action="BUY",
+        qty=10,
+        price=100.0,
+        reasoning="r",
+        run_id=run_id,
+        decision_id=decision_id,
+        fill_status=fill_status,
+        stop_loss=90.0,
     )
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', ?) WHERE id = ?",
@@ -117,6 +153,7 @@ def _trade(db, run_id, decision_id, symbol, fill_status, days_ago=1):
 
 
 # --- the join -----------------------------------------------------------
+
 
 def test_join_pairs_proposal_to_fill_via_decision_id(tmp_path):
     """A proposal converts only when a FILLED trade shares its decision_id.
@@ -196,14 +233,17 @@ def test_legacy_target_weight_pct_still_sizes_a_proposal(tmp_path):
     """
     pipeline, db = _pipeline(tmp_path)
     row_id = db.insert_specialist_evidence(
-        run_id="r1", decision_id="d1", agent_name="portfolio_manager",
-        kind="target", scope="symbol", symbol="JPM",
-        evidence_json=json.dumps({"symbol": "JPM", "target_weight_pct": 10.0,
-                                  "conviction": "high"}),
+        run_id="r1",
+        decision_id="d1",
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="JPM",
+        evidence_json=json.dumps({"symbol": "JPM", "target_weight_pct": 10.0, "conviction": "high"}),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', '-3 days') "
-        "WHERE id = ?", (row_id,),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', '-3 days') WHERE id = ?",
+        (row_id,),
     )
     db.conn.commit()
 
@@ -212,6 +252,7 @@ def test_legacy_target_weight_pct_still_sizes_a_proposal(tmp_path):
 
 
 # --- the threshold ------------------------------------------------------
+
 
 def test_threshold_needs_three_proposals_and_zero_fills(tmp_path):
     """Two blocks is noise; three is a pattern. One fill clears the name.
@@ -245,7 +286,7 @@ def test_window_excludes_proposals_older_than_lookback(tmp_path):
         _target(db, f"r{i}", f"d-old-{i}", "STALE", days_ago=day)
 
     out = pipeline._build_blocked_proposals(lookback_days=21)
-    assert out == ""          # nothing in the window at all
+    assert out == ""  # nothing in the window at all
     wide = pipeline._build_blocked_proposals(lookback_days=60)
     assert "- STALE: proposed 3×" in wide
 
@@ -263,6 +304,7 @@ def test_max_lines_caps_the_section(tmp_path):
 
 # --- the reasons --------------------------------------------------------
 
+
 def test_execution_skip_reason_is_rendered_verbatim(tmp_path):
     """`qty_zero` / `geometry_rr` / `insufficient_cash` come from the data.
 
@@ -271,16 +313,15 @@ def test_execution_skip_reason_is_rendered_verbatim(tmp_path):
     disagree about the same event.
     """
     pipeline, db = _pipeline(tmp_path)
-    for i, (day, reason) in enumerate(
-        ((5, "qty_zero"), (4, "geometry_rr"), (3, "insufficient_cash"))
-    ):
+    for i, (day, reason) in enumerate(((5, "qty_zero"), (4, "geometry_rr"), (3, "insufficient_cash"))):
         _target(db, f"r{i}", f"d{i}", "PATH", days_ago=day)
         _proposed_order(db, f"r{i}", f"d{i}", "PATH", days_ago=day)
         _skip(db, f"r{i}", f"d{i}", "PATH", reason, days_ago=day)
 
     out = pipeline._build_blocked_proposals()
-    assert ("- PATH: proposed 3× across 3 sessions, filled 0 — most recent "
-            "first: insufficient_cash, geometry_rr, qty_zero") in out
+    assert (
+        "- PATH: proposed 3× across 3 sessions, filled 0 — most recent first: insufficient_cash, geometry_rr, qty_zero"
+    ) in out
 
 
 def test_execution_skip_takes_priority_over_a_rejecting_verdict(tmp_path):
@@ -312,8 +353,7 @@ def test_rm_plan_rejection_carries_its_reason_category(tmp_path):
     for i, day in enumerate((5, 4, 3)):
         _target(db, f"r{i}", f"d{i}", "NVDA", days_ago=day)
         _proposed_order(db, f"r{i}", f"d{i}", "NVDA", days_ago=day)
-        _verdict(db, f"r{i}", f"d{i}", approved=False, category="rr_fail",
-                 days_ago=day)
+        _verdict(db, f"r{i}", f"d{i}", approved=False, category="rr_fail", days_ago=day)
 
     out = pipeline._build_blocked_proposals()
     assert "rm_rejected:rr_fail, rm_rejected:rr_fail, rm_rejected:rr_fail" in out
@@ -329,11 +369,23 @@ def test_rm_zeroing_one_symbol_blocks_only_that_symbol(tmp_path):
         _proposed_order(db, f"r{i}", f"d{i}", "NVDA", days_ago=day)
         _proposed_order(db, f"r{i}", f"d{i}", "XOM", days_ago=day)
         _trade(db, f"r{i}", f"d{i}", "XOM", "filled", days_ago=day)
-        _verdict(db, f"r{i}", f"d{i}", approved=True, category="clean",
-                 modifications=[{"symbol": "NVDA", "field": "allocation_pct",
-                                 "original_value": 8.0, "new_value": 0.0,
-                                 "reason": "no catalyst"}],
-                 days_ago=day)
+        _verdict(
+            db,
+            f"r{i}",
+            f"d{i}",
+            approved=True,
+            category="clean",
+            modifications=[
+                {
+                    "symbol": "NVDA",
+                    "field": "allocation_pct",
+                    "original_value": 8.0,
+                    "new_value": 0.0,
+                    "reason": "no catalyst",
+                }
+            ],
+            days_ago=day,
+        )
 
     out = pipeline._build_blocked_proposals()
     assert "- NVDA: proposed 3×" in out
@@ -366,17 +418,12 @@ def test_constructor_dropped_symbol_is_not_blamed_for_a_rm_veto(tmp_path):
     _verdict(db, "r1", "d1", approved=False, category="rr_fail", days_ago=3)
 
     out = pipeline._build_blocked_proposals(min_proposals=1)
-    assert "- SURVIVOR: proposed 1× across 1 sessions, filled 0 — most " \
-           "recent first: rm_rejected:rr_fail" in out
-    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most " \
-           "recent first: no_order_built" in out
-    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most " \
-           "recent first: no_order_built" in out
+    assert "- SURVIVOR: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected:rr_fail" in out
+    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most recent first: no_order_built" in out
+    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most recent first: no_order_built" in out
     # Neither dropped symbol carries the Risk Manager's reason.
-    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most " \
-           "recent first: rm_rejected" not in out
-    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most " \
-           "recent first: rm_rejected" not in out
+    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected" not in out
+    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected" not in out
 
 
 def test_a_data_fault_reaches_the_pm_digest_as_a_fault_not_a_drop(tmp_path):
@@ -386,24 +433,32 @@ def test_a_data_fault_reaches_the_pm_digest_as_a_fault_not_a_drop(tmp_path):
     pipeline, db = _pipeline(tmp_path)
     _target(db, "r1", "d1", "A", days_ago=2)
     row_id = db.insert_specialist_evidence(
-        run_id="r1", decision_id="d1", agent_name="pipeline",
-        kind="pipeline_event", scope="symbol", symbol="A",
-        evidence_json=json.dumps({
-            "stage": "deterministic_gate", "outcome": "unmeasurable",
-            "reason": "data_fault", "fault": "price_history_unusable",
-            "detail": "DATA FAULT: coverage=no_bars", "targeted": True,
-        }),
+        run_id="r1",
+        decision_id="d1",
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol="A",
+        evidence_json=json.dumps(
+            {
+                "stage": "deterministic_gate",
+                "outcome": "unmeasurable",
+                "reason": "data_fault",
+                "fault": "price_history_unusable",
+                "detail": "DATA FAULT: coverage=no_bars",
+                "targeted": True,
+            }
+        ),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', '-2 days') "
-        "WHERE id = ?", (row_id,),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', '-2 days') WHERE id = ?",
+        (row_id,),
     )
     db.conn.commit()
 
     out = pipeline._build_blocked_proposals(min_proposals=1)
 
-    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: data_fault:price_history_unusable" in out
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent first: data_fault:price_history_unusable" in out
     assert "constructor_dropped" not in out
     assert "no_order_built" not in out
 
@@ -439,18 +494,13 @@ def test_constructor_dropped_symbol_gets_its_own_reason_not_no_order_built(tmp_p
 
     out = pipeline._build_blocked_proposals(min_proposals=1)
 
-    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: constructor_dropped" in out
-    assert "B: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: rm_rejected:rr_fail" in out
-    assert "C: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: rm_rejected:rr_fail" in out
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent first: constructor_dropped" in out
+    assert "B: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected:rr_fail" in out
+    assert "C: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected:rr_fail" in out
     # A must not be blamed on the Risk Manager, and must not fall into the
     # unexplained generic bucket either.
-    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: rm_rejected" not in out
-    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
-           "first: no_order_built" not in out
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent first: rm_rejected" not in out
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent first: no_order_built" not in out
 
 
 def test_unfilled_order_status_is_rendered_verbatim(tmp_path):
@@ -479,8 +529,7 @@ def test_absent_downstream_rows_are_named_as_absences(tmp_path):
     for i, day in enumerate((5, 4, 3)):
         _target(db, f"rb{i}", f"db{i}", "NOPLACE", days_ago=day)
         _proposed_order(db, f"rb{i}", f"db{i}", "NOPLACE", days_ago=day)
-        _verdict(db, f"rb{i}", f"db{i}", approved=True, category="clean",
-                 days_ago=day)
+        _verdict(db, f"rb{i}", f"db{i}", approved=True, category="clean", days_ago=day)
 
     out = pipeline._build_blocked_proposals()
     assert "- NOORD: proposed 3×" in out
@@ -503,11 +552,11 @@ def test_reasons_are_ordered_most_recent_first(tmp_path):
     _skip(db, "r3", "d3", "NVDA", "insufficient_cash", days_ago=2)
 
     out = pipeline._build_blocked_proposals()
-    assert ("most recent first: insufficient_cash, geometry_rr, qty_zero"
-            in out)
+    assert "most recent first: insufficient_cash, geometry_rr, qty_zero" in out
 
 
 # --- the aggregate ------------------------------------------------------
+
 
 def test_aggregate_reports_conversion_rate_and_top_blocks(tmp_path):
     """The desk has no other view of its own conversion rate."""
@@ -532,10 +581,8 @@ def test_aggregate_lists_at_most_three_blocking_reasons(tmp_path):
         for i in range(n):
             did = f"d-{reason}-{i}"
             _target(db, did, did, f"S{reason[:3].upper()}{i}", days_ago=3)
-            _proposed_order(db, did, did, f"S{reason[:3].upper()}{i}",
-                            days_ago=3)
-            _skip(db, did, did, f"S{reason[:3].upper()}{i}", reason,
-                  days_ago=3)
+            _proposed_order(db, did, did, f"S{reason[:3].upper()}{i}", days_ago=3)
+            _skip(db, did, did, f"S{reason[:3].upper()}{i}", reason, days_ago=3)
     out = pipeline._build_blocked_proposals()
     top_line = [ln for ln in out.split("\n") if ln.startswith("Top blocks:")]
     assert len(top_line) == 1
@@ -543,6 +590,7 @@ def test_aggregate_lists_at_most_three_blocking_reasons(tmp_path):
 
 
 # --- the empty cases ----------------------------------------------------
+
 
 def test_no_repeat_offenders_renders_an_explicit_none(tmp_path):
     """A quiet section must not be mistakable for a missing one.
@@ -559,11 +607,11 @@ def test_no_repeat_offenders_renders_an_explicit_none(tmp_path):
     _trade(db, "r2", "d2", "XOM", "filled", days_ago=2)
 
     out = pipeline._build_blocked_proposals()
-    assert out                                   # not blank
+    assert out  # not blank
     assert "Conversion: 2 of 2 proposals reached a fill (100%)" in out
     assert "Repeat blocked names: none" in out
     assert "no symbol was proposed 3+ times without a fill" in out
-    assert "\n- " not in out                     # no per-symbol lines
+    assert "\n- " not in out  # no per-symbol lines
 
 
 def test_no_proposals_at_all_returns_empty_for_the_section_default(tmp_path):
@@ -595,13 +643,17 @@ def test_corrupt_evidence_json_is_skipped_not_fatal(tmp_path, caplog):
     for i, day in enumerate((5, 4, 3)):
         _target(db, f"r{i}", f"d{i}", "NVDA", days_ago=day)
     row_id = db.insert_specialist_evidence(
-        run_id="rbad", decision_id="dbad", agent_name="portfolio_manager",
-        kind="target", scope="symbol", symbol="JUNK",
+        run_id="rbad",
+        decision_id="dbad",
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="JUNK",
         evidence_json="{not json",
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', '-2 days') "
-        "WHERE id = ?", (row_id,),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', '-2 days') WHERE id = ?",
+        (row_id,),
     )
     db.conn.commit()
 
@@ -614,6 +666,7 @@ def test_corrupt_evidence_json_is_skipped_not_fatal(tmp_path, caplog):
 
 # --- the section is diagnostic only -------------------------------------
 
+
 def test_section_states_it_bars_nothing(tmp_path):
     """Someone else owns enforcement. This is memory, not a gate."""
     from unittest.mock import patch
@@ -622,8 +675,11 @@ def test_section_states_it_bars_nothing(tmp_path):
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
             blocked_proposals=(
                 "Conversion: 1 of 9 proposals reached a fill (11%) in the "
                 "last 21 days.\n"
@@ -645,8 +701,11 @@ def test_section_default_when_no_conversion_data(tmp_path):
     with patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
         msg = agent.build_user_message(
-            analyses=[], positions=[], macro_analysis=None,
-            cash_balance=5000.0, total_value=10000.0,
+            analyses=[],
+            positions=[],
+            macro_analysis=None,
+            cash_balance=5000.0,
+            total_value=10000.0,
         )
         assert "## Proposal Conversion" in msg
         assert "no proposals on record in the last 21 days" in msg

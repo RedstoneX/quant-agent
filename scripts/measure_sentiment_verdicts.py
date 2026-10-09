@@ -42,11 +42,14 @@ def _build_fetch_bars(lookback_days: int):
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--horizon", type=int, default=None,
-                    help="trading sessions after the filing to measure (default: to latest close)")
+    ap.add_argument(
+        "--horizon",
+        type=int,
+        default=None,
+        help="trading sessions after the filing to measure (default: to latest close)",
+    )
     ap.add_argument("--data-dir", default="data/earnings")
-    ap.add_argument("--lookback-days", type=int, default=400,
-                    help="calendar days of daily bars to pull per symbol")
+    ap.add_argument("--lookback-days", type=int, default=400, help="calendar days of daily bars to pull per symbol")
     args = ap.parse_args(argv)
 
     report = build_report(
@@ -55,8 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         horizon_sessions=args.horizon,
     )
 
-    window = (f"{args.horizon} sessions" if args.horizon is not None
-              else "filing -> latest close")
+    window = f"{args.horizon} sessions" if args.horizon is not None else "filing -> latest close"
     print(f"Sentiment-verdict accuracy  (window: {window})")
     print(f"  verdicts on disk : {report['n_verdicts']}")
     print(f"  resolved (scored): {report['n_resolved']}")
@@ -64,12 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("  by sentiment:")
     for name, b in sorted(report["by_sentiment"].items()):
-        print(f"    {name:8s} resolved={b['resolved']:3d} "
-              f"wrong={b['wrong']:3d} hit_rate={b['hit_rate_pct']}")
+        print(f"    {name:8s} resolved={b['resolved']:3d} wrong={b['wrong']:3d} hit_rate={b['hit_rate_pct']}")
     print("  by conviction:")
     for name, b in sorted(report["by_conviction"].items()):
-        print(f"    {name:8s} resolved={b['resolved']:3d} "
-              f"wrong={b['wrong']:3d} hit_rate={b['hit_rate_pct']}")
+        print(f"    {name:8s} resolved={b['resolved']:3d} wrong={b['wrong']:3d} hit_rate={b['hit_rate_pct']}")
 
     if report["n_verdicts"] == 0:
         print("\n  (no earnings verdicts on disk yet — nothing to score)")

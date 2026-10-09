@@ -34,6 +34,7 @@ from src.data.news import FeedFailure, NewsCoverage, NewsDataProvider, NewsItem
 # NewsCoverage — pure dataclass logic, no I/O.
 # ===========================================================================
 
+
 def test_coverage_status_ok_when_every_feed_succeeds():
     coverage = NewsCoverage(configured=3, succeeded=3, failed=[])
     assert coverage.status == "ok"
@@ -45,7 +46,8 @@ def test_coverage_status_partial_when_some_feeds_fail():
     """The core case: 7/9 feeds returned data. This must NOT read as 'ok' —
     that is exactly the pre-fix behaviour this whole change exists to kill."""
     coverage = NewsCoverage(
-        configured=9, succeeded=7,
+        configured=9,
+        succeeded=7,
         failed=[
             FeedFailure(name="Reuters Business", reason="HTTP Error 404: Not Found"),
             FeedFailure(name="AP Business", reason="HTTP Error 403: Forbidden"),
@@ -60,7 +62,8 @@ def test_coverage_status_failed_when_every_feed_fails():
     """Total outage. Must read as 'failed', the strongest signal — not
     'partial' (implies something came through) and never 'ok'."""
     coverage = NewsCoverage(
-        configured=2, succeeded=0,
+        configured=2,
+        succeeded=0,
         failed=[
             FeedFailure(name="A", reason="timed out"),
             FeedFailure(name="B", reason="timed out"),
@@ -88,7 +91,8 @@ def test_coverage_describe_full_coverage_is_unambiguous():
 
 def test_coverage_describe_partial_names_failed_feeds_and_reasons():
     coverage = NewsCoverage(
-        configured=9, succeeded=7,
+        configured=9,
+        succeeded=7,
         failed=[
             FeedFailure(name="Reuters Business", reason="HTTP Error 404: Not Found"),
             FeedFailure(name="AP Business", reason="HTTP Error 403: Forbidden"),
@@ -113,10 +117,11 @@ def test_coverage_describe_zero_configured_names_the_misconfiguration():
 # NewsDataProvider.fetch_news() / _fetch_feed() — the deterministic half.
 # ===========================================================================
 
+
 def _item(title="Headline", source="X"):
-    return NewsItem(title=title, summary="", source=source,
-                     published=datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc),
-                     link="")
+    return NewsItem(
+        title=title, summary="", source=source, published=datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc), link=""
+    )
 
 
 def test_fetch_news_all_feeds_succeed_reports_full_coverage():
@@ -126,9 +131,7 @@ def test_fetch_news_all_feeds_succeed_reports_full_coverage():
     # supposed to collapse, which would otherwise make this look like a
     # fetch bug rather than dedup doing its job.
     titles = {"A": "Fed holds interest rates steady", "B": "Oil prices tumble on demand worries"}
-    provider._fetch_feed = MagicMock(
-        side_effect=lambda name, url, cutoff: [_item(title=titles[name], source=name)]
-    )
+    provider._fetch_feed = MagicMock(side_effect=lambda name, url, cutoff: [_item(title=titles[name], source=name)])
 
     items, coverage = provider.fetch_news()
 
@@ -146,10 +149,12 @@ def test_fetch_news_one_dead_feed_is_reported_failed_not_silently_dropped():
     learn that one of the two configured feeds never came back. Assert
     explicitly that this is no longer possible: the failure is named, and
     coverage status is NOT 'ok'."""
-    provider = NewsDataProvider(feeds={
-        "Reuters Business": "http://dead",
-        "CNBC Top News": "http://alive",
-    })
+    provider = NewsDataProvider(
+        feeds={
+            "Reuters Business": "http://dead",
+            "CNBC Top News": "http://alive",
+        }
+    )
 
     def fake_fetch(name, url, cutoff):
         if name == "Reuters Business":
@@ -177,10 +182,12 @@ def test_fetch_news_one_dead_feed_is_reported_failed_not_silently_dropped():
 
 
 def test_fetch_news_all_feeds_dead_reports_failed_coverage_with_empty_items():
-    provider = NewsDataProvider(feeds={
-        "Reuters Business": "http://dead1",
-        "AP Business": "http://dead2",
-    })
+    provider = NewsDataProvider(
+        feeds={
+            "Reuters Business": "http://dead1",
+            "AP Business": "http://dead2",
+        }
+    )
     provider._fetch_feed = MagicMock(side_effect=Exception("boom"))
 
     items, coverage = provider.fetch_news()
@@ -218,8 +225,7 @@ def test_fetch_feed_raises_on_network_error_instead_of_swallowing(monkeypatch):
     provider = NewsDataProvider(feeds={"AP Business": "http://apnews.example"})
 
     with pytest.raises(OSError):
-        provider._fetch_feed("AP Business", "http://apnews.example",
-                              datetime(2026, 1, 1, tzinfo=timezone.utc))
+        provider._fetch_feed("AP Business", "http://apnews.example", datetime(2026, 1, 1, tzinfo=timezone.utc))
 
 
 def test_fetch_feed_raises_on_unparseable_document(monkeypatch):
@@ -253,10 +259,10 @@ def test_fetch_feed_zero_fresh_entries_is_not_a_failure(monkeypatch):
 
     valid_rss = (
         b'<?xml version="1.0"?><rss version="2.0"><channel>'
-        b'<title>Feed</title>'
-        b'<item><title>Old story</title>'
-        b'<pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>'
-        b'</channel></rss>'
+        b"<title>Feed</title>"
+        b"<item><title>Old story</title>"
+        b"<pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>"
+        b"</channel></rss>"
     )
 
     class _FakeResponse:
@@ -287,15 +293,18 @@ def test_fetch_feed_zero_fresh_entries_is_not_a_failure(monkeypatch):
 # NewsAnalystAgent.build_user_message() — coverage must reach the prompt.
 # ===========================================================================
 
+
 def _agent():
     from src.agents.news_analyst import NewsAnalystAgent
+
     return NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
 
 
 def test_prompt_includes_full_coverage_section():
     coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
     prompt = _agent().build_user_message(
-        news_text="Fed holds rates.", news_coverage=coverage,
+        news_text="Fed holds rates.",
+        news_coverage=coverage,
     )
     assert "News Coverage" in prompt
     assert "9/9" in prompt
@@ -306,14 +315,16 @@ def test_prompt_includes_partial_coverage_failed_feed_names():
     """This is 'Partial coverage flows through to whatever the analyst
     receives' — checked at the exact seam the analyst reads from."""
     coverage = NewsCoverage(
-        configured=9, succeeded=7,
+        configured=9,
+        succeeded=7,
         failed=[
             FeedFailure(name="Reuters Business", reason="HTTP Error 404: Not Found"),
             FeedFailure(name="AP Business", reason="HTTP Error 403: Forbidden"),
         ],
     )
     prompt = _agent().build_user_message(
-        news_text="Fed holds rates.", news_coverage=coverage,
+        news_text="Fed holds rates.",
+        news_coverage=coverage,
     )
     assert "News Coverage" in prompt
     assert "7/9" in prompt

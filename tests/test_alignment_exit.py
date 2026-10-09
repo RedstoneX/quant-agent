@@ -2,9 +2,15 @@
 
 These tests pin the six defects that closed the first attempt (PR 837).
 """
+
 from src.risk.alignment_exit import (
-    ALIGNMENT_GIVE_BACK_ATR_MULTIPLE, CODE_EXIT, CODE_HOLD, CODE_NO_ATR,
-    CODE_NO_MARK, check_alignment_exit, simple_moving_average,
+    ALIGNMENT_GIVE_BACK_ATR_MULTIPLE,
+    CODE_EXIT,
+    CODE_HOLD,
+    CODE_NO_ATR,
+    CODE_NO_MARK,
+    check_alignment_exit,
+    simple_moving_average,
     thesis_ma_period,
 )
 
@@ -15,6 +21,7 @@ def test_tolerance_is_not_the_entry_anchored_noise_band() -> None:
     on a 1 ATR give-back is roughly three times more eager than the
     literature the desk itself cites."""
     from src.risk.exit_guard import NOISE_BAND_ATR_MULTIPLE
+
     assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE == 3.0
     assert ALIGNMENT_GIVE_BACK_ATR_MULTIPLE != NOISE_BAND_ATR_MULTIPLE
 
@@ -22,7 +29,9 @@ def test_tolerance_is_not_the_entry_anchored_noise_band() -> None:
 def test_exit_when_last_mark_given_up_beyond_tolerance() -> None:
     closes = [100.0] * 25 + [80.0]
     v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=closes, atr=2.0,
+        thesis_invalid_if="close below the MA20",
+        closes=closes,
+        atr=2.0,
     )
     assert v.status == "EXIT" and v.code == CODE_EXIT
     assert v.exit_cleared and v.owner_reason
@@ -33,7 +42,9 @@ def test_hold_inside_the_tolerance() -> None:
     """One ATR under the average would have SOLD under the closed attempt."""
     closes = [100.0] * 25 + [97.5]
     v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=closes, atr=2.0,
+        thesis_invalid_if="close below the MA20",
+        closes=closes,
+        atr=2.0,
     )
     assert v.status == "HOLD" and v.code == CODE_HOLD
 
@@ -44,18 +55,23 @@ def test_parsed_period_and_thesis_text_are_recorded_on_every_verdict() -> None:
     durable code must exist even where the chart cannot be read."""
     v = check_alignment_exit(
         thesis_invalid_if="thesis fails on a close below the MA50",
-        closes=[100.0] * 60 + [50.0], atr=1.0,
+        closes=[100.0] * 60 + [50.0],
+        atr=1.0,
     )
     assert v.thesis_ma_period == 50
     assert "MA50" in v.thesis_text
     unreadable = check_alignment_exit(
-        thesis_invalid_if="fundamentals deteriorate", closes=[100.0], atr=1.0,
+        thesis_invalid_if="fundamentals deteriorate",
+        closes=[100.0],
+        atr=1.0,
     )
     assert unreadable.status == "UNPARSEABLE"
     assert unreadable.code == CODE_NO_MARK
     assert unreadable.thesis_text == "fundamentals deteriorate"
     no_atr = check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=[100.0] * 25, atr=None,
+        thesis_invalid_if="close below the MA20",
+        closes=[100.0] * 25,
+        atr=None,
     )
     assert no_atr.code == CODE_NO_ATR
 
@@ -67,7 +83,9 @@ def test_sessions_count_uses_the_average_as_it_stood_that_session() -> None:
     only the genuinely-below sessions count."""
     closes = [float(200 - i) for i in range(60)]  # 200 down to 141
     v = check_alignment_exit(
-        thesis_invalid_if="close below the MA20", closes=closes, atr=1.0,
+        thesis_invalid_if="close below the MA20",
+        closes=closes,
+        atr=1.0,
     )
     assert v.sessions_since_mark_lost is not None
     # Price is below its own MA20 for the whole decline, but nowhere near
@@ -79,7 +97,9 @@ def test_sessions_count_uses_the_average_as_it_stood_that_session() -> None:
 def test_short_side_is_mirrored() -> None:
     closes = [100.0] * 25 + [120.0]
     v = check_alignment_exit(
-        thesis_invalid_if="close above the MA20", closes=closes, atr=2.0,
+        thesis_invalid_if="close above the MA20",
+        closes=closes,
+        atr=2.0,
         is_short=True,
     )
     assert v.status == "EXIT"
@@ -88,7 +108,9 @@ def test_short_side_is_mirrored() -> None:
 def test_structural_mark_alone_can_exit() -> None:
     """No quorum: a position with only a structural mark exits on it."""
     v = check_alignment_exit(
-        thesis_invalid_if=None, closes=[100.0] * 5 + [80.0], atr=2.0,
+        thesis_invalid_if=None,
+        closes=[100.0] * 5 + [80.0],
+        atr=2.0,
         broken_structural_level=95.0,
     )
     assert v.status == "EXIT"

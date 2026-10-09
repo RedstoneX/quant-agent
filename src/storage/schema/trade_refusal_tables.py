@@ -14,6 +14,7 @@ distribution instead of argued about. Nothing accumulates: every share is a read
 
 Idempotent. Columns added after the table first shipped are ALTERed in for existing files.
 """
+
 from __future__ import annotations
 
 import logging

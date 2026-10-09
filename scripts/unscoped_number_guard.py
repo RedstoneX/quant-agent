@@ -17,6 +17,7 @@ same change, visibly, with a Guard-rule-change line.
 
 Run it directly: ``python -m scripts.unscoped_number_guard``.
 """
+
 from __future__ import annotations
 
 import sys

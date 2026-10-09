@@ -1,4 +1,5 @@
 """src.intraday.session_gate -- has the exchange's real close for today already passed?"""
+
 from __future__ import annotations
 
 from datetime import datetime

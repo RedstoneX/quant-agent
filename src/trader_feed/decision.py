@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,7 +58,6 @@ from src.trader_feed.common import (
     _ticker_co,
     logger,
 )
-
 
 
 def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
@@ -118,9 +118,7 @@ def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     if not isinstance(macro, dict):
         return
     bits = [
-        str(value)
-        for value in (macro.get("regime"), macro.get("equity_outlook"), macro.get("confidence"))
-        if value
+        str(value) for value in (macro.get("regime"), macro.get("equity_outlook"), macro.get("confidence")) if value
     ]
     guidance = macro.get("position_guidance") or {}
     target = guidance.get("target_invested_pct") if isinstance(guidance, dict) else None
@@ -170,9 +168,7 @@ def _signal_row_line(row: dict, profiles: dict[str, Any] | None = None) -> str:
     # Board item 89 clarity defect — "R/R 2.5" carried no unit. Same
     # figure, said as what it is: the reward measured in multiples of the
     # risk taken to get it.
-    rr_text = (
-        f" · reward {rr:g}× the risk" if isinstance(rr, (int, float)) else ""
-    )
+    rr_text = f" · reward {rr:g}× the risk" if isinstance(rr, (int, float)) else ""
     reason = _clip(row.get("reasoning"), 420)
     text = f"   • {label}: {rating}/{conviction}{rr_text}"
     if reason:
@@ -181,7 +177,9 @@ def _signal_row_line(row: dict, profiles: dict[str, Any] | None = None) -> str:
 
 
 def _append_intraday_evidence_freshness(
-    lines: list[str], outer: dict | None, nested: dict | None,
+    lines: list[str],
+    outer: dict | None,
+    nested: dict | None,
 ) -> None:
     """The freshness disclosure on an intraday tick, in the owner's words.
 
@@ -214,10 +212,7 @@ def _append_signals(
             lines.append(f"🔎 Triggered: {', '.join(candidates[:5])}")
         return
 
-    actionable = [
-        row for row in tech
-        if str(row.get("rating", "")).lower() not in ("", "neutral")
-    ]
+    actionable = [row for row in tech if str(row.get("rating", "")).lower() not in ("", "neutral")]
     lines.append(f"🔎 Signals: {len(tech)} analyzed · {len(actionable)} actionable")
     for row in _signal_rows(snap, candidates):
         lines.append(_signal_row_line(row))
@@ -335,20 +330,21 @@ def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
         f" · risk seat flagged a portfolio-wide exposure concern "
         f"(scale_all_buys {scale * 100:.0f}%) — advisory only, entries were "
         f"NOT resized"
-        if isinstance(scale, (int, float)) and scale < 1.0 else ""
+        if isinstance(scale, (int, float)) and scale < 1.0
+        else ""
     )
     mods = snap.get("risk_mods") or []
     # Phase 10.1: a verdict can now be APPROVED overall and still have refused
     # individual names. Reading only `approved` would show that run as a clean
     # approval and never mention the trade that died.
     rejected = risk.get("rejected_symbols") or []
-    rej_syms = sorted({
-        str(r.get("symbol")) for r in rejected if isinstance(r, dict) and r.get("symbol")
-    }) if isinstance(rejected, list) else []
-    refused_text = f" · refused {', '.join(rej_syms)}" if rej_syms else ""
-    lines.append(
-        f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s){refused_text}"
+    rej_syms = (
+        sorted({str(r.get("symbol")) for r in rejected if isinstance(r, dict) and r.get("symbol")})
+        if isinstance(rejected, list)
+        else []
     )
+    refused_text = f" · refused {', '.join(rej_syms)}" if rej_syms else ""
+    lines.append(f"🛡️ Risk: {label} · {category}{scale_text} · {len(mods)} mod(s){refused_text}")
     reason = _clip(risk.get("reasoning"), 550)
     if reason:
         lines.append(f"   {reason}")
@@ -444,8 +440,7 @@ def _append_no_trade_reason(
         # no stored reasoning for this run, which is not the same as saying
         # there was nothing to explain.
         lines.append(
-            "⏸️ NO TRADE — nothing was bought or sold, and the desk stored "
-            "no reasoning to explain for this run"
+            "⏸️ NO TRADE — nothing was bought or sold, and the desk stored no reasoning to explain for this run"
         )
 
 
@@ -534,14 +529,11 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
 
     # Board item 172. Third bucket, not folded into either of the two that
     # state a measured fact about coverage.
-    unreadable = [
-        row for row in gaps
-        if isinstance(row, dict) and _gap_is_unreadable(row)
-    ]
+    unreadable = [row for row in gaps if isinstance(row, dict) and _gap_is_unreadable(row)]
     rows = [
-        row for row in gaps
-        if isinstance(row, dict) and not _gap_is_expected_fractional(row)
-        and not _gap_is_unreadable(row)
+        row
+        for row in gaps
+        if isinstance(row, dict) and not _gap_is_expected_fractional(row) and not _gap_is_unreadable(row)
     ]
     uncovered = [row for row in rows if _gap_is_uncovered(row)]
     partial = [row for row in rows if not _gap_is_uncovered(row)]
@@ -553,19 +545,13 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
         return format_coverage_gap_line(row, profiles)
 
     if unreadable:
-        lines.append(
-            f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) the broker "
-            "could not be asked about"
-        )
+        lines.append(f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) the broker could not be asked about")
         for row in unreadable[:8]:
             symbol = str(row.get("symbol", "?")).upper()
             held = _number(row.get("held_qty"))
             held_text = f", holding {abs(held):g}" if held is not None else ""
             reason = str(row.get("read_error") or "").strip()
-            lines.append(
-                f"   • {_ticker_co(symbol, profiles)}{held_text} — "
-                + (reason or "the stop query failed")
-            )
+            lines.append(f"   • {_ticker_co(symbol, profiles)}{held_text} — " + (reason or "the stop query failed"))
         lines.append(
             "   Whether these have a stop is UNKNOWN — not confirmed "
             "missing and not confirmed present. Check the position's open "
@@ -620,8 +606,7 @@ def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict)
         reason = _clip(row.get("reasoning"), 140)
         reason_text = f" — {reason}" if reason else ""
         lines.append(
-            f"   • {action} {_ticker_co(symbol, profiles)} {qty_text} @ "
-            f"{price_text} — {state}{stop_text}{reason_text}"
+            f"   • {action} {_ticker_co(symbol, profiles)} {qty_text} @ {price_text} — {state}{stop_text}{reason_text}"
         )
 
 
@@ -648,16 +633,11 @@ def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
             # characters and a broker reason can run longer; a cut
             # mid-sentence was item 89's "detail truncated" defect.
             reason = _clip(row.get("reason"), 600)
-            lines.append(
-                f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — "
-                f"{row['who']}: {reason}"
-            )
+            lines.append(f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — {row['who']}: {reason}")
 
     if refused:
         lines.append(_b("🚫 NOT TAKEN"))
-        lines.append(
-            "   The desk decided against these. Nothing broke."
-        )
+        lines.append("   The desk decided against these. Nothing broke.")
         _bullets(refused)
     if faults:
         if refused:
@@ -720,11 +700,7 @@ def _watch_rows(result: dict) -> list[dict]:
     gaps = result.get("stop_coverage_gaps")
     if not isinstance(gaps, list):
         return []
-    return [
-        row for row in gaps
-        if isinstance(row, dict) and not _gap_is_uncovered(row)
-        and not _gap_is_unreadable(row)
-    ]
+    return [row for row in gaps if isinstance(row, dict) and not _gap_is_uncovered(row) and not _gap_is_unreadable(row)]
 
 
 def _append_watch(lines: list[str], rows: list[dict], profiles: dict) -> None:
@@ -735,14 +711,8 @@ def _append_watch(lines: list[str], rows: list[dict], profiles: dict) -> None:
         symbol = str(row.get("symbol", "?")).upper()
         held = _number(row.get("held_qty"))
         covered = _number(row.get("covered_qty"))
-        sizes = (
-            f" (holding {held:g}, stop covers {covered:g})"
-            if held is not None and covered is not None else ""
-        )
-        lines.append(
-            f"   • {_ticker_co(symbol, profiles)} — the stop covers only part "
-            f"of the position{sizes}"
-        )
+        sizes = f" (holding {held:g}, stop covers {covered:g})" if held is not None and covered is not None else ""
+        lines.append(f"   • {_ticker_co(symbol, profiles)} — the stop covers only part of the position{sizes}")
 
 
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
@@ -766,7 +736,10 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
     outcome = _outcome_word(
-        status, len(done_rows), len(blocked_rows), done_rows,
+        status,
+        len(done_rows),
+        len(blocked_rows),
+        done_rows,
         fault_count=_fault_count(blocked_rows),
     )
     lines = [f"{_status_emoji(status)} {mode.upper()} · {fmt_time_12h(et_now())} · {outcome}"]
@@ -796,10 +769,8 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
         from src import evidence_gate
-        degraded = {
-            name: value for name, value in data_status.items()
-            if evidence_gate.counts_as_degraded(value)
-        }
+
+        degraded = {name: value for name, value in data_status.items() if evidence_gate.counts_as_degraded(value)}
         if degraded:
             # Board item 89 clarity defect — this named internal components
             # ("macro, tech"). Same seats, in words, plus what it means.
@@ -840,7 +811,12 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     _new_block(protected_lines, _append_risk, snap)
     _new_block(protected_lines, _append_gate_and_execution, result, snap)
     _budgeted_sections(
-        lines, looked_at_slot, looked_at_rows, profiles, snap, detail_lines,
+        lines,
+        looked_at_slot,
+        looked_at_rows,
+        profiles,
+        snap,
+        detail_lines,
         protected_lines,
     )
 
@@ -857,6 +833,7 @@ def _held_symbols(snap: dict[str, Any]) -> list[str]:
     size), excludes cash-sweep vehicles the same way."""
     positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
     return [
-        str(row.get("symbol", "")).upper() for row in positions
+        str(row.get("symbol", "")).upper()
+        for row in positions
         if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
     ]

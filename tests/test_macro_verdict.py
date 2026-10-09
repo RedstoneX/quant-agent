@@ -25,7 +25,10 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    NO_STATED_STRENGTH, MacroAnalysis, MacroObservation, MacroPositionGuidance,
+    NO_STATED_STRENGTH,
+    MacroAnalysis,
+    MacroObservation,
+    MacroPositionGuidance,
     MacroReasoningChain,
 )
 
@@ -43,15 +46,22 @@ def _chain() -> MacroReasoningChain:
 
 def _guidance() -> MacroPositionGuidance:
     return MacroPositionGuidance(
-        target_invested_pct=75.0, cash_recommendation_pct=25.0, reasoning="Hold buffer.",
+        target_invested_pct=75.0,
+        cash_recommendation_pct=25.0,
+        reasoning="Hold buffer.",
     )
 
 
 def _macro(
-    equity_outlook: str, confidence: str = "medium", regime_shift: bool = False,
-    shift_reason: str = "", bull_triggers: list[str] | None = None,
-    bear_triggers: list[str] | None = None, key_observations=None,
-    sector_guidance=None, risk_factors=None,
+    equity_outlook: str,
+    confidence: str = "medium",
+    regime_shift: bool = False,
+    shift_reason: str = "",
+    bull_triggers: list[str] | None = None,
+    bear_triggers: list[str] | None = None,
+    key_observations=None,
+    sector_guidance=None,
+    risk_factors=None,
 ) -> MacroAnalysis:
     return MacroAnalysis(
         reasoning_chain=_chain(),
@@ -74,9 +84,12 @@ def _macro(
 # Magnitude mapping
 # ==========================================================================
 
+
 def test_a_directional_read_carries_the_flat_single_rung_magnitude():
     a = _macro(
-        "bullish", confidence="high", regime_shift=True,
+        "bullish",
+        confidence="high",
+        regime_shift=True,
         shift_reason="Fed pivots dovish and credit spreads snap tighter",
     )
     v = a.to_verdict("SPY")
@@ -90,7 +103,9 @@ def test_a_directional_read_carries_the_flat_single_rung_magnitude():
 
 def test_bearish_without_regime_shift_carries_the_same_flat_magnitude():
     a = _macro(
-        "bearish", confidence="medium", regime_shift=False,
+        "bearish",
+        confidence="medium",
+        regime_shift=False,
         bull_triggers=["Core CPI MoM < 0.2% for 2 months"],
     )
     v = a.to_verdict("XLE")
@@ -109,7 +124,9 @@ def test_magnitude_tracks_neither_confidence_nor_regime_shift(confidence, regime
     silently price anything at all — it reaches the reader as the stated
     falsifier instead."""
     a = _macro(
-        "bullish", confidence=confidence, regime_shift=regime_shift,
+        "bullish",
+        confidence=confidence,
+        regime_shift=regime_shift,
         shift_reason="Fed pivots dovish",
         bear_triggers=["HY OAS > 450bps"],
     )
@@ -126,7 +143,10 @@ def test_neutral_outlook_states_no_magnitude_even_with_regime_shift():
     than 0.0 (a strength of nothing, read off a scale macro does not have).
     """
     a = _macro(
-        "neutral", confidence="high", regime_shift=True, shift_reason="Something moved",
+        "neutral",
+        confidence="high",
+        regime_shift=True,
+        shift_reason="Something moved",
     )
     v = a.to_verdict("SPY")
     assert v.direction == "neutral"
@@ -138,9 +158,12 @@ def test_neutral_outlook_states_no_magnitude_even_with_regime_shift():
 # Invalidation fallback chain
 # ==========================================================================
 
+
 def test_regime_shift_reason_wins_over_triggers_when_both_present():
     a = _macro(
-        "bullish", regime_shift=True, shift_reason="Curve un-inverts on Fed cuts",
+        "bullish",
+        regime_shift=True,
+        shift_reason="Curve un-inverts on Fed cuts",
         bear_triggers=["Some trigger that should be ignored"],
     )
     v = a.to_verdict("NVDA")
@@ -173,6 +196,7 @@ def test_directional_call_with_no_stated_falsifier_gets_a_generic_fallback_not_a
 # ==========================================================================
 # Evidence
 # ==========================================================================
+
 
 def test_evidence_is_built_from_observations_sectors_and_risk_factors():
     a = _macro(
@@ -213,9 +237,12 @@ def test_neutral_verdict_may_carry_no_evidence():
 # Full round trip validates
 # ==========================================================================
 
+
 def test_a_full_directional_macro_read_produces_a_valid_verdict():
     a = _macro(
-        "bearish", confidence="high", regime_shift=True,
+        "bearish",
+        confidence="high",
+        regime_shift=True,
         shift_reason="Credit spreads blow out past 500bps",
         key_observations=[
             MacroObservation(indicator="HY_OAS", reading="480bps", interpretation="Widening fast"),
@@ -225,7 +252,9 @@ def test_a_full_directional_macro_read_produces_a_valid_verdict():
     assert v.seat == "macro"
     assert v.symbol == "XLF"
     assert (v.direction, v.magnitude, v.conviction) == (
-        "bearish", NO_STATED_STRENGTH, "high",
+        "bearish",
+        NO_STATED_STRENGTH,
+        "high",
     )
     assert v.invalidation == "Credit spreads blow out past 500bps"
     assert len(v.evidence) == 1
@@ -241,6 +270,7 @@ def test_a_full_directional_macro_read_produces_a_valid_verdict():
 # one prompt. These pin that they now agree.
 # ==========================================================================
 
+
 def _sector(sector: str, stance: str, reason: str = "policy tailwind") -> dict:
     # A dict, not a MacroSectorGuidance: `_sanitize_sector_guidance` is a
     # mode="before" validator that reads rows as mappings, which is also the
@@ -250,19 +280,21 @@ def _sector(sector: str, stance: str, reason: str = "policy tailwind") -> dict:
 
 def test_sector_stance_overrides_the_broad_outlook_for_that_sector():
     a = _macro(
-        "bullish", confidence="high",
+        "bullish",
+        confidence="high",
         sector_guidance=[_sector("Energy", "underweight", "crude rolling over")],
         bear_triggers=["HY OAS > 450bps"],
     )
     v = a.to_verdict("XOM", sector="Energy")
-    assert v.direction == "bearish"          # NOT the bullish broad read
-    assert v.conviction == "high"            # the only confidence the seat states
+    assert v.direction == "bearish"  # NOT the bullish broad read
+    assert v.conviction == "high"  # the only confidence the seat states
     assert v.magnitude == NO_STATED_STRENGTH
 
 
 def test_a_symbol_in_an_unmentioned_sector_still_gets_the_broad_read():
     a = _macro(
-        "bullish", confidence="medium",
+        "bullish",
+        confidence="medium",
         sector_guidance=[_sector("Energy", "underweight", "crude rolling over")],
         bear_triggers=["HY OAS > 450bps"],
     )
@@ -272,7 +304,8 @@ def test_a_symbol_in_an_unmentioned_sector_still_gets_the_broad_read():
 
 def test_no_sector_supplied_behaves_exactly_as_before():
     a = _macro(
-        "bearish", confidence="low",
+        "bearish",
+        confidence="low",
         sector_guidance=[_sector("Energy", "overweight")],
         bull_triggers=["CPI cools"],
     )
@@ -281,7 +314,8 @@ def test_no_sector_supplied_behaves_exactly_as_before():
 
 def test_sector_matching_is_case_and_whitespace_insensitive():
     a = _macro(
-        "bearish", confidence="medium",
+        "bearish",
+        confidence="medium",
         sector_guidance=[_sector("Technology", "overweight", "AI capex")],
         bull_triggers=["CPI cools"],
     )
@@ -290,7 +324,8 @@ def test_sector_matching_is_case_and_whitespace_insensitive():
 
 def test_a_neutral_sector_row_neutralises_a_directional_broad_read():
     a = _macro(
-        "bullish", confidence="high",
+        "bullish",
+        confidence="high",
         sector_guidance=[_sector("Utilities", "neutral", "rate-sensitive, no edge")],
         bear_triggers=["HY OAS > 450bps"],
     )
@@ -305,7 +340,8 @@ def test_disagreeing_sector_rows_resolve_to_neutral_not_to_the_broad_read():
     evidence registry treats as supporting nothing. Falling back to the broad
     read here would resurrect exactly the stance the sector rows contradict."""
     a = _macro(
-        "bullish", confidence="high",
+        "bullish",
+        confidence="high",
         sector_guidance=[
             _sector("Energy", "overweight", "refining margins"),
             _sector("Energy", "underweight", "crude rolling over"),
@@ -344,7 +380,8 @@ def test_an_unresolved_macro_read_no_longer_silently_conflict_drops_a_candidate(
     from src.verdicts import rank_verdicts
 
     a = _macro(
-        "bearish", confidence="high",
+        "bearish",
+        confidence="high",
         sector_guidance=[
             _sector("Energy", "overweight", "refining margins"),
             _sector("Energy", "underweight", "crude rolling over"),
@@ -352,8 +389,12 @@ def test_an_unresolved_macro_read_no_longer_silently_conflict_drops_a_candidate(
         bull_triggers=["HY OAS < 300bps"],
     )
     tech = AnalystVerdict(
-        seat="technical", symbol="XOM", direction="bullish", magnitude=1.0,
-        conviction="high", invalidation="closes below MA50",
+        seat="technical",
+        symbol="XOM",
+        direction="bullish",
+        magnitude=1.0,
+        conviction="high",
+        invalidation="closes below MA50",
         evidence=[VerdictEvidence(label="rsi", value=55.0, source="chart")],
     )
 
@@ -371,7 +412,8 @@ def test_an_unresolved_macro_read_no_longer_silently_conflict_drops_a_candidate(
 
 def test_the_deciding_sector_row_is_cited_first_in_the_evidence():
     a = _macro(
-        "bullish", confidence="high",
+        "bullish",
+        confidence="high",
         sector_guidance=[_sector("Energy", "underweight", "crude rolling over")],
         bear_triggers=["HY OAS > 450bps"],
     )
@@ -388,11 +430,14 @@ def test_the_verdict_direction_matches_the_evidence_registry_for_the_same_read()
     computed from the identical MacroAnalysis and sector mapping."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
     from src.models import (
-        NewsIntelligenceReport, StockNewsItem, normalize_sector_stance,
+        NewsIntelligenceReport,
+        StockNewsItem,
+        normalize_sector_stance,
     )
 
     a = _macro(
-        "bullish", confidence="high",
+        "bullish",
+        confidence="high",
         sector_guidance=[_sector("Energy", "underweight", "crude rolling over")],
         bear_triggers=["HY OAS > 450bps"],
     )
@@ -407,14 +452,24 @@ def test_the_verdict_direction_matches_the_evidence_registry_for_the_same_read()
         pm_briefing="nothing actionable",
         market_sentiment="neutral",
         confidence="low",
-        stock_news={"XOM": [StockNewsItem(
-            headline="XOM refinery update", sentiment="neutral",
-            conviction="low", impact_summary="no directional read",
-        )]},
+        stock_news={
+            "XOM": [
+                StockNewsItem(
+                    headline="XOM refinery update",
+                    sentiment="neutral",
+                    conviction="low",
+                    impact_summary="no directional read",
+                )
+            ]
+        },
     )
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], positions=[], news_intel=news, earnings_analyses=[],
-        macro_analysis=a.model_dump(), smart_money_findings=None,
+        analyses=[],
+        positions=[],
+        news_intel=news,
+        earnings_analyses=[],
+        macro_analysis=a.model_dump(),
+        smart_money_findings=None,
         symbol_sectors={"XOM": "Energy"},
     )
     registry_stance = normalize_sector_stance(registry["XOM"]["macro"])

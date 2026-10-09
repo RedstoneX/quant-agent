@@ -39,15 +39,19 @@ def _no_real_sleep(monkeypatch):
 
 def _item(title="Headline", source="X", link="", per_symbol=False, published=None):
     return NewsItem(
-        title=title, summary="", source=source,
+        title=title,
+        summary="",
+        source=source,
         published=published or datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
-        link=link, per_symbol=per_symbol,
+        link=link,
+        per_symbol=per_symbol,
     )
 
 
 # ===========================================================================
 # Symbol cap — the hard safety net against the 101-request hammering risk.
 # ===========================================================================
+
 
 def test_per_symbol_fetch_respects_the_configured_symbol_cap():
     # NewsDataProvider(feeds=...) falls back to the real RSS_FEEDS on a
@@ -100,6 +104,7 @@ def test_per_symbol_disabled_makes_zero_requests_regardless_of_symbols():
 # Selection order — deterministic, never set-iteration.
 # ===========================================================================
 
+
 def test_per_symbol_fetch_preserves_caller_order_when_truncating_to_the_cap():
     """The provider keeps the FIRST `per_symbol_max_symbols` symbols in the
     caller's own order — it must not resort/shuffle them. Ordering
@@ -125,7 +130,9 @@ def test_run_news_update_orders_held_positions_before_candidates_deterministical
     positions first, then the run's admitted candidates, deduped while
     preserving that order — never raw set iteration."""
 
-    pipeline = build_pipeline(news_provider=MagicMock(), news_store=MagicMock(), news_analyst=MagicMock(), db=MagicMock())
+    pipeline = build_pipeline(
+        news_provider=MagicMock(), news_store=MagicMock(), news_analyst=MagicMock(), db=MagicMock()
+    )
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"]),
         news=SimpleNamespace(max_prompt_items=50),
@@ -135,11 +142,13 @@ def test_run_news_update_orders_held_positions_before_candidates_deterministical
     pipeline.news_provider.tag_symbol_mentions.return_value = {}
     pipeline.news_store.load_macro_narrative.return_value = None
     pipeline.news_analyst.analyze.return_value = (
-        None, MagicMock(user_message="m"),
+        None,
+        MagicMock(user_message="m"),
     )
 
     pipeline._run_news_update(
-        "run1", session="morning",
+        "run1",
+        session="morning",
         held_symbols=["msft", "aapl"],
         candidate_symbols=["AAPL", "rsg"],  # AAPL duplicated on purpose
     )
@@ -159,8 +168,7 @@ def test_morning_research_stage_passes_held_positions_and_admitted_candidates():
 
     captured = {}
 
-    def run_news_update_fn(run_id, session="morning", universe=None,
-                            held_symbols=None, candidate_symbols=None):
+    def run_news_update_fn(run_id, session="morning", universe=None, held_symbols=None, candidate_symbols=None):
         captured["held_symbols"] = held_symbols
         captured["candidate_symbols"] = candidate_symbols
         return None, None
@@ -177,10 +185,18 @@ def test_morning_research_stage_passes_held_positions_and_admitted_candidates():
     news_store = MagicMock()
     news_store.load_macro_narrative.return_value = None
     macro_agent = MagicMock()
-    macro_agent.analyze.return_value = (None, MagicMock(
-        user_message="m", raw_text="{}", tokens_used=1, model="t",
-        input_tokens=1, output_tokens=1, cost_usd=0.0,
-    ))
+    macro_agent.analyze.return_value = (
+        None,
+        MagicMock(
+            user_message="m",
+            raw_text="{}",
+            tokens_used=1,
+            model="t",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+        ),
+    )
 
     stage = MorningResearchStage(
         config=mock_config,
@@ -204,8 +220,8 @@ def test_morning_research_stage_passes_held_positions_and_admitted_candidates():
     ctx = RunContext.start("morning")
     ctx.positions = [
         SimpleNamespace(symbol="msft", qty=10),
-        SimpleNamespace(symbol="abt", qty=-5),   # short — still "held"
-        SimpleNamespace(symbol="sgov", qty=0),   # flat — must be excluded
+        SimpleNamespace(symbol="abt", qty=-5),  # short — still "held"
+        SimpleNamespace(symbol="sgov", qty=0),  # flat — must be excluded
     ]
     ctx.admitted_symbols = {"RSG", "MSFT"}  # overlaps a held position
 
@@ -219,6 +235,7 @@ def test_morning_research_stage_passes_held_positions_and_admitted_candidates():
 # Coverage — per-symbol failures use the SAME NewsCoverage, not a parallel
 # reporting path (2026-08-28 fix this must not bypass).
 # ===========================================================================
+
 
 def test_failing_per_symbol_feed_degrades_coverage_to_partial():
     provider = NewsDataProvider(feeds={"CNBC Top News": "http://alive"})
@@ -261,7 +278,8 @@ def test_all_per_symbol_feeds_failing_is_partial_when_general_feeds_still_succee
     assert coverage.succeeded == len(provider.feeds)
     assert coverage.failed_count == 2
     assert {f.name for f in coverage.failed} == {
-        "Yahoo Finance (A)", "Yahoo Finance (B)",
+        "Yahoo Finance (A)",
+        "Yahoo Finance (B)",
     }
 
 
@@ -281,6 +299,7 @@ def test_everything_failing_general_and_per_symbol_reports_failed():
 # Dedup — per-symbol items must flow through the SAME cascade, not around it.
 # ===========================================================================
 
+
 def test_per_symbol_items_flow_through_the_same_dedup_as_general_items():
     """A per-symbol story that a general wire already carried must collapse
     into ONE item via the shared dedup pass (src/data/news_dedup.py) — it
@@ -291,15 +310,21 @@ def test_per_symbol_items_flow_through_the_same_dedup_as_general_items():
 
     def fake_fetch(name, url, cutoff):
         if name == "CNBC Top News":
-            return [_item(
-                title="Acme Corp beats quarterly estimates",
-                source="CNBC Top News", link=same_link + "?utm_source=cnbc",
-            )]
+            return [
+                _item(
+                    title="Acme Corp beats quarterly estimates",
+                    source="CNBC Top News",
+                    link=same_link + "?utm_source=cnbc",
+                )
+            ]
         if name == "Yahoo Finance (ACME)":
-            return [_item(
-                title="Acme Corp beats quarterly estimates",
-                source="Yahoo Finance (ACME)", link=same_link + "?ref=yahoo",
-            )]
+            return [
+                _item(
+                    title="Acme Corp beats quarterly estimates",
+                    source="Yahoo Finance (ACME)",
+                    link=same_link + "?ref=yahoo",
+                )
+            ]
         return []
 
     provider._fetch_feed = MagicMock(side_effect=fake_fetch)
@@ -319,12 +344,15 @@ def test_per_symbol_items_that_are_genuinely_new_survive_dedup_distinctly():
 
     def fake_fetch(name, url, cutoff):
         if name == "CNBC Top News":
-            return [_item(title="Fed holds rates steady", source="CNBC Top News",
-                           link="https://cnbc.example.com/fed")]
+            return [_item(title="Fed holds rates steady", source="CNBC Top News", link="https://cnbc.example.com/fed")]
         if name == "Yahoo Finance (ACME)":
-            return [_item(title="Acme wins exclusive supply contract",
-                           source="Yahoo Finance (ACME)",
-                           link="https://finance.example.com/acme-contract")]
+            return [
+                _item(
+                    title="Acme wins exclusive supply contract",
+                    source="Yahoo Finance (ACME)",
+                    link="https://finance.example.com/acme-contract",
+                )
+            ]
         return []
 
     provider._fetch_feed = MagicMock(side_effect=fake_fetch)
@@ -341,11 +369,10 @@ def test_per_symbol_items_that_are_genuinely_new_survive_dedup_distinctly():
 # Zero symbols — no-op wall. General wire path is byte-identical to today.
 # ===========================================================================
 
+
 def test_zero_symbols_is_byte_identical_to_omitting_symbols_argument():
     provider = NewsDataProvider(feeds={"CNBC Top News": "http://alive"})
-    provider._fetch_feed = MagicMock(
-        return_value=[_item(title="Fed holds rates", source="CNBC Top News")]
-    )
+    provider._fetch_feed = MagicMock(return_value=[_item(title="Fed holds rates", source="CNBC Top News")])
 
     items_default, coverage_default = provider.fetch_news()
     items_empty, coverage_empty = provider.fetch_news(symbols=[])
@@ -363,9 +390,7 @@ def test_zero_symbols_is_byte_identical_to_omitting_symbols_argument():
 
 def test_zero_symbols_with_per_symbol_disabled_is_also_a_no_op():
     provider = NewsDataProvider(feeds={"CNBC Top News": "http://alive"}, per_symbol_enabled=False)
-    provider._fetch_feed = MagicMock(
-        return_value=[_item(title="Fed holds rates", source="CNBC Top News")]
-    )
+    provider._fetch_feed = MagicMock(return_value=[_item(title="Fed holds rates", source="CNBC Top News")])
     items, coverage = provider.fetch_news()
     assert coverage.configured == 1
     assert [i.title for i in items] == ["Fed holds rates"]
@@ -375,18 +400,33 @@ def test_zero_symbols_with_per_symbol_disabled_is_also_a_no_op():
 # Per-symbol prompt item cap — general wire items must never be crowded out.
 # ===========================================================================
 
+
 def test_cap_per_symbol_items_keeps_all_general_and_first_n_per_symbol():
     items = [
-        _item(title="General 1", source="CNBC", per_symbol=False,
-              published=datetime(2026, 8, 30, 12, tzinfo=timezone.utc)),
-        _item(title="PerSym 1", source="Yahoo Finance (AAA)", per_symbol=True,
-              published=datetime(2026, 8, 30, 11, tzinfo=timezone.utc)),
-        _item(title="PerSym 2", source="Yahoo Finance (BBB)", per_symbol=True,
-              published=datetime(2026, 8, 30, 10, tzinfo=timezone.utc)),
-        _item(title="PerSym 3", source="Yahoo Finance (CCC)", per_symbol=True,
-              published=datetime(2026, 8, 30, 9, tzinfo=timezone.utc)),
-        _item(title="General 2", source="BBC", per_symbol=False,
-              published=datetime(2026, 8, 30, 8, tzinfo=timezone.utc)),
+        _item(
+            title="General 1", source="CNBC", per_symbol=False, published=datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+        ),
+        _item(
+            title="PerSym 1",
+            source="Yahoo Finance (AAA)",
+            per_symbol=True,
+            published=datetime(2026, 8, 30, 11, tzinfo=timezone.utc),
+        ),
+        _item(
+            title="PerSym 2",
+            source="Yahoo Finance (BBB)",
+            per_symbol=True,
+            published=datetime(2026, 8, 30, 10, tzinfo=timezone.utc),
+        ),
+        _item(
+            title="PerSym 3",
+            source="Yahoo Finance (CCC)",
+            per_symbol=True,
+            published=datetime(2026, 8, 30, 9, tzinfo=timezone.utc),
+        ),
+        _item(
+            title="General 2", source="BBC", per_symbol=False, published=datetime(2026, 8, 30, 8, tzinfo=timezone.utc)
+        ),
     ]
     capped = NewsDataProvider._cap_per_symbol_items(items, cap=2)
     titles = [i.title for i in capped]
@@ -396,17 +436,28 @@ def test_cap_per_symbol_items_keeps_all_general_and_first_n_per_symbol():
 def test_fetch_news_per_symbol_prompt_item_cap_holds_end_to_end():
     provider = NewsDataProvider(
         feeds={"CNBC Top News": "http://alive"},
-        per_symbol_max_symbols=5, per_symbol_max_prompt_items=1,
+        per_symbol_max_symbols=5,
+        per_symbol_max_prompt_items=1,
     )
 
     def fake_fetch(name, url, cutoff):
         if name == "CNBC Top News":
-            return [_item(title="General wire story", source="CNBC Top News",
-                           published=datetime(2026, 8, 30, 6, tzinfo=timezone.utc))]
+            return [
+                _item(
+                    title="General wire story",
+                    source="CNBC Top News",
+                    published=datetime(2026, 8, 30, 6, tzinfo=timezone.utc),
+                )
+            ]
         # Each per-symbol feed returns one distinct (non-duplicate) item.
-        return [_item(title=f"{name} exclusive story", source=name,
-                       link=f"https://example.com/{name}",
-                       published=datetime(2026, 8, 30, 12, tzinfo=timezone.utc))]
+        return [
+            _item(
+                title=f"{name} exclusive story",
+                source=name,
+                link=f"https://example.com/{name}",
+                published=datetime(2026, 8, 30, 12, tzinfo=timezone.utc),
+            )
+        ]
 
     provider._fetch_feed = MagicMock(side_effect=fake_fetch)
     items, coverage = provider.fetch_news(symbols=["AAA", "BBB", "CCC"])
@@ -414,12 +465,13 @@ def test_fetch_news_per_symbol_prompt_item_cap_holds_end_to_end():
     per_symbol_items = [i for i in items if i.per_symbol]
     general_items = [i for i in items if not i.per_symbol]
     assert len(per_symbol_items) == 1  # capped from 3 -> 1
-    assert len(general_items) == 1     # general item untouched by the cap
+    assert len(general_items) == 1  # general item untouched by the cap
 
 
 # ===========================================================================
 # Config <-> provider wiring.
 # ===========================================================================
+
 
 def test_news_config_per_symbol_defaults_match_provider_defaults():
     """NewsConfig's defaults and NewsDataProvider's own constructor defaults
@@ -433,9 +485,7 @@ def test_news_config_per_symbol_defaults_match_provider_defaults():
     assert provider.per_symbol_enabled == cfg.per_symbol_enabled
     assert provider.per_symbol_max_symbols == cfg.per_symbol_max_symbols
     assert provider.per_symbol_max_prompt_items == cfg.per_symbol_max_prompt_items
-    assert provider.per_symbol_request_interval_s == pytest.approx(
-        1.0 / cfg.per_symbol_requests_per_second
-    )
+    assert provider.per_symbol_request_interval_s == pytest.approx(1.0 / cfg.per_symbol_requests_per_second)
 
 
 def test_news_config_loads_custom_per_symbol_values_from_yaml(tmp_path):

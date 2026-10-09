@@ -1,4 +1,5 @@
 """Migration step: the two Sentinel-seam tables (see src/sentinel/). Append-only, idempotent."""
+
 from __future__ import annotations
 
 import logging

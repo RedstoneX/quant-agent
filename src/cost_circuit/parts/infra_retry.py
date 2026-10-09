@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_retry.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import logging
 import random
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 class InfraRetry:
     def __init__(
-        self, *,
+        self,
+        *,
         config,
         context,
         notifier,
@@ -85,16 +87,10 @@ class InfraRetry:
         the same transient fault don't retry in lockstep.
         """
 
-        base = max(
-            0.0, float(getattr(self.config, "infra_fault_retry_backoff_base_s", 2.0))
-        )
-        cap = max(
-            base, float(getattr(self.config, "infra_fault_retry_backoff_max_s", 8.0))
-        )
-        jitter = max(
-            0.0, float(getattr(self.config, "infra_fault_retry_backoff_jitter_s", 1.0))
-        )
-        delay = min(base * (2 ** attempt), cap)
+        base = max(0.0, float(getattr(self.config, "infra_fault_retry_backoff_base_s", 2.0)))
+        cap = max(base, float(getattr(self.config, "infra_fault_retry_backoff_max_s", 8.0)))
+        jitter = max(0.0, float(getattr(self.config, "infra_fault_retry_backoff_jitter_s", 1.0)))
+        delay = min(base * (2**attempt), cap)
         return delay + (random.uniform(0, jitter) if jitter > 0 else 0.0)
 
     def _run_with_infra_retry(
@@ -156,9 +152,12 @@ class InfraRetry:
                 if attempt < max_retries:
                     backoff = self._infra_retry_backoff_s(attempt)
                     logger.warning(
-                        "Cost-circuit infrastructure fault in %s (attempt "
-                        "%d/%d): %s -- retrying in %.1fs",
-                        agent_name, attempt + 1, max_retries + 1, exc, backoff,
+                        "Cost-circuit infrastructure fault in %s (attempt %d/%d): %s -- retrying in %.1fs",
+                        agent_name,
+                        attempt + 1,
+                        max_retries + 1,
+                        exc,
+                        backoff,
                     )
                     if backoff > 0:
                         time.sleep(backoff)
@@ -166,11 +165,17 @@ class InfraRetry:
                 logger.critical(
                     "Cost-circuit infrastructure fault in %s persisted past "
                     "%d attempt(s); latching paid analysis closed: %s",
-                    agent_name, max_retries + 1, exc, exc_info=True,
+                    agent_name,
+                    max_retries + 1,
+                    exc,
+                    exc_info=True,
                 )
         assert last_exc is not None  # loop always returns or sets this
         self.mark_unavailable(
-            last_exc, run_id=run_id, mode=mode, agent_name=agent_name,
+            last_exc,
+            run_id=run_id,
+            mode=mode,
+            agent_name=agent_name,
         )
         raise last_exc
 
@@ -210,21 +215,14 @@ class InfraRetry:
             # Pricing verification precedes every provider request.
             attempts_exact = True
         session_cost = snapshot.get("session_cost_usd")
-        if (
-            session_cost is None
-            and agent_name == "pricing_preflight"
-            and effective_attempts == 0
-        ):
+        if session_cost is None and agent_name == "pricing_preflight" and effective_attempts == 0:
             session_cost = 0.0
         daily_cost = snapshot.get("daily_cost_usd")
         costs_exact = bool(
             session_cost is not None
             and daily_cost is not None
             and snapshot.get("daily_costs_exact", False)
-            and (
-                snapshot.get("session_costs_exact", True)
-                if snapshot.get("session_cost_usd") is not None else True
-            )
+            and (snapshot.get("session_costs_exact", True) if snapshot.get("session_cost_usd") is not None else True)
         )
         try:
             self._write_emergency_latch(

@@ -140,6 +140,7 @@ unit that fires daily whether or not the trading timers are enabled. It is
 a READER — one read-only SQLite connection, one owner alert, no writes to
 the trading database and no broker orders of any kind.
 """
+
 from __future__ import annotations
 
 import json
@@ -179,18 +180,26 @@ ENTRY_ACTIONS = ("BUY", "SHORT")
 #: has thought of yet reads as a refusal, which can only ever LENGTHEN a
 #: streak that still has to be monomorphic over changing candidates before
 #: anything is sent.
-SURVIVED_OUTCOMES = frozenset({
-    "submitted", "filled", "allowed", "approved", "placed",
-    "buy_submitted", "funded",
-    # 2026-09-23 audit additions, both of them "an entry went ahead" words
-    # that were reading as refusals because they were simply never listed:
-    #   risk|modified        — the risk manager RESIZED the entry and let it
-    #                          through, which is `approved` with a haircut.
-    #   execution|safety_net — the catch-up reprice inside the entry ceiling,
-    #                          written only on the path where the order then
-    #                          proceeds.
-    "modified", "safety_net",
-})
+SURVIVED_OUTCOMES = frozenset(
+    {
+        "submitted",
+        "filled",
+        "allowed",
+        "approved",
+        "placed",
+        "buy_submitted",
+        "funded",
+        # 2026-09-23 audit additions, both of them "an entry went ahead" words
+        # that were reading as refusals because they were simply never listed:
+        #   risk|modified        — the risk manager RESIZED the entry and let it
+        #                          through, which is `approved` with a haircut.
+        #   execution|safety_net — the catch-up reprice inside the entry ceiling,
+        #                          written only on the path where the order then
+        #                          proceeds.
+        "modified",
+        "safety_net",
+    }
+)
 
 #: `outcome` values that record a candidate ARRIVING somewhere rather than a
 #: stage ruling on it — a beginning, not an end. A run that stops before the
@@ -212,22 +221,24 @@ SURVIVED_OUTCOMES = frozenset({
 #: all, and is dropped from that run's evidence. It is not counted as
 #: refused and it is not counted as survived; the desk simply never got as
 #: far as having an opinion about it.
-UNDECIDED_OUTCOMES = frozenset({
-    "discovered",     # opportunity — a mover or prefilter hit was noticed
-    "evaluated",      # specialist  — a seat analysed the chart
-    "nominated",      # opportunity — a research seat put the name forward
-    "admitted",       # opportunity — smart-money/Form 4 widened eligibility
-    "proposed",       # portfolio_manager — a target was put up
-    "attempted",      # funding — a cash sweep is in flight
-    "not_decided",    # evidence_gate — the gate says so in the word itself
-    "protective_sell_cancelled",   # scale_in — a bookkeeping step mid-add
-    # Board item 193 — the measured cancel-to-rearm window. Same character as
-    # `protective_sell_cancelled`: it records how long the held position was
-    # naked, it rules on nothing, and a candidate whose last event is one of
-    # these was neither refused nor survived.
-    "unprotected_window_closed",
-    "unprotected_window_still_open",
-})
+UNDECIDED_OUTCOMES = frozenset(
+    {
+        "discovered",  # opportunity — a mover or prefilter hit was noticed
+        "evaluated",  # specialist  — a seat analysed the chart
+        "nominated",  # opportunity — a research seat put the name forward
+        "admitted",  # opportunity — smart-money/Form 4 widened eligibility
+        "proposed",  # portfolio_manager — a target was put up
+        "attempted",  # funding — a cash sweep is in flight
+        "not_decided",  # evidence_gate — the gate says so in the word itself
+        "protective_sell_cancelled",  # scale_in — a bookkeeping step mid-add
+        # Board item 193 — the measured cancel-to-rearm window. Same character as
+        # `protective_sell_cancelled`: it records how long the held position was
+        # naked, it rules on nothing, and a candidate whose last event is one of
+        # these was neither refused nor survived.
+        "unprotected_window_closed",
+        "unprotected_window_still_open",
+    }
+)
 
 #: Outcomes where something DID rule, and ruled that no new entry was the
 #: right answer — for reasons that are not a gate turning an idea down.
@@ -255,18 +266,20 @@ UNDECIDED_OUTCOMES = frozenset({
 #: nothing is sent; twelve held names beside five new candidates all killed
 #: by one stuck rule still leaves those five, monomorphic, and the alarm
 #: still fires. That is the whole point of choosing this category.
-NO_ENTRY_DECIDED_OUTCOMES = frozenset({
-    "held_unchanged",   # portfolio_manager — holds it, left it out on purpose
-    "already_covered",  # opportunity — the nomination matched an analysis
-                        #   this same run already has; a dedupe, not a verdict
-    "not_required",     # funding — no cash sweep was needed to proceed
-    "exited",           # position_management — a SELL. This module already
-                        #   holds that an exit does not make a day non-empty
-                        #   (see ENTRY_ACTIONS); it is equally not a refusal
-                        #   of a new idea.
-    "stop_out_gap_unexplained",  # reconciliation — a finding about a
-                        #   position that is already closed, not a candidate
-})
+NO_ENTRY_DECIDED_OUTCOMES = frozenset(
+    {
+        "held_unchanged",  # portfolio_manager — holds it, left it out on purpose
+        "already_covered",  # opportunity — the nomination matched an analysis
+        #   this same run already has; a dedupe, not a verdict
+        "not_required",  # funding — no cash sweep was needed to proceed
+        "exited",  # position_management — a SELL. This module already
+        #   holds that an exit does not make a day non-empty
+        #   (see ENTRY_ACTIONS); it is equally not a refusal
+        #   of a new idea.
+        "stop_out_gap_unexplained",  # reconciliation — a finding about a
+        #   position that is already closed, not a candidate
+    }
+)
 
 #: The union, which is what the loader actually applies: every outcome word
 #: that is NOT the desk turning an idea down. Everything outside it reads as
@@ -300,9 +313,11 @@ NOT_A_REFUSAL_OUTCOMES = UNDECIDED_OUTCOMES | NO_ENTRY_DECIDED_OUTCOMES
 #: session — monomorphic across a changing candidate set, which is exactly
 #: this detector's trigger shape, and the owner is told the desk "refused
 #: every idea" when nothing was ever put in front of a decision at all.
-NOT_A_REFUSAL_STAGE_OUTCOMES = frozenset({
-    ("specialist", "failed"),
-})
+NOT_A_REFUSAL_STAGE_OUTCOMES = frozenset(
+    {
+        ("specialist", "failed"),
+    }
+)
 
 #: SEAT ACCEPTANCE (the enabler job). `agent_logs.status` records only that
 #: the provider call RETURNED; it has never recorded whether the seat could
@@ -322,34 +337,36 @@ SEAT_ACCEPTANCE_WORDS = frozenset({SEAT_ACCEPTED, SEAT_REFUSED})
 #: already existed in the desk's vocabulary before this column did — they are
 #: the `status` literals and `pipeline_event` reasons those same sites
 #: already assign on their refusal path. Nothing here is a new word.
-SEAT_REFUSAL_REASONS = frozenset({
-    "agent_failure",                   # smart_money / risk status literal
-    "failed",                          # data_status["tech"] / evening literal
-    "no_valid_grounded_decision",      # pipeline_event portfolio_manager|failed
-    "risk_manager_unparseable_output", # pipeline_event risk|failed
-    "position_review_parse_error",     # review_log_kwargs status literal
-    "evening_parse_error",             # _ev_log_kwargs status literal
-    # Board item 188, second criterion. The three DECISION seats each have
-    # several distinct ways their own acceptance gate can reject an answer,
-    # and the per-seat word above collapses them all into "it failed". These
-    # are the gates' OWN machine-readable reasons, carried on
-    # `AgentResult.gate_reason` by the seat that refused, so a per-model
-    # usable-answer rate can also say WHAT the small free model gets wrong.
-    # Recording vocabulary only — nothing branches on these words.
-    "pm_parse_error",                  # PM: body was not a decision object
-    "pm_schema_error",                 # PM: object failed PortfolioDecision
-    "pm_grounding_error",              # PM: targets not grounded in evidence
-    "pm_repair_changed_decision",      # PM: repair re-decided, failed closed
-    "risk_non_json",                   # RM: body was not JSON
-    "risk_decision_field_validation_failure",  # RM: bad decision-bearing field
-    "risk_repair_changed_decision",    # RM: repair re-decided, failed closed
-    "risk_repair_not_object",          # RM: repair returned a non-object
-    "risk_repair_schema_error",        # RM: repaired body failed the schema
-    "risk_parse_exception",            # RM: parse raised
-    "review_non_json",                 # PR: body was not JSON
-    "review_not_object",               # PR: body was JSON but not an object
-    "review_schema_validation_failure",  # PR: failed PositionReview schema
-})
+SEAT_REFUSAL_REASONS = frozenset(
+    {
+        "agent_failure",  # smart_money / risk status literal
+        "failed",  # data_status["tech"] / evening literal
+        "no_valid_grounded_decision",  # pipeline_event portfolio_manager|failed
+        "risk_manager_unparseable_output",  # pipeline_event risk|failed
+        "position_review_parse_error",  # review_log_kwargs status literal
+        "evening_parse_error",  # _ev_log_kwargs status literal
+        # Board item 188, second criterion. The three DECISION seats each have
+        # several distinct ways their own acceptance gate can reject an answer,
+        # and the per-seat word above collapses them all into "it failed". These
+        # are the gates' OWN machine-readable reasons, carried on
+        # `AgentResult.gate_reason` by the seat that refused, so a per-model
+        # usable-answer rate can also say WHAT the small free model gets wrong.
+        # Recording vocabulary only — nothing branches on these words.
+        "pm_parse_error",  # PM: body was not a decision object
+        "pm_schema_error",  # PM: object failed PortfolioDecision
+        "pm_grounding_error",  # PM: targets not grounded in evidence
+        "pm_repair_changed_decision",  # PM: repair re-decided, failed closed
+        "risk_non_json",  # RM: body was not JSON
+        "risk_decision_field_validation_failure",  # RM: bad decision-bearing field
+        "risk_repair_changed_decision",  # RM: repair re-decided, failed closed
+        "risk_repair_not_object",  # RM: repair returned a non-object
+        "risk_repair_schema_error",  # RM: repaired body failed the schema
+        "risk_parse_exception",  # RM: parse raised
+        "review_non_json",  # PR: body was not JSON
+        "review_not_object",  # PR: body was JSON but not an object
+        "review_schema_validation_failure",  # PR: failed PositionReview schema
+    }
+)
 
 
 #: The desk's OWN recorded words for a run that stopped before the decision
@@ -367,24 +384,27 @@ SEAT_REFUSAL_REASONS = frozenset({
 #: `intraday_scan_no_opportunity`, `executed` and `reviewed` are all
 #: deliberately ABSENT: each of those is a run that reached a decision, and
 #: a jam has to be able to hide inside them or this check has no job.
-NON_DECIDING_STATUSES = frozenset({
-    "paid_analysis_suspended",
-    "evidence_gate_skip",
-    "intraday_scan_crashed", "intraday_scan_out_of_credit",
-    "intraday_analysis_error",
-    "intraday_scan_disabled",
-    "intraday_scan_lock_contended",
-    "broker_error",
-    "analysis_error",
-    "provider_error",
-    "fetch_error",
-    "no_data",
-    "kill_switch_halted",
-    "market_holiday",
-    "early_close",
-    "disabled",
-    "error",
-})
+NON_DECIDING_STATUSES = frozenset(
+    {
+        "paid_analysis_suspended",
+        "evidence_gate_skip",
+        "intraday_scan_crashed",
+        "intraday_scan_out_of_credit",
+        "intraday_analysis_error",
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
+        "broker_error",
+        "analysis_error",
+        "provider_error",
+        "fetch_error",
+        "no_data",
+        "kill_switch_halted",
+        "market_holiday",
+        "early_close",
+        "disabled",
+        "error",
+    }
+)
 
 #: The portfolio manager's semantic failures are all spelled `pm_<something>`
 #: (`src/agents/portfolio_manager.py`'s `_semantic_failure`). They mean the
@@ -401,9 +421,8 @@ def is_non_deciding(status: str) -> bool:
     word = str(status or "").strip().lower()
     if not word:
         return False
-    return word in NON_DECIDING_STATUSES or word.startswith(
-        NON_DECIDING_STATUS_PREFIX
-    )
+    return word in NON_DECIDING_STATUSES or word.startswith(NON_DECIDING_STATUS_PREFIX)
+
 
 #: Any numeric literal, including a signed decimal or an exponent.
 _NUMBER = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?")
@@ -414,6 +433,7 @@ _WHITESPACE = re.compile(r"\s+")
 # ---------------------------------------------------------------------------
 # the signature of one refusal
 # ---------------------------------------------------------------------------
+
 
 def normalise(text: Any, symbol: str = "") -> str:
     """Strip the candidate's own ticker and every number out of a reason.
@@ -440,25 +460,29 @@ def signature_key(payload: dict, symbol: str = "") -> str:
     stage = str(payload.get("stage") or "")
     outcome = str(payload.get("outcome") or "")
     code = str(payload.get("refusal") or payload.get("fault") or "")
-    return "|".join((
-        stage, outcome,
-        normalise(payload.get("reason"), symbol),
-        code,
-        normalise(payload.get("detail"), symbol),
-    ))
+    return "|".join(
+        (
+            stage,
+            outcome,
+            normalise(payload.get("reason"), symbol),
+            code,
+            normalise(payload.get("detail"), symbol),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # sessions, read out of the evidence stream
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SessionShape:
     """One run's candidates and how each of them ended."""
 
     run_id: str
-    trading_day: str                      # ET calendar date, YYYY-MM-DD
-    last_seen: datetime                   # newest event in the run, UTC
+    trading_day: str  # ET calendar date, YYYY-MM-DD
+    last_seen: datetime  # newest event in the run, UTC
     placed_entry: bool
     keys_by_symbol: dict[str, str] = field(default_factory=dict)
     outcomes_by_symbol: dict[str, str] = field(default_factory=dict)
@@ -487,10 +511,7 @@ class SessionShape:
     def any_survived(self) -> bool:
         """At least one candidate got through — so "every idea was refused"
         is simply false for this session, whatever the trades table shows."""
-        return any(
-            outcome in SURVIVED_OUTCOMES
-            for outcome in self.outcomes_by_symbol.values()
-        )
+        return any(outcome in SURVIVED_OUTCOMES for outcome in self.outcomes_by_symbol.values())
 
     @property
     def distinct_keys(self) -> frozenset[str]:
@@ -506,14 +527,14 @@ class SessionShape:
 class RefusalSignatureStatus:
     """`should_alert` is the only field callers act on."""
 
-    trading_day: str | None = None        # the day judged (ET)
+    trading_day: str | None = None  # the day judged (ET)
     streak: list[SessionShape] = field(default_factory=list)
     #: Runs stepped over because the desk's own record says they never
     #: reached the decision stage. Reported, never counted as refusals.
     skipped: list[SessionShape] = field(default_factory=list)
-    key: str | None = None                # the one unvarying reason, if any
-    current: bool = False                 # newest streak session is that day
-    inputs_varied: bool = False           # the candidate sets were not all equal
+    key: str | None = None  # the one unvarying reason, if any
+    current: bool = False  # newest streak session is that day
+    inputs_varied: bool = False  # the candidate sets were not all equal
     db_error: str | None = None
     already_alerted_for_day: bool = False
 
@@ -630,8 +651,7 @@ def load_sessions(
         entered = {
             str(r["run_id"])
             for r in conn.execute(
-                "SELECT DISTINCT run_id FROM trades "
-                "WHERE run_id IS NOT NULL AND UPPER(action) IN (?, ?)",
+                "SELECT DISTINCT run_id FROM trades WHERE run_id IS NOT NULL AND UPPER(action) IN (?, ?)",
                 ENTRY_ACTIONS,
             ).fetchall()
             if r["run_id"]
@@ -674,10 +694,7 @@ def load_sessions(
         # FORWARD.
         outcome = str(payload.get("outcome") or "")
         stage = str(payload.get("stage") or "")
-        if (
-            outcome in NOT_A_REFUSAL_OUTCOMES
-            or (stage, outcome) in NOT_A_REFUSAL_STAGE_OUTCOMES
-        ):
+        if outcome in NOT_A_REFUSAL_OUTCOMES or (stage, outcome) in NOT_A_REFUSAL_STAGE_OUTCOMES:
             keys[run_id].pop(symbol, None)
             outcomes[run_id].pop(symbol, None)
         else:
@@ -700,15 +717,17 @@ def load_sessions(
             # streak and breaking none. This is the fully-invested book:
             # twelve held names, no orders, and nothing to report.
             continue
-        sessions.append(SessionShape(
-            run_id=run_id,
-            trading_day=when.astimezone(ET).date().isoformat(),
-            last_seen=when,
-            placed_entry=run_id in entered,
-            keys_by_symbol=dict(keys[run_id]),
-            outcomes_by_symbol=dict(outcomes[run_id]),
-            disposition=dispositions.get(run_id, ""),
-        ))
+        sessions.append(
+            SessionShape(
+                run_id=run_id,
+                trading_day=when.astimezone(ET).date().isoformat(),
+                last_seen=when,
+                placed_entry=run_id in entered,
+                keys_by_symbol=dict(keys[run_id]),
+                outcomes_by_symbol=dict(outcomes[run_id]),
+                disposition=dispositions.get(run_id, ""),
+            )
+        )
     sessions.sort(key=lambda s: s.last_seen)
     return sessions, None
 
@@ -759,6 +778,7 @@ def streak_and_skipped(
 # on-box state — one alert per trading day
 # ---------------------------------------------------------------------------
 
+
 def load_state(path: Path | None = None) -> dict[str, Any]:
     try:
         raw = json.loads((path or STATE_PATH).read_text())
@@ -797,6 +817,7 @@ def save_state(state: dict[str, Any], path: Path | None = None) -> bool:
 # ---------------------------------------------------------------------------
 # the check
 # ---------------------------------------------------------------------------
+
 
 def check_refusal_signature(
     *,
@@ -897,12 +918,10 @@ def _plain_key(key: str) -> str:
         # answer "no plain wording" over a `reason` field that is sitting
         # right there, which is the bug being fixed below.
         from src.pm_accounting import plain_reason
+
         return plain_reason(code)
     if code:
-        return (
-            "the desk recorded a reason it has no plain wording for "
-            f"(its internal name for it is '{code}')"
-        )
+        return f"the desk recorded a reason it has no plain wording for (its internal name for it is '{code}')"
     return _describe_or_admit(reason, detail)
 
 
@@ -921,13 +940,10 @@ def _describe_or_admit(reason: str, detail: str) -> str:
     meaning for a token it does not know. The admission sentence now means
     only what it says — that the key carries no describable field at all.
     """
-    text = (str(reason or "").strip() or str(detail or "").strip())
+    text = str(reason or "").strip() or str(detail or "").strip()
     if not text:
         return "the desk recorded a reason it has no plain wording for"
-    return (
-        "the desk has no plain wording for this one, and recorded it in its "
-        f"own words as '{text}'"
-    )
+    return f"the desk has no plain wording for this one, and recorded it in its own words as '{text}'"
 
 
 def _human_reason(session: SessionShape) -> str:
@@ -976,8 +992,10 @@ def alert_text(status: RefusalSignatureStatus) -> str:
         "not of a quiet market: a quiet market kills different names for "
         "different reasons.\n\n"
         f"The one reason: {_human_reason(sessions[-1]) if sessions else 'unknown'}\n\n"
-        + "\n".join(lines) + "\n"
-        + skipped + "\n"
+        + "\n".join(lines)
+        + "\n"
+        + skipped
+        + "\n"
         "Nothing has been changed, placed or cancelled. This is not a count "
         "of empty days — an empty day is normal here and no number of them "
         "would trigger this on its own. What triggered it is that the reason "

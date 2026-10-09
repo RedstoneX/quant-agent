@@ -3,16 +3,24 @@
 Every collaborator is an explicit keyword-only constructor argument, so the
 class is built from stubs alone (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import inspect
 from unittest.mock import MagicMock
 
 from src.execution.broker_parts.stop_amend import (
-    StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
+    StopAmender,
+    _AMEND_NOT_ATTEMPTED,
+    _is_terminal_broker_rejection,
+    _quantize_price,
 )
 from src.execution.broker_parts.stop_place import (
-    StopPlacer, _STOP_PLACEMENT_MAX_ATTEMPTS, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty,
+    StopPlacer,
+    _STOP_PLACEMENT_MAX_ATTEMPTS,
+    _is_held_for_orders_error,
+    _is_unsupported_stop_market_rejection,
+    _split_protective_qty,
 )
 from tests.boundary_harness import check_boundary
 
@@ -37,6 +45,7 @@ def test_stop_amend_module_passes_the_boundary_check():
 
 def test_moved_helpers_still_resolve_on_the_broker_module():
     import src.execution.broker as broker_module
+
     assert broker_module._AMEND_NOT_ATTEMPTED is _AMEND_NOT_ATTEMPTED
     assert broker_module._is_terminal_broker_rejection is _is_terminal_broker_rejection
     assert broker_module._quantize_price is _quantize_price
@@ -50,9 +59,14 @@ def test_amend_refusal_without_a_broker_object():
     rejection leaves the original stop resting and reports the refusal."""
     client = MagicMock(name="client")
     client.replace_order_by_id.side_effect = RuntimeError("rejected")
-    amender = StopAmender(client=client, list_open_stop_orders_by_side=MagicMock(return_value=[]),
-                          snapshot_stop_order=MagicMock(return_value=None))
-    out = amender._amend_one_stop_price(symbol="ZZZ", spec={"id": "s1", "qty": 1, "stop_price": 9.0, "limit_price": None}, new_price=9.5)
+    amender = StopAmender(
+        client=client,
+        list_open_stop_orders_by_side=MagicMock(return_value=[]),
+        snapshot_stop_order=MagicMock(return_value=None),
+    )
+    out = amender._amend_one_stop_price(
+        symbol="ZZZ", spec={"id": "s1", "qty": 1, "stop_price": 9.0, "limit_price": None}, new_price=9.5
+    )
     assert isinstance(out, dict)
     client.replace_order_by_id.assert_called_once()
 
@@ -70,6 +84,7 @@ def test_stop_place_module_passes_the_boundary_check():
 
 def test_stop_place_helpers_still_resolve_on_the_broker_module():
     import src.execution.broker as broker_module
+
     assert broker_module._STOP_PLACEMENT_MAX_ATTEMPTS is _STOP_PLACEMENT_MAX_ATTEMPTS
     assert broker_module._is_held_for_orders_error is _is_held_for_orders_error
     assert broker_module._is_unsupported_stop_market_rejection is _is_unsupported_stop_market_rejection
@@ -81,6 +96,7 @@ def test_broker_shim_passes_its_own_cluster_methods_so_instance_doubles_land():
     methods, so a test that swaps `_restore_stop_orders` on the instance after
     construction is what the lifted `shift_stops_down` body sees."""
     import src.execution.broker as broker_module
+
     broker = object.__new__(broker_module.AlpacaBroker)
     broker.client = MagicMock(name="client")
     broker._restore_stop_orders = MagicMock(name="restore", return_value=(0, []))
@@ -101,8 +117,10 @@ def test_existing_stop_cover_lookup_without_a_broker_object():
 
 # --- third instalment: OrderDesk + AccountReads -------------------------------
 
+
 def test_order_desk_is_constructible_from_stubs():
     from src.execution.broker_parts.order_desk import OrderDesk
+
     _build(OrderDesk)
     params = inspect.signature(OrderDesk).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
@@ -115,6 +133,7 @@ def test_order_desk_module_passes_the_boundary_check():
 
 def test_account_reads_is_constructible_from_stubs():
     from src.execution.broker_parts.account_reads import AccountReads
+
     _build(AccountReads)
     params = inspect.signature(AccountReads).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
@@ -128,6 +147,7 @@ def test_account_reads_module_passes_the_boundary_check():
 def test_order_desk_helpers_still_resolve_on_the_broker_module():
     import src.execution.broker as broker_module
     from src.execution.broker_parts import order_desk
+
     assert broker_module._outlier_refusal_detail is order_desk._outlier_refusal_detail
     assert broker_module._is_terminal_submission_rejection is order_desk._is_terminal_submission_rejection
     assert broker_module._PLAIN_PRICE_LABELS is order_desk._PLAIN_PRICE_LABELS
@@ -140,6 +160,7 @@ def test_broker_factories_never_hand_the_desk_its_own_shim():
     from unittest.mock import patch
     from src.execution.broker import AlpacaBroker
     from src.execution.broker_parts.order_desk import OrderDesk
+
     with patch("src.execution.broker.TradingClient"):
         broker = AlpacaBroker("key", "secret")
     desk = broker._order_desk()
@@ -157,8 +178,10 @@ def test_broker_factories_never_hand_the_desk_its_own_shim():
 
 # --- fourth (final) instalment: trade_stream + market_data -----------------
 
+
 def test_trade_stream_waits_is_constructible_from_stubs():
     from src.execution.broker_parts.trade_stream import TradeStreamWaits
+
     _build(TradeStreamWaits)
     params = inspect.signature(TradeStreamWaits).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
@@ -177,6 +200,7 @@ def test_trade_stream_module_passes_the_boundary_check():
 
 def test_market_data_is_constructible_from_stubs():
     from src.execution.broker_parts.market_data import MarketData
+
     _build(MarketData)
     params = inspect.signature(MarketData).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
@@ -193,6 +217,7 @@ def test_market_data_module_passes_the_boundary_check():
 def test_moved_stream_and_market_names_still_resolve_on_the_broker_module():
     import src.execution.broker as broker_module
     from src.execution.broker_parts import market_data, trade_stream
+
     assert broker_module._TradeUpdatesHub is trade_stream._TradeUpdatesHub
     assert broker_module._STREAM_ATTEMPT_BUDGET is trade_stream._STREAM_ATTEMPT_BUDGET
     assert broker_module._install_trading_stream_reconnect_guard is trade_stream._install_trading_stream_reconnect_guard
@@ -206,11 +231,13 @@ def test_patch_on_the_broker_module_reaches_the_moved_body(monkeypatch):
     with `global` must read through from the part."""
     import src.execution.broker as broker_module
     from src.execution.broker_parts import trade_stream
+
     sentinel = object()
     monkeypatch.setattr("src.execution.broker.TradingStream", sentinel)
     assert trade_stream.TradingStream is sentinel
     monkeypatch.setattr(broker_module, "_stream_auth_deprecation_logged", True)
     from src.execution.broker_parts import trade_stream_auth
+
     assert trade_stream_auth._stream_auth_deprecation_logged is True
     assert broker_module._stream_auth_deprecation_logged is True
     assert "_stream_auth_deprecation_logged" not in vars(broker_module)
@@ -220,8 +247,10 @@ def test_market_data_state_is_the_broker_itself():
     """`_data_client` is created lazily, after construction; the per-call object
     reads and writes it on the broker (`state`), so the lazy client persists."""
     from src.execution.broker_parts.market_data import MarketData
+
     class Host:
         _data_client = None
+
     host = Host()
     md = _build(MarketData, state=host)
     assert md._data_client is None
@@ -231,13 +260,14 @@ def test_market_data_state_is_the_broker_itself():
 
 # --- StopShifter: the ex-dividend shift as a part (was ShiftStopsMixin) -------
 
+
 def _one_amendable_stop(**overrides):
     """Stubs for a single resting stop that the measured-safe amend covers."""
     from src.execution.broker_parts.stop_shifter import StopShifter
+
     order = MagicMock(name="order", id="o1")
     spec = {"id": "o1", "qty": 3, "stop_price": 10.0, "limit_price": None}
-    leg = {"outcome": "amended", "id": "o1", "new_id": "o2", "old_stop": 10.0,
-           "new_stop": 9.5, "qty": 3, "detail": ""}
+    leg = {"outcome": "amended", "id": "o1", "new_id": "o2", "old_stop": 10.0, "new_stop": 9.5, "qty": 3, "detail": ""}
     stubs = dict(
         client=MagicMock(name="client"),
         list_open_sell_stop_orders=lambda symbol: [order],
@@ -253,6 +283,7 @@ def _one_amendable_stop(**overrides):
 
 def test_stop_shifter_is_constructible_from_stubs():
     from src.execution.broker_parts.stop_shifter import StopShifter
+
     _build(StopShifter)
     params = inspect.signature(StopShifter).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
@@ -276,8 +307,8 @@ def test_shift_stops_down_runs_from_stubs_without_a_placer_or_broker():
     assert out["status"] == "accepted" and out["mode"] == "amend"
     assert out["shifted"] == 1 and out["total"] == 1 and out["id"] == "o2"
     stubs["amend_one_stop_price"].assert_called_once_with(
-        symbol="GE", spec={"id": "o1", "qty": 3, "stop_price": 10.0, "limit_price": None},
-        new_price=9.5)
+        symbol="GE", spec={"id": "o1", "qty": 3, "stop_price": 10.0, "limit_price": None}, new_price=9.5
+    )
     stubs["cancel_snapshotted_stops"].assert_not_called()
     stubs["restore_stop_orders"].assert_not_called()
 
@@ -288,6 +319,7 @@ def test_shift_body_lives_in_the_part_and_the_shim_only_forwards():
     creeping back into the shim is a regression to the mixin design."""
     import ast
     from src.execution.broker_parts import stop_shift, stop_shifter
+
     tree = ast.parse(inspect.getsource(stop_shift))
     assert not [n for n in tree.body if isinstance(n, ast.ClassDef)]
     shim = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "shift_stops_down")
@@ -305,14 +337,26 @@ def test_shim_hands_the_placer_collaborators_in_live_not_at_construction():
     (how the broker shim and tests patch) must be the one the moved body calls.
     Snapshotting at construction would call the stale one forever."""
     _, stubs = _one_amendable_stop()
-    placer = _build(StopPlacer, client=stubs["client"],
-                    list_open_sell_stop_orders=stubs["list_open_sell_stop_orders"],
-                    snapshot_stop_order=stubs["snapshot_stop_order"],
-                    stop_order_amendable_in_place=stubs["stop_order_amendable_in_place"],
-                    amend_one_stop_price=MagicMock(name="stale", return_value={
-                        "outcome": "refused", "id": "o1", "new_id": None, "old_stop": 10.0,
-                        "new_stop": 9.5, "qty": 3, "detail": "stale"}),
-                    cancel_snapshotted_stops=stubs["cancel_snapshotted_stops"])
+    placer = _build(
+        StopPlacer,
+        client=stubs["client"],
+        list_open_sell_stop_orders=stubs["list_open_sell_stop_orders"],
+        snapshot_stop_order=stubs["snapshot_stop_order"],
+        stop_order_amendable_in_place=stubs["stop_order_amendable_in_place"],
+        amend_one_stop_price=MagicMock(
+            name="stale",
+            return_value={
+                "outcome": "refused",
+                "id": "o1",
+                "new_id": None,
+                "old_stop": 10.0,
+                "new_stop": 9.5,
+                "qty": 3,
+                "detail": "stale",
+            },
+        ),
+        cancel_snapshotted_stops=stubs["cancel_snapshotted_stops"],
+    )
     placer.shift_stops_down("GE", 0.5)  # first call builds a shifter
     placer._amend_one_stop_price = stubs["amend_one_stop_price"]  # swap after
     out = placer.shift_stops_down("GE", 0.5)
@@ -323,5 +367,6 @@ def test_shim_hands_the_placer_collaborators_in_live_not_at_construction():
 
 def test_shift_helpers_still_resolve_on_the_shim_module():
     from src.execution.broker_parts import stop_shift, stop_shifter
+
     assert stop_shift._quantize_price is stop_shifter._quantize_price
     assert stop_shift.defer_shift_if_closed is stop_shifter.defer_shift_if_closed

@@ -119,20 +119,32 @@ class ExitTrigger(str, Enum):
 #: triggers from `ExitTrigger` itself.
 _LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     ExitTrigger.THESIS_INVALID: (
-        "thesis_invalid", "thesis invalid", "invalidation triggered",
-        "broken thesis", "thesis broken",
+        "thesis_invalid",
+        "thesis invalid",
+        "invalidation triggered",
+        "broken thesis",
+        "thesis broken",
     ),
     ExitTrigger.BEARISH_STATE_CHANGE: (
-        "high-conviction bearish", "high conviction bearish", "high bearish",
+        "high-conviction bearish",
+        "high conviction bearish",
+        "high bearish",
     ),
     ExitTrigger.ADVERSE_NEWS: ("adverse news", "material news"),
     ExitTrigger.SECTOR_SHOCK: ("sector shock",),
     ExitTrigger.EARNINGS: (
-        "bearish earnings", "bearish filing", "earnings missed",
-        "earnings miss", "guidance cut",
+        "bearish earnings",
+        "bearish filing",
+        "earnings missed",
+        "earnings miss",
+        "guidance cut",
     ),
     ExitTrigger.REGIME_SHIFT: (
-        "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
+        "regime shift",
+        "regime flip",
+        "regime flipped",
+        "risk-off",
+        "risk off",
     ),
     ExitTrigger.STOP_FIRED: ("stop hit", "stopped out"),
     # The ALIGNMENT EXIT (owner ruling 2026-09-30, docs/WORK.md item 205) —
@@ -140,7 +152,8 @@ _LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
     # `src.risk.alignment_exit.check_alignment_exit`, never by a price
     # target.
     ExitTrigger.TREND_ALIGNMENT_OVER: (
-        "trend alignment over", "alignment exit",
+        "trend alignment over",
+        "alignment exit",
     ),
 }
 
@@ -163,10 +176,12 @@ _LEGACY_TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
 #:   earnings", and the STRUCTURED field (`PositionAction.exit_trigger`)
 #:   carries `earnings` exactly, so nothing is unreachable — only the bare
 #:   word in prose is not enough.
-CANONICAL_NAME_NOT_MATCHED_IN_PROSE: frozenset[ExitTrigger] = frozenset({
-    ExitTrigger.CANNOT_SUBSTANTIATE,
-    ExitTrigger.EARNINGS,
-})
+CANONICAL_NAME_NOT_MATCHED_IN_PROSE: frozenset[ExitTrigger] = frozenset(
+    {
+        ExitTrigger.CANNOT_SUBSTANTIATE,
+        ExitTrigger.EARNINGS,
+    }
+)
 
 
 def canonical_prose_names(trigger: ExitTrigger) -> tuple[str, ...]:
@@ -188,16 +203,13 @@ def canonical_prose_names(trigger: ExitTrigger) -> tuple[str, ...]:
 
 #: Every canonical name the prose gate accepts, derived from the enum.
 CANONICAL_TRIGGER_NAMES: tuple[str, ...] = tuple(
-    name
-    for trigger in ExitTrigger
-    for name in canonical_prose_names(trigger)
+    name for trigger in ExitTrigger for name in canonical_prose_names(trigger)
 )
+
 
 def _phrases_for(trigger: ExitTrigger) -> tuple[str, ...]:
     legacy = _LEGACY_TRIGGER_PHRASES.get(trigger, ())
-    return legacy + tuple(
-        name for name in canonical_prose_names(trigger) if name not in legacy
-    )
+    return legacy + tuple(name for name in canonical_prose_names(trigger) if name not in legacy)
 
 
 #: Iterated over `ExitTrigger` rather than over `_LEGACY_TRIGGER_PHRASES`
@@ -205,9 +217,7 @@ def _phrases_for(trigger: ExitTrigger) -> tuple[str, ...]:
 #: still gets its canonical name here, so it is namable the day it is
 #: declared. That is the divergence this whole block exists to prevent.
 TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
-    trigger: phrases
-    for trigger in ExitTrigger
-    if (phrases := _phrases_for(trigger))
+    trigger: phrases for trigger in ExitTrigger if (phrases := _phrases_for(trigger))
 }
 
 #: Triggers a verifier in this codebase can actually CONTRADICT today.
@@ -238,15 +248,19 @@ TRIGGER_PHRASES: dict[ExitTrigger, tuple[str, ...]] = {
 #: marks and its own noise band — so the trigger is neither an unverifiable
 #: claim nor an external event, and belongs in neither of the two sets that
 #: existed before it.
-VERIFIED_ON_CHART: frozenset[ExitTrigger] = frozenset({
-    ExitTrigger.TREND_ALIGNMENT_OVER,
-})
+VERIFIED_ON_CHART: frozenset[ExitTrigger] = frozenset(
+    {
+        ExitTrigger.TREND_ALIGNMENT_OVER,
+    }
+)
 
-EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset({
-    ExitTrigger.BEARISH_STATE_CHANGE,
-    ExitTrigger.ADVERSE_NEWS,
-    ExitTrigger.REGIME_SHIFT,
-})
+EVENT_TRIGGERS: frozenset[ExitTrigger] = frozenset(
+    {
+        ExitTrigger.BEARISH_STATE_CHANGE,
+        ExitTrigger.ADVERSE_NEWS,
+        ExitTrigger.REGIME_SHIFT,
+    }
+)
 
 #: The other side of the ledger: every `ExitTrigger` for which NO verifier
 #: exists, with the reason, one line each.
@@ -365,17 +379,13 @@ def derive_trigger_from_reason(reason: object) -> ExitTrigger | None:
     if not isinstance(reason, str) or not reason:
         return None
     lower = reason.lower()
-    hits = [
-        trigger for trigger, phrases in TRIGGER_PHRASES.items()
-        if any(phrase in lower for phrase in phrases)
-    ]
+    hits = [trigger for trigger, phrases in TRIGGER_PHRASES.items() if any(phrase in lower for phrase in phrases)]
     if len(hits) != 1:
         return None
     return hits[0]
 
 
-def _evidence_is_substantiation(evidence: object, reason: object,
-                                trigger: ExitTrigger | None) -> bool:
+def _evidence_is_substantiation(evidence: object, reason: object, trigger: ExitTrigger | None) -> bool:
     """True when `trigger_evidence` says something beyond the phrase itself.
 
     The failure mode this closes is the 2026-09-16 one restated in the new
@@ -448,8 +458,12 @@ class ExitTriggerCheck:
 
 
 def check_exit_trigger(
-    *, action: object, exit_trigger: object, trigger_evidence: object,
-    reason: object, symbol: str = "",
+    *,
+    action: object,
+    exit_trigger: object,
+    trigger_evidence: object,
+    reason: object,
+    symbol: str = "",
 ) -> ExitTriggerCheck:
     """Judge whether a sell-side action substantiates the trigger it names.
 
@@ -472,9 +486,7 @@ def check_exit_trigger(
     unsubstantiated is the caller's disclosed policy, not this
     function's.
     """
-    if str(getattr(action, "value", action) or "").upper() not in (
-        "SELL", "REDUCE", "COVER"
-    ):
+    if str(getattr(action, "value", action) or "").upper() not in ("SELL", "REDUCE", "COVER"):
         return ExitTriggerCheck("ok")
 
     act = str(getattr(action, "value", action)).upper()
@@ -483,7 +495,9 @@ def check_exit_trigger(
 
     if named is ExitTrigger.CANNOT_SUBSTANTIATE:
         return ExitTriggerCheck(
-            "unverifiable", trigger=None, needs_reask=True,
+            "unverifiable",
+            trigger=None,
+            needs_reask=True,
             finding=(
                 f"{sym}: {act} recorded exit_trigger=cannot_substantiate — "
                 f"the seat states it cannot substantiate this exit. Recorded "
@@ -499,7 +513,9 @@ def check_exit_trigger(
 
     if named is None:
         return ExitTriggerCheck(
-            "unverifiable", trigger=None, needs_reask=True,
+            "unverifiable",
+            trigger=None,
+            needs_reask=True,
             finding=(
                 f"{sym}: {act} names no recognised exit trigger in either "
                 f"`exit_trigger` or `reason`. Re-asked for a named trigger "
@@ -509,7 +525,10 @@ def check_exit_trigger(
 
     if not _evidence_is_substantiation(trigger_evidence, reason, named):
         return ExitTriggerCheck(
-            "unverifiable", trigger=named, healed=healed, needs_reask=True,
+            "unverifiable",
+            trigger=named,
+            healed=healed,
+            needs_reask=True,
             finding=(
                 f"{sym}: {act} names exit_trigger={named.value} but "
                 f"`trigger_evidence` carries nothing beyond the trigger "

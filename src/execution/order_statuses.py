@@ -17,9 +17,7 @@ from __future__ import annotations
 #: name now. Anything outside this set -- notably `pending_cancel`, which is
 #: what a just-cancelled stop still reports for a moment -- is a dying order
 #: and must never be counted as a stop that protects the position.
-PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
-    {"new", "accepted", "held", "partially_filled"}
-)
+PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset({"new", "accepted", "held", "partially_filled"})
 
 #: Broker order states in which an order has been ACCEPTED BY US to the
 #: broker but is not yet working on the book. Alpaca's own enum names them:
@@ -30,14 +28,13 @@ PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
 #: (`replace_stop_loss`'s failure path) is looking at the AGED order book —
 #: an order that has been sitting there and is still `pending_new` is a
 #: stuck order, not coverage.
-PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
-    {"pending_new", "accepted_for_bidding"}
-)
+PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset({"pending_new", "accepted_for_bidding"})
 
 #: The THIRD question — "does this order still hold the shares?" — asked only
 #: by the idempotent stop-submit path; rationale for each extra member in
 #: src/execution/order_idempotency.py (`_submit_stop_request_idempotent`).
 PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES = (
-    PROTECTIVE_ORDER_ACTIVE_STATUSES | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
+    PROTECTIVE_ORDER_ACTIVE_STATUSES
+    | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
     | frozenset({"pending_replace", "stopped", "calculated", "filled"})
 )

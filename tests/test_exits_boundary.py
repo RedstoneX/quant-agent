@@ -3,6 +3,7 @@
 Every collaborator is an explicit keyword-only constructor argument, so each
 class is built from stubs alone (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import inspect
@@ -35,9 +36,16 @@ class _Db:
         return lambda *a, **k: self.row
 
 
-@pytest.mark.parametrize("cls", [
-    AlignmentExit, ExitSubstantiation, HoldingDiscipline, StructuralProtection, TargetRevision,
-])
+@pytest.mark.parametrize(
+    "cls",
+    [
+        AlignmentExit,
+        ExitSubstantiation,
+        HoldingDiscipline,
+        StructuralProtection,
+        TargetRevision,
+    ],
+)
 def test_every_lifted_piece_is_constructible_from_stubs(cls):
     obj = _build(cls)
     params = inspect.signature(cls).parameters
@@ -49,7 +57,11 @@ def test_holding_discipline_ignores_a_non_exit_action():
     structural = MagicMock(name="structural_protection_for_holding")
     hd = _build(HoldingDiscipline, structural_protection_for_holding=structural)
     hd._holding_discipline_check_for_exit(
-        symbol="AAPL", action="HOLD", reason="nothing to do", positions=[], run_id="r1",
+        symbol="AAPL",
+        action="HOLD",
+        reason="nothing to do",
+        positions=[],
+        run_id="r1",
     )
     structural.assert_not_called()
 
@@ -66,7 +78,10 @@ def test_target_revision_with_nothing_flagged_and_nothing_held_adjudicates_nothi
     file_row = MagicMock(name="file_target_revision")
     tr = _build(TargetRevision, file_target_revision=file_row)
     out = tr._adjudicate_target_revision_flags(
-        MagicMock(target_revision_flags=[]), [], run_id="r1", seat="technical",
+        MagicMock(target_revision_flags=[]),
+        [],
+        run_id="r1",
+        seat="technical",
     )
     assert out == []
     file_row.assert_not_called()
@@ -111,10 +126,12 @@ def test_exit_review_approvals_record_only_the_unvetoed_symbols():
     rec = _build(ExitRecords, record_exit_refusal=record)
     decisions = [MagicMock(symbol="AAA", action="SELL"), MagicMock(symbol="BBB", action="REDUCE")]
     rec._record_exit_review_approvals(
-        decisions, {"BBB"}, MagicMock(reason_category="x", reasoning="fine"),
-        run_id="r1", original_action_by_symbol={},
+        decisions,
+        {"BBB"},
+        MagicMock(reason_category="x", reasoning="fine"),
+        run_id="r1",
+        original_action_by_symbol={},
     )
     assert record.call_count == 1
     assert record.call_args.kwargs["symbol"] == "AAA"
     assert record.call_args.kwargs["dropped"] is False
-

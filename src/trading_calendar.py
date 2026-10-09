@@ -52,17 +52,15 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
-SessionMode = Literal[
-    "earnings_preprocess", "morning", "intra_check", "midday", "close", "evening"
-]
+SessionMode = Literal["earnings_preprocess", "morning", "intra_check", "midday", "close", "evening"]
 
 # Session windows as (start_minute_of_day, end_minute_of_day) in ET.
 # These are the authoritative source. `scripts/run_if_et_window.sh` has the
 # same table hardcoded for zero-dep launchd gating; `test_trading_calendar.py`
 # asserts the two stay in sync.
 SESSION_WINDOWS: dict[str, tuple[int, int]] = {
-    "earnings_preprocess": (480, 555),   # 08:00 - 09:15 ET
-    "morning":             (570, 720),   # 09:30 - 12:00 ET
+    "earnings_preprocess": (480, 555),  # 08:00 - 09:15 ET
+    "morning": (570, 720),  # 09:30 - 12:00 ET
     # "no LLM" here was FALSE and is corrected 2026-09-23: intra_check is the
     # desk's largest paid cost centre, not a deterministic tick. Measured on
     # the production DB (llm_budget_sessions): 13-14 paid sessions a day,
@@ -70,10 +68,16 @@ SESSION_WINDOWS: dict[str, tuple[int, int]] = {
     # on 2026-09-21 (90%). Two separate derivations were built on the wrong
     # label before anyone checked. Whether it SHOULD be spending that much is
     # a live question and not settled here.
-    "intra_check":         (570, 960),   # 09:30 - 16:00 ET  (P&L circuit-breaker + on-trigger paid review, every 30min tick; NOT subject to once-per-day guard)
-    "midday":              (780, 870),   # 13:00 - 14:30 ET  (position reviewer, patient)
-    "close":               (930, 960),   # 15:30 - 16:00 ET  (position reviewer, act-on-trigger; 30min width guarantees a 30-min launchd tick lands inside regardless of phase)
-    "evening":             (1200, 1320), # 20:00 - 22:00 ET  (reporting only)
+    "intra_check": (
+        570,
+        960,
+    ),  # 09:30 - 16:00 ET  (P&L circuit-breaker + on-trigger paid review, every 30min tick; NOT subject to once-per-day guard)
+    "midday": (780, 870),  # 13:00 - 14:30 ET  (position reviewer, patient)
+    "close": (
+        930,
+        960,
+    ),  # 15:30 - 16:00 ET  (position reviewer, act-on-trigger; 30min width guarantees a 30-min launchd tick lands inside regardless of phase)
+    "evening": (1200, 1320),  # 20:00 - 22:00 ET  (reporting only)
 }
 
 
@@ -86,7 +90,7 @@ SESSION_WINDOWS: dict[str, tuple[int, int]] = {
 # yet complete" (stale-but-labelled), never toward treating a partial bar as
 # complete, but read the docstring before concluding the early close is
 # handled: the session-window table above has a worse exposure than this one.
-REGULAR_SESSION_OPEN_MIN = 570   # 09:30 ET
+REGULAR_SESSION_OPEN_MIN = 570  # 09:30 ET
 REGULAR_SESSION_CLOSE_MIN = 960  # 16:00 ET
 
 
@@ -122,7 +126,7 @@ def session_date_key(when: datetime | None = None) -> str:
     snapshot directories. Using this everywhere ensures a host in SGT and
     a host in NYC index the same trading session under the same key.
     """
-    d = (to_et(when).date() if when is not None else et_today())
+    d = to_et(when).date() if when is not None else et_today()
     return d.isoformat()
 
 
@@ -167,6 +171,7 @@ def trading_sessions_held(start: date, end: date) -> int:
     Returns 0 if `end` is not after `start`.
     """
     from datetime import timedelta
+
     if end <= start:
         return 0
     count = 0
@@ -268,7 +273,4 @@ def live_price_is_today(last_trade_at, when: datetime | None = None) -> bool:
 def format_window(mode: SessionMode) -> str:
     """Human-friendly 'HH:MM-HH:MM ET' rendering — for logs and tests."""
     lo, hi = SESSION_WINDOWS[mode]
-    return (
-        f"{time(lo // 60, lo % 60).strftime('%H:%M')}"
-        f"-{time(hi // 60, hi % 60).strftime('%H:%M')} ET"
-    )
+    return f"{time(lo // 60, lo % 60).strftime('%H:%M')}-{time(hi // 60, hi % 60).strftime('%H:%M')} ET"

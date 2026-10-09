@@ -1,4 +1,5 @@
 """Quarterly meta-reflection session (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -74,8 +75,8 @@ class QuarterlyMetaReflectionSession:
                 is_last = self._broker.is_last_trading_day_of_quarter(on_date=today)
             except Exception as exc:
                 logger.warning(
-                    "meta reflection skipped: quarter-end check failed (%s); "
-                    "pass --force to override", exc,
+                    "meta reflection skipped: quarter-end check failed (%s); pass --force to override",
+                    exc,
                 )
                 return {"status": "skipped", "reason": "quarter_end_check_failed"}
             if not is_last:
@@ -91,15 +92,16 @@ class QuarterlyMetaReflectionSession:
         # 1. Build digest — deterministic facts layer.
         prev_digest = load_previous_digest(today, root_dir=evolution_root)
         digest = build_quarterly_digest(
-            self._db, self._market,
-            period_end=today, lookback_days=lookback_days,
+            self._db,
+            self._market,
+            period_end=today,
+            lookback_days=lookback_days,
             prev_digest=prev_digest,
             prompts_dir=prompts_dir,
         )
         digest_path = persist_digest(digest, root_dir=evolution_root)
         logger.info(
-            "Quarterly digest built for %s: alpha=%s, total_real_misses=%s, "
-            "total_wrong_buys=%s",
+            "Quarterly digest built for %s: alpha=%s, total_real_misses=%s, total_wrong_buys=%s",
             digest["period"],
             (digest.get("period_performance") or {}).get("alpha_vs_spy_pct"),
             (digest.get("missed_themes") or {}).get("total_real_misses"),
@@ -116,8 +118,10 @@ class QuarterlyMetaReflectionSession:
         except PaidAnalysisSuspended as exc:
             payload = self._paid_suspended_payload(meta_run_id, error=exc)
             payload.update(
-                period=digest["period"], digest_path=str(digest_path),
-                reflection_path=None, reflection=None,
+                period=digest["period"],
+                digest_path=str(digest_path),
+                reflection_path=None,
+                reflection=None,
             )
             return payload
 
@@ -131,19 +135,23 @@ class QuarterlyMetaReflectionSession:
         ev_result = None
         try:
             reflection, ev_result = self._meta_reflector.analyze(
-                digest=digest, prev_reflection=prev_reflection,
+                digest=digest,
+                prev_reflection=prev_reflection,
             )
         except PaidAnalysisSuspended as exc:
             payload = self._paid_suspended_payload(meta_run_id, error=exc)
             payload.update(
-                period=digest["period"], digest_path=str(digest_path),
-                reflection_path=None, reflection=None,
+                period=digest["period"],
+                digest_path=str(digest_path),
+                reflection_path=None,
+                reflection=None,
             )
             return payload
         except Exception as exc:
             logger.error(
                 "meta_reflector.analyze raised; falling back to digest_only: %s",
-                exc, exc_info=True,
+                exc,
+                exc_info=True,
             )
 
         # Always log the agent's raw output for audit, even on failure.
@@ -153,14 +161,10 @@ class QuarterlyMetaReflectionSession:
                     agent_name="meta_reflector",
                     run_id=meta_run_id,
                     input_summary=(
-                        f"{digest['period']} · "
-                        f"alpha={(digest.get('period_performance') or {}).get('alpha_vs_spy_pct')}"
+                        f"{digest['period']} · alpha={(digest.get('period_performance') or {}).get('alpha_vs_spy_pct')}"
                     ),
                     input_message=ev_result.user_message,
-                    output_summary=(
-                        reflection.style_self_portrait[:200]
-                        if reflection else "parse_error"
-                    ),
+                    output_summary=(reflection.style_self_portrait[:200] if reflection else "parse_error"),
                     full_response=ev_result.raw_text,
                     model=ev_result.model,
                     tokens_used=ev_result.tokens_used,
@@ -173,8 +177,7 @@ class QuarterlyMetaReflectionSession:
                 logger.warning("meta_reflector agent_log insert failed: %s", exc)
 
         if reflection is None:
-            logger.error("Meta-reflector returned no valid reflection; "
-                         "digest persisted, reflection missing.")
+            logger.error("Meta-reflector returned no valid reflection; digest persisted, reflection missing.")
             return {
                 "status": "digest_only",
                 "run_id": meta_run_id,
@@ -187,7 +190,8 @@ class QuarterlyMetaReflectionSession:
         reflection_path = persist_reflection(reflection, root_dir=evolution_root)
         logger.info(
             "Quarterly meta-reflection complete: %s · %d proposed learnings",
-            digest["period"], len(reflection.proposed_learnings),
+            digest["period"],
+            len(reflection.proposed_learnings),
         )
 
         # 3. Prompt editor — only runs when evolution.enabled. When off
@@ -198,17 +202,21 @@ class QuarterlyMetaReflectionSession:
         editor_report: dict | None = None
         try:
             from src.config import EvolutionConfig
+
             evolution_cfg = getattr(self._config, "evolution", None)
             if evolution_cfg is None:
                 evolution_cfg = EvolutionConfig()
         except Exception:
             from src.config import EvolutionConfig
+
             evolution_cfg = EvolutionConfig()
 
         try:
             from src.evolution.prompt_editor import PromptEditor
+
             resolved_prompts_dir = (
-                Path(prompts_dir) if prompts_dir is not None
+                Path(prompts_dir)
+                if prompts_dir is not None
                 else Path(self._pipeline_file).resolve().parent.parent / "config" / "prompts"
             )
             editor = PromptEditor(
@@ -220,8 +228,7 @@ class QuarterlyMetaReflectionSession:
             editor_report = result_obj.to_dict()
             if result_obj.applied:
                 logger.info(
-                    "Prompt editor applied %d learning(s) across %d agent(s); "
-                    "git_commit=%s",
+                    "Prompt editor applied %d learning(s) across %d agent(s); git_commit=%s",
                     len(result_obj.applied),
                     result_obj.agents_edited,
                     result_obj.git_commit,
@@ -230,9 +237,9 @@ class QuarterlyMetaReflectionSession:
                 # Most common: evolution.enabled=false (observe-only). Log
                 # at INFO so operators see why nothing was applied.
                 logger.info(
-                    "Prompt editor did not apply any learnings (%d rejected). "
-                    "First reason: %s",
-                    len(result_obj.rejected), result_obj.rejected[0].reason,
+                    "Prompt editor did not apply any learnings (%d rejected). First reason: %s",
+                    len(result_obj.rejected),
+                    result_obj.rejected[0].reason,
                 )
         except Exception as exc:
             logger.error("Prompt editor invocation failed: %s", exc, exc_info=True)

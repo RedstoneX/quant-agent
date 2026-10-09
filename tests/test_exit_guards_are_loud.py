@@ -1,6 +1,7 @@
 """The exit path's broad catch-alls must be LOUD: traceback plus a counted row,
 with the clean pass writing its own distinct row (never-reached, ran-clean and
 ran-and-swallowed stay three states)."""
+
 import logging
 
 from src.pipeline_exits import ExitEngineMixin

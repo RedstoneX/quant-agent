@@ -1,4 +1,5 @@
 """src.cost_circuit.clock -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, time as dt_time, timezone
@@ -7,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 
 _ET = ZoneInfo("America/New_York")
+
 
 def _pinned_if_clock_replaced(conn: Any) -> Any:
     """Wrap a RAW connection when a caller has supplied a clock.
@@ -21,6 +23,7 @@ def _pinned_if_clock_replaced(conn: Any) -> Any:
     if _now_utc is _REAL_NOW_UTC or not isinstance(conn, sqlite3.Connection):
         return conn
     return _ClockPinnedConnection(conn, _now_utc().strftime("%Y-%m-%d %H:%M:%S"))
+
 
 def _now_utc() -> datetime:
     """The one clock this module reads.
@@ -42,10 +45,12 @@ def _now_utc() -> datetime:
     """
     return datetime.now(timezone.utc)
 
+
 #: Identity of the unreplaced clock. `_connect` compares against this rather
 #: than against a flag, so there is no way to be in "pinned" mode without a
 #: caller having actually supplied a clock.
 _REAL_NOW_UTC = _now_utc
+
 
 class _ClockPinnedConnection:
     """A sqlite3 connection whose `'now'` is the caller's clock, not the OS.
@@ -92,6 +97,7 @@ class _ClockPinnedConnection:
     def __setattr__(self, name, value):
         setattr(self._conn, name, value)
 
+
 def _et_day_and_utc_bounds(now: datetime | None = None) -> tuple[str, str, str]:
     now = now or _now_utc()
     local = now.astimezone(_ET)
@@ -104,6 +110,7 @@ def _et_day_and_utc_bounds(now: datetime | None = None) -> tuple[str, str, str]:
         start.strftime("%Y-%m-%d %H:%M:%S"),
         end.strftime("%Y-%m-%d %H:%M:%S"),
     )
+
 
 def _et_day_from_sqlite_utc(stamp: str) -> str | None:
     """The ET day a `datetime('now')` timestamp falls on, or None.
@@ -119,6 +126,7 @@ def _et_day_from_sqlite_utc(stamp: str) -> str | None:
             continue
         return parsed.replace(tzinfo=timezone.utc).astimezone(_ET).date().isoformat()
     return None
+
 
 def _legacy_mode(run_id: str) -> str:
     if run_id.startswith("intra_check-"):

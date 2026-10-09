@@ -88,6 +88,7 @@ def same_session_from_date(stored_date, today: str | date | None = None) -> bool
         return False
     if today is None:
         from src.util.time import et_today
+
         today_text = str(et_today())
     else:
         today_text = str(today).strip()[:10]
@@ -121,9 +122,12 @@ def payload_quality(payload, *, required_keys: tuple[str, ...] = ()) -> str:
 
 def _lost(kind: str, quality: str, *, same_session: bool, why: str) -> KindReuse:
     return KindReuse(
-        kind=kind, quality=quality, decision=DECISION_LOST,
+        kind=kind,
+        quality=quality,
+        decision=DECISION_LOST,
         status="carry_forward_failed" if quality == QUALITY_LOST else "carry_forward_empty",
-        reason=why, same_session=same_session,
+        reason=why,
+        same_session=same_session,
     )
 
 
@@ -142,25 +146,33 @@ def news_reuse(
     quality = payload_quality(payload)
     if quality != QUALITY_GOOD:
         return _lost(
-            KIND_NEWS, quality, same_session=same_session,
+            KIND_NEWS,
+            quality,
+            same_session=same_session,
             why="news payload is blank, missing, or unreadable — not reusable research",
         )
     if newer_material_wire:
         return KindReuse(
-            kind=KIND_NEWS, quality=quality, decision=DECISION_REFETCH,
+            kind=KIND_NEWS,
+            quality=quality,
+            decision=DECISION_REFETCH,
             status="expired",
             reason="newer material wire superseded the remembered news",
             same_session=same_session,
         )
     if not same_session:
         return KindReuse(
-            kind=KIND_NEWS, quality=quality, decision=DECISION_REFETCH,
+            kind=KIND_NEWS,
+            quality=quality,
+            decision=DECISION_REFETCH,
             status="expired",
             reason="news is session-scoped (hours); a prior session's wire has expired",
             same_session=False,
         )
     return KindReuse(
-        kind=KIND_NEWS, quality=quality, decision=DECISION_REUSE,
+        kind=KIND_NEWS,
+        quality=quality,
+        decision=DECISION_REUSE,
         status=STATUS_CARRIED_FROM_MORNING,
         reason="same-session GOOD news reused; no newer material wire",
         same_session=True,
@@ -180,25 +192,33 @@ def macro_reuse(
     quality = payload_quality(payload, required_keys=("regime",))
     if quality != QUALITY_GOOD:
         return _lost(
-            KIND_MACRO, quality, same_session=same_session,
+            KIND_MACRO,
+            quality,
+            same_session=same_session,
             why="macro payload is blank, missing, or unreadable — not a regime",
         )
     if regime_or_print_changed:
         return KindReuse(
-            kind=KIND_MACRO, quality=quality, decision=DECISION_REFETCH,
+            kind=KIND_MACRO,
+            quality=quality,
+            decision=DECISION_REFETCH,
             status="expired",
             reason="regime or print changed — remembered macro has expired",
             same_session=same_session,
         )
     if same_session:
         return KindReuse(
-            kind=KIND_MACRO, quality=quality, decision=DECISION_REUSE,
+            kind=KIND_MACRO,
+            quality=quality,
+            decision=DECISION_REUSE,
             status=STATUS_CARRIED_FROM_MORNING,
             reason="same-session GOOD macro reused; no regime/print change",
             same_session=True,
         )
     return KindReuse(
-        kind=KIND_MACRO, quality=quality, decision=DECISION_REUSE,
+        kind=KIND_MACRO,
+        quality=quality,
+        decision=DECISION_REUSE,
         status=STATUS_REMEMBERED,
         reason="GOOD macro remembered across days; no regime/print change",
         same_session=False,
@@ -215,24 +235,28 @@ def earnings_reuse(
     quality = payload_quality(payload)
     if quality == QUALITY_LOST:
         return _lost(
-            KIND_EARNINGS, quality, same_session=same_session,
+            KIND_EARNINGS,
+            quality,
+            same_session=same_session,
             why="earnings payload is missing or unreadable — not a write-up",
         )
     if new_report_or_8k:
         return KindReuse(
-            kind=KIND_EARNINGS, quality=QUALITY_GOOD if quality == QUALITY_GOOD else quality,
-            decision=DECISION_REFETCH, status="expired",
+            kind=KIND_EARNINGS,
+            quality=QUALITY_GOOD if quality == QUALITY_GOOD else quality,
+            decision=DECISION_REFETCH,
+            status="expired",
             reason="new report, amendment, or 8-K — remembered write-up has expired",
             same_session=same_session,
         )
     # Quiet day (blank list) is an answer: nothing to remember paying for.
-    status = (
-        STATUS_CARRIED_FROM_MORNING if same_session else STATUS_REMEMBERED
-    )
+    status = STATUS_CARRIED_FROM_MORNING if same_session else STATUS_REMEMBERED
     if quality == QUALITY_BLANK:
         status = STATUS_CHOSE_NOT_TO_REFETCH
     return KindReuse(
-        kind=KIND_EARNINGS, quality=quality, decision=DECISION_REUSE,
+        kind=KIND_EARNINGS,
+        quality=quality,
+        decision=DECISION_REUSE,
         status=status,
         reason="earnings write-up remembered; no new report or 8-K",
         same_session=same_session,
@@ -249,23 +273,27 @@ def insider_reuse(
     quality = payload_quality(payload)
     if quality == QUALITY_LOST:
         return _lost(
-            KIND_INSIDER, quality, same_session=same_session,
+            KIND_INSIDER,
+            quality,
+            same_session=same_session,
             why="insider payload is missing or unreadable — not a filing read",
         )
     if new_form4:
         return KindReuse(
-            kind=KIND_INSIDER, quality=QUALITY_GOOD if quality == QUALITY_GOOD else quality,
-            decision=DECISION_REFETCH, status="expired",
+            kind=KIND_INSIDER,
+            quality=QUALITY_GOOD if quality == QUALITY_GOOD else quality,
+            decision=DECISION_REFETCH,
+            status="expired",
             reason="new Form 4 filing — remembered filings have expired",
             same_session=same_session,
         )
-    status = (
-        STATUS_CARRIED_FROM_MORNING if same_session else STATUS_REMEMBERED
-    )
+    status = STATUS_CARRIED_FROM_MORNING if same_session else STATUS_REMEMBERED
     if quality == QUALITY_BLANK:
         status = STATUS_CHOSE_NOT_TO_REFETCH
     return KindReuse(
-        kind=KIND_INSIDER, quality=quality, decision=DECISION_REUSE,
+        kind=KIND_INSIDER,
+        quality=quality,
+        decision=DECISION_REUSE,
         status=status,
         reason="Form 4 filings remembered; no new filing",
         same_session=same_session,
@@ -303,6 +331,7 @@ def headline_mentions_symbols(title: str, symbols) -> bool:
     stock research.
     """
     import re
+
     text = str(title or "").strip()
     if not text:
         return False
@@ -316,7 +345,9 @@ def headline_mentions_symbols(title: str, symbols) -> bool:
     return False
 
 
-def newer_material_wire(covered: frozenset[str], fetched_headlines: list[str] | tuple[str, ...] | frozenset[str]) -> bool:
+def newer_material_wire(
+    covered: frozenset[str], fetched_headlines: list[str] | tuple[str, ...] | frozenset[str]
+) -> bool:
     """True when a fetched headline is not already in the remembered report.
 
     Mechanical ID compare — not an LLM "is this material?" call. A headline

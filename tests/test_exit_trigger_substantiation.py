@@ -32,6 +32,7 @@ from src.risk.exit_trigger import ExitTrigger, check_exit_trigger
 # Defect 1 — the structured trigger
 # ---------------------------------------------------------------------------
 
+
 def test_the_trigger_vocabulary_cannot_diverge_from_the_executor_gate():
     """Mechanical, because the rule that relies on remembering slips.
 
@@ -51,8 +52,10 @@ def test_the_2026_09_16_two_word_exit_is_now_unsubstantiated():
     """The reason that executed twice on the live desk."""
     action = PositionAction(action="SELL", symbol="COP", reason="adverse news")
     check = check_exit_trigger(
-        action=action.action, exit_trigger=action.exit_trigger,
-        trigger_evidence=action.trigger_evidence, reason=action.reason,
+        action=action.action,
+        exit_trigger=action.exit_trigger,
+        trigger_evidence=action.trigger_evidence,
+        reason=action.reason,
         symbol=action.symbol,
     )
     # Mechanically healed to the trigger the prose names — nothing invented.
@@ -67,8 +70,11 @@ def test_the_2026_09_16_two_word_exit_is_now_unsubstantiated():
 
 def test_evidence_that_only_repeats_the_trigger_is_not_substantiation():
     check = check_exit_trigger(
-        action="SELL", exit_trigger="adverse_news",
-        trigger_evidence="adverse news", reason="adverse news", symbol="COP",
+        action="SELL",
+        exit_trigger="adverse_news",
+        trigger_evidence="adverse news",
+        reason="adverse news",
+        symbol="COP",
     )
     assert check.verdict == "unverifiable"
     assert check.needs_reask is True
@@ -76,12 +82,11 @@ def test_evidence_that_only_repeats_the_trigger_is_not_substantiation():
 
 def test_a_substantiated_exit_passes_clean():
     check = check_exit_trigger(
-        action="SELL", exit_trigger="adverse_news",
-        trigger_evidence=(
-            "Active News State Change 2026-09-16, COP(bearish), HIGH: "
-            "oil below $100"
-        ),
-        reason="adverse news weakens the commodity-price leg", symbol="COP",
+        action="SELL",
+        exit_trigger="adverse_news",
+        trigger_evidence=("Active News State Change 2026-09-16, COP(bearish), HIGH: oil below $100"),
+        reason="adverse news weakens the commodity-price leg",
+        symbol="COP",
     )
     assert check.verdict == "ok"
     assert check.substantiated is True
@@ -93,13 +98,17 @@ def test_cannot_substantiate_is_a_first_class_recordable_outcome():
     legitimate answer that logs and re-asks — it does not block and is not
     an error."""
     action = PositionAction(
-        action="SELL", symbol="V", reason="I want out of this one",
+        action="SELL",
+        symbol="V",
+        reason="I want out of this one",
         exit_trigger="cannot_substantiate",
     )
     assert action.exit_trigger is ExitTrigger.CANNOT_SUBSTANTIATE
     check = check_exit_trigger(
-        action=action.action, exit_trigger=action.exit_trigger,
-        trigger_evidence=action.trigger_evidence, reason=action.reason,
+        action=action.action,
+        exit_trigger=action.exit_trigger,
+        trigger_evidence=action.trigger_evidence,
+        reason=action.reason,
         symbol=action.symbol,
     )
     assert check.verdict == "unverifiable"
@@ -111,13 +120,17 @@ def test_an_unrecognised_trigger_never_drops_the_action():
     """Losing an exit to a misspelled enum is the wrong failure direction —
     it reads as 'no trigger named' and is healed from the prose instead."""
     action = PositionAction(
-        action="SELL", symbol="COP", reason="adverse news on the oil complex",
+        action="SELL",
+        symbol="COP",
+        reason="adverse news on the oil complex",
         exit_trigger="ADVERSE-NEWS-ISH",
     )
     assert action.exit_trigger is None
     check = check_exit_trigger(
-        action=action.action, exit_trigger=action.exit_trigger,
-        trigger_evidence="2026-09-16 COP(bearish) HIGH row", reason=action.reason,
+        action=action.action,
+        exit_trigger=action.exit_trigger,
+        trigger_evidence="2026-09-16 COP(bearish) HIGH row",
+        reason=action.reason,
         symbol=action.symbol,
     )
     assert check.trigger is ExitTrigger.ADVERSE_NEWS
@@ -126,21 +139,29 @@ def test_an_unrecognised_trigger_never_drops_the_action():
 
 def test_hold_is_never_asked_to_substantiate_anything():
     check = check_exit_trigger(
-        action="HOLD", exit_trigger=None, trigger_evidence="",
-        reason="thesis intact", symbol="NVDA",
+        action="HOLD",
+        exit_trigger=None,
+        trigger_evidence="",
+        reason="thesis intact",
+        symbol="NVDA",
     )
     assert check.verdict == "ok"
     assert check.needs_reask is False
 
 
-@pytest.mark.parametrize("state_changes, expected, blocks", [
-    # No same-day row names COP either way -> cannot be checked. Log only.
-    ("", "unverifiable", False),
-    # A same-day row names COP BULLISH -> the claim is provably false.
-    ("- [2026-09-18] Oil rally lifts producers → COP(bullish)\n", "false", True),
-])
+@pytest.mark.parametrize(
+    "state_changes, expected, blocks",
+    [
+        # No same-day row names COP either way -> cannot be checked. Log only.
+        ("", "unverifiable", False),
+        # A same-day row names COP BULLISH -> the claim is provably false.
+        ("- [2026-09-18] Oil rally lifts producers → COP(bullish)\n", "false", True),
+    ],
+)
 def test_the_structured_trigger_makes_provable_falsity_decidable(
-    state_changes, expected, blocks,
+    state_changes,
+    expected,
+    blocks,
 ):
     """Same two-word prose, same protected position. Without the structured
     trigger the fact-check returns "ok" and nothing is checked; with it, the
@@ -149,16 +170,22 @@ def test_the_structured_trigger_makes_provable_falsity_decidable(
     import datetime
 
     kwargs = dict(
-        action="SELL", reason="adverse news", symbol="COP", protected=True,
-        macro_regime_today="risk-on", macro_status="ok",
+        action="SELL",
+        reason="adverse news",
+        symbol="COP",
+        protected=True,
+        macro_regime_today="risk-on",
+        macro_status="ok",
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
-        active_state_changes=state_changes, asof=datetime.date(2026, 9, 18),
+        active_state_changes=state_changes,
+        asof=datetime.date(2026, 9, 18),
     )
     # Before: the prose made no claim either regex recognised.
     assert holding_discipline_claim_check(**kwargs).verdict == "ok"
     # After: the trigger is in a field, so there is something to check.
     check = holding_discipline_claim_check(
-        **kwargs, exit_trigger=ExitTrigger.ADVERSE_NEWS,
+        **kwargs,
+        exit_trigger=ExitTrigger.ADVERSE_NEWS,
     )
     assert check.verdict == expected
     assert check.blocks is blocks
@@ -179,17 +206,22 @@ _WIDENED = [
 
 
 @pytest.mark.parametrize(
-    "symbol, before, after, stop_then, stop_now, px_then, px_now", _WIDENED,
+    "symbol, before, after, stop_then, stop_now, px_then, px_now",
+    _WIDENED,
 )
 def test_a_wider_stop_is_not_an_improvement(
-    symbol, before, after, stop_then, stop_now, px_then, px_now,
+    symbol,
+    before,
+    after,
+    stop_then,
+    stop_now,
+    px_then,
+    px_now,
 ):
     d = compute_deltas(
         symbol,
-        prior={"distance_to_stop_pct": before, "stop_loss": stop_then,
-               "current_price": px_then},
-        current={"distance_to_stop_pct": after, "stop_loss": stop_now,
-                 "current_price": px_now},
+        prior={"distance_to_stop_pct": before, "stop_loss": stop_then, "current_price": px_then},
+        current={"distance_to_stop_pct": after, "stop_loss": stop_now, "current_price": px_now},
     )
     assert d.stop_driven == ["distance_to_stop_pct"]
     assert d.improved == []
@@ -204,10 +236,8 @@ def test_price_moving_away_from_a_fixed_stop_still_counts():
     genuine case the metric exists for."""
     d = compute_deltas(
         "AAA",
-        prior={"distance_to_stop_pct": 2.0, "stop_loss": 98.0,
-               "current_price": 100.0},
-        current={"distance_to_stop_pct": 8.9, "stop_loss": 98.0,
-                 "current_price": 107.6},
+        prior={"distance_to_stop_pct": 2.0, "stop_loss": 98.0, "current_price": 100.0},
+        current={"distance_to_stop_pct": 8.9, "stop_loss": 98.0, "current_price": 107.6},
     )
     assert d.stop_driven == []
     assert d.improved == ["distance_to_stop_pct"]
@@ -220,10 +250,8 @@ def test_a_tightened_stop_still_reads_as_worsened():
     paperwork — the wrong failure direction on this path."""
     d = compute_deltas(
         "AAA",
-        prior={"distance_to_stop_pct": 8.0, "r_multiple": 0.5,
-               "stop_loss": 92.0, "current_price": 100.0},
-        current={"distance_to_stop_pct": 3.0, "r_multiple": 0.9,
-                 "stop_loss": 97.0, "current_price": 100.0},
+        prior={"distance_to_stop_pct": 8.0, "r_multiple": 0.5, "stop_loss": 92.0, "current_price": 100.0},
+        current={"distance_to_stop_pct": 3.0, "r_multiple": 0.9, "stop_loss": 97.0, "current_price": 100.0},
     )
     assert d.worsened == ["distance_to_stop_pct"]
     assert d.net_improved is False

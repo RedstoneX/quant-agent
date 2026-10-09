@@ -55,30 +55,39 @@ def _clean_telemetry():
 
 
 def _trc() -> dict:
-    return dict(trend="t", momentum="m", volatility="v", volume="vol",
-                support_resistance="sr")
+    return dict(trend="t", momentum="m", volatility="v", volume="vol", support_resistance="sr")
 
 
 def _tech(**over) -> dict:
     base = dict(
-        symbol="SPY", rating="buy", conviction="high",
-        entry_price=500.0, stop_loss=490.0, reference_target=525.0,
-        support_levels=[490.0], resistance_levels=[525.0],
-        setup_type="range", expected_horizon_sessions=10,
-        reasoning="x", reasoning_chain=_trc(), thesis_invalid_if="MA50 breaks",
+        symbol="SPY",
+        rating="buy",
+        conviction="high",
+        entry_price=500.0,
+        stop_loss=490.0,
+        reference_target=525.0,
+        support_levels=[490.0],
+        resistance_levels=[525.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
+        reasoning="x",
+        reasoning_chain=_trc(),
+        thesis_invalid_if="MA50 breaks",
     )
     base.update(over)
     return base
 
 
 def _risk_rc() -> dict:
-    return dict(rr_audit="x", signal_fidelity="x", correlation_check="x",
-                event_risk="x", sizing_sanity="x", overall="x")
+    return dict(
+        rr_audit="x", signal_fidelity="x", correlation_check="x", event_risk="x", sizing_sanity="x", overall="x"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Half 1 — a null on a DEFAULTED field must not cost us the object
 # ---------------------------------------------------------------------------
+
 
 def test_null_thesis_invalid_if_on_neutral_keeps_the_whole_analysis():
     """The 2026-09-01 production payload: null on a NEUTRAL must not bin the read.
@@ -87,20 +96,30 @@ def test_null_thesis_invalid_if_on_neutral_keeps_the_whole_analysis():
     a missing falsifier and is refused (see load-bearing cases), not kept
     as a tradeable don't-know.
     """
-    payload = _tech(rating="neutral", thesis_invalid_if=None,
-                    entry_price=None, stop_loss=None, reference_target=None,
-                    setup_type=None, expected_horizon_sessions=None,
-                    support_levels=[], resistance_levels=[])
+    payload = _tech(
+        rating="neutral",
+        thesis_invalid_if=None,
+        entry_price=None,
+        stop_loss=None,
+        reference_target=None,
+        setup_type=None,
+        expected_horizon_sessions=None,
+        support_levels=[],
+        resistance_levels=[],
+    )
     r = TechAnalysisResult(**payload)
     assert r.thesis_invalid_if == ""
     assert r.rating == "neutral"
 
 
-@pytest.mark.parametrize("field_name, expected", [
-    ("conviction", "medium"),
-    ("support_levels", []),          # rejected later by the after-validator
-    ("computed_levels", []),
-])
+@pytest.mark.parametrize(
+    "field_name, expected",
+    [
+        ("conviction", "medium"),
+        ("support_levels", []),  # rejected later by the after-validator
+        ("computed_levels", []),
+    ],
+)
 def test_null_on_defaulted_tech_field_takes_the_default(field_name, expected):
     payload = _tech(**{field_name: None})
     if field_name == "support_levels":
@@ -110,10 +129,13 @@ def test_null_on_defaulted_tech_field_takes_the_default(field_name, expected):
     assert getattr(r, field_name) == expected
 
 
-@pytest.mark.parametrize("field_name, expected", [
-    ("theme_durability", "unknown"),
-    ("universe_addition_reason", ""),
-])
+@pytest.mark.parametrize(
+    "field_name, expected",
+    [
+        ("theme_durability", "unknown"),
+        ("universe_addition_reason", ""),
+    ],
+)
 def test_null_on_defaulted_missed_opportunity_field(field_name, expected):
     """Production emitted a null here on 25 of 50 `theme_durability` slots.
 
@@ -121,8 +143,11 @@ def test_null_on_defaulted_missed_opportunity_field(field_name, expected):
     quarterly theme aggregation silently lost it.
     """
     mo = MissedOpportunity(
-        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", **{field_name: None},
+        symbol="XOM",
+        move_pct=6.2,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        **{field_name: None},
     )
     assert getattr(mo, field_name) == expected
 
@@ -134,22 +159,29 @@ def test_actionable_missing_soft_exit_is_refused_not_kept_as_unknown():
     name. Never-blank: the object does not validate. Neutral may omit.
     """
     with pytest.raises(ValidationError):
-        TechAnalysisResult(**{
-            k: v for k, v in _tech().items() if k != "thesis_invalid_if"
-        })
+        TechAnalysisResult(**{k: v for k, v in _tech().items() if k != "thesis_invalid_if"})
     with pytest.raises(ValidationError):
         TechAnalysisResult(**_tech(thesis_invalid_if=None))
     with pytest.raises(ValidationError):
         TechAnalysisResult(**_tech(thesis_invalid_if=""))
     with pytest.raises(ValidationError):
         TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))
-    omitted_neutral = TechAnalysisResult(**{
-        k: v for k, v in _tech(rating="neutral", entry_price=None,
-                               stop_loss=None, reference_target=None,
-                               setup_type=None, expected_horizon_sessions=None,
-                               support_levels=[], resistance_levels=[]).items()
-        if k != "thesis_invalid_if"
-    })
+    omitted_neutral = TechAnalysisResult(
+        **{
+            k: v
+            for k, v in _tech(
+                rating="neutral",
+                entry_price=None,
+                stop_loss=None,
+                reference_target=None,
+                setup_type=None,
+                expected_horizon_sessions=None,
+                support_levels=[],
+                resistance_levels=[],
+            ).items()
+            if k != "thesis_invalid_if"
+        }
+    )
     assert omitted_neutral.thesis_invalid_if == ""
 
 
@@ -164,9 +196,7 @@ def test_unknown_soft_exit_does_not_replace_the_hard_stop_in_the_verdict():
     Actionable parse refuses unknown. This exercises the restatement path
     on a constructed-without-validation object (legacy / stored).
     """
-    r = TechAnalysisResult.model_construct(
-        **_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN)
-    )
+    r = TechAnalysisResult.model_construct(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))
     assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN
     verdict = r.to_verdict()
     assert "hard stop" in verdict.invalidation
@@ -176,10 +206,17 @@ def test_unknown_soft_exit_does_not_replace_the_hard_stop_in_the_verdict():
 def test_empty_default_soft_exit_on_neutral_is_not_tallied_as_a_drop():
     """Neutral empty is the schema working, not a null wipe."""
     r = TechAnalysisResult(
-        **_tech(rating="neutral", thesis_invalid_if="",
-                entry_price=None, stop_loss=None, reference_target=None,
-                setup_type=None, expected_horizon_sessions=None,
-                support_levels=[], resistance_levels=[]),
+        **_tech(
+            rating="neutral",
+            thesis_invalid_if="",
+            entry_price=None,
+            stop_loss=None,
+            reference_target=None,
+            setup_type=None,
+            expected_horizon_sessions=None,
+            support_levels=[],
+            resistance_levels=[],
+        ),
     )
     assert r.thesis_invalid_if == ""
     assert parse_telemetry.total_null_coercions() == 0
@@ -187,20 +224,29 @@ def test_empty_default_soft_exit_on_neutral_is_not_tallied_as_a_drop():
 
 def test_target_null_catalyst_is_unknown_omitted_stays_empty():
     stated = TargetPosition(
-        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
-        thesis="hold the add", catalyst="8-K tonight",
+        symbol="AAPL",
+        target_weight_pct=3.0,
+        conviction="medium",
+        thesis="hold the add",
+        catalyst="8-K tonight",
         thesis_invalid_if="closes below 191.5",
     )
     assert stated.catalyst == "8-K tonight"
     omitted = TargetPosition(
-        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+        symbol="AAPL",
+        target_weight_pct=3.0,
+        conviction="medium",
         thesis="hold the add",
     )
     assert omitted.catalyst == ""
     assert omitted.thesis_invalid_if == ""
     nulled = TargetPosition(
-        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
-        thesis="hold the add", catalyst=None, thesis_invalid_if=None,
+        symbol="AAPL",
+        target_weight_pct=3.0,
+        conviction="medium",
+        thesis="hold the add",
+        catalyst=None,
+        thesis_invalid_if=None,
     )
     assert nulled.catalyst == SOFT_EXIT_UNKNOWN
     assert nulled.thesis_invalid_if == SOFT_EXIT_UNKNOWN
@@ -208,8 +254,11 @@ def test_target_null_catalyst_is_unknown_omitted_stays_empty():
 
 def test_assignment_does_not_wipe_a_stated_soft_exit():
     t = TargetPosition(
-        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
-        thesis="hold the add", catalyst="8-K tonight",
+        symbol="AAPL",
+        target_weight_pct=3.0,
+        conviction="medium",
+        thesis="hold the add",
+        catalyst="8-K tonight",
         thesis_invalid_if="closes below 191.5",
     )
     t.risk_allocation_pct = 1.0
@@ -226,18 +275,25 @@ def test_assignment_does_not_wipe_a_stated_soft_exit():
 # docs/INCIDENT_HISTORY.md 2026-09-03 "evening analyst audit".
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("field_name, expected", [
-    ("theme_durability", "unknown"),
-    ("universe_addition_reason", ""),
-])
+
+@pytest.mark.parametrize(
+    "field_name, expected",
+    [
+        ("theme_durability", "unknown"),
+        ("universe_addition_reason", ""),
+    ],
+)
 def test_empty_string_on_defaulted_missed_opportunity_field(field_name, expected):
     """The exact production payload shape (BIAF/GPRO, 2026-09-03): `""`
     instead of `null` on a droppable field must still validate and land on
     the field's declared default, not raise.
     """
     mo = MissedOpportunity(
-        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", **{field_name: ""},
+        symbol="XOM",
+        move_pct=6.2,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        **{field_name: ""},
     )
     assert getattr(mo, field_name) == expected
 
@@ -245,12 +301,18 @@ def test_empty_string_on_defaulted_missed_opportunity_field(field_name, expected
 def test_empty_string_equals_null_for_theme_durability():
     """The fix's whole claim: `""` and `null` must produce the same object."""
     nulled = MissedOpportunity(
-        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", theme_durability=None,
+        symbol="XOM",
+        move_pct=6.2,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        theme_durability=None,
     )
     empty = MissedOpportunity(
-        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", theme_durability="",
+        symbol="XOM",
+        move_pct=6.2,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        theme_durability="",
     )
     assert nulled.model_dump() == empty.model_dump()
 
@@ -262,8 +324,11 @@ def test_empty_string_coercion_is_recorded_like_a_null():
     """
     assert parse_telemetry.total_null_coercions() == 0
     MissedOpportunity(
-        symbol="BIAF", move_pct=9.0, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", theme_durability="",
+        symbol="BIAF",
+        move_pct=9.0,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        theme_durability="",
     )
     snap = parse_telemetry.snapshot()
     assert snap.get(("MissedOpportunity", "theme_durability")) == 1
@@ -285,8 +350,11 @@ def test_empty_string_matching_the_fields_own_default_is_not_double_processed():
     """
     parse_telemetry.reset()
     mo = MissedOpportunity(
-        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
-        lesson="no signal, legitimate hold", universe_addition_reason="",
+        symbol="XOM",
+        move_pct=6.2,
+        miss_category="noise_rally",
+        lesson="no signal, legitimate hold",
+        universe_addition_reason="",
     )
     assert mo.universe_addition_reason == ""
     assert mo.universe_addition_recommendation == "no"
@@ -302,44 +370,70 @@ def test_empty_string_matching_the_fields_own_default_is_not_double_processed():
 
 LOAD_BEARING_NULLS = [
     # (label, callable that must raise)
-    ("tech.stop_loss",        lambda: TechAnalysisResult(**_tech(stop_loss=None))),
-    ("tech.entry_price",      lambda: TechAnalysisResult(**_tech(entry_price=None))),
+    ("tech.stop_loss", lambda: TechAnalysisResult(**_tech(stop_loss=None))),
+    ("tech.entry_price", lambda: TechAnalysisResult(**_tech(entry_price=None))),
     ("tech.reference_target", lambda: TechAnalysisResult(**_tech(reference_target=None))),
-    ("tech.setup_type",       lambda: TechAnalysisResult(**_tech(setup_type=None))),
+    ("tech.setup_type", lambda: TechAnalysisResult(**_tech(setup_type=None))),
     ("tech.expected_horizon", lambda: TechAnalysisResult(**_tech(expected_horizon_sessions=None))),
     # Nulling BOTH level lists leaves an actionable rating with no structure.
     ("tech.thesis_invalid_if_null", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=None))),
     ("tech.thesis_invalid_if_empty", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=""))),
-    ("tech.thesis_invalid_if_unknown", lambda: TechAnalysisResult(
-        **_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))),
+    ("tech.thesis_invalid_if_unknown", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))),
     # Required fields: no default exists, so there is nothing safe to fall back to.
-    ("tech.rating",           lambda: TechAnalysisResult(**_tech(rating=None))),
-    ("tech.symbol",           lambda: TechAnalysisResult(**_tech(symbol=None))),
-    ("tech.reasoning",        lambda: TechAnalysisResult(**_tech(reasoning=None))),
-    ("tech.reasoning_chain",  lambda: TechAnalysisResult(**_tech(reasoning_chain=None))),
+    ("tech.rating", lambda: TechAnalysisResult(**_tech(rating=None))),
+    ("tech.symbol", lambda: TechAnalysisResult(**_tech(symbol=None))),
+    ("tech.reasoning", lambda: TechAnalysisResult(**_tech(reasoning=None))),
+    ("tech.reasoning_chain", lambda: TechAnalysisResult(**_tech(reasoning_chain=None))),
     # Deny-listed: a default exists but it is an affirmative instruction.
-    ("target.direction",      lambda: TargetPosition(
-        symbol="SPY", thesis="t", risk_allocation_pct=1.0, direction=None)),
-    ("verdict.scale_all_buys", lambda: RiskVerdict(
-        approved=True, reasoning="r", scale_all_buys=None,
-        reasoning_chain=_risk_rc())),
-    ("verdict.approved",      lambda: RiskVerdict(
-        approved=None, reasoning="r", reasoning_chain=_risk_rc())),
-    ("trade.stop_loss",       lambda: TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=2.0, entry_price=500.0,
-        stop_loss=None, take_profit=525.0, reasoning="r")),
-    ("trade.entry_price",     lambda: TradeDecision(
-        action="BUY", symbol="SPY", allocation_pct=2.0, entry_price=None,
-        stop_loss=490.0, take_profit=525.0, reasoning="r")),
-    ("sellgrade.sell_price",  lambda: SellGrade(
-        symbol="SPY", sell_date="2026-09-01", sell_price=None,
-        current_price=510.0, pct_move_since_sell=1.0, grade="correct",
-        reason="r")),
+    ("target.direction", lambda: TargetPosition(symbol="SPY", thesis="t", risk_allocation_pct=1.0, direction=None)),
+    (
+        "verdict.scale_all_buys",
+        lambda: RiskVerdict(approved=True, reasoning="r", scale_all_buys=None, reasoning_chain=_risk_rc()),
+    ),
+    ("verdict.approved", lambda: RiskVerdict(approved=None, reasoning="r", reasoning_chain=_risk_rc())),
+    (
+        "trade.stop_loss",
+        lambda: TradeDecision(
+            action="BUY",
+            symbol="SPY",
+            allocation_pct=2.0,
+            entry_price=500.0,
+            stop_loss=None,
+            take_profit=525.0,
+            reasoning="r",
+        ),
+    ),
+    (
+        "trade.entry_price",
+        lambda: TradeDecision(
+            action="BUY",
+            symbol="SPY",
+            allocation_pct=2.0,
+            entry_price=None,
+            stop_loss=490.0,
+            take_profit=525.0,
+            reasoning="r",
+        ),
+    ),
+    (
+        "sellgrade.sell_price",
+        lambda: SellGrade(
+            symbol="SPY",
+            sell_date="2026-09-01",
+            sell_price=None,
+            current_price=510.0,
+            pct_move_since_sell=1.0,
+            grade="correct",
+            reason="r",
+        ),
+    ),
 ]
 
 
 @pytest.mark.parametrize(
-    "label, build", LOAD_BEARING_NULLS, ids=[c[0] for c in LOAD_BEARING_NULLS],
+    "label, build",
+    LOAD_BEARING_NULLS,
+    ids=[c[0] for c in LOAD_BEARING_NULLS],
 )
 def test_load_bearing_null_is_never_silently_accepted(label, build):
     with pytest.raises(ValidationError):
@@ -349,7 +443,10 @@ def test_load_bearing_null_is_never_silently_accepted(label, build):
 def test_neutral_rating_still_clears_prices_rather_than_inventing_them():
     """Null tolerance must not resurrect stale numbers on a no-trade read."""
     r = TechAnalysisResult(
-        symbol="SPY", rating="neutral", reasoning="x", reasoning_chain=_trc(),
+        symbol="SPY",
+        rating="neutral",
+        reasoning="x",
+        reasoning_chain=_trc(),
         thesis_invalid_if=None,
     )
     assert r.thesis_invalid_if == ""
@@ -360,6 +457,7 @@ def test_neutral_rating_still_clears_prices_rather_than_inventing_them():
 # ---------------------------------------------------------------------------
 # The coercion is COUNTED — recovering the object quietly is not enough
 # ---------------------------------------------------------------------------
+
 
 def test_null_coercion_is_recorded_in_parse_telemetry():
     """Actionable null still tallies, then the after-validator refuses the name."""
@@ -387,14 +485,19 @@ def test_nulls_on_optional_fields_are_not_counted_as_coercions():
     whole change exists to avoid.
     """
     TechAnalysisResult(
-        symbol="SPY", rating="neutral", reasoning="x", reasoning_chain=_trc(),
-        entry_price=None, stop_loss=None, reference_target=None,
-        setup_type=None, expected_horizon_sessions=None, signal_age_days=None,
+        symbol="SPY",
+        rating="neutral",
+        reasoning="x",
+        reasoning_chain=_trc(),
+        entry_price=None,
+        stop_loss=None,
+        reference_target=None,
+        setup_type=None,
+        expected_horizon_sessions=None,
+        signal_age_days=None,
         atr_14=None,
     )
-    assert parse_telemetry.snapshot() == {}, (
-        "an Optional field's null must never reach the coercion ledger"
-    )
+    assert parse_telemetry.snapshot() == {}, "an Optional field's null must never reach the coercion ledger"
 
 
 def test_droppable_sets_never_include_an_optional_field():
@@ -403,8 +506,7 @@ def test_droppable_sets_never_include_an_optional_field():
             continue
         for field_name in models._null_droppable_fields(cls):
             assert _rejects_none(cls.model_fields[field_name]), (
-                f"{cls.__name__}.{field_name} already accepts None — it must "
-                f"not be treated as droppable"
+                f"{cls.__name__}.{field_name} already accepts None — it must not be treated as droppable"
             )
 
 
@@ -418,15 +520,21 @@ def test_dropped_item_is_counted_separately_from_a_coercion():
 def test_suspended_blocks_the_tally_but_not_the_coercion():
     with parse_telemetry.suspended():
         t = TargetPosition(
-            symbol="AAPL", thesis="t", risk_allocation_pct=1.0,
-            catalyst=None, thesis_invalid_if="closes below 191.5",
+            symbol="AAPL",
+            thesis="t",
+            risk_allocation_pct=1.0,
+            catalyst=None,
+            thesis_invalid_if="closes below 191.5",
         )
     assert t.catalyst == SOFT_EXIT_UNKNOWN  # still recovered
-    assert parse_telemetry.snapshot() == {}   # but not counted
+    assert parse_telemetry.snapshot() == {}  # but not counted
     # and the suspension is not sticky
     TargetPosition(
-        symbol="AAPL", thesis="t", risk_allocation_pct=1.0,
-        catalyst=None, thesis_invalid_if="closes below 191.5",
+        symbol="AAPL",
+        thesis="t",
+        risk_allocation_pct=1.0,
+        catalyst=None,
+        thesis_invalid_if="closes below 191.5",
     )
     assert parse_telemetry.total_null_coercions() == 1
 
@@ -437,10 +545,15 @@ def test_evening_prevalidation_does_not_double_count():
     from src.agents.evening_analyst import EveningAnalystAgent
 
     parsed = {
-        "missed_opportunities": [{
-            "symbol": "XOM", "move_pct": 6.2, "miss_category": "noise_rally",
-            "lesson": "no signal", "theme_durability": None,
-        }],
+        "missed_opportunities": [
+            {
+                "symbol": "XOM",
+                "move_pct": 6.2,
+                "miss_category": "noise_rally",
+                "lesson": "no signal",
+                "theme_durability": None,
+            }
+        ],
     }
     EveningAnalystAgent._drop_invalid_missed_opportunities(parsed)
     assert parse_telemetry.snapshot() == {}, "the dry run must not tally"
@@ -451,19 +564,18 @@ def test_evening_prevalidation_does_not_double_count():
 def test_pm_prevalidation_does_not_double_count_and_records_its_drops():
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
-    parsed = {"targets": [
-        {"symbol": "SPY", "thesis": "t", "risk_allocation_pct": 1.0,
-         "thesis_invalid_if": None},
-        {"symbol": "BAD", "thesis": "t"},          # sizes to nothing -> dropped
-    ]}
+    parsed = {
+        "targets": [
+            {"symbol": "SPY", "thesis": "t", "risk_allocation_pct": 1.0, "thesis_invalid_if": None},
+            {"symbol": "BAD", "thesis": "t"},  # sizes to nothing -> dropped
+        ]
+    }
     PortfolioManagerAgent._drop_invalid_targets(parsed)
     assert len(parsed["targets"]) == 1
     assert parse_telemetry.snapshot() == {}, "the dry run must not tally"
     assert parse_telemetry.dropped_snapshot() == {("TargetPosition", "BAD"): 1}
     TargetPosition(**parsed["targets"][0])
-    assert parse_telemetry.snapshot() == {
-        ("TargetPosition", "thesis_invalid_if"): 1
-    }
+    assert parse_telemetry.snapshot() == {("TargetPosition", "thesis_invalid_if"): 1}
 
 
 @patch("anthropic.Anthropic")
@@ -481,18 +593,30 @@ def test_tech_analyst_records_the_analysis_it_drops(mock_cls):
     from src.agents.tech_analyst import TechAnalystAgent
     from src.models import OHLCV, TechnicalIndicators
 
-    bad = json.dumps([{
-        "symbol": "SPY", "rating": "buy", "conviction": "high",
-        "entry_price": 507.0, "reference_target": 530.0,
-        "stop_loss": 999.0,                      # above entry on a BUY — fatal
-        "support_levels": [494.0], "resistance_levels": [530.0],
-        "setup_type": "range", "expected_horizon_sessions": 10,
-        "reasoning_chain": {
-            "trend": "t", "momentum": "m", "volatility": "v",
-            "volume": "vol", "support_resistance": "sr",
-        },
-        "reasoning": "r",
-    }])
+    bad = json.dumps(
+        [
+            {
+                "symbol": "SPY",
+                "rating": "buy",
+                "conviction": "high",
+                "entry_price": 507.0,
+                "reference_target": 530.0,
+                "stop_loss": 999.0,  # above entry on a BUY — fatal
+                "support_levels": [494.0],
+                "resistance_levels": [530.0],
+                "setup_type": "range",
+                "expected_horizon_sessions": 10,
+                "reasoning_chain": {
+                    "trend": "t",
+                    "momentum": "m",
+                    "volatility": "v",
+                    "volume": "vol",
+                    "support_resistance": "sr",
+                },
+                "reasoning": "r",
+            }
+        ]
+    )
     mock_client = MagicMock()
     resp = MagicMock()
     resp.content = [MagicMock(text=bad)]
@@ -502,8 +626,7 @@ def test_tech_analyst_records_the_analysis_it_drops(mock_cls):
     mock_cls.return_value = mock_client
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
-    bars = [OHLCV(date=date(2026, 4, 7), open=503.0, high=510.0, low=500.0,
-                  close=507.0, volume=1_000_000)]
+    bars = [OHLCV(date=date(2026, 4, 7), open=503.0, high=510.0, low=500.0, close=507.0, volume=1_000_000)]
     ind = TechnicalIndicators(symbol="SPY", ma_20=505.0, atr_14=8.5)
     results, _ = agent.analyze_batch(
         [{"symbol": "SPY", "bars": bars, "indicators": ind}],
@@ -522,12 +645,17 @@ def test_tech_analyst_records_the_analysis_it_drops(mock_cls):
 # Models NOT parsed from LLM output. A null in one of these comes from our own
 # code, and a loud failure is the correct response to our own bug.
 NON_LLM_MODELS = {
-    "OHLCV", "TechnicalIndicators", "Position", "MissedOpportunitySnapshot",
-    "AgentLog", "LLMOutputModel",
+    "OHLCV",
+    "TechnicalIndicators",
+    "Position",
+    "MissedOpportunitySnapshot",
+    "AgentLog",
+    "LLMOutputModel",
     # Phase 13: derived in Python from a seat's already-validated report
     # (`TechAnalysisResult.to_verdict`), never parsed from an LLM response.
     # A null here is our own bug and should fail loudly.
-    "AnalystVerdict", "VerdictEvidence",
+    "AnalystVerdict",
+    "VerdictEvidence",
 }
 
 
@@ -542,8 +670,12 @@ def _rejects_none(field) -> bool:
 def _model_classes():
     for name in dir(models):
         obj = getattr(models, name, None)
-        if (isinstance(obj, type) and issubclass(obj, BaseModel)
-                and obj is not BaseModel and obj.__module__ == "src.models"):
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, BaseModel)
+            and obj is not BaseModel
+            and obj.__module__ == "src.models"
+        ):
             yield name, obj
 
 
@@ -560,15 +692,11 @@ def test_every_llm_parsed_model_with_a_defaulted_field_has_null_tolerance():
     for name, cls in _model_classes():
         if name in NON_LLM_MODELS or issubclass(cls, LLMOutputModel):
             continue
-        exposed = [
-            f for f, fld in cls.model_fields.items()
-            if not fld.is_required() and _rejects_none(fld)
-        ]
+        exposed = [f for f, fld in cls.model_fields.items() if not fld.is_required() and _rejects_none(fld)]
         if exposed:
             offenders.append((name, exposed))
     assert not offenders, (
-        "these models can lose a whole object to an explicit null on a field "
-        f"that declares a default: {offenders}"
+        f"these models can lose a whole object to an explicit null on a field that declares a default: {offenders}"
     )
 
 
@@ -578,9 +706,7 @@ def test_deny_list_names_only_real_fields():
         cls = getattr(models, cls_name)
         assert field_name in cls.model_fields, f"{cls_name}.{field_name} does not exist"
         fld = cls.model_fields[field_name]
-        assert not fld.is_required(), (
-            f"{cls_name}.{field_name} is required — it needs no deny-list entry"
-        )
+        assert not fld.is_required(), f"{cls_name}.{field_name} is required — it needs no deny-list entry"
         assert field_name not in models._null_droppable_fields(cls)
 
 
@@ -620,30 +746,50 @@ def test_unknown_soft_exit_isolates_that_name_and_keeps_the_rest_of_the_plan():
     from src.pipeline_stages import _isolate_empty_soft_exit_entries
 
     mrvl = TradeDecision(
-        action="BUY", symbol="MRVL", allocation_pct=3.0,
-        entry_price=80.0, stop_loss=75.0, take_profit=90.0,
-        reasoning="retry", thesis_invalid_if=SOFT_EXIT_UNKNOWN,
+        action="BUY",
+        symbol="MRVL",
+        allocation_pct=3.0,
+        entry_price=80.0,
+        stop_loss=75.0,
+        take_profit=90.0,
+        reasoning="retry",
+        thesis_invalid_if=SOFT_EXIT_UNKNOWN,
     )
     aapl = TradeDecision(
-        action="BUY", symbol="AAPL", allocation_pct=3.0,
-        entry_price=190.0, stop_loss=185.0, take_profit=205.0,
-        reasoning="stated", thesis_invalid_if="closes below 185",
+        action="BUY",
+        symbol="AAPL",
+        allocation_pct=3.0,
+        entry_price=190.0,
+        stop_loss=185.0,
+        take_profit=205.0,
+        reasoning="stated",
+        thesis_invalid_if="closes below 185",
     )
     hold = TradeDecision(
-        action="HOLD", symbol="MSFT", allocation_pct=0.0,
-        entry_price=400.0, stop_loss=390.0, take_profit=420.0,
+        action="HOLD",
+        symbol="MSFT",
+        allocation_pct=0.0,
+        entry_price=400.0,
+        stop_loss=390.0,
+        take_profit=420.0,
         reasoning="keep",
     )
     plan = SimpleNamespace(
         decisions=[mrvl, aapl, hold],
         targets=[
             TargetPosition(
-                symbol="MRVL", target_weight_pct=3.0, conviction="medium",
-                thesis="retry", thesis_invalid_if=None,
+                symbol="MRVL",
+                target_weight_pct=3.0,
+                conviction="medium",
+                thesis="retry",
+                thesis_invalid_if=None,
             ),
             TargetPosition(
-                symbol="AAPL", target_weight_pct=3.0, conviction="medium",
-                thesis="add", thesis_invalid_if="closes below 185",
+                symbol="AAPL",
+                target_weight_pct=3.0,
+                conviction="medium",
+                thesis="add",
+                thesis_invalid_if="closes below 185",
             ),
         ],
         constructor_dropped=[],
@@ -656,8 +802,4 @@ def test_unknown_soft_exit_isolates_that_name_and_keeps_the_rest_of_the_plan():
     assert [t.symbol for t in plan.targets] == ["MRVL", "AAPL"]
     assert "MRVL" in plan.constructor_dropped
     assert not any(d.symbol == "MRVL" for d in plan.decisions)
-    assert any(
-        SOFT_EXIT_MISSING_AFTER_RETRY in str(c)
-        for c in pipeline.db.insert_specialist_evidence.mock_calls
-    )
-
+    assert any(SOFT_EXIT_MISSING_AFTER_RETRY in str(c) for c in pipeline.db.insert_specialist_evidence.mock_calls)

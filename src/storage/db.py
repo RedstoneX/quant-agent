@@ -13,11 +13,13 @@ from src.storage.sector_weights import (
 from src.storage.analytics import TradeAnalytics
 from src.storage.break_records import BreakRecords, build_break_records
 from src.storage.conviction_ledger_store import (
-    ConvictionLedgerStore, build_conviction_ledger_store,
+    ConvictionLedgerStore,
+    build_conviction_ledger_store,
 )
 from src.storage.seat_stances import read_seat_stances
 from src.storage.target_revisions import (
-    TargetRevisionRecords, build_target_revision_records,
+    TargetRevisionRecords,
+    build_target_revision_records,
 )
 from src.storage.trades import TradeLedger
 from src.storage.trades.ledger import (  # re-export mirror: defined there, still importable from here
@@ -50,10 +52,14 @@ from src.storage.analytics.calibration import (  # re-export mirror: defined the
 )
 from src.util.time import ET, UTC, et_today
 from src.storage.clock_stamp import (  # noqa: F401  (re-exported)
-    sqlite_utc_timestamp, utc_now_stamp, utc_stamp_ago,
+    sqlite_utc_timestamp,
+    utc_now_stamp,
+    utc_stamp_ago,
 )
 
 logger = logging.getLogger(__name__)
+
+
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -119,6 +125,7 @@ class Database:
         surfacing, not silently dropping).
         """
         import time as _time
+
         last_exc: sqlite3.OperationalError | None = None
         for attempt in range(5):
             try:
@@ -131,9 +138,11 @@ class Database:
                 last_exc = exc
                 logger.warning(
                     "DB %s contended (attempt %d/5): %s — retrying",
-                    label, attempt + 1, exc,
+                    label,
+                    attempt + 1,
+                    exc,
                 )
-                _time.sleep(0.05 * (2 ** attempt))  # 0.05,0.1,0.2,0.4,0.8s
+                _time.sleep(0.05 * (2**attempt))  # 0.05,0.1,0.2,0.4,0.8s
         logger.error("DB %s still locked after retries — giving up: %s", label, last_exc)
         raise last_exc
 
@@ -213,13 +222,9 @@ class Database:
                     out.append(item)
             return json.dumps(out)
 
-        actions_json = (
-            json.dumps(suggested_actions) if isinstance(suggested_actions, list)
-            else suggested_actions
-        )
+        actions_json = json.dumps(suggested_actions) if isinstance(suggested_actions, list) else suggested_actions
         risks_json = (
-            json.dumps(list(tomorrow_key_risks))
-            if not isinstance(tomorrow_key_risks, str) else tomorrow_key_risks
+            json.dumps(list(tomorrow_key_risks)) if not isinstance(tomorrow_key_risks, str) else tomorrow_key_risks
         )
         sell_grades_json = _to_json_list(sell_grades)
         buy_grades_json = _to_json_list(buy_grades)
@@ -267,13 +272,24 @@ class Database:
                     "selection_rules_json, discipline_notes_json, "
                     "previous_outlook_assessment) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (date, tomorrow_outlook, lessons, actions_json, risk_rating,
-                     tomorrow_bias, tomorrow_conviction, risks_json,
-                     sell_decisions_assessment or "",
-                     sell_grades_json, buy_grades_json,
-                     missed_opportunities_json,
-                     thesis_updates_json, selection_rules_json,
-                     discipline_notes_json, previous_outlook_assessment or ""),
+                    (
+                        date,
+                        tomorrow_outlook,
+                        lessons,
+                        actions_json,
+                        risk_rating,
+                        tomorrow_bias,
+                        tomorrow_conviction,
+                        risks_json,
+                        sell_decisions_assessment or "",
+                        sell_grades_json,
+                        buy_grades_json,
+                        missed_opportunities_json,
+                        thesis_updates_json,
+                        selection_rules_json,
+                        discipline_notes_json,
+                        previous_outlook_assessment or "",
+                    ),
                 )
                 self.conn.commit()
             except Exception:
@@ -288,10 +304,7 @@ class Database:
     @staticmethod
     def _executed_trade_predicate() -> str:
         """SQL predicate for trades that executed at least some quantity."""
-        return (
-            "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' "
-            "OR COALESCE(fill_qty, 0) > 0)"
-        )
+        return "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' OR COALESCE(fill_qty, 0) > 0)"
 
     @staticmethod
     def _sqlite_utc_timestamp(when: datetime) -> str:
@@ -307,8 +320,13 @@ class Database:
         return cls._sqlite_utc_timestamp(start_et), cls._sqlite_utc_timestamp(end_et)
 
     def record_alignment_exit_reading(
-        self, *, symbol: str, verdict, run_id: str | None = None,
-        is_short: bool | None = None, session_date: str | None = None,
+        self,
+        *,
+        symbol: str,
+        verdict,
+        run_id: str | None = None,
+        is_short: bool | None = None,
+        session_date: str | None = None,
         not_evaluated_reason: str | None = None,
     ) -> bool:
         """Record one open position's alignment-exit reading for this run.
@@ -399,13 +417,19 @@ class Database:
             return True
         except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
             logger.warning(
-                "alignment-exit reading for %s was not recorded (%s)", sym, e,
+                "alignment-exit reading for %s was not recorded (%s)",
+                sym,
+                e,
             )
             return False
 
     def record_soft_exit_heal_restores(
-        self, *, observations, run_id: str | None = None,
-        session_date: str | None = None, dropped: int = 0,
+        self,
+        *,
+        observations,
+        run_id: str | None = None,
+        session_date: str | None = None,
+        dropped: int = 0,
     ) -> int:
         """Record what the mechanical soft-exit heal did. Returns rows written.
 
@@ -425,17 +449,19 @@ class Database:
             blank = obs.get("blank_found")
             healed = obs.get("healed")
             src = obs.get("source")
-            rows.append((
-                utc_now_stamp(),
-                run_id or None,
-                session_date or str(et_today()),
-                sym,
-                None if blank is None else int(bool(blank)),
-                None if healed is None else int(bool(healed)),
-                src if isinstance(src, str) and src.strip() else None,
-                int(dropped) if first else None,
-                max(1, int(obs.get("occurrences") or 1)),
-            ))
+            rows.append(
+                (
+                    utc_now_stamp(),
+                    run_id or None,
+                    session_date or str(et_today()),
+                    sym,
+                    None if blank is None else int(bool(blank)),
+                    None if healed is None else int(bool(healed)),
+                    src if isinstance(src, str) and src.strip() else None,
+                    int(dropped) if first else None,
+                    max(1, int(obs.get("occurrences") or 1)),
+                )
+            )
             first = False
         if not rows:
             return 0
@@ -459,35 +485,43 @@ class Database:
     #: denominator as item 222's single-name ceiling; not a second
     #: convention.
     REALISED_SECTOR_WEIGHT_DENOMINATOR = (
-        "percent of total account equity, raw position notional, "
-        "before the gross multiplier"
+        "percent of total account equity, raw position notional, before the gross multiplier"
     )
 
     record_realised_sector_weights = _record_realised_sector_weights
 
-    def insert_agent_log(self, agent_name: str, run_id: str, input_summary: str,
-                         output_summary: str, full_response: str, model: str,
-                         tokens_used: int, input_message: str = "",
-                         input_tokens: int | None = None,
-                         output_tokens: int | None = None,
-                         cost_usd: float | None = None,
-                         provider_requests: int | None = None,
-                         requested_provider: str | None = None,
-                         requested_model: str | None = None,
-                         actual_provider: str | None = None,
-                         prompt_version: str | None = None,
-                         latency_s: float | None = None,
-                         status: str | None = None,
-                         finish_reason: str | None = None,
-                         truncated: bool | None = None,
-                         decision_id: str | None = None,
-                         acceptance: str | None = None,
-                         acceptance_reason: str | None = None,
-                         telemetry: str | None = None):
+    def insert_agent_log(
+        self,
+        agent_name: str,
+        run_id: str,
+        input_summary: str,
+        output_summary: str,
+        full_response: str,
+        model: str,
+        tokens_used: int,
+        input_message: str = "",
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cost_usd: float | None = None,
+        provider_requests: int | None = None,
+        requested_provider: str | None = None,
+        requested_model: str | None = None,
+        actual_provider: str | None = None,
+        prompt_version: str | None = None,
+        latency_s: float | None = None,
+        status: str | None = None,
+        finish_reason: str | None = None,
+        truncated: bool | None = None,
+        decision_id: str | None = None,
+        acceptance: str | None = None,
+        acceptance_reason: str | None = None,
+        telemetry: str | None = None,
+    ):
         """`model` remains the ACTUAL responding model (Stage 0.5 contract —
         unchanged). The Stage 1 kwargs below are additive and all default to
         None so every pre-Stage-1 caller keeps working unmodified; omitting
         them persists NULL, never a fabricated value."""
+
         def _do():
             self.conn.execute(
                 """INSERT INTO agent_logs (agent_name, run_id, input_summary, input_message,
@@ -498,21 +532,46 @@ class Database:
                    prompt_version, latency_s, status, finish_reason, truncated,
                    decision_id, acceptance, acceptance_reason, telemetry)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (agent_name, run_id, input_summary, input_message, output_summary,
-                 full_response, model, tokens_used,
-                 input_tokens, output_tokens, cost_usd,
-                 provider_requests,
-                 requested_provider, requested_model, actual_provider,
-                 prompt_version, latency_s, status,
-                 finish_reason, None if truncated is None else int(truncated),
-                 decision_id, acceptance, acceptance_reason, telemetry),
+                (
+                    agent_name,
+                    run_id,
+                    input_summary,
+                    input_message,
+                    output_summary,
+                    full_response,
+                    model,
+                    tokens_used,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                    provider_requests,
+                    requested_provider,
+                    requested_model,
+                    actual_provider,
+                    prompt_version,
+                    latency_s,
+                    status,
+                    finish_reason,
+                    None if truncated is None else int(truncated),
+                    decision_id,
+                    acceptance,
+                    acceptance_reason,
+                    telemetry,
+                ),
             )
             self.conn.commit()
+
         self._locked_write(_do, label="insert_agent_log")
 
     def insert_specialist_evidence(
-        self, *, run_id: str, agent_name: str, kind: str, scope: str,
-        evidence_json: str, symbol: str | None = None,
+        self,
+        *,
+        run_id: str,
+        agent_name: str,
+        kind: str,
+        scope: str,
+        evidence_json: str,
+        symbol: str | None = None,
         decision_id: str | None = None,
     ) -> int:
         """Persist one already-VALIDATED structured evidence row (Stage 4).
@@ -524,6 +583,7 @@ class Database:
         not swallow errors (matches every other insert_* method's contract),
         it just never touches trading-critical state.
         """
+
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO specialist_evidence "
@@ -533,10 +593,10 @@ class Database:
             )
             self.conn.commit()
             return cur.lastrowid or 0
+
         return self._locked_write(_do, label="insert_specialist_evidence")
 
-    def count_paid_seat_heals_today(self, seat: str, *,
-                                     trading_day: date | None = None) -> int | None:
+    def count_paid_seat_heals_today(self, seat: str, *, trading_day: date | None = None) -> int | None:
         """How many PAID research heals this seat has already had today (ET).
 
         The in-context counter `RunContext.heal_paid_retries` says "at most
@@ -559,6 +619,7 @@ class Database:
         default is today.
         """
         import json as _json
+
         want = str(seat or "").strip()
         if not want:
             return 0
@@ -588,7 +649,11 @@ class Database:
         return count
 
     def record_acted_exit_trigger(
-        self, *, run_id: str, payload_json: str, symbol: str,
+        self,
+        *,
+        run_id: str,
+        payload_json: str,
+        symbol: str,
     ) -> int:
         """Persist WHAT authorised a sell-side action the desk submitted.
 
@@ -600,14 +665,20 @@ class Database:
         `get_acted_exit_triggers_today`; the trading path never mutates it.
         """
         from src.risk.spent_trigger import ACTED_TRIGGER_KIND
+
         return self.insert_specialist_evidence(
-            run_id=run_id, agent_name="position_reviewer",
-            kind=ACTED_TRIGGER_KIND, scope="symbol", symbol=symbol,
+            run_id=run_id,
+            agent_name="position_reviewer",
+            kind=ACTED_TRIGGER_KIND,
+            scope="symbol",
+            symbol=symbol,
             evidence_json=payload_json,
         )
 
     def get_acted_exit_triggers_today(
-        self, *, trading_day: date | None = None,
+        self,
+        *,
+        trading_day: date | None = None,
     ) -> list[dict] | None:
         """Every sell-side action submitted today (ET), with its trigger.
 
@@ -618,6 +689,7 @@ class Database:
         """
         import json as _json
         from src.risk.spent_trigger import ACTED_TRIGGER_KIND
+
         start, end = self._et_day_utc_bounds(trading_day)
         try:
             with self._lock:
@@ -641,7 +713,9 @@ class Database:
         return out
 
     def latest_news_analysis_today(
-        self, *, trading_day: date | None = None,
+        self,
+        *,
+        trading_day: date | None = None,
     ) -> str | None:
         """The newest news-seat answer the desk PAID for today (ET), as JSON.
 
@@ -754,6 +828,7 @@ class Database:
             )
             self.conn.commit()
             return cur.rowcount or 0
+
         return self._locked_write(_do, label="link_nominations_to_decision")
 
     def get_nominations_for_decision(self, decision_id: str) -> list[dict]:
@@ -800,7 +875,11 @@ class Database:
         return {str(r[0]).strip().upper() for r in rows if r[0]}
 
     def record_seat_stances(
-        self, *, run_id: str, decision_id: str, stances,
+        self,
+        *,
+        run_id: str,
+        decision_id: str,
+        stances,
     ) -> int:
         """Persist each seat's side on each idea — dissent as well as support.
 
@@ -814,6 +893,7 @@ class Database:
         scores and what sizing counted are the same fact.
         """
         import json as _json
+
         written = 0
         for stance in stances or []:
             payload = {
@@ -825,21 +905,31 @@ class Database:
                 "observation": stance.observation,
             }
             self.insert_specialist_evidence(
-                run_id=run_id, decision_id=decision_id, agent_name=stance.seat,
-                kind=self.SEAT_STANCE_KIND, scope="symbol", symbol=stance.symbol,
+                run_id=run_id,
+                decision_id=decision_id,
+                agent_name=stance.seat,
+                kind=self.SEAT_STANCE_KIND,
+                scope="symbol",
+                symbol=stance.symbol,
                 evidence_json=_json.dumps(payload, sort_keys=True),
             )
             written += 1
         return written
 
     def get_seat_stances(
-        self, *, decision_id: str, symbol: str | None = None,
+        self,
+        *,
+        decision_id: str,
+        symbol: str | None = None,
     ) -> list:
         """Reconstruct `SeatStance` objects for one decision — body now
         `src.storage.seat_stances.read_seat_stances`, shared with the
         conviction ledger store so the two reads cannot drift apart."""
         return read_seat_stances(
-            self.conn, self._lock, decision_id=decision_id, symbol=symbol,
+            self.conn,
+            self._lock,
+            decision_id=decision_id,
+            symbol=symbol,
         )
 
     @property
@@ -859,17 +949,27 @@ class Database:
     POSITION_REVIEW_METRIC_KIND = "review_metrics"
 
     def save_position_review_metrics(
-        self, *, run_id: str, symbol: str, metrics_json: str,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        metrics_json: str,
     ) -> int:
         """Snapshot one position's deterministic metrics for the next review."""
         return self.insert_specialist_evidence(
-            run_id=run_id, agent_name="position_reviewer",
-            kind=self.POSITION_REVIEW_METRIC_KIND, scope="symbol",
-            symbol=symbol.upper(), evidence_json=metrics_json,
+            run_id=run_id,
+            agent_name="position_reviewer",
+            kind=self.POSITION_REVIEW_METRIC_KIND,
+            scope="symbol",
+            symbol=symbol.upper(),
+            evidence_json=metrics_json,
         )
 
     def get_prior_position_review_metrics(
-        self, symbols, *, exclude_run_id: str | None = None,
+        self,
+        symbols,
+        *,
+        exclude_run_id: str | None = None,
     ) -> dict[str, dict]:
         """Most recent prior metric snapshot per symbol, as {symbol: row}.
 
@@ -957,46 +1057,73 @@ class Database:
         return build_target_revision_records(conn=self.conn, lock=self._lock)
 
     def save_holding_protection_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
-        close: float | None = None, basis: str | None = None,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        raw_broken: bool,
+        bar_date: str,
+        close: float | None = None,
+        basis: str | None = None,
         detail: str | None = None,
     ) -> int:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.save_holding_protection_break(
-            run_id=run_id, symbol=symbol, raw_broken=raw_broken,
-            bar_date=bar_date, close=close, basis=basis, detail=detail,
+            run_id=run_id,
+            symbol=symbol,
+            raw_broken=raw_broken,
+            bar_date=bar_date,
+            close=close,
+            basis=basis,
+            detail=detail,
         )
 
     def get_prior_holding_protection_break(
-        self, symbols, *, today_bar_date: str,
+        self,
+        symbols,
+        *,
+        today_bar_date: str,
         exclude_run_id: str | None = None,
     ) -> dict[str, bool]:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.get_prior_holding_protection_break(
-            symbols, today_bar_date=today_bar_date,
+            symbols,
+            today_bar_date=today_bar_date,
             exclude_run_id=exclude_run_id,
         )
 
     def get_recent_holding_protection_breaks(
-        self, symbol: str, *, before_bar_date: str,
-        exclude_run_id: str | None = None, limit: int = 30,
+        self,
+        symbol: str,
+        *,
+        before_bar_date: str,
+        exclude_run_id: str | None = None,
+        limit: int = 30,
     ) -> list[dict]:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.get_recent_holding_protection_breaks(
-            symbol, before_bar_date=before_bar_date,
-            exclude_run_id=exclude_run_id, limit=limit,
+            symbol,
+            before_bar_date=before_bar_date,
+            exclude_run_id=exclude_run_id,
+            limit=limit,
         )
 
     def save_delever_ceiling_state(
-        self, *, run_id: str, over_ceiling: bool,
+        self,
+        *,
+        run_id: str,
+        over_ceiling: bool,
     ) -> int:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.save_delever_ceiling_state(
-            run_id=run_id, over_ceiling=over_ceiling,
+            run_id=run_id,
+            over_ceiling=over_ceiling,
         )
 
     def get_last_delever_over_ceiling(
-        self, *, exclude_run_id: str | None = None,
+        self,
+        *,
+        exclude_run_id: str | None = None,
     ) -> bool | None:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.get_last_delever_over_ceiling(
@@ -1004,49 +1131,91 @@ class Database:
         )
 
     def save_target_level_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool | None,
-        bar_date: str, raw_reach: bool | None = None,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        raw_broken: bool | None,
+        bar_date: str,
+        raw_reach: bool | None = None,
         raw_wall: bool | None = None,
     ) -> int:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.save_target_level_break(
-            run_id=run_id, symbol=symbol, raw_broken=raw_broken,
-            bar_date=bar_date, raw_reach=raw_reach, raw_wall=raw_wall,
+            run_id=run_id,
+            symbol=symbol,
+            raw_broken=raw_broken,
+            bar_date=bar_date,
+            raw_reach=raw_reach,
+            raw_wall=raw_wall,
         )
 
     def get_prior_target_level_break(
-        self, symbols, *, today_bar_date: str,
-        exclude_run_id: str | None = None, flag: str = "raw_broken",
+        self,
+        symbols,
+        *,
+        today_bar_date: str,
+        exclude_run_id: str | None = None,
+        flag: str = "raw_broken",
     ) -> dict[str, bool]:
         """Compatibility facade; the implementation belongs to `breaks`."""
         return self.breaks.get_prior_target_level_break(
-            symbols, today_bar_date=today_bar_date,
-            exclude_run_id=exclude_run_id, flag=flag,
+            symbols,
+            today_bar_date=today_bar_date,
+            exclude_run_id=exclude_run_id,
+            flag=flag,
         )
 
     def record_target_revision(
-        self, *, run_id: str, symbol: str, code: str, seat: str,
-        evidence: str, detail: str = "", trigger: str = "",
-        prior_price: float | None = None, new_price: float | None = None,
-        basis: str = "", level_used: float | None = None,
-        evidence_id: int | None = None, applied: bool = False,
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        code: str,
+        seat: str,
+        evidence: str,
+        detail: str = "",
+        trigger: str = "",
+        prior_price: float | None = None,
+        new_price: float | None = None,
+        basis: str = "",
+        level_used: float | None = None,
+        evidence_id: int | None = None,
+        applied: bool = False,
     ) -> int:
         """Compatibility facade; implementation belongs to `target_revisions`."""
         return self.target_revisions.record_target_revision(
-            run_id=run_id, symbol=symbol, code=code, seat=seat,
-            evidence=evidence, detail=detail, trigger=trigger,
-            prior_price=prior_price, new_price=new_price, basis=basis,
-            level_used=level_used, evidence_id=evidence_id, applied=applied,
+            run_id=run_id,
+            symbol=symbol,
+            code=code,
+            seat=seat,
+            evidence=evidence,
+            detail=detail,
+            trigger=trigger,
+            prior_price=prior_price,
+            new_price=new_price,
+            basis=basis,
+            level_used=level_used,
+            evidence_id=evidence_id,
+            applied=applied,
         )
 
     def get_target_revisions(
-        self, symbols, *, limit: int = 200,
+        self,
+        symbols,
+        *,
+        limit: int = 200,
     ) -> dict[str, list[dict]]:
         """Compatibility facade; implementation belongs to `target_revisions`."""
         return self.target_revisions.get_target_revisions(symbols, limit=limit)
 
     def record_intraday_evaluation(
-        self, *, symbol: str, run_id: str, status: str, detail: str = "",
+        self,
+        *,
+        symbol: str,
+        run_id: str,
+        status: str,
+        detail: str = "",
     ) -> None:
         def _do():
             self.conn.execute(
@@ -1056,15 +1225,18 @@ class Database:
                 (symbol.upper(), run_id, status, detail),
             )
             self.conn.commit()
+
         self._locked_write(_do, label="record_intraday_evaluation")
 
     def get_recent_intraday_evaluations(
-        self, symbol: str, *, cooldown_hours: float,
+        self,
+        symbol: str,
+        *,
+        cooldown_hours: float,
     ) -> list[dict]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT * FROM intraday_evaluations WHERE symbol=? "
-                "AND timestamp >= ? ORDER BY timestamp DESC",
+                "SELECT * FROM intraday_evaluations WHERE symbol=? AND timestamp >= ? ORDER BY timestamp DESC",
                 (symbol.upper(), utc_stamp_ago(hours=float(cooldown_hours))),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1100,7 +1272,10 @@ class Database:
     INTRADAY_SNAPSHOT_ALERT_COOLDOWN_HOURS = 24.0
 
     def record_intraday_symbol_snapshot_result(
-        self, symbol: str, *, ok: bool,
+        self,
+        symbol: str,
+        *,
+        ok: bool,
     ) -> dict:
         """Update one symbol's consecutive-miss streak; report whether this
         call should trigger an owner alert (crossed the threshold, and no
@@ -1124,8 +1299,7 @@ class Database:
                 self.conn.commit()
                 return
             row = self.conn.execute(
-                "SELECT consecutive_misses, last_alert_at "
-                "FROM intraday_symbol_health WHERE symbol=?",
+                "SELECT consecutive_misses, last_alert_at FROM intraday_symbol_health WHERE symbol=?",
                 (symbol,),
             ).fetchone()
             misses = (row["consecutive_misses"] if row else 0) + 1
@@ -1133,6 +1307,7 @@ class Database:
             should_alert = misses >= self.INTRADAY_SNAPSHOT_ALERT_THRESHOLD
             if should_alert and last_alert_at:
                 from datetime import timezone
+
                 try:
                     last_dt = datetime.fromisoformat(last_alert_at).replace(tzinfo=timezone.utc)
                     cutoff = datetime.now(timezone.utc) - timedelta(
@@ -1148,8 +1323,7 @@ class Database:
                 "(symbol, consecutive_misses, last_alert_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(symbol) DO UPDATE SET consecutive_misses=excluded.consecutive_misses"
                 + (", last_alert_at=?" if should_alert else ""),
-                (symbol, misses, last_alert_at)
-                + ((utc_now_stamp(),) if should_alert else ()),
+                (symbol, misses, last_alert_at) + ((utc_now_stamp(),) if should_alert else ()),
             )
             self.conn.commit()
             result["consecutive_misses"] = misses
@@ -1173,8 +1347,7 @@ class Database:
         start_utc, end_utc = self._et_day_utc_bounds(trading_day)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT DISTINCT run_id FROM agent_logs "
-                "WHERE timestamp >= ? AND timestamp < ?",
+                "SELECT DISTINCT run_id FROM agent_logs WHERE timestamp >= ? AND timestamp < ?",
                 (start_utc, end_utc),
             ).fetchall()
         prefixes: set[str] = set()
@@ -1183,8 +1356,7 @@ class Database:
             prefixes.add(rid.rsplit("-", 1)[0] if "-" in rid else rid)
         return prefixes
 
-    def agent_names_logged_on(self, run_id_prefix: str,
-                              trading_day: date | None = None) -> set[str]:
+    def agent_names_logged_on(self, run_id_prefix: str, trading_day: date | None = None) -> set[str]:
         """Distinct agent_name values logged on the given ET trading day for
         run_ids starting with `run_id_prefix` (e.g. 'run-' for morning).
 
@@ -1197,8 +1369,7 @@ class Database:
         start_utc, end_utc = self._et_day_utc_bounds(trading_day)
         with self._lock:
             rows = self.conn.execute(
-                "SELECT DISTINCT agent_name FROM agent_logs "
-                "WHERE timestamp >= ? AND timestamp < ? AND run_id LIKE ?",
+                "SELECT DISTINCT agent_name FROM agent_logs WHERE timestamp >= ? AND timestamp < ? AND run_id LIKE ?",
                 (start_utc, end_utc, f"{run_id_prefix}%"),
             ).fetchall()
         return {r[0] for r in rows if r[0]}
@@ -1297,8 +1468,14 @@ class Database:
             self.conn.commit()
             return cursor.rowcount or 0
 
-    def insert_daily_pnl(self, date: str, total_value: float, daily_pnl: float,
-                         daily_return_pct: float, equity_close: float | None = None):
+    def insert_daily_pnl(
+        self,
+        date: str,
+        total_value: float,
+        daily_pnl: float,
+        daily_return_pct: float,
+        equity_close: float | None = None,
+    ):
         with self._lock:
             # COALESCE preserves a previously-stored equity_close when this
             # write carries None (e.g. an LLM-failed evening re-run on a day the
@@ -1317,8 +1494,14 @@ class Database:
             self.conn.commit()
 
     def insert_margin_interest_daily(
-        self, date: str, debit_balance: float, rate_pct: float, daily_usd: float,
-        days_charged: int, period_usd: float, source: str = "estimate",
+        self,
+        date: str,
+        debit_balance: float,
+        rate_pct: float,
+        daily_usd: float,
+        days_charged: int,
+        period_usd: float,
+        source: str = "estimate",
     ) -> None:
         """One row per trading day the margin-interest tracker ran — the
         only historical record of the desk's overnight debit balance (see
@@ -1338,8 +1521,7 @@ class Database:
                      days_charged=excluded.days_charged,
                      period_usd=excluded.period_usd,
                      source=excluded.source""",
-                (date, debit_balance, rate_pct, daily_usd, days_charged,
-                 period_usd, source),
+                (date, debit_balance, rate_pct, daily_usd, days_charged, period_usd, source),
             )
             self.conn.commit()
 
@@ -1347,20 +1529,29 @@ class Database:
         """Board item 187 record: one row per morning FRED fetch. See the
         table comment in `initialize()`; `row` comes from
         `src.data.fetch_coverage_record.build_row`."""
-        cols = ("run_id", "series_configured", "series_succeeded",
-                "series_failed", "series_not_attempted",
-                "releases_configured", "releases_succeeded",
-                "releases_from_cache", "releases_failed", "full_coverage")
+        cols = (
+            "run_id",
+            "series_configured",
+            "series_succeeded",
+            "series_failed",
+            "series_not_attempted",
+            "releases_configured",
+            "releases_succeeded",
+            "releases_from_cache",
+            "releases_failed",
+            "full_coverage",
+        )
         with self._lock:
             self.conn.execute(
-                f"INSERT INTO fred_fetch_coverage_runs ({', '.join(cols)}) "
-                f"VALUES ({', '.join('?' for _ in cols)})",
+                f"INSERT INTO fred_fetch_coverage_runs ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
                 tuple(row[c] for c in cols),
             )
             self.conn.commit()
 
     def backfill_margin_interest_daily(
-        self, rows: list, dry_run: bool = True,
+        self,
+        rows: list,
+        dry_run: bool = True,
     ) -> dict:
         """Write reconstructed HISTORICAL `margin_interest_daily` rows —
         owner ask 2026-09-24: no historical daily debit balance was ever
@@ -1415,8 +1606,7 @@ class Database:
                          period_usd=excluded.period_usd,
                          source=excluded.source
                        WHERE margin_interest_daily.source = 'estimate_backfill'""",
-                    (d, row.debit_balance, row.rate_pct, row.daily_usd,
-                     row.days_charged, row.period_usd, row.source),
+                    (d, row.debit_balance, row.rate_pct, row.daily_usd, row.days_charged, row.period_usd, row.source),
                 )
             if not dry_run:
                 self.conn.commit()
@@ -1438,15 +1628,13 @@ class Database:
         """
         with self._lock:
             cursor = self.conn.execute(
-                "UPDATE daily_pnl SET equity_close = ? "
-                "WHERE date = ? AND equity_close IS NULL",
+                "UPDATE daily_pnl SET equity_close = ? WHERE date = ? AND equity_close IS NULL",
                 (equity_close, date),
             )
             self.conn.commit()
             return cursor.rowcount > 0
 
-    def save_evening_report(self, *, date: str, run_id: str | None,
-                            payload: dict) -> None:
+    def save_evening_report(self, *, date: str, run_id: str | None, payload: dict) -> None:
         """Store the evening run's own output for later re-rendering.
 
         `payload` is the result dict `run_evening` returns — the very
@@ -1471,7 +1659,8 @@ class Database:
         payload_json = json.dumps(payload, default=str)
         with self._lock:
             positions = [
-                dict(row) for row in self.conn.execute(
+                dict(row)
+                for row in self.conn.execute(
                     "SELECT symbol, qty, avg_entry, current_price, market_value, "
                     "unrealized_pnl FROM positions WHERE qty != 0 "
                     "ORDER BY ABS(market_value) DESC"
@@ -1493,74 +1682,134 @@ class Database:
 
     def _trades(self) -> TradeLedger:
         """Per-call construction so a collaborator swapped after __init__ is still reached."""
-        return TradeLedger(conn=self.conn, lock=self._lock, locked_write=self._locked_write,
-                           executed_trade_predicate=self._executed_trade_predicate,
-                           sqlite_utc_timestamp=self._sqlite_utc_timestamp,
-                           et_day_utc_bounds=self._et_day_utc_bounds)
+        return TradeLedger(
+            conn=self.conn,
+            lock=self._lock,
+            locked_write=self._locked_write,
+            executed_trade_predicate=self._executed_trade_predicate,
+            sqlite_utc_timestamp=self._sqlite_utc_timestamp,
+            et_day_utc_bounds=self._et_day_utc_bounds,
+        )
 
-    def insert_trade(self, symbol: str, action: str, qty: float, price: float,
-                     reasoning: str, run_id: str,
-                     stop_loss: float = 0, take_profit: float = 0,
-                     broker_order_id: str | None = None,
-                     fill_status: str | None = None,
-                     decision_id: str | None = None,
-                     expected_horizon_sessions: int | None = None,
-                     setup_type: str | None = None,
-                     conviction: str | None = None,
-                     requested_risk_pct: float | None = None,
-                     allocated_risk_pct: float | None = None,
-                     decision_model: str | None = None,
-                     thesis_invalid_if: str | None = None,
-                     structural_ceiling: bool | None = None,
-                     entry_atr: float | None = None,
-                     stop_basis: str | None = None,
-                     stop_level_basis: str | None = None) -> int:
+    def insert_trade(
+        self,
+        symbol: str,
+        action: str,
+        qty: float,
+        price: float,
+        reasoning: str,
+        run_id: str,
+        stop_loss: float = 0,
+        take_profit: float = 0,
+        broker_order_id: str | None = None,
+        fill_status: str | None = None,
+        decision_id: str | None = None,
+        expected_horizon_sessions: int | None = None,
+        setup_type: str | None = None,
+        conviction: str | None = None,
+        requested_risk_pct: float | None = None,
+        allocated_risk_pct: float | None = None,
+        decision_model: str | None = None,
+        thesis_invalid_if: str | None = None,
+        structural_ceiling: bool | None = None,
+        entry_atr: float | None = None,
+        stop_basis: str | None = None,
+        stop_level_basis: str | None = None,
+    ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_trade(symbol, action, qty, price, reasoning, run_id, stop_loss, take_profit, broker_order_id, fill_status, decision_id, expected_horizon_sessions, setup_type, conviction, requested_risk_pct, allocated_risk_pct, decision_model, thesis_invalid_if, structural_ceiling, entry_atr, stop_basis, stop_level_basis)
+        return self._trades().insert_trade(
+            symbol,
+            action,
+            qty,
+            price,
+            reasoning,
+            run_id,
+            stop_loss,
+            take_profit,
+            broker_order_id,
+            fill_status,
+            decision_id,
+            expected_horizon_sessions,
+            setup_type,
+            conviction,
+            requested_risk_pct,
+            allocated_risk_pct,
+            decision_model,
+            thesis_invalid_if,
+            structural_ceiling,
+            entry_atr,
+            stop_basis,
+            stop_level_basis,
+        )
 
     def insert_trade_refusal(self, **kwargs) -> int | None:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().insert_trade_refusal(**kwargs)
 
     def get_trade_refusals(
-        self, *, refusal: str | None = None, limit: int = 500,
+        self,
+        *,
+        refusal: str | None = None,
+        limit: int = 500,
     ) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_trade_refusals(refusal=refusal, limit=limit)
 
     def update_open_stop_loss(
-        self, symbol: str, new_stop_price: float, *, action: str | None = None,
+        self,
+        symbol: str,
+        new_stop_price: float,
+        *,
+        action: str | None = None,
     ) -> bool:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().update_open_stop_loss(symbol, new_stop_price, action=action)
 
     def _resolve_new_row_position_id(
-        self, symbol: str, action: str, *, qty: float,
-        fill_status: str | None, fill_qty: float | None,
+        self,
+        symbol: str,
+        action: str,
+        *,
+        qty: float,
+        fill_status: str | None,
+        fill_qty: float | None,
         timestamp: str | None = None,
     ) -> str | None:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades()._resolve_new_row_position_id(symbol, action, qty=qty, fill_status=fill_status, fill_qty=fill_qty, timestamp=timestamp)
+        return self._trades()._resolve_new_row_position_id(
+            symbol, action, qty=qty, fill_status=fill_status, fill_qty=fill_qty, timestamp=timestamp
+        )
 
     def confirm_trade_submitted(
-        self, row_id: int, broker_order_id: str | None,
+        self,
+        row_id: int,
+        broker_order_id: str | None,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().confirm_trade_submitted(row_id, broker_order_id)
 
     def repoint_trade_broker_order_id(
-        self, row_id: int, *, old_order_id: str, new_order_id: str,
+        self,
+        row_id: int,
+        *,
+        old_order_id: str,
+        new_order_id: str,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().repoint_trade_broker_order_id(row_id, old_order_id=old_order_id, new_order_id=new_order_id)
+        return self._trades().repoint_trade_broker_order_id(
+            row_id, old_order_id=old_order_id, new_order_id=new_order_id
+        )
 
     def mark_trade_submit_failed(self, row_id: int) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().mark_trade_submit_failed(row_id)
 
     def update_trade_fill(
-        self, broker_order_id: str, fill_status: str,
-        fill_qty: float | None = None, fill_price: float | None = None,
+        self,
+        broker_order_id: str,
+        fill_status: str,
+        fill_qty: float | None = None,
+        fill_price: float | None = None,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().update_trade_fill(broker_order_id, fill_status, fill_qty, fill_price)
@@ -1578,37 +1827,68 @@ class Database:
         return self._trades().get_known_broker_order_ids(symbol)
 
     def insert_stop_out_trade(
-        self, *, symbol: str, qty: float, price: float,
-        broker_order_id: str, filled_at: str | None,
-        run_id: str | None = None, action: str = "STOP_OUT",
+        self,
+        *,
+        symbol: str,
+        qty: float,
+        price: float,
+        broker_order_id: str,
+        filled_at: str | None,
+        run_id: str | None = None,
+        action: str = "STOP_OUT",
         reasoning: str | None = None,
     ) -> tuple[int, bool]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_stop_out_trade(symbol=symbol, qty=qty, price=price, broker_order_id=broker_order_id, filled_at=filled_at, run_id=run_id, action=action, reasoning=reasoning)
+        return self._trades().insert_stop_out_trade(
+            symbol=symbol,
+            qty=qty,
+            price=price,
+            broker_order_id=broker_order_id,
+            filled_at=filled_at,
+            run_id=run_id,
+            action=action,
+            reasoning=reasoning,
+        )
 
     def get_unreconciled_orders(self, run_id: str | None = None) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_unreconciled_orders(run_id)
 
     def get_orphaned_pending_submits(
-        self, min_age_seconds: int = 120,
+        self,
+        min_age_seconds: int = 120,
     ) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_orphaned_pending_submits(min_age_seconds)
 
     def has_pending_action_for_symbol(
-        self, symbol: str, action: str, today_only: bool = True,
+        self,
+        symbol: str,
+        action: str,
+        today_only: bool = True,
     ) -> bool:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().has_pending_action_for_symbol(symbol, action, today_only)
 
     def insert_pending_protection_restore(
-        self, *, symbol: str, sell_order_id: str,
-        position_qty_before_sell: float, specs_json: str,
-        run_id: str | None = None, side: str | None = None,
+        self,
+        *,
+        symbol: str,
+        sell_order_id: str,
+        position_qty_before_sell: float,
+        specs_json: str,
+        run_id: str | None = None,
+        side: str | None = None,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_pending_protection_restore(symbol=symbol, sell_order_id=sell_order_id, position_qty_before_sell=position_qty_before_sell, specs_json=specs_json, run_id=run_id, side=side)
+        return self._trades().insert_pending_protection_restore(
+            symbol=symbol,
+            sell_order_id=sell_order_id,
+            position_qty_before_sell=position_qty_before_sell,
+            specs_json=specs_json,
+            run_id=run_id,
+            side=side,
+        )
 
     def get_protection_restore_wal_audit(self) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
@@ -1623,27 +1903,48 @@ class Database:
         return self._trades().delete_pending_protection_restore(row_id)
 
     def update_pending_protection_restore(
-        self, row_id: int, *,
+        self,
+        row_id: int,
+        *,
         sell_order_id: str | None = None,
         position_qty_before_sell: float | None = None,
         specs_json: str | None = None,
         side: str | None = None,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().update_pending_protection_restore(row_id, sell_order_id=sell_order_id, position_qty_before_sell=position_qty_before_sell, specs_json=specs_json, side=side)
+        return self._trades().update_pending_protection_restore(
+            row_id,
+            sell_order_id=sell_order_id,
+            position_qty_before_sell=position_qty_before_sell,
+            specs_json=specs_json,
+            side=side,
+        )
 
     def update_pending_protection_restore_specs(
-        self, row_id: int, specs_json: str,
+        self,
+        row_id: int,
+        specs_json: str,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().update_pending_protection_restore_specs(row_id, specs_json)
 
     def insert_pending_repeg(
-        self, *, trade_row_id: int | None, symbol: str, old_order_id: str,
-        new_order_id: str, run_id: str | None = None,
+        self,
+        *,
+        trade_row_id: int | None,
+        symbol: str,
+        old_order_id: str,
+        new_order_id: str,
+        run_id: str | None = None,
     ) -> int:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_pending_repeg(trade_row_id=trade_row_id, symbol=symbol, old_order_id=old_order_id, new_order_id=new_order_id, run_id=run_id)
+        return self._trades().insert_pending_repeg(
+            trade_row_id=trade_row_id,
+            symbol=symbol,
+            old_order_id=old_order_id,
+            new_order_id=new_order_id,
+            run_id=run_id,
+        )
 
     def get_pending_repegs(self) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
@@ -1661,9 +1962,9 @@ class Database:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().prune_pending_repegs(keep_days)
 
-    def get_trades(self, symbol: str | None = None, limit: int = 100,
-                    today_only: bool = False,
-                    executed_only: bool = False) -> list[dict]:
+    def get_trades(
+        self, symbol: str | None = None, limit: int = 100, today_only: bool = False, executed_only: bool = False
+    ) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_trades(symbol, limit, today_only, executed_only)
 
@@ -1672,7 +1973,10 @@ class Database:
         return self._trades()._accumulate_excursions(position)
 
     def record_overnight_gap(
-        self, symbol: str, prev_close: float, open_price: float,
+        self,
+        symbol: str,
+        prev_close: float,
+        open_price: float,
         session_date: str,
     ) -> bool:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
@@ -1687,7 +1991,11 @@ class Database:
         return self._trades().sync_positions(positions)
 
     def update_open_take_profit(
-        self, symbol: str, new_target: float, *, action: str | None = None,
+        self,
+        symbol: str,
+        new_target: float,
+        *,
+        action: str | None = None,
     ) -> bool:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().update_open_take_profit(symbol, new_target, action=action)
@@ -1712,7 +2020,7 @@ class Database:
         """Per-call construction so a collaborator swapped after __init__ is still reached."""
         return TradeAnalytics(conn=self.conn, lock=self._lock, executed_trade_predicate=self._executed_trade_predicate)
 
-    def get_evening_report(self, date: str | None=None) -> dict | None:
+    def get_evening_report(self, date: str | None = None) -> dict | None:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_evening_report(date)
 
@@ -1725,7 +2033,8 @@ class Database:
 
         with self._lock:
             positions = [
-                dict(row) for row in self.conn.execute(
+                dict(row)
+                for row in self.conn.execute(
                     "SELECT symbol, qty, avg_entry, current_price, market_value, "
                     "unrealized_pnl FROM positions WHERE qty != 0 "
                     "ORDER BY ABS(market_value) DESC"
@@ -1733,8 +2042,7 @@ class Database:
             ]
         return json.dumps(positions, default=str)
 
-    def save_session_report(self, *, mode: str, date: str,
-                            run_id: str | None, payload: dict) -> None:
+    def save_session_report(self, *, mode: str, date: str, run_id: str | None, payload: dict) -> None:
         """Store one morning/midday/close result dict, verbatim, for replay.
 
         Same contract as `save_evening_report`: `payload` is stored exactly
@@ -1766,12 +2074,11 @@ class Database:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().last_fresh_seat_reads(seats)
 
-    def get_session_report(self, mode: str, date: str | None=None) -> dict | None:
+    def get_session_report(self, mode: str, date: str | None = None) -> dict | None:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_session_report(mode, date)
 
-    def save_intra_check_report(self, *, run_id: str, date: str,
-                                payload: dict) -> None:
+    def save_intra_check_report(self, *, run_id: str, date: str, payload: dict) -> None:
         """Store one intra_check tick's result dict, verbatim, for replay.
 
         Keyed by run_id, not date: intra_check fires roughly every 30
@@ -1796,7 +2103,7 @@ class Database:
             )
             self.conn.commit()
 
-    def get_intra_check_report(self, run_id: str | None=None, date: str | None=None) -> dict | None:
+    def get_intra_check_report(self, run_id: str | None = None, date: str | None = None) -> dict | None:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_intra_check_report(run_id, date)
 
@@ -1804,21 +2111,27 @@ class Database:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_earliest_daily_pnl()
 
-    def get_daily_pnl(self, limit: int=30, before_date: str | None=None) -> list[dict]:
+    def get_daily_pnl(self, limit: int = 30, before_date: str | None = None) -> list[dict]:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_daily_pnl(limit, before_date)
 
-    def save_insights(self, date: str, tomorrow_outlook: str, lessons: str,
-                      suggested_actions: str, risk_rating: str,
-                      tomorrow_bias: str = "neutral",
-                      tomorrow_conviction: str = "medium",
-                      tomorrow_key_risks: list | str = (),
-                      sell_decisions_assessment: str = ""):
+    def save_insights(
+        self,
+        date: str,
+        tomorrow_outlook: str,
+        lessons: str,
+        suggested_actions: str,
+        risk_rating: str,
+        tomorrow_bias: str = "neutral",
+        tomorrow_conviction: str = "medium",
+        tomorrow_key_risks: list | str = (),
+        sell_decisions_assessment: str = "",
+    ):
         import json
+
         actions_json = json.dumps(suggested_actions) if isinstance(suggested_actions, list) else suggested_actions
         risks_json = (
-            json.dumps(list(tomorrow_key_risks))
-            if not isinstance(tomorrow_key_risks, str) else tomorrow_key_risks
+            json.dumps(list(tomorrow_key_risks)) if not isinstance(tomorrow_key_risks, str) else tomorrow_key_risks
         )
         with self._lock:
             self.conn.execute(
@@ -1827,13 +2140,21 @@ class Database:
                     tomorrow_bias, tomorrow_conviction, tomorrow_key_risks,
                     sell_decisions_assessment)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (date, tomorrow_outlook, lessons, actions_json, risk_rating,
-                 tomorrow_bias, tomorrow_conviction, risks_json,
-                 sell_decisions_assessment or ""),
+                (
+                    date,
+                    tomorrow_outlook,
+                    lessons,
+                    actions_json,
+                    risk_rating,
+                    tomorrow_bias,
+                    tomorrow_conviction,
+                    risks_json,
+                    sell_decisions_assessment or "",
+                ),
             )
             self.conn.commit()
 
-    def get_symbol_last_buy(self, symbol: str, include_in_flight: bool=False, *, action: str='BUY') -> dict | None:
+    def get_symbol_last_buy(self, symbol: str, include_in_flight: bool = False, *, action: str = "BUY") -> dict | None:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_symbol_last_buy(symbol, include_in_flight, action=action)
 
@@ -1845,7 +2166,7 @@ class Database:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_position_open_row(buy_row)
 
-    def get_recent_insights(self, limit: int=7) -> list[dict]:
+    def get_recent_insights(self, limit: int = 7) -> list[dict]:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_recent_insights(limit)
 
@@ -1853,15 +2174,15 @@ class Database:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_proposal_funnel_rows(since_ts)
 
-    def compute_trade_calibration(self, lookback_days: int=45) -> dict:
+    def compute_trade_calibration(self, lookback_days: int = 45) -> dict:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().compute_trade_calibration(lookback_days)
 
-    def get_recent_agent_outputs(self, agent_name: str, limit: int=5, before_date: str | None=None) -> list[dict]:
+    def get_recent_agent_outputs(self, agent_name: str, limit: int = 5, before_date: str | None = None) -> list[dict]:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_recent_agent_outputs(agent_name, limit, before_date)
 
-    def get_latest_insights(self, before_date: str | None=None) -> dict | None:
+    def get_latest_insights(self, before_date: str | None = None) -> dict | None:
         """Thin shim: lifted into TradeAnalytics (db rebuild instalment 2); built per call."""
         return self._analytics().get_latest_insights(before_date)
 

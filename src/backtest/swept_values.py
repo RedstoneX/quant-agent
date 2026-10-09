@@ -42,6 +42,7 @@ the duration of one run only, and restores the original afterwards.
 NOTHING HERE RAISES. A diagnostic that halts a backtest is worse than
 the problem it reports. A zero count is reported, never enforced.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -66,10 +67,8 @@ KNOWN_VALUES: dict[str, str] = {
 #: DEFINES the constant is exactly the mistake this file exists to make
 #: visible, because `from X import NAME` already copied the value out.
 FROZEN_SITES: tuple[tuple[str, str, str], ...] = (
-    ("src.risk.trail_evaluate", "CHANDELIER_ATR_MULTIPLE",
-     "trailing.chandelier_atr_multiple"),
-    ("src.risk.trail_evaluate", "NOISE_BAND_ATR_MULTIPLE",
-     "trailing.noise_band_atr_multiple"),
+    ("src.risk.trail_evaluate", "CHANDELIER_ATR_MULTIPLE", "trailing.chandelier_atr_multiple"),
+    ("src.risk.trail_evaluate", "NOISE_BAND_ATR_MULTIPLE", "trailing.noise_band_atr_multiple"),
 )
 
 
@@ -219,10 +218,15 @@ class SweepMeter:
         """
         seen = self.counts()
         head = f"SWEPT-VALUE READS{(' — ' + label) if label else ''}"
-        lines = ["=" * 74, head, "=" * 74,
-                 "Times this run actually READ each value a sweep can vary.",
-                 "0 means the run never reached it: any A/B over it is a NON-RESULT,",
-                 "however different or identical the numbers look.", ""]
+        lines = [
+            "=" * 74,
+            head,
+            "=" * 74,
+            "Times this run actually READ each value a sweep can vary.",
+            "0 means the run never reached it: any A/B over it is a NON-RESULT,",
+            "however different or identical the numbers look.",
+            "",
+        ]
         width = max(len(n) for n in seen)
         for name in sorted(seen):
             n = seen[name]
@@ -232,15 +236,15 @@ class SweepMeter:
         unknown = self.unknown_overrides()
         if unknown:
             lines.append("")
-            lines.append("  Overrides with no reading site in this engine (can only "
-                         "ever report 0):")
+            lines.append("  Overrides with no reading site in this engine (can only ever report 0):")
             for name in unknown:
                 lines.append(f"    {name}")
         swept_unread = sorted(n for n in self.overrides if seen.get(n, 0) == 0)
         lines.append("")
         if swept_unread:
-            lines.append("  VERDICT: this sweep did NOT reach " +
-                         ", ".join(swept_unread) + " — its result is a non-result.")
+            lines.append(
+                "  VERDICT: this sweep did NOT reach " + ", ".join(swept_unread) + " — its result is a non-result."
+            )
         elif self.overrides:
             lines.append("  VERDICT: every swept value was read at its use site.")
         else:

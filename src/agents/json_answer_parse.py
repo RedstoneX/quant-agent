@@ -32,11 +32,7 @@ def shape_score(parsed, key_weights: Mapping[str, int]) -> int:
     if not isinstance(parsed, dict):
         return 0
     keys = set(parsed.keys())
-    return sum(
-        weight
-        for key, weight in key_weights.items()
-        if key in keys
-    )
+    return sum(weight for key, weight in key_weights.items() if key in keys)
 
 
 def repair_unquoted_keys(text: str) -> str:
@@ -107,10 +103,15 @@ def parse_json_text(
                 parsed = json.loads(repair_unquoted_keys(fenced))
             except json.JSONDecodeError:
                 continue
-        candidates.append((
-            shape_score(parsed, key_weights), len(json.dumps(parsed)), idx,
-            match.span(1), parsed,
-        ))
+        candidates.append(
+            (
+                shape_score(parsed, key_weights),
+                len(json.dumps(parsed)),
+                idx,
+                match.span(1),
+                parsed,
+            )
+        )
         idx += 1
 
     decoder = json.JSONDecoder()
@@ -121,10 +122,15 @@ def parse_json_text(
             parsed, end = decoder.raw_decode(raw_text[i:])
         except json.JSONDecodeError:
             continue
-        candidates.append((
-            shape_score(parsed, key_weights), len(json.dumps(parsed)), idx,
-            (i, i + end), parsed,
-        ))
+        candidates.append(
+            (
+                shape_score(parsed, key_weights),
+                len(json.dumps(parsed)),
+                idx,
+                (i, i + end),
+                parsed,
+            )
+        )
         idx += 1
 
     # Nested-fragment filter: a candidate STRICTLY contained inside a
@@ -142,19 +148,12 @@ def parse_json_text(
     # (e.g. {"thinking": ..., "answer": {...}}), where the wrapper has
     # no recognizable agent shape and the payload is the real output.
     def _strictly_inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
-        return (
-            outer[0] <= inner[0] and inner[1] <= outer[1]
-            and (outer[0] < inner[0] or inner[1] < outer[1])
-        )
+        return outer[0] <= inner[0] and inner[1] <= outer[1] and (outer[0] < inner[0] or inner[1] < outer[1])
 
     filtered = [
-        c for c in candidates
-        if not any(
-            other is not c
-            and other[0] > 0
-            and _strictly_inside(c[3], other[3])
-            for other in candidates
-        )
+        c
+        for c in candidates
+        if not any(other is not c and other[0] > 0 and _strictly_inside(c[3], other[3]) for other in candidates)
     ]
     candidates = filtered or candidates
 

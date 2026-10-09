@@ -1,4 +1,5 @@
 """HTTP-status and Retry-After readers for the trade_updates stream, split out of trade_stream.py."""
+
 from __future__ import annotations
 
 import re
@@ -16,8 +17,7 @@ def _stream_http_status(exc: BaseException) -> int | None:
             val = getattr(response, attr, None)
             if isinstance(val, int):
                 return val
-    match = re.search(r"\bHTTP\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b",
-                      str(exc), re.IGNORECASE)
+    match = re.search(r"\bHTTP\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b", str(exc), re.IGNORECASE)
     if match:
         return 429
     return None
@@ -51,7 +51,8 @@ def _stream_retry_after_seconds(exc: BaseException) -> float | None:
             return hint
     match = re.search(
         r'retry[_-]after["\']?\s*[:=]\s*"?(\d+(?:\.\d+)?)',
-        str(exc), re.IGNORECASE,
+        str(exc),
+        re.IGNORECASE,
     )
     if match:
         hint = float(match.group(1))

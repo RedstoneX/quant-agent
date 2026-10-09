@@ -17,6 +17,7 @@ The module-level helpers the bodies read as globals moved with them;
 `src.execution.broker` re-exports every one so existing importers and patch
 targets still resolve.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,9 +33,14 @@ from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, Repla
 from src.execution.broker_parts.stop_amend import _quantize_price
 from src.execution.broker_parts.stop_place import _alpaca_symbol, _internal_symbol
 from src.execution.order_gates import (  # noqa: F401 (re-exports keep patch targets)
-    _PLAIN_PRICE_LABELS, _outlier_refusal_detail, QTY_REJECTED, quantity_refusal_live,
+    _PLAIN_PRICE_LABELS,
+    _outlier_refusal_detail,
+    QTY_REJECTED,
+    quantity_refusal_live,
 )
-from src.execution import order_idempotency as _idem  # session key read via the module so one patch target serves every path
+from src.execution import (
+    order_idempotency as _idem,
+)  # session key read via the module so one patch target serves every path
 from src.execution.order_idempotency import _client_order_id, _submit_entry_request_idempotent
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 
@@ -59,7 +65,8 @@ class OrderDesk:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         client,
         kill_switch_active,
         kill_switch_path,
@@ -150,10 +157,10 @@ class OrderDesk:
             count = 0
             for order in orders or []:
                 order_id = getattr(order, "id", None)
-                order_side = str(getattr(getattr(order, "side", None), "value",
-                                        getattr(order, "side", ""))).lower()
-                order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                        getattr(order, "order_type", ""))).lower()
+                order_side = str(getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))).lower()
+                order_type = str(
+                    getattr(getattr(order, "order_type", None), "value", getattr(order, "order_type", ""))
+                ).lower()
                 if order_side not in ("buy", "sell") or not order_id:
                     continue
                 if "stop" in order_type:
@@ -169,13 +176,19 @@ class OrderDesk:
             return 0
 
     def list_open_entry_order_ids(
-        self, symbol: str, *, side: str | None = None,
+        self,
+        symbol: str,
+        *,
+        side: str | None = None,
     ) -> list[str]:
         """Ids of working non-stop BUY/SELL orders for `symbol` (see order_desk_reads)."""
         return _reads.list_open_entry_order_ids(self, symbol, side=side)
 
     def list_open_entry_orders_checked(
-        self, symbol: str, *, side: str | None = None,
+        self,
+        symbol: str,
+        *,
+        side: str | None = None,
     ) -> tuple[bool, list[str]]:
         """`(ok, ids)` for working non-stop orders (see order_desk_reads)."""
         return _reads.list_open_entry_orders_checked(self, symbol, side=side)
@@ -185,7 +198,10 @@ class OrderDesk:
         return _reads.open_buy_notional(self)
 
     def list_recent_orders(
-        self, symbol: str, side: str, after,
+        self,
+        symbol: str,
+        side: str,
+        after,
     ) -> list[dict] | None:
         """All of `symbol`'s orders on `side` since `after` (see order_desk_reads)."""
         return _reads.list_recent_orders(self, symbol, side, after)
@@ -223,17 +239,15 @@ class OrderDesk:
         status if nothing arrived, and the full REST polling loop only when
         the stream could not be used at all. No new polling machinery.
         """
-        stop_states = (
-            self._ORDER_TERMINAL_STATES
-            | self._ORDER_REPLACEABLE_STATES
-            | frozenset({"partially_filled"})
-        )
+        stop_states = self._ORDER_TERMINAL_STATES | self._ORDER_REPLACEABLE_STATES | frozenset({"partially_filled"})
         return self._wait_for_order_status(
-            order_id, timeout_seconds, poll_interval,
-            stop_states=stop_states, use_stream=use_stream,
+            order_id,
+            timeout_seconds,
+            poll_interval,
+            stop_states=stop_states,
+            use_stream=use_stream,
             unavailable_log=(
-                "order-status stream unavailable for %s — falling back to "
-                "REST polling for exchange acknowledgement"
+                "order-status stream unavailable for %s — falling back to REST polling for exchange acknowledgement"
             ),
         )
 
@@ -277,11 +291,12 @@ class OrderDesk:
         real network I/O.
         """
         return self._wait_for_order_status(
-            order_id, timeout_seconds, poll_interval,
-            stop_states=self._ORDER_TERMINAL_STATES, use_stream=use_stream,
-            unavailable_log=(
-                "order-fill stream unavailable for %s — falling back to REST polling"
-            ),
+            order_id,
+            timeout_seconds,
+            poll_interval,
+            stop_states=self._ORDER_TERMINAL_STATES,
+            use_stream=use_stream,
+            unavailable_log=("order-fill stream unavailable for %s — falling back to REST polling"),
         )
 
     def _get_order_status_once(self, order_id: str) -> str | None:
@@ -289,8 +304,7 @@ class OrderDesk:
         on any failure — callers already treat None as "no information"."""
         try:
             order = self.client.get_order_by_id(order_id)
-            status = str(getattr(getattr(order, "status", None), "value",
-                                 getattr(order, "status", ""))).lower()
+            status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
             ok(self, "read_order_status", order=order_id)
             return status or None
         except Exception as exc:
@@ -298,7 +312,9 @@ class OrderDesk:
             return None
 
     def _wait_for_order_terminal_via_stream(
-        self, order_id: str, timeout_seconds: float,
+        self,
+        order_id: str,
+        timeout_seconds: float,
         poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
         """Terminal-state wait on the websocket. See
@@ -307,7 +323,9 @@ class OrderDesk:
         name because the polling/stream tests and `wait_for_order_terminal`
         address it directly."""
         return self._wait_for_order_status_via_stream(
-            order_id, timeout_seconds, stop_states=self._ORDER_TERMINAL_STATES,
+            order_id,
+            timeout_seconds,
+            stop_states=self._ORDER_TERMINAL_STATES,
             poll_interval=poll_interval,
         )
 
@@ -320,7 +338,9 @@ class OrderDesk:
         """The original REST-polling implementation, kept as the fallback
         path for when the real-time stream cannot be used at all."""
         return self._wait_for_order_status_via_polling(
-            order_id, timeout_seconds, poll_interval,
+            order_id,
+            timeout_seconds,
+            poll_interval,
             stop_states=self._ORDER_TERMINAL_STATES,
         )
 
@@ -340,8 +360,7 @@ class OrderDesk:
         while time.monotonic() < deadline:
             try:
                 order = self.client.get_order_by_id(order_id)
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
+                status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
                 ok(self, "poll_order_status", order=order_id)
             except Exception as exc:
                 mark(self, "poll_order_status", exc, order=order_id)
@@ -354,12 +373,17 @@ class OrderDesk:
 
         return last_status
 
-    def submit_order(self, symbol: str, qty: float, side: str,
-                     limit_price: float | None = None,
-                     stop_loss_price: float | None = None,
-                     take_profit_price: float | None = None,
-                     reference_price: float | None = None,
-                     atr: float | None = None) -> dict:
+    def submit_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        limit_price: float | None = None,
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
+        reference_price: float | None = None,
+        atr: float | None = None,
+    ) -> dict:
         """Submit an entry or exit order.
 
         `atr` is OPTIONAL and is used for the OWNER-FACING WORDING ONLY —
@@ -376,13 +400,17 @@ class OrderDesk:
             logger.error(
                 "KILL SWITCH ACTIVE (%s exists): refusing %s %s %s. Every "
                 "order — entry or exit — is halted until the file is "
-                "removed.", self._kill_switch_path, side.upper(), qty, symbol,
+                "removed.",
+                self._kill_switch_path,
+                side.upper(),
+                qty,
+                symbol,
             )
             return {
-                "id": None, "status": "kill_switch_halted",
+                "id": None,
+                "status": "kill_switch_halted",
                 "symbol": _internal_symbol(symbol),
-                "detail": "the trading kill switch is active — every order "
-                          "is halted until the file is removed",
+                "detail": "the trading kill switch is active — every order is halted until the file is removed",
             }
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
@@ -394,9 +422,7 @@ class OrderDesk:
         # protective stop at all, which is the worst possible outcome of a
         # bad number. The stop checks below refuse it instead.
         stop_was_supplied = stop_loss_price is not None
-        stop_was_finite = (
-            stop_loss_price is not None and math.isfinite(stop_loss_price)
-        )
+        stop_was_finite = stop_loss_price is not None and math.isfinite(stop_loss_price)
 
         # Normalize to Alpaca's tick size — sub-penny values from quote-midpoint
         # math or LLM outputs get Alpaca error 42210000 and a rejected order.
@@ -461,10 +487,17 @@ class OrderDesk:
                     logger.error(
                         "Fat-finger guard: %s %s — %s=$%.4f deviates %.1f%% from reference $%.2f. "
                         "Order REJECTED (likely data glitch or LLM hallucination).",
-                        side.upper(), symbol, label, candidate, deviation * 100, reference_price,
+                        side.upper(),
+                        symbol,
+                        label,
+                        candidate,
+                        deviation * 100,
+                        reference_price,
                     )
                     return {
-                        "id": None, "status": "rejected_outlier", "symbol": internal_symbol,
+                        "id": None,
+                        "status": "rejected_outlier",
+                        "symbol": internal_symbol,
                         # Surfaced downstream (src/pipeline_stages.py's
                         # execution-skip record, then the Telegram alert) so
                         # the operator reads the REAL blocker — QAMC's own
@@ -488,8 +521,11 @@ class OrderDesk:
                         # caller has none the sentence simply omits it
                         # rather than inventing a range.
                         "detail": _outlier_refusal_detail(
-                            label, candidate, reference_price,
-                            symbol=internal_symbol, atr=atr,
+                            label,
+                            candidate,
+                            reference_price,
+                            symbol=internal_symbol,
+                            atr=atr,
                         ),
                     }
 
@@ -510,9 +546,7 @@ class OrderDesk:
             # stopless buy) — that distinction is the whole fix. NaN/Inf
             # was the same hole in a different disguise, closed for this
             # lane by PR #455; zero is closed here.
-            stop_state, _stop_px = classify_stop_price(
-                stop_loss_price if stop_was_finite else float("nan")
-            )
+            stop_state, _stop_px = classify_stop_price(stop_loss_price if stop_was_finite else float("nan"))
             if stop_state != STOP_USABLE:
                 logger.error(
                     "Stop sanity: %s %s — a stop was requested and its value "
@@ -520,10 +554,13 @@ class OrderDesk:
                     "submitted naked. A garbage stop is not an absent stop: "
                     "only a caller that passes no stop at all (None) is "
                     "allowed a stopless order.",
-                    side.upper(), symbol, stop_loss_price,
+                    side.upper(),
+                    symbol,
+                    stop_loss_price,
                 )
                 return {
-                    "id": None, "status": "rejected_bad_stop",
+                    "id": None,
+                    "status": "rejected_bad_stop",
                     "symbol": internal_symbol,
                     "detail": "the stop price is not a usable number",
                 }
@@ -537,9 +574,9 @@ class OrderDesk:
             # falling back to the quote when it is a market order. No
             # number is chosen: it is an inequality.
             entry_ref = (
-                limit_price if (limit_price and limit_price > 0)
-                else (reference_price if (reference_price and reference_price > 0)
-                      else None)
+                limit_price
+                if (limit_price and limit_price > 0)
+                else (reference_price if (reference_price and reference_price > 0) else None)
             )
             if (
                 entry_ref is not None
@@ -549,19 +586,20 @@ class OrderDesk:
                 and stop_loss_price > 0
             ):
                 is_short_entry = side.lower() == "sell_short"
-                wrong_side = (
-                    stop_loss_price <= entry_ref if is_short_entry
-                    else stop_loss_price >= entry_ref
-                )
+                wrong_side = stop_loss_price <= entry_ref if is_short_entry else stop_loss_price >= entry_ref
                 if wrong_side:
                     logger.error(
                         "Stop sanity: %s %s — stop=$%.4f is on the wrong "
                         "side of the $%.4f entry, so it protects nothing. "
                         "Order REJECTED.",
-                        side.upper(), symbol, stop_loss_price, entry_ref,
+                        side.upper(),
+                        symbol,
+                        stop_loss_price,
+                        entry_ref,
                     )
                     return {
-                        "id": None, "status": "rejected_bad_stop",
+                        "id": None,
+                        "status": "rejected_bad_stop",
                         "symbol": internal_symbol,
                         "detail": (
                             f"stop ${stop_loss_price:,.2f} is on the wrong "
@@ -573,16 +611,19 @@ class OrderDesk:
         # Quantity gate (src/execution/order_gates.py): the stop PRICE was
         # refused here, the quantity never was (2026-10-01 audit).
         qty_refusal = quantity_refusal_live(
-            internal_symbol, alpaca_symbol, qty, side,
+            internal_symbol,
+            alpaca_symbol,
+            qty,
+            side,
             price=limit_price if (limit_price and limit_price > 0) else reference_price,
-            client=self.client, get_fractionability=self._get_fractionability,
-            get_account=self._get_account, max_position_pct=self._max_position_pct,
+            client=self.client,
+            get_fractionability=self._get_fractionability,
+            get_account=self._get_account,
+            max_position_pct=self._max_position_pct,
         )
         if qty_refusal is not None:
-            logger.error("Quantity gate: %s %s %s — %s. Order REJECTED.",
-                         side.upper(), qty, symbol, qty_refusal)
-            return {"id": None, "status": QTY_REJECTED,
-                    "symbol": internal_symbol, "detail": qty_refusal}
+            logger.error("Quantity gate: %s %s %s — %s. Order REJECTED.", side.upper(), qty, symbol, qty_refusal)
+            return {"id": None, "status": QTY_REJECTED, "symbol": internal_symbol, "detail": qty_refusal}
 
         # Protective stop for a BUY is placed as a SEPARATE GTC stop-MARKET
         # (guaranteed exit; stop-limit only on the unsupported-combo fallback)
@@ -616,32 +657,44 @@ class OrderDesk:
         # which never passes `stop_loss_price` and so never reaches here
         # regardless — 'sell_short' is the only sell-side string an ENTRY
         # ever uses.
-        use_stop = (stop_loss_price is not None and stop_loss_price > 0
-                    and side.lower() in ("buy", "sell_short"))
+        use_stop = stop_loss_price is not None and stop_loss_price > 0 and side.lower() in ("buy", "sell_short")
 
         # Idempotency key (src/execution/order_idempotency.py): a retried
         # submission reuses it and the broker refuses the duplicate.
         client_order_id = _client_order_id(
-            purpose="ENT", symbol=alpaca_symbol, side=side,
-            session_date=_idem._session_date_key(), qty=qty, price=limit_price,
+            purpose="ENT",
+            symbol=alpaca_symbol,
+            side=side,
+            session_date=_idem._session_date_key(),
+            qty=qty,
+            price=limit_price,
         )
         if limit_price is not None:
             request = LimitOrderRequest(
-                symbol=alpaca_symbol, qty=qty, side=order_side,
-                time_in_force=TimeInForce.DAY, limit_price=limit_price,
+                symbol=alpaca_symbol,
+                qty=qty,
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
+                limit_price=limit_price,
                 client_order_id=client_order_id,
             )
         else:
             request = MarketOrderRequest(
-                symbol=alpaca_symbol, qty=qty, side=order_side,
+                symbol=alpaca_symbol,
+                qty=qty,
+                side=order_side,
                 time_in_force=TimeInForce.DAY,
                 client_order_id=client_order_id,
             )
 
         try:
             order = _submit_entry_request_idempotent(
-                self.client, request, client_order_id=client_order_id,
-                side=side, qty=qty, symbol=symbol,
+                self.client,
+                request,
+                client_order_id=client_order_id,
+                side=side,
+                qty=qty,
+                symbol=symbol,
             )
         except Exception as exc:  # noqa: BLE001
             # Owner ruling 2026-09-30 (board item 183): the constructor's
@@ -669,17 +722,28 @@ class OrderDesk:
                 mark(self, "submit_order_rejected", exc, side=side)
                 logger.warning(
                     "Order rejected by broker for %s %s %s: %s",
-                    side, qty, symbol, exc,
+                    side,
+                    qty,
+                    symbol,
+                    exc,
                 )
                 return {
-                    "id": None, "status": "rejected_by_broker",
-                    "symbol": internal_symbol, "detail": str(exc),
+                    "id": None,
+                    "status": "rejected_by_broker",
+                    "symbol": internal_symbol,
+                    "detail": str(exc),
                 }
             raise
         bracket_info = f" [SL=${stop_loss_price} to be placed on fill]" if use_stop else ""
-        logger.info("Order submitted: %s %s %s @ %s%s — status: %s",
-                     side, qty, symbol, limit_price or "market", bracket_info,
-                     str(getattr(order.status, "value", order.status)))
+        logger.info(
+            "Order submitted: %s %s %s @ %s%s — status: %s",
+            side,
+            qty,
+            symbol,
+            limit_price or "market",
+            bracket_info,
+            str(getattr(order.status, "value", order.status)),
+        )
         return {
             "id": str(order.id),
             # alpaca-py OrderStatus is `(str, Enum)`. Plain `str(enum)`
@@ -745,23 +809,25 @@ class OrderDesk:
             except Exception as exc:  # noqa: BLE001
                 mark(self, "resolve_replacement_chain", exc, order=current)
                 return None
-            status = str(
-                getattr(getattr(order, "status", None), "value",
-                        getattr(order, "status", ""))
-            ).lower()
+            status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
             successor = getattr(order, "replaced_by", None)
             successor = str(successor) if successor else ""
             if status != "replaced" or not successor or successor == current:
                 return current
             current = successor
         logger.error(
-            "resolve_replacement_chain: %s exceeded %d hops — refusing to "
-            "keep walking", order_id, self._MAX_REPLACEMENT_HOPS,
+            "resolve_replacement_chain: %s exceeded %d hops — refusing to keep walking",
+            order_id,
+            self._MAX_REPLACEMENT_HOPS,
         )
         return None
 
     def replace_entry_limit(
-        self, order_id: str, new_limit_price: float, *, qty: float | None = None,
+        self,
+        order_id: str,
+        new_limit_price: float,
+        *,
+        qty: float | None = None,
     ) -> dict:
         """PATCH a working entry limit to a new price. Returns the NEW order id.
 
@@ -789,15 +855,18 @@ class OrderDesk:
         """
         if self._kill_switch_active():
             logger.error(
-                "KILL SWITCH ACTIVE (%s exists): refusing to re-peg entry "
-                "order %s to $%.4f.", self._kill_switch_path, order_id, new_limit_price,
+                "KILL SWITCH ACTIVE (%s exists): refusing to re-peg entry order %s to $%.4f.",
+                self._kill_switch_path,
+                order_id,
+                new_limit_price,
             )
             return {"id": None, "status": "kill_switch_halted"}
         price = _quantize_price(new_limit_price)
         if price is None or price <= 0:
             logger.warning(
                 "replace_entry_limit refused for %s: non-quotable price %r",
-                order_id, new_limit_price,
+                order_id,
+                new_limit_price,
             )
             return {"id": None, "status": "replace_invalid_price"}
 
@@ -817,7 +886,8 @@ class OrderDesk:
             logger.info(
                 "replace_entry_limit refused for %s: fractional qty %s cannot "
                 "be re-pegged — the original order remains authoritative",
-                order_id, qty,
+                order_id,
+                qty,
             )
             return {"id": None, "status": "replace_unsupported_fractional_qty"}
 
@@ -832,7 +902,8 @@ class OrderDesk:
 
         try:
             order = self.client.replace_order_by_id(
-                order_id, ReplaceOrderRequest(**kwargs),
+                order_id,
+                ReplaceOrderRequest(**kwargs),
             )
             ok(self, "replace_entry_limit", order=order_id)
         except Exception as exc:  # noqa: BLE001
@@ -844,24 +915,29 @@ class OrderDesk:
             logger.error(
                 "replace_entry_limit: broker accepted the replacement of %s "
                 "but returned no order id — treating as rejected so the "
-                "caller keeps polling the original", order_id,
+                "caller keeps polling the original",
+                order_id,
             )
             return {"id": None, "status": "replace_rejected"}
-        status = str(
-            getattr(getattr(order, "status", None), "value",
-                    getattr(order, "status", ""))
-        ).lower()
+        status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
         logger.info(
             "replace_entry_limit: %s → %s @ $%.4f (status %s)",
-            order_id, new_id, price, status or "unknown",
+            order_id,
+            new_id,
+            price,
+            status or "unknown",
         )
         return {
-            "id": new_id, "status": status or "accepted",
-            "limit_price": price, "replaces": str(order_id),
+            "id": new_id,
+            "status": status or "accepted",
+            "limit_price": price,
+            "replaces": str(order_id),
         }
 
     def await_replacement_confirmed(
-        self, old_order_id: str, new_order_id: str,
+        self,
+        old_order_id: str,
+        new_order_id: str,
         timeout_seconds: float = 5.0,
     ) -> bool:
         """Block until Alpaca has FINISHED replacing `old_order_id`.
@@ -906,7 +982,8 @@ class OrderDesk:
             return False
         try:
             status = self.wait_for_order_terminal(
-                str(old_order_id), timeout_seconds=timeout_seconds,
+                str(old_order_id),
+                timeout_seconds=timeout_seconds,
                 poll_interval=min(1.0, max(0.1, timeout_seconds)),
             )
             ok(self, "replace_confirmation_wait", order=str(old_order_id))
@@ -930,7 +1007,11 @@ class OrderDesk:
             "replace confirmation: %s → %s could not be confirmed within "
             "%.1fs (last status %r, chain %r) — the chase stops here rather "
             "than firing a second replace into a pending_replace window",
-            old_order_id, new_order_id, timeout_seconds, status, resolved,
+            old_order_id,
+            new_order_id,
+            timeout_seconds,
+            status,
+            resolved,
         )
         return False
 
@@ -938,5 +1019,4 @@ class OrderDesk:
         order = self.client.close_position(_alpaca_symbol(symbol))
         logger.info("Closed position: %s", symbol)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
-        return {"id": str(order.id),
-                "status": str(getattr(order.status, "value", order.status))}
+        return {"id": str(order.id), "status": str(getattr(order.status, "value", order.status))}

@@ -57,6 +57,7 @@ validation, which is a different code path and found 9 differences /
 verifiable from `/tmp/qamc_ro.db` by anyone who can read it; the 292 figure
 is not re-asserted as fact here.
 """
+
 import json
 import re
 from pathlib import Path

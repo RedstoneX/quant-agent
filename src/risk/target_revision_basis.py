@@ -141,7 +141,9 @@ def _finite(value: object) -> float | None:
 
 
 def remaining_horizon_sessions(
-    *, pinned_horizon_sessions: int | None, sessions_held: int | None,
+    *,
+    pinned_horizon_sessions: int | None,
+    sessions_held: int | None,
 ) -> int | None:
     """How much of its pinned horizon this position has LEFT, in sessions.
 

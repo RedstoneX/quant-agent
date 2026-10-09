@@ -1,4 +1,5 @@
 """The undefined-name guard reads the test tree; one frozen fixture is excluded."""
+
 from __future__ import annotations
 
 from pathlib import Path

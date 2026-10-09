@@ -35,6 +35,7 @@ Exit codes:
        never turns a network hiccup into red)
     1  a real cross-PR collision was found
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,8 +49,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.board_numbers import read_open_pr_claims  # noqa: E402
 
 
-def find_collisions(pr_number: int, claims_by_pr: dict[int, set[int]],
-                     ) -> list[str]:
+def find_collisions(
+    pr_number: int,
+    claims_by_pr: dict[int, set[int]],
+) -> list[str]:
     """One sentence per OTHER open PR that added a number this PR also
     added. `pr_number` itself is never compared against itself."""
     mine = claims_by_pr.get(pr_number, set())
@@ -71,28 +74,31 @@ def find_collisions(pr_number: int, claims_by_pr: dict[int, set[int]],
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pr-number", type=int, required=True)
     args = parser.parse_args(argv)
 
     claims = read_open_pr_claims()
     if claims.problem:
-        print(f"check_board_number_claims: could not read open pull "
-              f"requests ({claims.problem}); advisory check skipped, not "
-              f"failed", file=sys.stderr)
+        print(
+            f"check_board_number_claims: could not read open pull "
+            f"requests ({claims.problem}); advisory check skipped, not "
+            f"failed",
+            file=sys.stderr,
+        )
         return 0
 
     if args.pr_number not in claims.by_pr:
-        print(f"check_board_number_claims: PR {args.pr_number} adds no new "
-              f"board item number (or could not be read); nothing to check "
-              f"against other open PRs")
+        print(
+            f"check_board_number_claims: PR {args.pr_number} adds no new "
+            f"board item number (or could not be read); nothing to check "
+            f"against other open PRs"
+        )
         return 0
 
     collisions = find_collisions(args.pr_number, claims.by_pr)
     if not collisions:
-        print(f"check_board_number_claims: no other open pull request "
-              f"claims {sorted(claims.by_pr[args.pr_number])}")
+        print(f"check_board_number_claims: no other open pull request claims {sorted(claims.by_pr[args.pr_number])}")
         return 0
 
     for line in collisions:

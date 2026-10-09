@@ -49,11 +49,7 @@ def test_no_owner_facing_module_formats_a_clock_time_itself():
                 if name not in ("strftime", "format"):
                     continue
                 for arg in node.args[:1]:
-                    if (
-                        isinstance(arg, ast.Constant)
-                        and isinstance(arg.value, str)
-                        and _bare_clock(arg.value)
-                    ):
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and _bare_clock(arg.value):
                         offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
             # f-string format specs such as f"{dt:%H:%M}"
             for node in ast.walk(tree):
@@ -61,9 +57,7 @@ def test_no_owner_facing_module_formats_a_clock_time_itself():
                     spec = ast.unparse(node.format_spec)
                     if _bare_clock(spec):
                         offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
-    assert offenders == [], (
-        f"owner-facing clock time formatted without the shared formatter: {offenders}"
-    )
+    assert offenders == [], f"owner-facing clock time formatted without the shared formatter: {offenders}"
 
 
 def test_health_report_window_carries_the_date_even_within_one_day():

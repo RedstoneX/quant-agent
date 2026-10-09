@@ -3,6 +3,7 @@ of ``pipeline_risk_gate.py`` (at its size ratchet) so that module's catch-alls
 could be made LOUD. A pure rule over the decisions and the earnings results it
 is handed; ``RiskGate`` re-exports it as a staticmethod under its old name.
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,6 +69,7 @@ def refuse_queued_earnings_buys(
         return decisions
 
     from src.risk.rules import unread_filing_block_reason
+
     kept: list[TradeDecision] = []
     for d in decisions:
         if d.action != "BUY" or d.symbol.upper() not in queued_symbols:
@@ -75,6 +77,8 @@ def refuse_queued_earnings_buys(
             continue
         logger.warning(
             "Unread-filing refusal: dropping %s BUY %.2f%% — %s",
-            d.symbol, d.allocation_pct, unread_filing_block_reason(d.symbol),
+            d.symbol,
+            d.allocation_pct,
+            unread_filing_block_reason(d.symbol),
         )
     return kept

@@ -95,8 +95,7 @@ class StopCancelOutcome:
             f"cancelled={len(self.cancelled)} "
             f"still_resting={len(self.still_resting)} "
             f"UNPROTECTED={len(self.unprotected)} "
-            f"(qty {self.unprotected_qty:g})"
-            + (f" — {self.detail}" if self.detail else "")
+            f"(qty {self.unprotected_qty:g})" + (f" — {self.detail}" if self.detail else "")
         )
 
     # --- the forcing function --------------------------------------------
@@ -135,10 +134,7 @@ class StopCoverageLost(RuntimeError):
 
     def __init__(self, outcome: StopCancelOutcome):
         self.outcome = outcome
-        super().__init__(
-            "protective stop coverage shrank and could not be rolled back: "
-            + outcome.summary()
-        )
+        super().__init__("protective stop coverage shrank and could not be rolled back: " + outcome.summary())
 
 
 def settle_cancel(symbol, specs, cancelled, untouched, cancel_failed, restore, log):
@@ -157,26 +153,36 @@ def settle_cancel(symbol, specs, cancelled, untouched, cancel_failed, restore, l
         try:
             _n, rollback_failed = restore(symbol, cancelled)
         except Exception as exc:  # noqa: BLE001
-            log.error("cancel_snapshotted_stops: rollback RAISED for %s (%s) — "
-                      "treating every cancelled stop as unrestored.", symbol, exc)
+            log.error(
+                "cancel_snapshotted_stops: rollback RAISED for %s (%s) — treating every cancelled stop as unrestored.",
+                symbol,
+                exc,
+            )
             rollback_failed = list(cancelled)
         lost = {id(s) for s in rollback_failed}
         restored = [s for s in cancelled if id(s) not in lost]
     outcome = StopCancelOutcome(
-        symbol=symbol, requested=tuple(specs), cancelled=(),
+        symbol=symbol,
+        requested=tuple(specs),
+        cancelled=(),
         still_resting=tuple(cancel_failed) + tuple(untouched) + tuple(restored),
         unprotected=tuple(rollback_failed),
-        detail=f"{len(cancel_failed)}/{len(specs)} cancel(s) failed" + (
-            f", {len(untouched)} spec(s) had no order id" if untouched else ""),
+        detail=f"{len(cancel_failed)}/{len(specs)} cancel(s) failed"
+        + (f", {len(untouched)} spec(s) had no order id" if untouched else ""),
     )
     if outcome.coverage_shrank:
-        log.critical("cancel_snapshotted_stops: %s LOST STOP COVERAGE — %s. The "
-                     "SELL will not proceed; the recovery row for the unprotected "
-                     "specs must be kept so the drain re-attaches them.",
-                     symbol, outcome.summary())
+        log.critical(
+            "cancel_snapshotted_stops: %s LOST STOP COVERAGE — %s. The "
+            "SELL will not proceed; the recovery row for the unprotected "
+            "specs must be kept so the drain re-attaches them.",
+            symbol,
+            outcome.summary(),
+        )
     else:
-        log.warning("cancel_snapshotted_stops: %s — rolled back cleanly, every "
-                    "share still covered; SELL won't proceed.", outcome.summary())
+        log.warning(
+            "cancel_snapshotted_stops: %s — rolled back cleanly, every share still covered; SELL won't proceed.",
+            outcome.summary(),
+        )
     return outcome
 
 
@@ -190,14 +196,21 @@ def keep_recovery_row(db, wal_row_id, cancel, log, label):
     time instead of our bookkeeping narrowing it now (and being wrong if a
     stop was cancelled or filled in between). No new write, nothing stored.
     """
-    log.critical("%s PROTECTION LOST: %s — the action is abandoned and the "
-                 "recovery row is KEPT so the drain re-attaches the missing "
-                 "stop(s).", label, cancel.summary())
+    log.critical(
+        "%s PROTECTION LOST: %s — the action is abandoned and the "
+        "recovery row is KEPT so the drain re-attaches the missing "
+        "stop(s).",
+        label,
+        cancel.summary(),
+    )
     if wal_row_id is None:
-        log.critical("%s PROTECTION LOST: no recovery row — %.6g share(s) of "
-                     "stop coverage are gone with nothing persisted to restore "
-                     "them; the coverage reconcile is the only repair left.",
-                     label, cancel.unprotected_qty)
+        log.critical(
+            "%s PROTECTION LOST: no recovery row — %.6g share(s) of "
+            "stop coverage are gone with nothing persisted to restore "
+            "them; the coverage reconcile is the only repair left.",
+            label,
+            cancel.unprotected_qty,
+        )
 
 
 def handle_add_cancel(db, prep, cancel, logger, discharge):

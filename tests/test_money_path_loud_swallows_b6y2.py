@@ -1,4 +1,5 @@
 """One conversion proven end to end against a REAL ledger, nothing mocked at the record path."""
+
 import logging
 
 from src.execution import exit_path_records as epr
@@ -14,9 +15,7 @@ def _db(tmp_path):
 
 
 def _rows(db):
-    return db.conn.execute(
-        "SELECT agreed, detail FROM reconciliation_runs WHERE kind = ?", (KIND,)
-    ).fetchall()
+    return db.conn.execute("SELECT agreed, detail FROM reconciliation_runs WHERE kind = ?", (KIND,)).fetchall()
 
 
 def test_never_reached_writes_no_row(tmp_path):

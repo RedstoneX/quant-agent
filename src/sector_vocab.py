@@ -7,9 +7,18 @@ same sector names and directions without importing the model base.
 # yfinance sector taxonomy (matches what broker._get_sector returns).
 # "Broad" covers index ETFs (SPY/QQQ/IWM/DIA) that have no single sector tag.
 _ALLOWED_SECTORS = (
-    "Technology", "Financial Services", "Healthcare", "Consumer Cyclical",
-    "Consumer Defensive", "Energy", "Industrials", "Communication Services",
-    "Utilities", "Basic Materials", "Real Estate", "Broad",
+    "Technology",
+    "Financial Services",
+    "Healthcare",
+    "Consumer Cyclical",
+    "Consumer Defensive",
+    "Energy",
+    "Industrials",
+    "Communication Services",
+    "Utilities",
+    "Basic Materials",
+    "Real Estate",
+    "Broad",
 )
 
 # Common LLM-emitted aliases → canonical name. Applied before the Literal check

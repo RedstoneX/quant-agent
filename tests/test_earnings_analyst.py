@@ -84,17 +84,6 @@ def report(tmp_path):
     )
 
 
-
-
-
-
-
-
-
-
-
-
-
 def test_earnings_analyst_accepts_valid_analysis(agent, report):
     agent.run = MagicMock(
         return_value=AgentResult(
@@ -135,12 +124,15 @@ def test_analyze_reports_wrapper_carries_analysis_path_to_full_extraction(agent,
     assert wrapper["analysis_path"] == report.analysis_path
     assert Path(wrapper["analysis_path"]).exists()
 
-    on_disk = json.loads(
-        Path(wrapper["analysis_path"]).read_text().split("```json\n")[1].split("\n```")[0]
-    )
+    on_disk = json.loads(Path(wrapper["analysis_path"]).read_text().split("```json\n")[1].split("\n```")[0])
     for field in (
-        "revenue", "profitability", "cash_flow", "balance_sheet",
-        "strategic_direction", "risk_flags", "strategy_consistency",
+        "revenue",
+        "profitability",
+        "cash_flow",
+        "balance_sheet",
+        "strategic_direction",
+        "risk_flags",
+        "strategy_consistency",
         "data_quality",
     ):
         assert field in on_disk, f"full extraction lost field {field!r} on disk"
@@ -154,9 +146,7 @@ def test_existing_analysis_wrapper_also_carries_analysis_path(agent, report):
     report.is_new = False
     analysis_path = Path(report.analysis_path)
     analysis_path.parent.mkdir(parents=True, exist_ok=True)
-    analysis_path.write_text(
-        "# Cached\n\n```json\n" + json.dumps(_valid_analysis(report), indent=2) + "\n```\n"
-    )
+    analysis_path.write_text("# Cached\n\n```json\n" + json.dumps(_valid_analysis(report), indent=2) + "\n```\n")
 
     results = agent.analyze_reports([report])
 
@@ -226,9 +216,7 @@ def test_earnings_analyst_rejects_invalid_cached_analysis(agent, report):
 
     analysis_path = Path(report.analysis_path)
     analysis_path.parent.mkdir(parents=True, exist_ok=True)
-    analysis_path.write_text(
-        "# Cached analysis\n\n```json\n" + json.dumps(bad, indent=2) + "\n```\n"
-    )
+    analysis_path.write_text("# Cached analysis\n\n```json\n" + json.dumps(bad, indent=2) + "\n```\n")
 
     assert agent._load_analysis(report) is None
 
@@ -239,6 +227,7 @@ def test_earnings_analyst_rejects_invalid_cached_analysis(agent, report):
 # tests/test_agent_audit_2026_08_14.py; these cover the caller
 # (`_validate_analysis`) that redacts and, for a cached hit, self-heals disk.
 # ===========================================================================
+
 
 def test_fresh_analysis_with_fabricated_valuation_is_redacted(agent, report):
     """Reproduces the live KO/MTZ shape: the model states a P/E or market cap
@@ -252,7 +241,9 @@ def test_fresh_analysis_with_fabricated_valuation_is_redacted(agent, report):
     )
     agent.run = MagicMock(
         return_value=AgentResult(
-            raw_text=json.dumps(bad), tokens_used=123, model="test-model",
+            raw_text=json.dumps(bad),
+            tokens_used=123,
+            model="test-model",
         )
     )
 
@@ -275,14 +266,11 @@ def test_cached_analysis_with_fabricated_valuation_self_heals(agent, report):
     the cache file so the SAME run doesn't re-trigger the warning forever."""
     dirty = _valid_analysis(report)
     dirty["investment_implications"]["reasoning_chain"]["valuation_context"] = (
-        "Trading at a market cap that looks rich versus peers given the "
-        "growth profile disclosed."
+        "Trading at a market cap that looks rich versus peers given the growth profile disclosed."
     )
     analysis_path = Path(report.analysis_path)
     analysis_path.parent.mkdir(parents=True, exist_ok=True)
-    analysis_path.write_text(
-        "# Cached analysis\n\n```json\n" + json.dumps(dirty, indent=2) + "\n```\n"
-    )
+    analysis_path.write_text("# Cached analysis\n\n```json\n" + json.dumps(dirty, indent=2) + "\n```\n")
 
     loaded = agent._load_analysis(report)
     assert loaded is not None
@@ -304,6 +292,7 @@ def test_cached_analysis_with_fabricated_valuation_self_heals(agent, report):
 # ===========================================================================
 # Atomic write tests — _save_analysis must not leave a half-written .md
 # ===========================================================================
+
 
 def test_save_analysis_writes_atomically_via_tmp_rename(agent, report, tmp_path):
     """The save path must use tmp+rename so a SIGKILL mid-write can never
@@ -364,15 +353,6 @@ def test_save_analysis_cleans_tmp_on_rename_failure(agent, report, tmp_path, mon
 # ===========================================================================
 
 
-
-
-
-
-
-
-
-
-
 def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     """End-to-end wiring: `_check_symbol` must actually attach the XBRL
     block to `text_excerpt`, not just have the method exist unused.
@@ -388,20 +368,36 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     provider = EarningsDataProvider(data_dir=str(tmp_path))
     monkeypatch.setattr(provider.sec, "cik_for", lambda ticker: "789019")
     monkeypatch.setattr(
-        provider.sec, "recent_filings",
+        provider.sec,
+        "recent_filings",
         lambda cik, ticker: [
             FilingInfo(
-                symbol=ticker, form_type="10-Q", filing_date="2026-04-30",
-                accession_number="0000789019-26-000001", primary_doc="doc.htm",
+                symbol=ticker,
+                form_type="10-Q",
+                filing_date="2026-04-30",
+                accession_number="0000789019-26-000001",
+                primary_doc="doc.htm",
             ),
         ],
     )
     local_html = tmp_path / "filing.html"
     local_html.write_text("<html><body>Some filing text with no clean sections.</body></html>")
     monkeypatch.setattr(provider, "_download_filing", lambda cik, filing: str(local_html))
-    payload = json.dumps({"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
-        {"end": "2026-03-31", "val": 31_778_000_000, "form": "10-Q"},
-    ]}}}}}).encode()
+    payload = json.dumps(
+        {
+            "facts": {
+                "us-gaap": {
+                    "NetIncomeLoss": {
+                        "units": {
+                            "USD": [
+                                {"end": "2026-03-31", "val": 31_778_000_000, "form": "10-Q"},
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    ).encode()
     monkeypatch.setattr(provider.sec, "get", lambda url, **_kw: payload)
 
     report = provider._check_symbol("MSFT")
@@ -412,11 +408,3 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     # And the same fetch's parsed value reaches the comparable-values dict
     # the XBRL cross-check (src/pipeline_stages.py) reads.
     assert report.xbrl_facts == {"net_income": 31_778_000_000.0}
-
-
-
-
-
-
-
-

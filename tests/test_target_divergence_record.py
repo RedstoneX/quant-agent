@@ -15,10 +15,13 @@ from types import SimpleNamespace
 import pytest
 
 from src.portfolio_constructor import (
-    ConstructorConfig, PortfolioConstructor, divergence_counter,
+    ConstructorConfig,
+    PortfolioConstructor,
+    divergence_counter,
 )
 from src.portfolio_constructor.refusal_recorder import (
-    TARGET_DIVERGENCE_OBSERVED, TradeRefusalRecorder,
+    TARGET_DIVERGENCE_OBSERVED,
+    TradeRefusalRecorder,
 )
 from src.storage.db import Database
 from src.storage.schema.trade_refusal_tables import ensure_trade_refusal_table
@@ -35,8 +38,10 @@ def db():
 
 def _derivation(gap):
     return SimpleNamespace(
-        price=100.0, model_target=100.0 * (1 + gap / 100.0),
-        basis="atr", divergence_pct=gap,
+        price=100.0,
+        model_target=100.0 * (1 + gap / 100.0),
+        basis="atr",
+        divergence_pct=gap,
     )
 
 
@@ -69,9 +74,15 @@ def test_no_recorder_logs_only_and_counts_nothing(caplog):
 
 def test_an_unmeasurable_comparison_writes_nothing(db):
     pc = PortfolioConstructor(ConstructorConfig(), recorder=TradeRefusalRecorder(db))
-    pc._log_target_divergence("aaa", SimpleNamespace(
-        price=None, model_target=None, basis="x", divergence_pct=None,
-    ))
+    pc._log_target_divergence(
+        "aaa",
+        SimpleNamespace(
+            price=None,
+            model_target=None,
+            basis="x",
+            divergence_pct=None,
+        ),
+    )
     assert db.get_trade_refusals(refusal=TARGET_DIVERGENCE_OBSERVED) == []
 
 
@@ -81,6 +92,7 @@ class _StubLedger:
     def __init__(self):
         import sqlite3
         import threading
+
         self.conn = sqlite3.connect(":memory:")
         self._lock = threading.Lock()
         ensure_trade_refusal_table(conn=self.conn)
@@ -94,8 +106,13 @@ def test_store_and_schema_stand_alone_without_the_ledger_file():
     ledger = _StubLedger()
     ensure_trade_refusal_table(conn=ledger.conn)  # idempotent on a second call
     rid = trade_refusals_store.insert(
-        ledger, symbol="aaa", direction=None, refusal="x", stage="observed_not_refused",
-        observed_gap_pct=-7.5, threshold=25.0,
+        ledger,
+        symbol="aaa",
+        direction=None,
+        refusal="x",
+        stage="observed_not_refused",
+        observed_gap_pct=-7.5,
+        threshold=25.0,
     )
     assert rid == 1
     rows = trade_refusals_store.get_all(ledger, refusal="x")
@@ -104,9 +121,12 @@ def test_store_and_schema_stand_alone_without_the_ledger_file():
 
 def test_an_old_file_gains_the_gap_column_on_migration():
     import sqlite3
+
     conn = sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE trade_refusals (id INTEGER PRIMARY KEY, timestamp TEXT, "
-                 "symbol TEXT NOT NULL, refusal TEXT NOT NULL)")
+    conn.execute(
+        "CREATE TABLE trade_refusals (id INTEGER PRIMARY KEY, timestamp TEXT, "
+        "symbol TEXT NOT NULL, refusal TEXT NOT NULL)"
+    )
     ensure_trade_refusal_table(conn=conn)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_refusals)")}
     assert {"observed_gap_pct", "requested_risk_pct"} <= cols

@@ -8,6 +8,7 @@ once a cancel is CONFIRMED cancelled. Cancels can be made to stay pending.
 
 Offline: no network, no real broker.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -43,7 +44,7 @@ class HoldingBroker:
         self.orders: dict[str, Order] = {}
         self.calls: list = []
         self.n = 0
-        self.refuse_submits = 0        # how many of the next submits to refuse
+        self.refuse_submits = 0  # how many of the next submits to refuse
         self.refuse_qty_amend = False  # the broker says NO to a whole-share qty amend
         self.qty_amend_unknown = False  # no answer at all to a qty amend
 
@@ -52,9 +53,11 @@ class HoldingBroker:
         return "buy" if self.held < 0 else "sell"
 
     def holding(self, excluding=None):
-        return sum(o.qty for o in self.orders.values() if o.id != excluding
-                   and o.side == self.closing_side()
-                   and o.status in ("new", "accepted", "pending_cancel"))
+        return sum(
+            o.qty
+            for o in self.orders.values()
+            if o.id != excluding and o.side == self.closing_side() and o.status in ("new", "accepted", "pending_cancel")
+        )
 
     def hold_check(self, extra, excluding=None):
         if self.holding(excluding) + extra > abs(self.held) + 1e-9:
@@ -71,8 +74,7 @@ class HoldingBroker:
         return f"o{self.n}"
 
     def book(self):
-        return sorted((o.qty, o.stop_price) for o in self.orders.values()
-                      if o.status in ("new", "accepted"))
+        return sorted((o.qty, o.stop_price) for o in self.orders.values() if o.status in ("new", "accepted"))
 
     # -- the client surface the desk calls --------------------------------
     def get_clock(self):
@@ -92,8 +94,12 @@ class HoldingBroker:
                 raise ApiErr("422: replace refused", 422)
             if float(req.qty) > old.qty:  # a reduction frees shares; only growth needs room
                 self.hold_check(float(req.qty), excluding=oid)
-        new = Order(self.new_id(), float(req.qty) if req.qty is not None else old.qty,
-                    float(req.stop_price or old.stop_price), old.side)
+        new = Order(
+            self.new_id(),
+            float(req.qty) if req.qty is not None else old.qty,
+            float(req.stop_price or old.stop_price),
+            old.side,
+        )
         old.status = "replaced"
         self.orders[new.id] = new
         return new
@@ -156,6 +162,7 @@ def _windows(b):
 
 # --------------------------------------------------------- the decisive case
 
+
 def test_grow_from_1_37_to_2_cancels_the_sliver_before_the_gtc_grows(alerts):
     fake = HoldingBroker(2.0)
     gtc, day = fake.rest(1), fake.rest(0.37)
@@ -185,6 +192,7 @@ def test_a_right_total_with_a_whole_share_on_day_legs_is_corrected(alerts):
 
 
 # ------------------------------------------------------------ no-cancel cases
+
 
 def test_a_correct_book_only_moves_prices(alerts):
     fake = HoldingBroker(1.37)
@@ -226,7 +234,7 @@ def test_room_to_grow_amends_the_largest_lot_in_place(alerts):
 
 
 def test_shrink_amends_the_largest_lot_down_in_place(alerts):
-    fake = HoldingBroker(7)        # the lots were right at 7; two shares were sold
+    fake = HoldingBroker(7)  # the lots were right at 7; two shares were sold
     fake.rest(3), fake.rest(4)
     fake.held = 5.0
     b = _desk(fake)
@@ -237,8 +245,9 @@ def test_shrink_amends_the_largest_lot_down_in_place(alerts):
 
 # ------------------------------------------------------------------ the short
 
+
 def test_a_short_is_treated_exactly_like_a_long(alerts):
-    fake = HoldingBroker(-3)       # was short 5, covered 2; the buy-stop still says 5
+    fake = HoldingBroker(-3)  # was short 5, covered 2; the buy-stop still says 5
     fake.held = -5.0
     fake.rest(5)
     fake.held = -3.0
@@ -259,6 +268,7 @@ def test_a_short_with_no_leg_gets_one_gtc_leg_and_the_hold_refuses_a_second():
 
 
 # --------------------------------------------------------------- failure paths
+
 
 def test_a_pending_cancel_amends_nothing_and_resubmits_nothing(alerts):
     fake = HoldingBroker(2.0, pending_cancels=True)
@@ -322,6 +332,7 @@ def test_no_fractional_quantity_amend_is_ever_sent(alerts):
 
 
 # ------------------------------------------------------------- pure helpers
+
 
 def test_book_shape_classes_legs_by_quantity():
     shape = inv.book_shape([{"id": "a", "qty": 2}, {"id": "b", "qty": 0.37}, {"id": "c", "qty": 0.4}], 2.77)

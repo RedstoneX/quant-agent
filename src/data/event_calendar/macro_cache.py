@@ -91,9 +91,7 @@ class ReleaseScheduleCache:
             return None
         try:
             fetched_on = date.fromisoformat(str(entry.get("fetched_on")))
-            dates = sorted(
-                date.fromisoformat(str(d)) for d in (entry.get("dates") or [])
-            )
+            dates = sorted(date.fromisoformat(str(d)) for d in (entry.get("dates") or []))
         except Exception as e:  # noqa: BLE001 — a malformed entry is a miss
             record_swallowed("data.event_calendar.macro_cache.load", e, log=logger, release_id=release_id)
             return None
@@ -112,10 +110,15 @@ class ReleaseScheduleCache:
             }
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps({
-                "schema": RELEASE_SCHEDULE_CACHE_SCHEMA,
-                "releases": entries,
-            }, indent=2))
+            tmp.write_text(
+                json.dumps(
+                    {
+                        "schema": RELEASE_SCHEDULE_CACHE_SCHEMA,
+                        "releases": entries,
+                    },
+                    indent=2,
+                )
+            )
             os.replace(tmp, self.path)
         except Exception as e:  # noqa: BLE001
             logger.warning("Release-schedule cache unwritable: %s", e)

@@ -52,6 +52,7 @@ def _sqlite_utc_timestamp(when: datetime) -> str:
     regardless of host timezone.
     """
     from datetime import UTC
+
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
     return when.astimezone(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
@@ -73,10 +74,7 @@ def _executed_trade_predicate() -> str:
 
     Mirrors `src/storage/db.py:Database._executed_trade_predicate` exactly.
     """
-    return (
-        "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' "
-        "OR COALESCE(fill_qty, 0) > 0)"
-    )
+    return "((fill_status IS NULL AND action != 'HOLD') OR fill_status = 'filled' OR COALESCE(fill_qty, 0) > 0)"
 
 
 def is_executed_trade(row: dict) -> bool:
@@ -118,11 +116,7 @@ def get_llm_circuit_health() -> dict:
     conn = None
     try:
         conn = _connect()
-        tables = {
-            row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         result = {
             "available": "llm_circuit_state" in tables,
             "suspended": None,
@@ -165,7 +159,8 @@ def get_llm_circuit_health() -> dict:
         if "llm_quota_holds" in tables:
             current_day = et_today().isoformat()
             holds = [
-                dict(row) for row in conn.execute(
+                dict(row)
+                for row in conn.execute(
                     "SELECT scope, day, trigger_code, trigger_detail, run_id, mode, "
                     "agent_name, session_cost_usd, daily_cost_usd, daily_limit_usd, "
                     "created_at FROM llm_quota_holds WHERE active=1 AND day=? "
@@ -176,7 +171,8 @@ def get_llm_circuit_health() -> dict:
             ]
             result["active_quota_holds"] = holds
             global_day_hold = next(
-                (hold for hold in holds if hold["scope"] == "day"), None,
+                (hold for hold in holds if hold["scope"] == "day"),
+                None,
             )
             representative = global_day_hold or (holds[0] if holds else None)
             if not result["suspended"] and representative is not None:
@@ -207,18 +203,13 @@ def get_llm_circuit_health() -> dict:
         # only llm_circuit_state could otherwise report OK while every trading
         # process is correctly fail-closed on this durable marker.
         db_file = Path(get_db_path())
-        emergency_latch = db_file.with_name(
-            f"{db_file.name}.llm-circuit-unavailable"
-        )
+        emergency_latch = db_file.with_name(f"{db_file.name}.llm-circuit-unavailable")
         if emergency_latch.exists():
             try:
                 payload = json.loads(emergency_latch.read_text(encoding="utf-8"))
                 detail = str(payload.get("error") or "persistent accounting failure")
             except Exception as exc:
-                detail = (
-                    "durable accounting-failure latch is unreadable: "
-                    f"{type(exc).__name__}: {str(exc)[:200]}"
-                )
+                detail = f"durable accounting-failure latch is unreadable: {type(exc).__name__}: {str(exc)[:200]}"
             result.update(
                 available=False,
                 suspended=True,
@@ -231,24 +222,21 @@ def get_llm_circuit_health() -> dict:
             )
         if "llm_budget_days" in tables:
             row = conn.execute(
-                "SELECT baseline_cost_usd + incremental_cost_usd AS cost "
-                "FROM llm_budget_days WHERE day=?",
+                "SELECT baseline_cost_usd + incremental_cost_usd AS cost FROM llm_budget_days WHERE day=?",
                 (et_today().isoformat(),),
             ).fetchone()
             if row:
                 result["daily_cost_usd"] = row["cost"]
         if "agent_logs" in tables:
             utc_start, utc_end = _et_day_utc_bounds()
-            columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(agent_logs)").fetchall()
-            }
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_logs)").fetchall()}
             status_expr = "status" if "status" in columns else "NULL"
             row = conn.execute(
                 f"SELECT run_id, timestamp, {status_expr} AS status "
                 "FROM agent_logs WHERE agent_name='portfolio_manager' "
                 "AND timestamp >= ? AND timestamp < ? "
-                "ORDER BY timestamp DESC, id DESC LIMIT 1"
-                , (utc_start, utc_end)
+                "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                (utc_start, utc_end),
             ).fetchone()
             if row:
                 result.update(
@@ -257,8 +245,10 @@ def get_llm_circuit_health() -> dict:
                     recent_pm_timestamp=row["timestamp"],
                 )
             for agent_name in (
-                "portfolio_manager", "risk_manager",
-                "position_reviewer", "evening_analyst",
+                "portfolio_manager",
+                "risk_manager",
+                "position_reviewer",
+                "evening_analyst",
             ):
                 latest = conn.execute(
                     f"SELECT run_id, timestamp, {status_expr} AS status "
@@ -336,16 +326,23 @@ def get_trades(
 #: row (already persisted by the writer), this vocabulary is only needed here
 #: to work out whether a chain has gone flat yet.
 _POSITION_OPEN_ACTIONS = frozenset({"BUY", "SHORT"})
-_POSITION_EXIT_ACTIONS = frozenset({
-    "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER", "REDUCE",
-    "TAKE_PROFIT", "STOP_OUT", "TRAIL_STOP",
-    # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
-    # back but could not prove was a protective stop. The writer counts it as
-    # a real closed lot (_EITHER_SIDE_EXIT_ACTIONS in src/storage/db.py), so
-    # the reader MUST subtract it too — otherwise a position the broker
-    # actually closed reports "open" forever in get_position_history.
-    "RECONCILED_EXIT",
-})
+_POSITION_EXIT_ACTIONS = frozenset(
+    {
+        "EMERGENCY_SELL",
+        "EMERGENCY_COVER",
+        "FORCE_DELEVER",
+        "REDUCE",
+        "TAKE_PROFIT",
+        "STOP_OUT",
+        "TRAIL_STOP",
+        # RECONCILED_EXIT (item 173(a)): a broker-side exit the reconciler wrote
+        # back but could not prove was a protective stop. The writer counts it as
+        # a real closed lot (_EITHER_SIDE_EXIT_ACTIONS in src/storage/db.py), so
+        # the reader MUST subtract it too — otherwise a position the broker
+        # actually closed reports "open" forever in get_position_history.
+        "RECONCILED_EXIT",
+    }
+)
 _POSITION_EXIT_PREFIXES = ("SELL", "PARTIAL_SELL", "COVER", "PARTIAL_COVER")
 
 
@@ -397,9 +394,7 @@ def get_position_history(position_id: str) -> dict | None:
                 continue
             if action == "TRAIL_STOP":
                 status = str(r.get("fill_status") or "").lower()
-                filled = status == "filled" or (
-                    status == "" and float(r.get("fill_qty") or 0) > 0
-                )
+                filled = status == "filled" or (status == "" and float(r.get("fill_qty") or 0) > 0)
                 if not filled:
                     continue
             net -= qty
@@ -408,16 +403,10 @@ def get_position_history(position_id: str) -> dict | None:
         exit_row = rows[-1] if (is_closed and len(rows) > 1) else None
         interim = rows[1:-1] if exit_row is not None else rows[1:]
 
-        exit_family_rows = [
-            r for r in rows[1:]
-            if (r.get("action") or "").upper() not in _POSITION_OPEN_ACTIONS
-        ]
+        exit_family_rows = [r for r in rows[1:] if (r.get("action") or "").upper() not in _POSITION_OPEN_ACTIONS]
         priced = [r for r in exit_family_rows if r.get("realized_pnl") is not None]
         realized_total = sum(r["realized_pnl"] for r in priced) if priced else None
-        unpriced_executed = any(
-            r.get("realized_pnl") is None and is_executed_trade(r)
-            for r in exit_family_rows
-        )
+        unpriced_executed = any(r.get("realized_pnl") is None and is_executed_trade(r) for r in exit_family_rows)
         realized_partial = bool(priced) and unpriced_executed
 
         hold_days = None
@@ -468,8 +457,7 @@ def _canonical_run_cost(conn: sqlite3.Connection, run_id: str, agent_cost_rows) 
     """
     try:
         row = conn.execute(
-            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
-            "WHERE run_id = ?",
+            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions WHERE run_id = ?",
             (run_id,),
         ).fetchone()
     except sqlite3.OperationalError:
@@ -509,7 +497,9 @@ def get_recent_runs(limit: int = 20) -> list[dict]:
                 (d["run_id"],),
             ).fetchall()
             d["total_cost_usd"] = _canonical_run_cost(
-                conn, d["run_id"], cost_rows,
+                conn,
+                d["run_id"],
+                cost_rows,
             )
             out.append(d)
         return out
@@ -548,7 +538,8 @@ def get_run_detail(run_id: str) -> dict:
                 decision_id = log["decision_id"]
                 break
         cost_rows = conn.execute(
-            "SELECT cost_usd FROM agent_logs WHERE run_id = ?", (run_id,),
+            "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
+            (run_id,),
         ).fetchall()
         total_cost_usd = _canonical_run_cost(conn, run_id, cost_rows)
         return {
@@ -578,18 +569,15 @@ def get_decision_detail(decision_id: str) -> dict:
     try:
         conn = _connect()
         pm_row = conn.execute(
-            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'portfolio_manager' "
-            "LIMIT 1",
+            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'portfolio_manager' LIMIT 1",
             (decision_id,),
         ).fetchone()
         rm_row = conn.execute(
-            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'risk_manager' "
-            "LIMIT 1",
+            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'risk_manager' LIMIT 1",
             (decision_id,),
         ).fetchone()
         hard_risk_block_row = conn.execute(
-            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'risk_gate' "
-            "LIMIT 1",
+            "SELECT * FROM agent_logs WHERE decision_id = ? AND agent_name = 'risk_gate' LIMIT 1",
             (decision_id,),
         ).fetchone()
         trades = [
@@ -607,8 +595,10 @@ def get_decision_detail(decision_id: str) -> dict:
         }
     except sqlite3.Error:
         return {
-            "portfolio_manager": None, "risk_manager": None,
-            "hard_risk_block": None, "trades": [],
+            "portfolio_manager": None,
+            "risk_manager": None,
+            "hard_risk_block": None,
+            "trades": [],
         }
     finally:
         if conn is not None:
@@ -661,6 +651,7 @@ def get_watchlist_candidates(lookback_days: int = 30) -> list[dict]:
     if not rows:
         return []
     from src.watchlist_candidates import build_watchlist_candidates
+
     return build_watchlist_candidates(rows, lookback_days)
 
 
@@ -872,10 +863,13 @@ def get_run_funnel(run_id: str) -> dict:
                 (run_id,),
             ).fetchall()
         ]
-        hard_risk_block = conn.execute(
-            "SELECT 1 FROM agent_logs WHERE run_id = ? AND agent_name = 'risk_gate' LIMIT 1",
-            (run_id,),
-        ).fetchone() is not None
+        hard_risk_block = (
+            conn.execute(
+                "SELECT 1 FROM agent_logs WHERE run_id = ? AND agent_name = 'risk_gate' LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            is not None
+        )
         ts_row = conn.execute(
             "SELECT MIN(timestamp) as first_ts FROM agent_logs WHERE run_id = ?",
             (run_id,),
@@ -898,8 +892,10 @@ def get_run_funnel(run_id: str) -> dict:
         }
     except sqlite3.Error:
         return {
-            "specialist_evidence": [], "trades": [],
-            "hard_risk_block": False, "first_timestamp": None,
+            "specialist_evidence": [],
+            "trades": [],
+            "hard_risk_block": False,
+            "first_timestamp": None,
             "run_exists": False,
         }
     finally:
@@ -931,8 +927,7 @@ def get_journal_dates(limit: int = 60) -> list[str]:
         dates.update(r[0] for r in rows if r[0])
 
         run_rows = conn.execute(
-            "SELECT MIN(timestamp) as first_ts FROM agent_logs "
-            "WHERE run_id IS NOT NULL GROUP BY run_id"
+            "SELECT MIN(timestamp) as first_ts FROM agent_logs WHERE run_id IS NOT NULL GROUP BY run_id"
         ).fetchall()
         for r in run_rows:
             ts = r["first_ts"]
@@ -963,8 +958,11 @@ def get_journal_day(date_str: str) -> dict:
         day = date.fromisoformat(date_str)
     except (TypeError, ValueError):
         return {
-            "daily_pnl": None, "insights": None, "runs": [],
-            "trades": [], "candidates": [],
+            "daily_pnl": None,
+            "insights": None,
+            "runs": [],
+            "trades": [],
+            "candidates": [],
         }
     conn = None
     try:
@@ -972,10 +970,12 @@ def get_journal_day(date_str: str) -> dict:
         start_utc, end_utc = _et_day_utc_bounds(day)
 
         daily_pnl_row = conn.execute(
-            "SELECT * FROM daily_pnl WHERE date = ?", (date_str,),
+            "SELECT * FROM daily_pnl WHERE date = ?",
+            (date_str,),
         ).fetchone()
         insights_row = conn.execute(
-            "SELECT * FROM insights WHERE date = ?", (date_str,),
+            "SELECT * FROM insights WHERE date = ?",
+            (date_str,),
         ).fetchone()
 
         run_rows = conn.execute(
@@ -992,16 +992,18 @@ def get_journal_day(date_str: str) -> dict:
             run_id = d["run_id"] or ""
             d["session_prefix"] = run_id.rsplit("-", 1)[0] if "-" in run_id else run_id
             cost_rows = conn.execute(
-                "SELECT cost_usd FROM agent_logs WHERE run_id = ?", (d["run_id"],),
+                "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
+                (d["run_id"],),
             ).fetchall()
             d["total_cost_usd"] = _canonical_run_cost(
-                conn, d["run_id"], cost_rows,
+                conn,
+                d["run_id"],
+                cost_rows,
             )
             runs.append(d)
 
         trade_rows = conn.execute(
-            "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? "
-            "ORDER BY timestamp",
+            "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
             (start_utc, end_utc),
         ).fetchall()
         trades = [dict(r) for r in trade_rows]
@@ -1023,8 +1025,11 @@ def get_journal_day(date_str: str) -> dict:
         }
     except sqlite3.Error:
         return {
-            "daily_pnl": None, "insights": None, "runs": [],
-            "trades": [], "candidates": [],
+            "daily_pnl": None,
+            "insights": None,
+            "runs": [],
+            "trades": [],
+            "candidates": [],
         }
     finally:
         if conn is not None:
@@ -1048,23 +1053,34 @@ def get_research_day(date_str: str) -> dict:
     try:
         conn = _connect()
         start_utc, end_utc = _et_day_utc_bounds(day)
-        agent_logs = [dict(r) for r in conn.execute(
-            "SELECT * FROM agent_logs WHERE timestamp >= ? AND timestamp < ? "
-            "ORDER BY timestamp, id", (start_utc, end_utc),
-        ).fetchall()]
-        evidence = [dict(r) for r in conn.execute(
-            "SELECT * FROM specialist_evidence WHERE timestamp >= ? AND timestamp < ? "
-            "ORDER BY timestamp, id", (start_utc, end_utc),
-        ).fetchall()]
-        trades = [dict(r) for r in conn.execute(
-            "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? "
-            "ORDER BY timestamp, id", (start_utc, end_utc),
-        ).fetchall()]
+        agent_logs = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM agent_logs WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp, id",
+                (start_utc, end_utc),
+            ).fetchall()
+        ]
+        evidence = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM specialist_evidence WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp, id",
+                (start_utc, end_utc),
+            ).fetchall()
+        ]
+        trades = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM trades WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp, id",
+                (start_utc, end_utc),
+            ).fetchall()
+        ]
         daily_pnl = conn.execute(
-            "SELECT * FROM daily_pnl WHERE date = ?", (date_str,),
+            "SELECT * FROM daily_pnl WHERE date = ?",
+            (date_str,),
         ).fetchone()
         insights = conn.execute(
-            "SELECT * FROM insights WHERE date = ?", (date_str,),
+            "SELECT * FROM insights WHERE date = ?",
+            (date_str,),
         ).fetchone()
         return {
             "invalid_date": False,
@@ -1079,8 +1095,11 @@ def get_research_day(date_str: str) -> dict:
         return {
             "invalid_date": False,
             "read_error": "research data unavailable",
-            "agent_logs": [], "specialist_evidence": [], "trades": [],
-            "daily_pnl": None, "insights": None,
+            "agent_logs": [],
+            "specialist_evidence": [],
+            "trades": [],
+            "daily_pnl": None,
+            "insights": None,
         }
     finally:
         if conn is not None:
@@ -1147,12 +1166,14 @@ def list_meta_periods() -> list[dict]:
     for entry in sorted(base.iterdir()):
         if not entry.is_dir():
             continue
-        out.append({
-            "period": entry.name,
-            "has_digest": (entry / "digest.json").is_file(),
-            "has_reflection": (entry / "reflection.json").is_file(),
-            "has_proposed_edits": (entry / "proposed_edits.json").is_file(),
-        })
+        out.append(
+            {
+                "period": entry.name,
+                "has_digest": (entry / "digest.json").is_file(),
+                "has_reflection": (entry / "reflection.json").is_file(),
+                "has_proposed_edits": (entry / "proposed_edits.json").is_file(),
+            }
+        )
     return out
 
 
@@ -1220,8 +1241,7 @@ def get_conviction_ledger() -> dict:
             (CONVICTION_CREDIT_KIND,),
         ).fetchall()
         stance_rows = conn.execute(
-            "SELECT agent_name, symbol, decision_id, evidence_json "
-            "FROM specialist_evidence WHERE kind = ? ORDER BY id",
+            "SELECT agent_name, symbol, decision_id, evidence_json FROM specialist_evidence WHERE kind = ? ORDER BY id",
             (SEAT_STANCE_KIND,),
         ).fetchall()
     except sqlite3.Error:
@@ -1244,38 +1264,42 @@ def get_conviction_ledger() -> dict:
         except (KeyError, TypeError, ValueError):
             continue
         side = str(payload.get("side") or "")
-        credits.append({
-            "analyst": str(payload.get("seat") or row["agent_name"] or ""),
-            "symbol": str(payload.get("symbol") or row["symbol"] or ""),
-            "side": side,
-            "stance": str(payload.get("stance") or ""),
-            "conviction": str(payload.get("conviction") or ""),
-            "r_multiple": r_multiple,
-            "credit": round(r_multiple if side == "supported" else -r_multiple, 4),
-            # The ledger stamps `resolved_at` from the closing trade; fall
-            # back to the evidence row's own timestamp rather than dropping
-            # a scored call out of the series for want of a date.
-            "resolved_at": str(payload.get("resolved_at") or row["timestamp"] or ""),
-            "position_id": payload.get("position_id"),
-            "decision_id": payload.get("decision_id") or row["decision_id"],
-            "direction": str(payload.get("direction") or "long"),
-            "nominated": bool(payload.get("nominated")),
-        })
+        credits.append(
+            {
+                "analyst": str(payload.get("seat") or row["agent_name"] or ""),
+                "symbol": str(payload.get("symbol") or row["symbol"] or ""),
+                "side": side,
+                "stance": str(payload.get("stance") or ""),
+                "conviction": str(payload.get("conviction") or ""),
+                "r_multiple": r_multiple,
+                "credit": round(r_multiple if side == "supported" else -r_multiple, 4),
+                # The ledger stamps `resolved_at` from the closing trade; fall
+                # back to the evidence row's own timestamp rather than dropping
+                # a scored call out of the series for want of a date.
+                "resolved_at": str(payload.get("resolved_at") or row["timestamp"] or ""),
+                "position_id": payload.get("position_id"),
+                "decision_id": payload.get("decision_id") or row["decision_id"],
+                "direction": str(payload.get("direction") or "long"),
+                "nominated": bool(payload.get("nominated")),
+            }
+        )
 
     stances: list[dict] = []
     for row in stance_rows:
         payload = _parse_evidence_payload(row["evidence_json"])
         if payload is None:
             continue
-        stances.append({
-            "analyst": str(payload.get("seat") or row["agent_name"] or ""),
-            "symbol": str(payload.get("symbol") or row["symbol"] or ""),
-            "decision_id": row["decision_id"],
-            "stance": str(payload.get("stance") or ""),
-            "conviction": str(payload.get("conviction") or ""),
-            "nominated": bool(payload.get("nominated")),
-            "observation": str(payload.get("observation") or ""),
-        })
+        stances.append(
+            {
+                "analyst": str(payload.get("seat") or row["agent_name"] or ""),
+                "symbol": str(payload.get("symbol") or row["symbol"] or ""),
+                "decision_id": row["decision_id"],
+                "stance": str(payload.get("stance") or ""),
+                "conviction": str(payload.get("conviction") or ""),
+                "nominated": bool(payload.get("nominated")),
+                "observation": str(payload.get("observation") or ""),
+            }
+        )
 
     return {"read_error": None, "credits": credits, "stances": stances}
 
@@ -1311,9 +1335,9 @@ def get_holding_why(symbol: str) -> dict | None:
         position_id = entry.get("position_id")
         if position_id:
             interim = [
-                dict(row) for row in conn.execute(
-                    "SELECT * FROM trades WHERE position_id = ? AND id != ? "
-                    "ORDER BY timestamp, id",
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM trades WHERE position_id = ? AND id != ? ORDER BY timestamp, id",
                     (position_id, entry.get("id")),
                 ).fetchall()
             ]
@@ -1333,10 +1357,8 @@ def get_holding_why(symbol: str) -> dict | None:
 #: `src.coverage_watchdog.STATE_PATH` builds, and a test pins the two
 #: together so a move cannot silently blank this endpoint.
 SUPPRESSION_STATE_PATHS = (
-    Path(__file__).resolve().parent.parent.parent
-    / "data" / "alerting" / "coverage_heartbeat.json",
-    Path(__file__).resolve().parent.parent.parent
-    / "data" / "alerting" / "deploy_drift.json",
+    Path(__file__).resolve().parent.parent.parent / "data" / "alerting" / "coverage_heartbeat.json",
+    Path(__file__).resolve().parent.parent.parent / "data" / "alerting" / "deploy_drift.json",
 )
 
 
@@ -1364,11 +1386,7 @@ def get_suppressed_alerts(limit: int = 50) -> dict:
     conn = None
     try:
         conn = _connect()
-        tables = {
-            row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         if "llm_circuit_events" in tables:
             out["deferred_available"] = True
             rows = conn.execute(
@@ -1410,9 +1428,9 @@ def get_suppressed_alerts(limit: int = 50) -> dict:
                 cleaned[str(kind)] = {
                     "day": entry.get("day"),
                     "count": int(entry.get("count") or 0),
-                    "events": [e for e in events if isinstance(e, dict)][
-                        -max(1, int(limit)):
-                    ] if isinstance(events, list) else [],
+                    "events": [e for e in events if isinstance(e, dict)][-max(1, int(limit)) :]
+                    if isinstance(events, list)
+                    else [],
                 }
     out["suppressed_repeats"] = cleaned
     return out
@@ -1506,9 +1524,7 @@ def get_muted_backlog() -> dict:
     conn = None
     try:
         conn = _connect()
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifier_sends'"
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifier_sends'").fetchone()
         if not exists:
             return out
         out["record_available"] = True
@@ -1549,10 +1565,14 @@ def get_muted_backlog() -> dict:
         live = is_live_risk_message(text)
         day = _et_day(stamp)
         for bucket, key in ((by_kind, kind), (by_day, day)):
-            slot = bucket.setdefault(key, {
-                "count": 0, "live_risk_count": 0,
-                **{f"{r}_count": 0 for r in _UNDELIVERED_REASONS},
-            })
+            slot = bucket.setdefault(
+                key,
+                {
+                    "count": 0,
+                    "live_risk_count": 0,
+                    **{f"{r}_count": 0 for r in _UNDELIVERED_REASONS},
+                },
+            )
             slot["count"] += 1
             slot[f"{reason}_count"] += 1
             if live:
@@ -1561,22 +1581,19 @@ def get_muted_backlog() -> dict:
         out[f"{reason}_total"] += 1
         if live:
             out["live_risk_total"] += 1
-            out["live_risk"].append({
-                "timestamp": stamp,
-                "day": day,
-                "kind": kind,
-                "reason": reason,
-                "symbols": _muted_symbols(detail),
-                "headline": _headline(text),
-            })
+            out["live_risk"].append(
+                {
+                    "timestamp": stamp,
+                    "day": day,
+                    "kind": kind,
+                    "reason": reason,
+                    "symbols": _muted_symbols(detail),
+                    "headline": _headline(text),
+                }
+            )
 
-    out["by_kind"] = [
-        {"kind": k, **v} for k, v in
-        sorted(by_kind.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
-    ]
-    out["by_day"] = [
-        {"day": d, **v} for d, v in sorted(by_day.items(), reverse=True)
-    ]
+    out["by_kind"] = [{"kind": k, **v} for k, v in sorted(by_kind.items(), key=lambda kv: (-kv[1]["count"], kv[0]))]
+    out["by_day"] = [{"day": d, **v} for d, v in sorted(by_day.items(), reverse=True)]
     if stamps:
         out["oldest"] = min(stamps)
         out["newest"] = max(stamps)

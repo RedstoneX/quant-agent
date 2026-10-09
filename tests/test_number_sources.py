@@ -16,6 +16,7 @@ file tests that a justification EXISTS in an openable shape. None of them
 tests that one is TRUE. The first version of this ledger's flagship entry was
 false in four places and passed every test below.
 """
+
 from __future__ import annotations
 
 import re
@@ -57,8 +58,7 @@ def test_every_trade_governing_number_is_accounted_for() -> None:
     """
     problems = audit()
     assert not problems, "\n".join(
-        ["unsourced or unaccounted trade-governing numbers:", ""]
-        + [f"  {p}" for p in problems]
+        ["unsourced or unaccounted trade-governing numbers:", ""] + [f"  {p}" for p in problems]
     )
 
 
@@ -114,8 +114,7 @@ def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
     """
     root = Path(__file__).resolve().parent.parent
     assert not (root / "config" / "number_ledger_history.yaml").exists(), (
-        "the summed history file is stored bookkeeping; the trunk is the "
-        "reference"
+        "the summed history file is stored bookkeeping; the trunk is the reference"
     )
     text = (root / "src" / "number_sources.py").read_text(encoding="utf-8")
     assert not re.search(r"MAX_ARBITRARY_ENTRIES", text), (
@@ -133,12 +132,9 @@ def test_a_mirrored_constant_is_one_number_not_two() -> None:
     """
     ledger = load_ledger()
     mirrors = {
-        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple":
-            "src.config.RiskConfig.min_stop_atr_multiple",
-        "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS":
-            "src.config.ExecutionConfig.max_entry_slippage_bps",
-        "src.data.levels.MAX_REACH_ATR_MULTIPLE":
-            "src.config.RiskConfig.max_target_reach_atr_multiple",
+        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple": "src.config.RiskConfig.min_stop_atr_multiple",
+        "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS": "src.config.ExecutionConfig.max_entry_slippage_bps",
+        "src.data.levels.MAX_REACH_ATR_MULTIPLE": "src.config.RiskConfig.max_target_reach_atr_multiple",
     }
     for site_id, base in mirrors.items():
         assert ledger[site_id]["status"] == "derived", site_id
@@ -270,7 +266,6 @@ def test_scope_has_not_silently_narrowed() -> None:
     assert "src/coverage_watchdog.py" in SCOPED_PATHS
     assert "src/pipeline.py" in SCOPED_PATHS
     assert "src/agents" in SCOPED_PATHS
-
 
 
 # --------------------------------------------------------------------------
@@ -518,9 +513,7 @@ def test_zero_is_not_a_site_but_one_is() -> None:
         "numbers: []\n",
     )
     problems = audit(repo_root=root, ledger_path=ledger)
-    assert [p.site_id for p in problems] == [
-        "src.risk.rules.ABSOLUTE_MIN_STOP_ATR"
-    ]
+    assert [p.site_id for p in problems] == ["src.risk.rules.ABSOLUTE_MIN_STOP_ATR"]
 
 
 def test_a_default_pointed_at_an_unscoped_module_does_not_vanish() -> None:
@@ -530,15 +523,12 @@ def test_a_default_pointed_at_an_unscoped_module_does_not_vanish() -> None:
     root = Path(pytest.importorskip("tempfile").mkdtemp())
     root, ledger = _fixture(
         root,
-        "from src.hidden import HIDDEN_FLOOR\n\n\n"
-        "class RulesConfig:\n    floor: float = HIDDEN_FLOOR\n",
+        "from src.hidden import HIDDEN_FLOOR\n\n\nclass RulesConfig:\n    floor: float = HIDDEN_FLOOR\n",
         "numbers: []\n",
     )
     (root / "src" / "hidden.py").write_text("HIDDEN_FLOOR = 2.75\n")
     problems = audit(repo_root=root, ledger_path=ledger)
-    assert [(p.kind, p.site_id) for p in problems] == [
-        ("unsourced", "src.risk.rules.RulesConfig.floor")
-    ]
+    assert [(p.kind, p.site_id) for p in problems] == [("unsourced", "src.risk.rules.RulesConfig.floor")]
 
 
 # --------------------------------------------------------------------------
@@ -558,12 +548,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # rather than re-deriving it — an unread filing refuses the BUY. Rule (c)
     # is pinned on the other parameter default it found, so the shape stays
     # covered and a new one still cannot arrive unseen.
-    assert not any(
-        i.startswith(
-            "src.pipeline_risk_gate.RiskGate._refuse_queued_earnings_buys"
-        )
-        for i in ids
-    )
+    assert not any(i.startswith("src.pipeline_risk_gate.RiskGate._refuse_queued_earnings_buys") for i in ids)
     assert "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)" in ids
     # (d) class attributes.
     assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
@@ -650,14 +635,8 @@ def test_a_near_one_price_multiplier_is_a_site_and_unit_arithmetic_is_not() -> N
         """,
         "numbers: []\n",
     )
-    found = {
-        p.site_id: p.detail
-        for p in audit(repo_root=root, ledger_path=ledger)
-        if p.kind == "unsourced"
-    }
-    assert sorted(found) == [
-        f"src.risk.rules.exit_limit:factor[{n}]" for n in range(6)
-    ]
+    found = {p.site_id: p.detail for p in audit(repo_root=root, ledger_path=ledger) if p.kind == "unsourced"}
+    assert sorted(found) == [f"src.risk.rules.exit_limit:factor[{n}]" for n in range(6)]
     assert "0.995" in found["src.risk.rules.exit_limit:factor[0]"]
     assert "0.97" in found["src.risk.rules.exit_limit:factor[3]"]
 
@@ -671,9 +650,7 @@ def test_the_new_shapes_do_not_leak_into_the_unscoped_sentinel() -> None:
         "X = 1\n",
         "numbers: []\n",
     )
-    (root / "src" / "unscoped.py").write_text(
-        "def f(a=5.0):\n    return a * 0.99\n\n\nclass K:\n    B = 3\n"
-    )
+    (root / "src" / "unscoped.py").write_text("def f(a=5.0):\n    return a * 0.99\n\n\nclass K:\n    B = 3\n")
     assert collect_unscoped_sites(root) == []
 
 
@@ -711,8 +688,7 @@ def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
         "where": "src/storage/db.py",
         "records": "the per-closed-trade entry stop, its basis and the "
         "maximum adverse excursion reached before the exit",
-        "closes_when": "enough closed trades carry the columns to show "
-        "whether the floor was ever violated in practice",
+        "closes_when": "enough closed trades carry the columns to show whether the floor was ever violated in practice",
         # A BUILT recording also has to name fields the storage layer really
         # writes (2026-10-01): three recordings were found collecting nothing
         # while their columns existed, so "built" now has to be falsifiable.
@@ -735,9 +711,7 @@ def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
     for field, value in (("kind", "vibes"), ("state", "someday")):
         broken = dict(good)
         broken[field] = value
-        assert "expected one of" in str(
-            settlement_route_problem({"settles_by": broken})
-        )
+        assert "expected one of" in str(settlement_route_problem({"settles_by": broken}))
     for field in ("records", "closes_when"):
         broken = dict(good)
         broken[field] = "later"
@@ -788,8 +762,7 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
             )
             continue
         assert settlement_route_problem(entry) is None, (
-            f"{site_id} is a book-wide ceiling with no actionable recording: "
-            f"{settlement_route_problem(entry)}"
+            f"{site_id} is a book-wide ceiling with no actionable recording: {settlement_route_problem(entry)}"
         )
         assert entry["settles_by"]["kind"] == "recording", (
             f"{site_id} cannot settle by anything but a recording: there is "
@@ -804,7 +777,7 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         for phrase in ("the owner accept", "does the owner"):
             start = 0
             while (hit := lowered.find(phrase, start)) != -1:
-                assert "withdrawn" in lowered[hit:hit + 160], (
+                assert "withdrawn" in lowered[hit : hit + 160], (
                     f"{site_id} asks the owner for a concentration he "
                     "accepts without marking it withdrawn, which his "
                     "2026-09-30 ruling on global risk dials bars."

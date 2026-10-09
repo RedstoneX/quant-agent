@@ -123,18 +123,21 @@ def _entry_targets(con: sqlite3.Connection, since: str | None) -> list[dict]:
             sz = None
         if sz is None or sz <= 0.0:
             continue
-        out.append({
-            "decision_id": r["decision_id"],
-            "symbol": (r["symbol"] or "").strip().upper(),
-            "run_id": r["run_id"],
-            "ts": r["timestamp"],
-        })
+        out.append(
+            {
+                "decision_id": r["decision_id"],
+                "symbol": (r["symbol"] or "").strip().upper(),
+                "run_id": r["run_id"],
+                "ts": r["timestamp"],
+            }
+        )
     return out
 
 
 def _load_pairs(con: sqlite3.Connection, kind: str) -> set[tuple[str, str]]:
     rows = con.execute(
-        "SELECT decision_id, symbol FROM specialist_evidence WHERE kind=?", (kind,),
+        "SELECT decision_id, symbol FROM specialist_evidence WHERE kind=?",
+        (kind,),
     ).fetchall()
     return {(r["decision_id"], (r["symbol"] or "").strip().upper()) for r in rows}
 
@@ -223,8 +226,7 @@ def _load_recorded_reasons(con: sqlite3.Connection) -> dict[tuple[str, str], str
     """
     out: dict[tuple[str, str], str] = {}
     for r in con.execute(
-        "SELECT decision_id, symbol, evidence_json FROM specialist_evidence "
-        "WHERE kind='pipeline_event'",
+        "SELECT decision_id, symbol, evidence_json FROM specialist_evidence WHERE kind='pipeline_event'",
     ).fetchall():
         try:
             d = json.loads(r["evidence_json"] or "{}")
@@ -255,8 +257,7 @@ def _load_fills(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
     """
     fills: dict[tuple[str, str], str] = {}
     rows = con.execute(
-        "SELECT decision_id, symbol, fill_status FROM trades "
-        "WHERE decision_id IS NOT NULL ORDER BY id",
+        "SELECT decision_id, symbol, fill_status FROM trades WHERE decision_id IS NOT NULL ORDER BY id",
     ).fetchall()
     for r in rows:
         key = (r["decision_id"], (r["symbol"] or "").strip().upper())
@@ -270,7 +271,13 @@ def _load_fills(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
 
 
 def classify(
-    did: str, sym: str, *, ordered: set, verdicts: dict, skips: dict, fills: dict,
+    did: str,
+    sym: str,
+    *,
+    ordered: set,
+    verdicts: dict,
+    skips: dict,
+    fills: dict,
     recorded_reasons: dict | None = None,
 ) -> str | None:
     """None == converted (filled). Otherwise the verbatim/derived cause.
@@ -303,7 +310,7 @@ def classify(
         if v.get("approved") is False:
             cat = (v.get("reason_category") or "").strip()
             return f"rm_rejected:{cat}" if cat else "rm_rejected"
-        for mod in (v.get("modifications") or []):
+        for mod in v.get("modifications") or []:
             if not isinstance(mod, dict):
                 continue
             if (mod.get("symbol") or "").strip().upper() != sym:
@@ -323,7 +330,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="path to quant_agent.db (read-only)")
     ap.add_argument("--since", default=None, help="YYYY-MM-DD or full timestamp; default is all recorded history")
     ap.add_argument("--min-repeat", type=int, default=3, help="symbol repeat threshold for the 'never fills' section")
-    ap.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of the plain-language report")
+    ap.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON instead of the plain-language report"
+    )
     args = ap.parse_args(argv)
 
     if not args.db.exists():
@@ -345,8 +354,13 @@ def main(argv: list[str] | None = None) -> int:
         results = []
         for t in entry:
             reason = classify(
-                t["decision_id"], t["symbol"], ordered=ordered, verdicts=verdicts,
-                skips=skips, fills=fills, recorded_reasons=recorded_reasons,
+                t["decision_id"],
+                t["symbol"],
+                ordered=ordered,
+                verdicts=verdicts,
+                skips=skips,
+                fills=fills,
+                recorded_reasons=recorded_reasons,
             )
             results.append({**t, "reason": reason})
 
@@ -405,7 +419,9 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("-- ranked causes, worst first (share of ALL proposals, share of BLOCKED) --")
         for reason, n in by_reason.most_common():
-            print(f"  {n:3d}  {n / total * 100:5.1f}% of all   {n / (total - converted) * 100:5.1f}% of blocked   {reason}")
+            print(
+                f"  {n:3d}  {n / total * 100:5.1f}% of all   {n / (total - converted) * 100:5.1f}% of blocked   {reason}"
+            )
         print()
         print("-- per-day: proposed / filled --")
         for day in sorted(byday):

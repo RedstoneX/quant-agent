@@ -6,6 +6,7 @@ reaching the write-capable repair code under `src/execution/`. Imports only
 `src.silence_watchdog` and `src.trading_calendar` (both stdlib-only closures);
 `tests/test_api_cannot_trade.py` pins that.
 """
+
 from __future__ import annotations
 
 import logging

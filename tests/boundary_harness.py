@@ -4,6 +4,7 @@ A boundary exists where a piece can be constructed and exercised on its own,
 without building a TradingPipeline. Pure AST; imports nothing from src.
 Moves no product code.
 """
+
 from __future__ import annotations
 
 import ast
@@ -19,9 +20,9 @@ PIPELINE_CLASS = "TradingPipeline"
 @dataclass
 class Verdict:
     module: str
-    failures: dict = field(default_factory=dict)   # clause number -> reason
-    warnings: list = field(default_factory=list)   # reported, not failing
-    skipped: list = field(default_factory=list)    # clauses not checkable
+    failures: dict = field(default_factory=dict)  # clause number -> reason
+    warnings: list = field(default_factory=list)  # reported, not failing
+    skipped: list = field(default_factory=list)  # clauses not checkable
 
     @property
     def passed(self) -> bool:
@@ -41,8 +42,7 @@ def references_pipeline(tree: ast.AST, *, strings: bool = True) -> bool:
     string such as a patch target) or imports the src.pipeline module."""
     for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom):
-            if n.module == PIPELINE_MODULE or any(
-                    a.name == PIPELINE_CLASS for a in n.names):
+            if n.module == PIPELINE_MODULE or any(a.name == PIPELINE_CLASS for a in n.names):
                 return True
         elif isinstance(n, ast.Import):
             if any(a.name == PIPELINE_MODULE for a in n.names):
@@ -51,10 +51,12 @@ def references_pipeline(tree: ast.AST, *, strings: bool = True) -> bool:
             return True
         elif isinstance(n, ast.Attribute) and n.attr == PIPELINE_CLASS:
             return True
-        elif strings and isinstance(n, ast.Constant) and isinstance(n.value, str) \
-                and (PIPELINE_CLASS in n.value
-                     or n.value.startswith(PIPELINE_MODULE + ".")
-                     or n.value == PIPELINE_MODULE):
+        elif (
+            strings
+            and isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and (PIPELINE_CLASS in n.value or n.value.startswith(PIPELINE_MODULE + ".") or n.value == PIPELINE_MODULE)
+        ):
             return True
     return False
 
@@ -65,8 +67,11 @@ def imports_module(tree: ast.AST, module: str) -> bool:
             return True
         if isinstance(n, ast.Import) and any(a.name == module for a in n.names):
             return True
-        if isinstance(n, ast.ImportFrom) and n.module == module.rpartition(".")[0] \
-                and any(a.name == module.rpartition(".")[2] for a in n.names):
+        if (
+            isinstance(n, ast.ImportFrom)
+            and n.module == module.rpartition(".")[0]
+            and any(a.name == module.rpartition(".")[2] for a in n.names)
+        ):
             return True
     return False
 
@@ -75,15 +80,19 @@ def imports_module(tree: ast.AST, module: str) -> bool:
 #: root. These are the ONLY files the metric skips; there is no list of
 #: current offenders; those are pinned by path in
 #: config/check_allowlists/struct_boundary_pipeline_files.txt.
-_UNMEASURED = ("boundary_harness.py", "test_boundary_harness.py",
-               # and the composition root,
-               "pipeline_factory.py", "test_pipeline_factory.py",
-               # and the ONE deliberate whole-system test. test_e2e_morning_session.py
-               # exists precisely to build a real TradingPipeline and drive every
-               # stage end to end; counting it would penalise the test this metric
-               # most wants to exist. Every OTHER test that needs a whole pipeline
-               # is what the ratchet is measuring.
-               "test_e2e_morning_session.py")
+_UNMEASURED = (
+    "boundary_harness.py",
+    "test_boundary_harness.py",
+    # and the composition root,
+    "pipeline_factory.py",
+    "test_pipeline_factory.py",
+    # and the ONE deliberate whole-system test. test_e2e_morning_session.py
+    # exists precisely to build a real TradingPipeline and drive every
+    # stage end to end; counting it would penalise the test this metric
+    # most wants to exist. Every OTHER test that needs a whole pipeline
+    # is what the ratchet is measuring.
+    "test_e2e_morning_session.py",
+)
 
 
 def test_files_referencing_pipeline(tests_dir: Path = TESTS) -> set[str]:
@@ -112,8 +121,7 @@ def count_test_files_importing_pipeline(tests_dir: Path = TESTS) -> int:
 
 def _self_reads_and_writes(cls: ast.ClassDef):
     init_assigned, reads = set(), set()
-    methods = {n.name for n in cls.body
-               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    methods = {n.name for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     class_level = set()
     for n in cls.body:
         if isinstance(n, ast.Assign):
@@ -124,8 +132,7 @@ def _self_reads_and_writes(cls: ast.ClassDef):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for n in ast.walk(fn):
-            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
-                    and n.value.id == "self":
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self":
                 if isinstance(n.ctx, ast.Store):
                     if fn.name == "__init__":
                         init_assigned.add(n.attr)
@@ -177,14 +184,13 @@ def check_boundary(module: str, *, layer_of=None, tests_dir: Path = TESTS) -> Ve
     # Clauses 1 and 2, per class.
     for cls in classes:
         init_assigned, reads, own = _self_reads_and_writes(cls)
-        if "__init__" not in {n.name for n in cls.body
-                              if isinstance(n, ast.FunctionDef)}:
+        if "__init__" not in {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}:
             v.failures.setdefault(1, []).append(f"{cls.name}: no __init__")
         foreign = sorted(reads - init_assigned - own)
         if foreign:
             v.failures.setdefault(2, []).append(
-                f"{cls.name}: {len(foreign)} self attrs not set in __init__ "
-                f"nor defined on it, e.g. {foreign[:3]}")
+                f"{cls.name}: {len(foreign)} self attrs not set in __init__ nor defined on it, e.g. {foreign[:3]}"
+            )
 
     # Clause 3.
     if references_pipeline(tree, strings=False):  # code only: docstrings may name it
@@ -194,8 +200,8 @@ def check_boundary(module: str, *, layer_of=None, tests_dir: Path = TESTS) -> Ve
         v.failures[3] = f"accepts TradingPipeline parameter: {annotated[:3]}"
     if duck:
         v.warnings.append(
-            f"clause 3: {len(duck)} untyped parameter(s) named pipeline/pipe "
-            f"(duck-typed pipeline), e.g. {duck[:3]}")
+            f"clause 3: {len(duck)} untyped parameter(s) named pipeline/pipe (duck-typed pipeline), e.g. {duck[:3]}"
+        )
 
     # Clause 4.
     if layer_of is None:

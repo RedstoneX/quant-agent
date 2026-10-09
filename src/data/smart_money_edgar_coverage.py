@@ -1,6 +1,7 @@
 """EDGAR coverage arithmetic for the Form 4 scan, standalone: pure functions of
 the stats a scan hands in, with no provider, network or cache behind them.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,17 +26,19 @@ ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 #: spent its budget exactly as designed is not a scan that failed, and
 #: treating it as one would make the seat read degraded every single day,
 #: which is the harm board item 126 names in its own text.
-UNVERIFIED_EDGAR_REASONS = frozenset({
-    "edgar_total_unreadable",
-    "edgar_hits_unreadable",
-    "edgar_returned_no_hits_for_nonzero_total",
-    "edgar_page_short_of_total",
-    "edgar_hits_malformed",
-    "edgar_total_changed",
-    "edgar_coverage_stale",
-    "edgar_rows_unreadable",
-    "edgar_enumerated_above_total",
-})
+UNVERIFIED_EDGAR_REASONS = frozenset(
+    {
+        "edgar_total_unreadable",
+        "edgar_hits_unreadable",
+        "edgar_returned_no_hits_for_nonzero_total",
+        "edgar_page_short_of_total",
+        "edgar_hits_malformed",
+        "edgar_total_changed",
+        "edgar_coverage_stale",
+        "edgar_rows_unreadable",
+        "edgar_enumerated_above_total",
+    }
+)
 
 
 def edgar_total(hits_block: object) -> int | None:
@@ -102,9 +105,16 @@ def blank_edgar_coverage() -> dict:
     `_discover`.
     """
     return {
-        "known": False, "verified": False, "reasons": ["never_recorded"],
-        "edgar_total": 0, "enumerated": 0, "rows_received": 0, "ratio": None,
-        "days_queried": 0, "days_in_window": 0, "days_with_total": 0,
+        "known": False,
+        "verified": False,
+        "reasons": ["never_recorded"],
+        "edgar_total": 0,
+        "enumerated": 0,
+        "rows_received": 0,
+        "ratio": None,
+        "days_queried": 0,
+        "days_in_window": 0,
+        "days_with_total": 0,
         "window_fraction": None,
     }
 
@@ -149,10 +159,7 @@ def edgar_coverage(stats: object) -> dict:
         days_with_total = int(stats.get("edgar_days_with_total") or 0)
     except (TypeError, ValueError):
         return blank
-    reasons = sorted({
-        str(r) for r in (stats.get("edgar_coverage_reasons") or [])
-        if str(r).strip()
-    })
+    reasons = sorted({str(r) for r in (stats.get("edgar_coverage_reasons") or []) if str(r).strip()})
     if days_queried <= 0:
         # Nothing was asked of EDGAR at all. Recorded as a reason rather
         # than as an empty success.
@@ -165,11 +172,7 @@ def edgar_coverage(stats: object) -> dict:
         # rendered with nothing attached to explain it, and a coverage
         # figure that reads better than complete is not a coverage figure.
         reasons = sorted(set(reasons) | {"edgar_enumerated_above_total"})
-    verified = (
-        days_queried > 0
-        and days_with_total == days_queried
-        and not (set(reasons) & UNVERIFIED_EDGAR_REASONS)
-    )
+    verified = days_queried > 0 and days_with_total == days_queried and not (set(reasons) & UNVERIFIED_EDGAR_REASONS)
     return {
         "known": days_queried > 0,
         "verified": verified,
@@ -190,8 +193,6 @@ def edgar_coverage(stats: object) -> dict:
         # How much of the lookback window the scan reached at all. Read this
         # BEFORE the ratio: a ratio of 1.0 over two days of a 366-day window
         # is an honest statement about two days and nothing more.
-        "window_fraction": (
-            round(days_queried / days_in_window, 4) if days_in_window > 0 else None
-        ),
+        "window_fraction": (round(days_queried / days_in_window, 4) if days_in_window > 0 else None),
         "days_with_total": days_with_total,
     }

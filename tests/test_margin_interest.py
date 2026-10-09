@@ -35,6 +35,7 @@ from src.margin_interest import (
 # 1. Formula correctness
 # ---------------------------------------------------------------------------
 
+
 def test_formula_known_balance_and_rate():
     # $10,000 debit at 6.25% / 360 = $1.7361...
     daily = estimate_daily_interest(10_000.0, 6.25)
@@ -71,6 +72,7 @@ def test_elite_rate_produces_a_smaller_estimate():
 # ---------------------------------------------------------------------------
 # 2. Zero debit balance -> no charge, no alert noise
 # ---------------------------------------------------------------------------
+
 
 def test_zero_cash_deficit_is_zero_debit_balance():
     assert overnight_debit_balance(0.0) == 0.0
@@ -116,6 +118,7 @@ def test_zero_debit_balance_produces_no_comparison():
 # 3. Intraday leverage + flat close -> zero interest (the design lever)
 # ---------------------------------------------------------------------------
 
+
 def test_intraday_debit_with_flat_close_is_zero_overnight_debit():
     """The desk ran leveraged intraday (cash dipped to -$8,000 at some
     point during the day) but trimmed back to flat before the close.
@@ -124,7 +127,7 @@ def test_intraday_debit_with_flat_close_is_zero_overnight_debit():
     intraday low" on this function, so a caller literally cannot charge
     for the intraday draw even by mistake. This is the pin."""
     intraday_low_cash = -8_000.0  # never passed to overnight_debit_balance
-    end_of_day_cash = 0.0         # flat close
+    end_of_day_cash = 0.0  # flat close
     debit_balance = overnight_debit_balance(end_of_day_cash)
     assert debit_balance == 0.0
     assert build_estimate(debit_balance, 6.25) is None
@@ -156,6 +159,7 @@ def test_only_a_debit_balance_still_present_at_close_accrues_interest():
 # 4. Labelled ESTIMATE wherever rendered
 # ---------------------------------------------------------------------------
 
+
 def test_estimate_object_carries_the_label():
     estimate = build_estimate(10_000.0, 6.25)
     assert estimate.label == ESTIMATE_LABEL
@@ -176,6 +180,7 @@ def test_estimate_label_never_claims_an_observed_charge():
 # ---------------------------------------------------------------------------
 # 5. INT-activity comparison against a stubbed broker response
 # ---------------------------------------------------------------------------
+
 
 def test_int_activity_comparison_when_charge_present():
     estimate = build_estimate(9_839.0, 6.25)
@@ -220,7 +225,8 @@ def test_int_activity_comparison_never_prejudges_before_data():
     estimate = build_estimate(9_839.0, 6.25)
     absent = compare_estimate_to_broker_activity(estimate, [])
     present = compare_estimate_to_broker_activity(
-        estimate, [{"net_amount": -1.71}],
+        estimate,
+        [{"net_amount": -1.71}],
     )
     assert absent.charge_confirmed is False
     assert present.charge_confirmed is True
@@ -238,14 +244,14 @@ def test_int_activity_zero_net_amount_is_not_confirmed():
 # Broker method: get_margin_interest_activities against a stubbed SDK client
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_broker_get_margin_interest_activities_parses_response(MockTradingClient):
     from src.execution.broker import AlpacaBroker
 
     mock_client = MagicMock()
     mock_client.get.return_value = [
-        {"activity_type": "INT", "date": "2026-09-01", "net_amount": "-1.71",
-         "description": "MARGIN INTEREST"},
+        {"activity_type": "INT", "date": "2026-09-01", "net_amount": "-1.71", "description": "MARGIN INTEREST"},
     ]
     MockTradingClient.return_value = mock_client
 
@@ -290,6 +296,7 @@ def test_broker_get_margin_interest_activities_never_raises_on_broker_error(Mock
 # paginated via Alpaca's page_token cursor).
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker.TradingClient")
 def test_broker_get_all_account_activities_single_page(MockTradingClient):
     from src.execution.broker import AlpacaBroker
@@ -297,8 +304,14 @@ def test_broker_get_all_account_activities_single_page(MockTradingClient):
     mock_client = MagicMock()
     mock_client.get.return_value = [
         {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
-        {"id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
-         "side": "buy", "price": "100.00", "qty": "10"},
+        {
+            "id": "2",
+            "activity_type": "FILL",
+            "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy",
+            "price": "100.00",
+            "qty": "10",
+        },
     ]
     MockTradingClient.return_value = mock_client
 
@@ -317,8 +330,7 @@ def test_broker_get_all_account_activities_pages_until_short_page(MockTradingCli
     from src.execution.broker import AlpacaBroker
 
     mock_client = MagicMock()
-    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
-             for i in range(3)]
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"} for i in range(3)]
     page2 = [{"id": "3", "activity_type": "FEE", "date": "2026-08-15", "net_amount": "-0.01"}]
     mock_client.get.side_effect = [page1, page2]
     MockTradingClient.return_value = mock_client
@@ -350,8 +362,7 @@ def test_broker_get_all_account_activities_never_raises_degrades_to_partial(Mock
     from src.execution.broker import AlpacaBroker
 
     mock_client = MagicMock()
-    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"}
-             for i in range(3)]
+    page1 = [{"id": str(i), "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"} for i in range(3)]
     mock_client.get.side_effect = [page1, RuntimeError("broker down")]
     MockTradingClient.return_value = mock_client
 
@@ -364,6 +375,7 @@ def test_broker_get_all_account_activities_never_raises_degrades_to_partial(Mock
 # ---------------------------------------------------------------------------
 # End-to-end: stubbed broker response feeding the comparison, both directions
 # ---------------------------------------------------------------------------
+
 
 @patch("src.execution.broker.TradingClient")
 def test_end_to_end_broker_confirms_charge(MockTradingClient):
@@ -378,7 +390,8 @@ def test_end_to_end_broker_confirms_charge(MockTradingClient):
 
     estimate = build_estimate(9_839.0, 6.25)
     comparison = compare_estimate_to_broker_activity(
-        estimate, broker.get_margin_interest_activities(),
+        estimate,
+        broker.get_margin_interest_activities(),
     )
     assert comparison.charge_confirmed is True
 
@@ -394,7 +407,8 @@ def test_end_to_end_broker_shows_no_charge(MockTradingClient):
 
     estimate = build_estimate(9_839.0, 6.25)
     comparison = compare_estimate_to_broker_activity(
-        estimate, broker.get_margin_interest_activities(),
+        estimate,
+        broker.get_margin_interest_activities(),
     )
     assert comparison.charge_confirmed is False
 
@@ -427,8 +441,10 @@ def test_read_margin_interest_no_debit_balance_is_an_explicit_zero(monkeypatch):
     rate, and `error` None so a caller can tell this apart from a failed
     read. `label` stays None: a certain zero is not an estimate."""
     from types import SimpleNamespace
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
     )
     out = broker_reads.read_margin_interest(1_000.0)
@@ -437,9 +453,15 @@ def test_read_margin_interest_no_debit_balance_is_an_explicit_zero(monkeypatch):
     # it — covered separately by the cumulative-specific tests below.
     out = {**out, "cumulative": None}
     assert out == {
-        "debit_balance": 0.0, "rate_pct": 6.25, "daily_usd": 0.0,
-        "annual_usd": 0.0, "label": None, "broker_check_note": None,
-        "days_charged": 1, "period_usd": 0.0, "error": None,
+        "debit_balance": 0.0,
+        "rate_pct": 6.25,
+        "daily_usd": 0.0,
+        "annual_usd": 0.0,
+        "label": None,
+        "broker_check_note": None,
+        "days_charged": 1,
+        "period_usd": 0.0,
+        "error": None,
         "cumulative": None,
     }
 
@@ -452,8 +474,10 @@ def test_read_margin_interest_missing_rate_is_a_fault_not_a_zero(monkeypatch):
     needs to know the tracker is broken — the inverse of what his
     "so I know it's still working" decision asked for."""
     from types import SimpleNamespace
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=0.0),
     )
     out = broker_reads.read_margin_interest(-5_000.0)
@@ -467,12 +491,15 @@ def test_read_margin_interest_reports_a_debit_balance_even_with_margin_disabled(
     False (D10 exempts COVER from cash_only); the estimate must still
     surface rather than silently reporting nothing."""
     from types import SimpleNamespace
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),  # allow_margin intentionally absent
     )
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: SimpleNamespace(get_margin_interest_activities=lambda: []),
     )
     out = broker_reads.read_margin_interest(-9_839.0)
@@ -485,6 +512,7 @@ def test_read_margin_interest_reports_a_debit_balance_even_with_margin_disabled(
 def test_read_margin_interest_config_read_failure_reports_error(monkeypatch):
     def boom():
         raise RuntimeError("config unreadable")
+
     monkeypatch.setattr(broker_reads, "get_risk_limits", boom)
     out = broker_reads.read_margin_interest(-5_000.0)
     assert out["error"] == "config unreadable"
@@ -493,12 +521,15 @@ def test_read_margin_interest_config_read_failure_reports_error(monkeypatch):
 
 def test_read_margin_interest_includes_broker_check_note(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
     )
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: SimpleNamespace(
             get_margin_interest_activities=lambda: [{"net_amount": -1.71}],
         ),
@@ -515,12 +546,15 @@ def test_read_margin_interest_int_activity_failure_does_not_hide_the_estimate(mo
 
     def boom():
         raise RuntimeError("broker down")
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
     )
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: SimpleNamespace(get_margin_interest_activities=boom),
     )
     out = broker_reads.read_margin_interest(-9_839.0)
@@ -540,12 +574,15 @@ def test_read_margin_interest_friday_reflects_the_three_day_weekend_carry(monkey
     stubbed `is_trading_day`, proving the dashboard no longer disagrees with
     the alert."""
     from types import SimpleNamespace
+
     monkeypatch.setattr(
-        broker_reads, "get_risk_limits",
+        broker_reads,
+        "get_risk_limits",
         lambda: SimpleNamespace(margin_interest_rate_pct=6.25),
     )
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: SimpleNamespace(
             is_trading_day=_weekday_calendar(),
             get_margin_interest_activities=lambda: [],
@@ -565,6 +602,7 @@ def test_read_margin_interest_friday_reflects_the_three_day_weekend_carry(monkey
 # 7. src/notifier.py::_margin_interest_lines — the morning Telegram wiring.
 # ---------------------------------------------------------------------------
 
+
 def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatch, tmp_path):
     """A zero-debit morning still produces exactly one cumulative line
     (owner decision 2026-09-18's "every day, even if it's zero" carries
@@ -572,6 +610,7 @@ def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatc
     persists as a $0.00 row, and the buckets built from it carry no "est."
     tag on a certain zero."""
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
@@ -579,7 +618,8 @@ def test_margin_interest_lines_speak_the_zero_without_a_debit_balance(monkeypatc
         lambda *a, **kw: MagicMock(risk=MagicMock(margin_interest_rate_pct=6.25)),
     )
     monkeypatch.setattr(
-        "src.api.deps.get_alpaca_credentials", lambda: ("k", "s"),
+        "src.api.deps.get_alpaca_credentials",
+        lambda: ("k", "s"),
     )
     monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
     monkeypatch.setattr(
@@ -601,6 +641,7 @@ def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(mo
     balance carried with `allow_margin` False must still produce a line,
     not silence — the Telegram alert is where the desk actually sees it."""
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
@@ -610,7 +651,8 @@ def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(mo
         ),
     )
     monkeypatch.setattr(
-        "src.api.deps.get_alpaca_credentials", lambda: ("k", "s"),
+        "src.api.deps.get_alpaca_credentials",
+        lambda: ("k", "s"),
     )
     monkeypatch.setattr("src.api.deps.get_alpaca_paper", lambda: True)
     monkeypatch.setattr(
@@ -630,12 +672,14 @@ def test_margin_interest_lines_present_with_margin_disabled_and_negative_cash(mo
 
 def test_margin_interest_lines_suppressed_in_rehearsal(monkeypatch):
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", True)
     assert n._margin_interest_lines() == []
 
 
 def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch, tmp_path):
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
     monkeypatch.setattr(
@@ -645,12 +689,14 @@ def test_margin_interest_lines_never_raises_when_broker_read_fails(monkeypatch, 
 
     def boom():
         raise RuntimeError("credentials gateway down")
+
     monkeypatch.setattr("src.api.deps.get_alpaca_credentials", boom)
     # Still never raises — but it now SAYS the read failed instead of
     # degrading to silence (2026-09-18): silence is indistinguishable from
     # a dead tracker, which is the whole defect being fixed. Crucially NOT
     # the zero line: "not available" and "$0.00" are different claims.
     from src.margin_interest import UNAVAILABLE_LINE
+
     assert n._margin_interest_lines() == [UNAVAILABLE_LINE]
     assert "$0.00" not in UNAVAILABLE_LINE
 
@@ -663,6 +709,7 @@ def test_margin_interest_lines_persists_a_row_for_the_cumulative_view(monkeypatc
     import sqlite3
 
     import src.notifier as n
+
     db_path = tmp_path / "quant_agent.db"
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(n, "_DB_PATH", db_path)
@@ -713,8 +760,13 @@ def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monk
     monkeypatch.setattr(Database, "insert_margin_interest_daily", spy)
 
     n._persist_margin_interest_daily(
-        "2026-09-24", debit_balance=5000.0, rate_pct=6.25, daily_usd=0.868,
-        days_charged=1, period_usd=0.868, source="estimate",
+        "2026-09-24",
+        debit_balance=5000.0,
+        rate_pct=6.25,
+        daily_usd=0.868,
+        days_charged=1,
+        period_usd=0.868,
+        source="estimate",
     )
 
     assert len(calls) == 1
@@ -725,6 +777,7 @@ def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monk
 
     # And the row actually landed via that one path.
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     row = conn.execute(
         "SELECT date, debit_balance, source FROM margin_interest_daily",
@@ -742,17 +795,16 @@ def test_persist_margin_interest_daily_delegates_to_the_one_database_method(monk
 # `None`, which is why the always-speak policy lives in its own function and
 # not in `format_alert_line`.
 
+
 def test_format_daily_line_says_the_zero_with_the_measured_cash_figure():
     """The zero is the evidence the tracker still runs, so it must SPEAK —
     and it carries the real overnight cash balance rather than a bare
     "$0.00", because a constant string is indistinguishable from a stuck
     one while a balance that moves day to day is not."""
     from src.margin_interest import format_daily_line
+
     line = format_daily_line(4_812.33, 6.25)
-    assert line == (
-        "💳 margin interest: $0.00/day — overnight cash $4,812.33, "
-        "nothing borrowed"
-    )
+    assert line == ("💳 margin interest: $0.00/day — overnight cash $4,812.33, nothing borrowed")
     # A certain zero is not an estimate — nothing borrowed costs nothing at
     # any rate at all. The label stays on the figure that IS a projection.
     assert "ESTIMATE" not in line
@@ -764,11 +816,9 @@ def test_format_daily_line_does_not_claim_nothing_was_borrowed_below_the_floor()
     not assert that none was — it shows the measured figure and says the
     amount is too small to charge on."""
     from src.margin_interest import format_daily_line
+
     line = format_daily_line(-0.99, 6.25)
-    assert line == (
-        "💳 margin interest: $0.00/day — overnight cash -$0.99, "
-        "too small to charge on"
-    )
+    assert line == ("💳 margin interest: $0.00/day — overnight cash -$0.99, too small to charge on")
     assert "nothing borrowed" not in line
 
 
@@ -776,8 +826,12 @@ def test_format_daily_line_still_renders_a_real_debit_exactly_as_before():
     """The non-zero line is UNCHANGED by the visibility work — same figures,
     same wording, ESTIMATE label verbatim."""
     from src.margin_interest import (
-        ESTIMATE_LABEL, build_estimate, format_alert_line, format_daily_line,
+        ESTIMATE_LABEL,
+        build_estimate,
+        format_alert_line,
+        format_daily_line,
     )
+
     line = format_daily_line(-5_729.0, 6.25)
     assert line == format_alert_line(build_estimate(5_729.0, 6.25))
     assert line.startswith("💳 margin interest: $0.99/day (~$358/yr) on $5,729")
@@ -790,6 +844,7 @@ def test_format_daily_line_calls_a_missing_rate_a_fault_not_a_zero():
     one day the owner most needs to know the tracker is broken — that is
     the inverse of what "so I know it's still working" asked for."""
     from src.margin_interest import RATE_UNAVAILABLE_LINE, format_daily_line
+
     for bad_rate in (None, 0.0, -1.0):
         assert format_daily_line(-5_729.0, bad_rate) == RATE_UNAVAILABLE_LINE
     assert "$0.00" not in RATE_UNAVAILABLE_LINE
@@ -797,6 +852,7 @@ def test_format_daily_line_calls_a_missing_rate_a_fault_not_a_zero():
 
 def test_format_daily_line_calls_an_unreadable_cash_balance_a_fault():
     from src.margin_interest import UNAVAILABLE_LINE, format_daily_line
+
     assert format_daily_line(None, 6.25) == UNAVAILABLE_LINE
     assert "$0.00" not in UNAVAILABLE_LINE
 
@@ -805,6 +861,7 @@ def test_format_alert_line_keeps_its_silent_contract():
     """Guard: the always-speak policy must NOT have been pushed down into
     the shared formatter, which cannot tell "no debit" from "no rate"."""
     from src.margin_interest import build_estimate, format_alert_line
+
     assert format_alert_line(None) is None
     assert format_alert_line(build_estimate(0.0, 6.25)) is None
 
@@ -821,7 +878,8 @@ def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypat
     monkeypatch.setattr(n, "_day_cost_line", lambda: "📅 today: $0.34")
     monkeypatch.setattr(n, "_openrouter_balance_line", lambda: "🔋 OpenRouter: $7.10 left")
     monkeypatch.setattr(
-        n, "_margin_interest_lines",
+        n,
+        "_margin_interest_lines",
         lambda: ["💳 margin interest: $0.00/day — overnight cash $1,000.00, nothing borrowed"],
     )
     msg = n.format_session_result("morning", {"status": "ok", "run_id": "r"}, 5.0)
@@ -868,11 +926,13 @@ def _stub_broker_with_calendar(monkeypatch, cash, today, calendar, tmp_path=None
     )
     if tmp_path is not None:
         import src.notifier as n
+
         monkeypatch.setattr(n, "_DB_PATH", tmp_path / "quant_agent.db")
 
 
 def test_days_charged_weeknight_is_one():
     from src.margin_interest import days_charged_until_next_trading_day
+
     wed = _date(2026, 9, 23)
     assert wed.weekday() == 2
     assert days_charged_until_next_trading_day(_weekday_calendar(), wed) == 1
@@ -880,6 +940,7 @@ def test_days_charged_weeknight_is_one():
 
 def test_days_charged_friday_is_three():
     from src.margin_interest import days_charged_until_next_trading_day
+
     fri = _date(2026, 9, 25)
     assert fri.weekday() == 4
     assert days_charged_until_next_trading_day(_weekday_calendar(), fri) == 3
@@ -887,7 +948,8 @@ def test_days_charged_friday_is_three():
 
 def test_days_charged_friday_before_monday_holiday_is_four():
     from src.margin_interest import days_charged_until_next_trading_day
-    fri = _date(2026, 9, 4)          # Labor Day 2026 is Mon 2026-09-07
+
+    fri = _date(2026, 9, 4)  # Labor Day 2026 is Mon 2026-09-07
     assert fri.weekday() == 4
     cal = _weekday_calendar(holidays={_date(2026, 9, 7)})
     assert days_charged_until_next_trading_day(cal, fri) == 4
@@ -898,6 +960,7 @@ def test_days_charged_degrades_to_one_when_calendar_raises():
 
     def boom(_d):
         raise RuntimeError("calendar endpoint down")
+
     assert days_charged_until_next_trading_day(boom, _date(2026, 9, 25)) == 1
 
 
@@ -905,11 +968,13 @@ def test_days_charged_degrades_to_one_when_no_trading_day_within_bound():
     """A calendar that says 'closed' forever is a broken read, not a
     market closure — bounded search, then the old flat figure."""
     from src.margin_interest import days_charged_until_next_trading_day
+
     assert days_charged_until_next_trading_day(lambda d: False, _date(2026, 9, 25)) == 1
 
 
 def test_estimate_period_usd_is_daily_times_days_charged():
     from src.margin_interest import build_estimate
+
     est = build_estimate(5_000.0, 6.25, days_charged=3)
     assert est.days_charged == 3
     assert est.period_usd == pytest.approx(est.daily_usd * 3)
@@ -920,6 +985,7 @@ def test_estimate_period_usd_is_daily_times_days_charged():
 
 def test_build_estimate_defaults_to_one_day_so_existing_callers_are_unchanged():
     from src.margin_interest import build_estimate
+
     est = build_estimate(5_000.0, 6.25)
     assert est.days_charged == 1
     assert est.period_usd == pytest.approx(est.daily_usd)
@@ -927,16 +993,15 @@ def test_build_estimate_defaults_to_one_day_so_existing_callers_are_unchanged():
 
 def test_format_daily_line_weeknight_has_no_multi_day_clause():
     from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+
     line = format_daily_line(-5_000.0, 6.25, days_charged=1)
-    assert line == (
-        "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
-        f"at 6.25% — {ESTIMATE_LABEL}"
-    )
+    assert line == (f"💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight at 6.25% — {ESTIMATE_LABEL}")
     assert "days" not in line.split(" — ")[0]
 
 
 def test_format_daily_line_friday_names_the_three_day_weekend_total():
     from src.margin_interest import ESTIMATE_LABEL, format_daily_line
+
     line = format_daily_line(-5_000.0, 6.25, days_charged=3)
     assert line == (
         "💳 margin interest: $0.87/day (~$312/yr) on $5,000 carried overnight "
@@ -947,6 +1012,7 @@ def test_format_daily_line_friday_names_the_three_day_weekend_total():
 
 def test_format_daily_line_long_weekend_names_four_days():
     from src.margin_interest import format_daily_line
+
     line = format_daily_line(-5_000.0, 6.25, days_charged=4)
     assert "carried over the long weekend that's 4 days ≈ $3.47" in line
 
@@ -955,8 +1021,11 @@ def test_format_daily_line_zero_and_fault_states_ignore_days_charged():
     """The multi-day clause belongs only on a real debit; the zero line and
     both 'not available' lines are byte-for-byte what they were."""
     from src.margin_interest import (
-        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, format_daily_line,
+        RATE_UNAVAILABLE_LINE,
+        UNAVAILABLE_LINE,
+        format_daily_line,
     )
+
     assert format_daily_line(None, 6.25, days_charged=3) == UNAVAILABLE_LINE
     assert format_daily_line(-5_000.0, None, days_charged=3) == RATE_UNAVAILABLE_LINE
     assert format_daily_line(1_000.0, 6.25, days_charged=3) == format_daily_line(1_000.0, 6.25)
@@ -968,9 +1037,14 @@ def test_margin_interest_lines_weeknight_shows_one_day(monkeypatch, tmp_path):
     for 1 day — that whole period_usd is what the (freshly-empty)
     cumulative buckets show, since it's the only row ever persisted."""
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     _stub_broker_with_calendar(
-        monkeypatch, -5_000.0, _date(2026, 9, 23), _weekday_calendar(), tmp_path,
+        monkeypatch,
+        -5_000.0,
+        _date(2026, 9, 23),
+        _weekday_calendar(),
+        tmp_path,
     )
     lines = n._margin_interest_lines()
     assert "this week $0.87" in lines[0]
@@ -981,9 +1055,14 @@ def test_margin_interest_lines_friday_shows_three_days_via_broker_calendar(monke
     """Friday's carry is 3 days: $0.8681/day x 3 = $2.6042, and THAT total
     (not the per-day figure) is what the cumulative buckets sum."""
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     _stub_broker_with_calendar(
-        monkeypatch, -5_000.0, _date(2026, 9, 25), _weekday_calendar(), tmp_path,
+        monkeypatch,
+        -5_000.0,
+        _date(2026, 9, 25),
+        _weekday_calendar(),
+        tmp_path,
     )
     lines = n._margin_interest_lines()
     assert "this week $2.60" in lines[0]
@@ -994,10 +1073,12 @@ def test_margin_interest_lines_calendar_failure_degrades_to_one_day_not_an_error
     """A broken calendar read must NOT turn a readable balance into
     'not available' — the cash WAS read; only the day count is unknown."""
     import src.notifier as n
+
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
 
     def boom(_d):
         raise RuntimeError("calendar endpoint down")
+
     _stub_broker_with_calendar(monkeypatch, -5_000.0, _date(2026, 9, 25), boom, tmp_path)
     lines = n._margin_interest_lines()
     assert "this week $0.87" in lines[0]
@@ -1037,10 +1118,10 @@ def test_bucket_estimate_rows_splits_this_week_and_current_month():
 def test_bucket_estimate_rows_lists_prior_months_newest_first_skips_zero():
     today = _date(2026, 9, 24)
     rows = [
-        {"date": "2026-08-05", "period_usd": 10.0},   # August: nonzero
-        {"date": "2026-07-10", "period_usd": 0.0},    # July: zero -> skipped
-        {"date": "2026-06-15", "period_usd": 4.0},    # June: nonzero
-        {"date": "2026-03-01", "period_usd": 99.0},   # outside the 6-month window
+        {"date": "2026-08-05", "period_usd": 10.0},  # August: nonzero
+        {"date": "2026-07-10", "period_usd": 0.0},  # July: zero -> skipped
+        {"date": "2026-06-15", "period_usd": 4.0},  # June: nonzero
+        {"date": "2026-03-01", "period_usd": 99.0},  # outside the 6-month window
     ]
     result = bucket_estimate_rows(rows, today)
     labels = [m["label"] for m in result.prior_months]
@@ -1087,8 +1168,8 @@ def test_bucket_broker_activities_returns_none_when_broker_never_confirmed():
 def test_bucket_broker_activities_sums_confirmed_charges_by_bucket():
     today = _date(2026, 9, 24)
     activities = [
-        {"date": "2026-09-24", "net_amount": -1.50},   # this week/month
-        {"date": "2026-08-15", "net_amount": -3.00},   # prior month
+        {"date": "2026-09-24", "net_amount": -1.50},  # this week/month
+        {"date": "2026-08-15", "net_amount": -3.00},  # prior month
         {"date": "2026-01-01", "net_amount": -20.00},  # all-time, pre-window
     ]
     result = bucket_broker_activities(activities, today)
@@ -1128,7 +1209,8 @@ def test_format_cumulative_line_no_caveat_paragraph_only_est_tag():
     is the short '(est.)' tag, per the owner's 2026-09-24 ask to remove the
     caveat block from every rendering."""
     result = bucket_estimate_rows(
-        [{"date": "2026-09-24", "period_usd": 1.23}], _date(2026, 9, 24),
+        [{"date": "2026-09-24", "period_usd": 1.23}],
+        _date(2026, 9, 24),
     )
     line = format_cumulative_line(result)
     assert "(est.)" in line
@@ -1140,7 +1222,8 @@ def test_format_cumulative_line_no_caveat_paragraph_only_est_tag():
 
 def test_format_cumulative_line_broker_actual_carries_no_est_tag():
     result = bucket_broker_activities(
-        [{"date": "2026-09-24", "net_amount": -1.23}], _date(2026, 9, 24),
+        [{"date": "2026-09-24", "net_amount": -1.23}],
+        _date(2026, 9, 24),
     )
     line = format_cumulative_line(result)
     assert "(est.)" not in line
@@ -1211,13 +1294,21 @@ def test_reconstruct_daily_cash_balances_replays_deposit_then_trades():
     activities = [
         {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
         {
-            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
-            "side": "buy", "price": "100.00", "qty": "50",
+            "id": "2",
+            "activity_type": "FILL",
+            "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy",
+            "price": "100.00",
+            "qty": "50",
         },
         {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.01"},
         {
-            "id": "4", "activity_type": "FILL", "transaction_time": "2026-08-17T14:00:00Z",
-            "side": "buy", "price": "200.00", "qty": "80",
+            "id": "4",
+            "activity_type": "FILL",
+            "transaction_time": "2026-08-17T14:00:00Z",
+            "side": "buy",
+            "price": "200.00",
+            "qty": "80",
         },
     ]
     by_date = reconstruct_daily_cash_balances(activities)
@@ -1243,8 +1334,12 @@ def test_reconstruct_daily_cash_balances_matches_live_account_within_pennies():
     activities = [
         {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "10000"},
         {
-            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
-            "side": "buy", "price": "150.00", "qty": "100",
+            "id": "2",
+            "activity_type": "FILL",
+            "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy",
+            "price": "150.00",
+            "qty": "100",
         },
         {"id": "3", "activity_type": "FEE", "date": "2026-08-14", "net_amount": "-0.02"},
     ]
@@ -1279,7 +1374,10 @@ def test_backfill_daily_estimates_one_row_per_trading_day_zero_included():
     ]
     trading_days = [_date(2026, 8, 14), _date(2026, 8, 17)]
     rows = backfill_daily_estimates(
-        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+        trading_days,
+        activities,
+        rate_pct=6.25,
+        is_trading_day=lambda d: d.weekday() < 5,
     )
     assert len(rows) == 2
     assert all(isinstance(r, BackfilledDayEstimate) for r in rows)
@@ -1293,14 +1391,21 @@ def test_backfill_daily_estimates_debit_day_gets_a_real_estimate():
     activities = [
         {"id": "1", "activity_type": "JNLC", "date": "2026-08-12", "net_amount": "1000"},
         {
-            "id": "2", "activity_type": "FILL", "transaction_time": "2026-08-14T14:00:00Z",
-            "side": "buy", "price": "100.00", "qty": "50",  # takes cash to -4000
+            "id": "2",
+            "activity_type": "FILL",
+            "transaction_time": "2026-08-14T14:00:00Z",
+            "side": "buy",
+            "price": "100.00",
+            "qty": "50",  # takes cash to -4000
         },
     ]
     # 8/17 (Monday) morning inherits 8/14's EOD balance of -4000.
     trading_days = [_date(2026, 8, 17)]
     rows = backfill_daily_estimates(
-        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: d.weekday() < 5,
+        trading_days,
+        activities,
+        rate_pct=6.25,
+        is_trading_day=lambda d: d.weekday() < 5,
     )
     assert len(rows) == 1
     row = rows[0]
@@ -1318,7 +1423,10 @@ def test_backfill_daily_estimates_no_prior_activity_is_a_true_zero():
     ]
     trading_days = [_date(2026, 8, 14)]
     rows = backfill_daily_estimates(
-        trading_days, activities, rate_pct=6.25, is_trading_day=lambda d: True,
+        trading_days,
+        activities,
+        rate_pct=6.25,
+        is_trading_day=lambda d: True,
     )
     assert rows[0].debit_balance == 0.0
     assert rows[0].period_usd == 0.0
@@ -1327,6 +1435,9 @@ def test_backfill_daily_estimates_no_prior_activity_is_a_true_zero():
 def test_backfill_daily_estimates_never_raises_on_unparseable_activity():
     activities = [{"activity_type": "FILL", "side": "buy", "price": "nope", "qty": "1"}]
     rows = backfill_daily_estimates(
-        [_date(2026, 8, 14)], activities, rate_pct=6.25, is_trading_day=lambda d: True,
+        [_date(2026, 8, 14)],
+        activities,
+        rate_pct=6.25,
+        is_trading_day=lambda d: True,
     )
     assert len(rows) == 1

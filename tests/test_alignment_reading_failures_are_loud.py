@@ -11,6 +11,7 @@ now leaves an explicit not-evaluated ROW naming the error, and a write that
 is refused outright is logged with its traceback so the layer that refused
 it is named.
 """
+
 from __future__ import annotations
 
 import logging
@@ -97,7 +98,10 @@ def test_a_refused_write_is_logged_with_its_traceback(caplog):
     scan = _scan(_RefusingDb(), cached=lambda **k: None)
     with caplog.at_level(logging.ERROR):
         scan._record_alignment_reading(
-            symbol="CCC", verdict=None, run_id="run-1", is_short=False,
+            symbol="CCC",
+            verdict=None,
+            run_id="run-1",
+            is_short=False,
             not_evaluated_reason="whatever",
         )
     records = [r for r in caplog.records if "CCC" in r.getMessage()]

@@ -32,15 +32,8 @@ def ensure_soft_exit_restore_occurrences(conn) -> None:
     try:
         cursor = conn.execute("PRAGMA table_info(soft_exit_heal_restores)")
         if "occurrences" not in {row[1] for row in cursor.fetchall()}:
-            conn.execute(
-                "ALTER TABLE soft_exit_heal_restores ADD COLUMN occurrences INTEGER"
-            )
-        conn.execute(
-            "UPDATE soft_exit_heal_restores SET occurrences = 1 "
-            "WHERE occurrences IS NULL"
-        )
+            conn.execute("ALTER TABLE soft_exit_heal_restores ADD COLUMN occurrences INTEGER")
+        conn.execute("UPDATE soft_exit_heal_restores SET occurrences = 1 WHERE occurrences IS NULL")
         conn.commit()
     except Exception as e:  # noqa: BLE001 — a migration hiccup is not fatal
-        logger.error(
-            "Schema migration failed for soft_exit_heal_restores.occurrences: %s", e
-        )
+        logger.error("Schema migration failed for soft_exit_heal_restores.occurrences: %s", e)

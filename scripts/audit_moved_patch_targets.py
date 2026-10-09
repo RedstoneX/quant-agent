@@ -37,6 +37,7 @@ name through their own unmirrored binding or a function-local ``from ... import`
 Usage: ``python -m scripts.audit_moved_patch_targets [--json] [--root DIR]``.
 Exit status is 0 regardless; the guard test consumes the JSON.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -96,23 +97,24 @@ class _ModuleFacts:
             self._bind_top(node)
         # Lazy ``__getattr__`` maps: ``_X = {"Name": "src.mod", ...}`` consumed
         # by a module-level ``def __getattr__``.
-        has_getattr = any(
-            isinstance(n, ast.FunctionDef) and n.name == "__getattr__" for n in self.tree.body
-        )
+        has_getattr = any(isinstance(n, ast.FunctionDef) and n.name == "__getattr__" for n in self.tree.body)
         dict_consts: dict[str, dict[str, str]] = {}
         for node in self.tree.body:
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
                 keys = node.value.keys
                 vals = node.value.values
                 if keys and all(
-                    isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
-                    and isinstance(k.value, str) and isinstance(v.value, str)
+                    isinstance(k, ast.Constant)
+                    and isinstance(v, ast.Constant)
+                    and isinstance(k.value, str)
+                    and isinstance(v.value, str)
                     for k, v in zip(keys, vals)
                 ):
                     for tgt in node.targets:
                         if isinstance(tgt, ast.Name):
                             dict_consts[tgt.id] = {
-                                k.value: v.value for k, v in zip(keys, vals)  # type: ignore[union-attr]
+                                k.value: v.value
+                                for k, v in zip(keys, vals)  # type: ignore[union-attr]
                             }
         if has_getattr:
             for mapping in dict_consts.values():
@@ -122,10 +124,7 @@ class _ModuleFacts:
         # that calls ``setattr`` on modules named in one of the dict constants,
         # installed by assigning ``__class__`` on ``sys.modules[__name__]``.
         installed = any(
-            isinstance(n, ast.Assign)
-            and any(
-                isinstance(t, ast.Attribute) and t.attr == "__class__" for t in n.targets
-            )
+            isinstance(n, ast.Assign) and any(isinstance(t, ast.Attribute) and t.attr == "__class__" for t in n.targets)
             for n in self.tree.body
         )
         if installed:
@@ -161,9 +160,7 @@ class _ModuleFacts:
                 for sub in ast.walk(node):
                     if isinstance(sub, ast.ImportFrom) and sub.module:
                         for alias in sub.names:
-                            self.local_imports[alias.asname or alias.name].append(
-                                (sub.module, sub.lineno)
-                            )
+                            self.local_imports[alias.asname or alias.name].append((sub.module, sub.lineno))
 
     def _bind_top(self, node: ast.AST) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -263,14 +260,16 @@ def collect_targets(tests_dir: Path) -> list[PatchTarget]:
                 raw = first.value
                 for mod in AUDITED_MODULES:
                     if raw.startswith(mod + "."):
-                        name = raw[len(mod) + 1:].split(".")[0]
+                        name = raw[len(mod) + 1 :].split(".")[0]
                         out.append(PatchTarget(rel, node.lineno, mod, name, raw))
                         break
             elif kind == "object" and len(node.args) >= 2:
                 tgt, attr = node.args[0], node.args[1]
                 if (
-                    isinstance(tgt, ast.Name) and tgt.id in aliases
-                    and isinstance(attr, ast.Constant) and isinstance(attr.value, str)
+                    isinstance(tgt, ast.Name)
+                    and tgt.id in aliases
+                    and isinstance(attr, ast.Constant)
+                    and isinstance(attr.value, str)
                 ):
                     mod = aliases[tgt.id]
                     out.append(PatchTarget(rel, node.lineno, mod, attr.value, f"{mod}.{attr.value}"))
@@ -286,7 +285,8 @@ def classify(target: PatchTarget, root: Path) -> Finding:
     name = target.name
     binding = facts.bindings.get(name) or (f"lazy -> {facts.lazy[name]}" if name in facts.lazy else "")
     mirrored_in = sorted(
-        m for m in facts.mirror_targets
+        m
+        for m in facts.mirror_targets
         if (root / (m.replace(".", "/") + ".py")).exists() and name in _facts(m, root).bindings
     )
     if not binding:
@@ -304,8 +304,10 @@ def classify(target: PatchTarget, root: Path) -> Finding:
     if cls in {"LIVE", "MIRRORED"}:
         for other in [facts.dotted, *_sibling_modules(facts, root)]:
             of = _facts(other, root)
-            if other != facts.dotted and cls == "LIVE" and (
-                name in of.bindings and name in of.loads and other not in mirrored_in
+            if (
+                other != facts.dotted
+                and cls == "LIVE"
+                and (name in of.bindings and name in of.loads and other not in mirrored_in)
             ):
                 leaks.append(other)
             for source, lineno in of.local_imports.get(name, ()):
@@ -313,9 +315,7 @@ def classify(target: PatchTarget, root: Path) -> Finding:
                 # and therefore reached; one from anywhere else is not.
                 if source != facts.dotted:
                     leaks.append(f"{other}:{lineno} (function-local import from {source})")
-    return Finding(
-        target.test_file, target.lineno, target.module, name, cls, binding, reason, tuple(leaks)
-    )
+    return Finding(target.test_file, target.lineno, target.module, name, cls, binding, reason, tuple(leaks))
 
 
 def _sibling_modules(facts: _ModuleFacts, root: Path) -> list[str]:
@@ -367,8 +367,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {c:4}  {n}")
     leaky = [f for f in report["findings"] if f["leaks_to"]]
     if leaky:
-        print("\nLIVE/MIRRORED but the name is ALSO loaded by split-out modules through an "
-              "unmirrored binding or a function-local import (those call sites are NOT reached):")
+        print(
+            "\nLIVE/MIRRORED but the name is ALSO loaded by split-out modules through an "
+            "unmirrored binding or a function-local import (those call sites are NOT reached):"
+        )
         seen: set[tuple[str, tuple[str, ...]]] = set()
         for f in leaky:
             key = (f"{f['module']}.{f['name']}", tuple(f["leaks_to"]))
@@ -379,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
     if bad:
         print("\nREEXPORT / MISSING sites:")
         for f in bad:
-            print(f"  {f['test_file']}:{f['lineno']}  {f['module']}.{f['name']}  [{f['classification']}] {f['binding']}")
+            print(
+                f"  {f['test_file']}:{f['lineno']}  {f['module']}.{f['name']}  [{f['classification']}] {f['binding']}"
+            )
     return 0
 
 

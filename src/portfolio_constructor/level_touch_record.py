@@ -86,9 +86,7 @@ class LevelTouchTally:
     @property
     def refusals(self) -> int:
         """Every decision in which the bar cost the desk a level."""
-        return self.count(outcome=OUTCOME_UNDER_TOUCHED) + self.count(
-            outcome=OUTCOME_UNVERIFIED
-        )
+        return self.count(outcome=OUTCOME_UNDER_TOUCHED) + self.count(outcome=OUTCOME_UNVERIFIED)
 
     def bound(self) -> bool:
         """Did the bar change any outcome? False means NEVER EXERCISED."""
@@ -106,9 +104,7 @@ class LevelTouchTally:
             "by_site": {
                 site: {
                     "admitted": self.count(site=site, outcome=OUTCOME_ADMITTED),
-                    "under_touched": self.count(
-                        site=site, outcome=OUTCOME_UNDER_TOUCHED
-                    ),
+                    "under_touched": self.count(site=site, outcome=OUTCOME_UNDER_TOUCHED),
                     "unverified": self.count(site=site, outcome=OUTCOME_UNVERIFIED),
                 }
                 for site in (

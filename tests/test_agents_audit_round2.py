@@ -12,8 +12,13 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    BuyGrade, MissedOpportunity, Position, PortfolioDecision, ReasoningChain,
-    SellGrade, TradeDecision,
+    BuyGrade,
+    MissedOpportunity,
+    Position,
+    PortfolioDecision,
+    ReasoningChain,
+    SellGrade,
+    TradeDecision,
 )
 
 
@@ -25,21 +30,29 @@ def _mk_agent(cls):
         return cls(api_key="test", model="claude-sonnet-4-6")
 
 
-def _position(symbol="NVDA", qty=10, avg_entry=100.0, current_price=110.0,
-              market_value=None, unrealized_pnl=100.0, sector="Tech"):
+def _position(
+    symbol="NVDA", qty=10, avg_entry=100.0, current_price=110.0, market_value=None, unrealized_pnl=100.0, sector="Tech"
+):
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
         current_price=current_price,
         market_value=market_value if market_value is not None else qty * current_price,
-        unrealized_pnl=unrealized_pnl, sector=sector,
+        unrealized_pnl=unrealized_pnl,
+        sector=sector,
     )
 
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
@@ -47,6 +60,7 @@ def _pm_rc() -> ReasoningChain:
 # idx 4 — position_reviewer: stop/target/thesis lines must not silently
 # vanish for positions opened before today.
 # ---------------------------------------------------------------------------
+
 
 def test_idx4_stop_target_backfilled_from_position_facts():
     """No morning BUY row (position opened days ago) but position_facts has
@@ -96,10 +110,15 @@ def test_idx4_today_buy_context_still_preferred():
         cash_balance=1_000.0,
         total_value=10_000.0,
         session_type="midday",
-        morning_trades=[{
-            "symbol": "NVDA", "action": "BUY", "stop_loss": 95.0,
-            "take_profit": 130.0, "reasoning": "AI capex thesis",
-        }],
+        morning_trades=[
+            {
+                "symbol": "NVDA",
+                "action": "BUY",
+                "stop_loss": 95.0,
+                "take_profit": 130.0,
+                "reasoning": "AI capex thesis",
+            }
+        ],
         position_facts={"NVDA": {"days_held": 0}},
     )
     assert "Hard stop (broker): $95.00" in msg
@@ -128,17 +147,24 @@ def test_idx4_no_facts_no_context_notes_absence():
 # idx 5 — risk_manager: portfolio header + per-position weights
 # ---------------------------------------------------------------------------
 
+
 def _rm_decision(action="BUY", symbol="SPY", alloc=10.0):
     return TradeDecision(
-        action=action, symbol=symbol, allocation_pct=alloc,
-        entry_price=507.0, stop_loss=490.0, take_profit=530.0,
+        action=action,
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=507.0,
+        stop_loss=490.0,
+        take_profit=530.0,
         reasoning="test",
     )
 
 
 def _rm_pd(decisions):
     return PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="x",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="x",
     )
 
 
@@ -183,15 +209,18 @@ def test_idx5_rm_weight_approximation_without_total_value():
 # idx 6 — risk_manager: BUY vs SELL allocation_pct semantics labeled
 # ---------------------------------------------------------------------------
 
+
 def test_idx6_rm_sell_vs_buy_allocation_labels():
     from src.agents.risk_manager import RiskManagerAgent
 
     agent = _mk_agent(RiskManagerAgent)
     msg = agent.build_user_message(
-        portfolio_decision=_rm_pd([
-            _rm_decision(action="BUY", symbol="SPY", alloc=10.0),
-            _rm_decision(action="SELL", symbol="META", alloc=100.0),
-        ]),
+        portfolio_decision=_rm_pd(
+            [
+                _rm_decision(action="BUY", symbol="SPY", alloc=10.0),
+                _rm_decision(action="SELL", symbol="META", alloc=100.0),
+            ]
+        ),
         positions=[],
         macro_summary={},
         rule_violations=[],
@@ -230,9 +259,11 @@ def test_buy_that_adds_shows_increment_and_resulting_weight():
 
     agent = _mk_agent(RiskManagerAgent)
     msg = agent.build_user_message(
-        portfolio_decision=_rm_pd([
-            _rm_decision(action="BUY", symbol="RSG", alloc=44.23),
-        ]),
+        portfolio_decision=_rm_pd(
+            [
+                _rm_decision(action="BUY", symbol="RSG", alloc=44.23),
+            ]
+        ),
         positions=[_position(symbol="RSG", market_value=20_770.0)],
         macro_summary={},
         rule_violations=[],
@@ -257,9 +288,11 @@ def test_buy_that_adds_resulting_weight_is_gross_aware():
     assert _gross_multiplier("SQQQ") == 3.0, "fixture assumes SQQQ is 3x"
     agent = _mk_agent(RiskManagerAgent)
     msg = agent.build_user_message(
-        portfolio_decision=_rm_pd([
-            _rm_decision(action="BUY", symbol="SQQQ", alloc=5.0),
-        ]),
+        portfolio_decision=_rm_pd(
+            [
+                _rm_decision(action="BUY", symbol="SQQQ", alloc=5.0),
+            ]
+        ),
         positions=[_position(symbol="SQQQ", market_value=5_000.0)],
         macro_summary={},
         rule_violations=[],
@@ -313,6 +346,7 @@ def test_rm_prompt_carries_the_desks_concentration_doctrine():
 # idx 12 — news_analyst: stock_mentions rendering keeps symbol + dedupes
 # ---------------------------------------------------------------------------
 
+
 class _FakeNewsItem:
     def __init__(self, source, title, summary=""):
         self.source = source
@@ -340,6 +374,7 @@ def test_idx12_stock_mentions_render_symbol_and_dedupe():
 # idx 22 — portfolio_manager: Weight tag must be GROSS (constructor basis)
 # ---------------------------------------------------------------------------
 
+
 def test_idx22_pm_weight_is_gross_for_leveraged_etf():
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
@@ -347,12 +382,24 @@ def test_idx22_pm_weight_is_gross_for_leveraged_etf():
     msg = agent.build_user_message(
         analyses=[],
         positions=[
-            _position(symbol="SQQQ", qty=100, avg_entry=60.0,
-                      current_price=60.0, market_value=6_000.0,
-                      unrealized_pnl=0.0, sector="Inverse"),
-            _position(symbol="AAPL", qty=30, avg_entry=200.0,
-                      current_price=200.0, market_value=6_000.0,
-                      unrealized_pnl=0.0, sector="Tech"),
+            _position(
+                symbol="SQQQ",
+                qty=100,
+                avg_entry=60.0,
+                current_price=60.0,
+                market_value=6_000.0,
+                unrealized_pnl=0.0,
+                sector="Inverse",
+            ),
+            _position(
+                symbol="AAPL",
+                qty=30,
+                avg_entry=200.0,
+                current_price=200.0,
+                market_value=6_000.0,
+                unrealized_pnl=0.0,
+                sector="Tech",
+            ),
         ],
         cash_balance=88_000.0,
         total_value=100_000.0,
@@ -372,6 +419,7 @@ def test_idx22_pm_prompt_documents_gross_weights():
 # idx 23 — tech_analyst: rows for unsubmitted symbols are dropped
 # ---------------------------------------------------------------------------
 
+
 def _tech_row(symbol):
     return {
         "symbol": symbol,
@@ -386,8 +434,11 @@ def _tech_row(symbol):
         "expected_horizon_sessions": 10,
         "thesis_invalid_if": "Price closes below MA50",
         "reasoning_chain": {
-            "trend": "up", "momentum": "ok", "volatility": "calm",
-            "volume": "confirming", "support_resistance": "MA50",
+            "trend": "up",
+            "momentum": "ok",
+            "volatility": "calm",
+            "volume": "confirming",
+            "support_resistance": "MA50",
         },
         "reasoning": "test",
     }
@@ -410,12 +461,21 @@ def test_idx23_tech_drops_unsubmitted_symbol_rows(mock_cls, caplog):
 
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6")
     indicators = TechnicalIndicators(
-        symbol="SPY", ma_20=505.0, ma_50=498.0, ma_200=480.0, rsi_14=58.0,
-        macd=1.5, macd_signal=1.2, macd_hist=0.3, bb_upper=520.0,
-        bb_middle=505.0, bb_lower=490.0, atr_14=8.5, volume_change_pct=15.0,
+        symbol="SPY",
+        ma_20=505.0,
+        ma_50=498.0,
+        ma_200=480.0,
+        rsi_14=58.0,
+        macd=1.5,
+        macd_signal=1.2,
+        macd_hist=0.3,
+        bb_upper=520.0,
+        bb_middle=505.0,
+        bb_lower=490.0,
+        atr_14=8.5,
+        volume_change_pct=15.0,
     )
-    bars = [OHLCV(date=date(2026, 7, 15), open=503.0, high=510.0,
-                  low=500.0, close=507.0, volume=1_000_000)]
+    bars = [OHLCV(date=date(2026, 7, 15), open=503.0, high=510.0, low=500.0, close=507.0, volume=1_000_000)]
     with caplog.at_level("WARNING"):
         results, _ = agent.analyze_batch(
             [{"symbol": "SPY", "bars": bars, "indicators": indicators}],
@@ -434,6 +494,7 @@ def test_idx23_tech_prompt_forbids_variant_symbols():
 # ---------------------------------------------------------------------------
 # idx 24 — news_analyst: close session has its own guidance
 # ---------------------------------------------------------------------------
+
 
 def test_idx24_news_close_session_guidance():
     from src.agents.news_analyst import NewsAnalystAgent
@@ -454,10 +515,14 @@ def test_idx24_close_session_uses_prior_snapshot():
         prior_session_report={
             "pm_briefing": "midday briefing text",
             "market_sentiment": "neutral",
-            "state_changes": [{
-                "event": "Fed pause", "previous_state": "cutting",
-                "new_state": "paused", "conviction": "high",
-            }],
+            "state_changes": [
+                {
+                    "event": "Fed pause",
+                    "previous_state": "cutting",
+                    "new_state": "paused",
+                    "conviction": "high",
+                }
+            ],
         },
     )
     assert "Prior Session Snapshot" in msg
@@ -468,21 +533,25 @@ def test_idx24_close_session_uses_prior_snapshot():
 # idx 25 — news_analyst hallucination filter: whole-token symbol matching
 # ---------------------------------------------------------------------------
 
+
 def _news_report(state_changes):
     from src.models import NewsIntelligenceReport
-    return NewsIntelligenceReport.model_validate({
-        "macro_narrative": {
-            "last_updated": "2026-07-16",
-            "era_themes": ["test"],
-            "current_regime": "test regime",
-            "key_state_tracker": {},
-        },
-        "state_changes": state_changes,
-        "stock_news": {},
-        "pm_briefing": "test",
-        "market_sentiment": "neutral",
-        "confidence": "medium",
-    })
+
+    return NewsIntelligenceReport.model_validate(
+        {
+            "macro_narrative": {
+                "last_updated": "2026-07-16",
+                "era_themes": ["test"],
+                "current_regime": "test regime",
+                "key_state_tracker": {},
+            },
+            "state_changes": state_changes,
+            "stock_news": {},
+            "pm_briefing": "test",
+            "market_sentiment": "neutral",
+            "confidence": "medium",
+        }
+    )
 
 
 def test_idx25_short_ticker_substring_no_longer_grounds_state_change():
@@ -490,16 +559,21 @@ def test_idx25_short_ticker_substring_no_longer_grounds_state_change():
     NOT survive on that substring hit."""
     from src.agents.news_analyst import NewsAnalystAgent
 
-    report = _news_report([{
-        "event": "Taiwan Strait blockade begins",
-        "previous_state": "tension",
-        "new_state": "blockade",
-        "market_impact": "risk-off",
-        "affected_symbols": ["V"],
-        "conviction": "high",
-    }])
+    report = _news_report(
+        [
+            {
+                "event": "Taiwan Strait blockade begins",
+                "previous_state": "tension",
+                "new_state": "blockade",
+                "market_impact": "risk-off",
+                "affected_symbols": ["V"],
+                "conviction": "high",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
-        report, news_text="Nvidia rallies as markets rise on Fed pause hopes.",
+        report,
+        news_text="Nvidia rallies as markets rise on Fed pause hopes.",
     )
     assert filtered.state_changes == []
 
@@ -507,16 +581,21 @@ def test_idx25_short_ticker_substring_no_longer_grounds_state_change():
 def test_idx25_exact_symbol_token_still_matches():
     from src.agents.news_analyst import NewsAnalystAgent
 
-    report = _news_report([{
-        "event": "Chipmaker guidance shock",
-        "previous_state": "steady",
-        "new_state": "cut",
-        "market_impact": "semis down",
-        "affected_symbols": ["NVDA"],
-        "conviction": "high",
-    }])
+    report = _news_report(
+        [
+            {
+                "event": "Chipmaker guidance shock",
+                "previous_state": "steady",
+                "new_state": "cut",
+                "market_impact": "semis down",
+                "affected_symbols": ["NVDA"],
+                "conviction": "high",
+            }
+        ]
+    )
     filtered = NewsAnalystAgent._filter_hallucinated_state_changes(
-        report, news_text="NVDA slides 5% after datacenter order pause.",
+        report,
+        news_text="NVDA slides 5% after datacenter order pause.",
     )
     assert len(filtered.state_changes) == 1
 
@@ -524,6 +603,7 @@ def test_idx25_exact_symbol_token_still_matches():
 # ---------------------------------------------------------------------------
 # idx 26 — meta_reflector renders digest['watchlist_candidates']
 # ---------------------------------------------------------------------------
+
 
 def test_idx26_meta_reflector_renders_watchlist_candidates():
     from src.agents.meta_reflector import MetaReflectorAgent
@@ -535,13 +615,18 @@ def test_idx26_meta_reflector_renders_watchlist_candidates():
             "window_days": 90,
             "total_candidates": 1,
             "high_conviction": ["VST"],
-            "candidates": [{
-                "symbol": "VST", "add_count": 2, "watch_count": 1,
-                "total_flags": 3, "dates": ["2026-06-01"],
-                "themes": ["nuclear/power"],
-                "latest_reason": "volume-confirmed multi-day trend",
-                "latest_miss_category": "theme_blindspot",
-            }],
+            "candidates": [
+                {
+                    "symbol": "VST",
+                    "add_count": 2,
+                    "watch_count": 1,
+                    "total_flags": 3,
+                    "dates": ["2026-06-01"],
+                    "themes": ["nuclear/power"],
+                    "latest_reason": "volume-confirmed multi-day trend",
+                    "latest_miss_category": "theme_blindspot",
+                }
+            ],
         },
     }
     msg = agent.build_user_message(digest=digest)
@@ -553,6 +638,7 @@ def test_idx26_meta_reflector_renders_watchlist_candidates():
 
 def test_idx26_meta_reflector_watchlist_empty_fallback():
     from src.agents.meta_reflector import _fmt_watchlist_candidates
+
     assert "no watchlist candidates" in _fmt_watchlist_candidates(None)
     assert "no watchlist candidates" in _fmt_watchlist_candidates({"candidates": []})
 
@@ -560,6 +646,7 @@ def test_idx26_meta_reflector_watchlist_empty_fallback():
 # ---------------------------------------------------------------------------
 # idx 29 + 37 — position_reviewer prompt describes ACTUAL enforcement
 # ---------------------------------------------------------------------------
+
 
 def test_idx29_37_prompt_matches_executor_enforcement():
     text = (_REPO_ROOT / "config" / "prompts" / "position_reviewer.md").read_text()
@@ -585,10 +672,14 @@ def test_idx29_37_prompt_matches_executor_enforcement():
 # idx 31 — MissedOpportunity dead validator removed
 # ---------------------------------------------------------------------------
 
+
 def test_idx31_theme_without_durability_defaults_to_unknown():
     m = MissedOpportunity(
-        symbol="VST", move_pct=12.0, miss_category="theme_blindspot",
-        theme_if_any="nuclear/power", lesson="power theme uncovered",
+        symbol="VST",
+        move_pct=12.0,
+        miss_category="theme_blindspot",
+        theme_if_any="nuclear/power",
+        lesson="power theme uncovered",
     )
     assert m.theme_durability == "unknown"
 
@@ -612,12 +703,15 @@ def test_idx31_explicit_null_durability_is_now_unknown_not_a_dropped_entry():
     `test_idx31_dead_validator_removed` below.
     """
     m = MissedOpportunity(
-        symbol="VST", move_pct=12.0, miss_category="theme_blindspot",
-        theme_if_any="nuclear/power", theme_durability=None,
+        symbol="VST",
+        move_pct=12.0,
+        miss_category="theme_blindspot",
+        theme_if_any="nuclear/power",
+        theme_durability=None,
         lesson="power theme uncovered",
     )
     assert m.theme_durability == "unknown"
-    assert m.symbol == "VST"          # the entry SURVIVES — that is the fix
+    assert m.symbol == "VST"  # the entry SURVIVES — that is the fix
     assert m.theme_if_any == "nuclear/power"
 
 
@@ -630,8 +724,11 @@ def test_idx31_null_theme_on_a_real_miss_still_rejects():
     """
     with pytest.raises(ValidationError):
         MissedOpportunity(
-            symbol="VST", move_pct=12.0, miss_category="theme_blindspot",
-            theme_if_any=None, theme_durability=None,
+            symbol="VST",
+            move_pct=12.0,
+            miss_category="theme_blindspot",
+            theme_if_any=None,
+            theme_durability=None,
             lesson="power theme uncovered",
         )
 
@@ -644,13 +741,13 @@ def test_idx31_dead_validator_removed():
 # idx 34 — macro None values render as N/A, not 'None'
 # ---------------------------------------------------------------------------
 
+
 def _outage_macro_summary():
     """Shape MacroDataProvider returns on FRED outage: keys present,
     values None."""
     return {
         "vix": {"current": None, "mean_5d": None, "trend": None},
-        "treasury": {"us2y": None, "us10y": None, "spread_2_10": None,
-                     "inverted": None},
+        "treasury": {"us2y": None, "us10y": None, "spread_2_10": None, "inverted": None},
         "fed_funds_rate": {"current": None},
         "credit_spread": {"current_bps": None, "change_30d_bps": None},
         "inflation": {"core_cpi_yoy": None},
@@ -696,11 +793,14 @@ def test_idx34_position_reviewer_macro_outage_renders_na():
 # idx 35 — PMFacts RM-discipline denominator is rm_verdicts_seen, not /5
 # ---------------------------------------------------------------------------
 
+
 def test_idx35_pmfacts_uses_real_rm_denominator():
     from src.pipeline_context import PMFacts
 
     rendered = PMFacts(
-        rm_verdicts_seen=2, rm_scale_downs_last5=2, rm_mods_last5=1,
+        rm_verdicts_seen=2,
+        rm_scale_downs_last5=2,
+        rm_mods_last5=1,
     ).render()
     assert "last 2 verdicts" in rendered
     assert "2/2" in rendered
@@ -720,6 +820,7 @@ def test_idx35_pmfacts_zero_verdicts_named_unsourced():
 # idx 36 — evening-grade calibration renders when only BUY grades exist
 # ---------------------------------------------------------------------------
 
+
 def test_idx36_buy_grades_render_without_sells():
     from src.agents.position_reviewer import PositionReviewerAgent
 
@@ -731,7 +832,8 @@ def test_idx36_buy_grades_render_without_sells():
         total_value=10_000.0,
         session_type="midday",
         trade_grade_summary={
-            "n_sells": 0, "n_buys": 6,
+            "n_sells": 0,
+            "n_buys": 6,
             "sell_counts": {},
             "buy_counts": {"correct": 4, "premature": 1, "wrong": 1},
         },
@@ -759,29 +861,40 @@ def test_idx36_section_still_absent_with_no_grades_at_all():
 # idx 53 — evening_analyst: per-entry isolation for sell_grades/buy_grades
 # ---------------------------------------------------------------------------
 
+
 def _good_sell_grade():
     return {
-        "symbol": "AAPL", "sell_date": "2026-07-10", "sell_price": 210.0,
-        "current_price": 220.0, "pct_move_since_sell": 4.8,
-        "grade": "premature", "reason": "cut a winner on noise",
+        "symbol": "AAPL",
+        "sell_date": "2026-07-10",
+        "sell_price": 210.0,
+        "current_price": 220.0,
+        "pct_move_since_sell": 4.8,
+        "grade": "premature",
+        "reason": "cut a winner on noise",
     }
 
 
 def _good_buy_grade():
     return {
-        "symbol": "MSFT", "buy_date": "2026-07-01", "buy_price": 450.0,
-        "current_price": 470.0, "pct_move_since_buy": 4.4,
-        "grade": "correct", "reason": "thesis playing out",
+        "symbol": "MSFT",
+        "buy_date": "2026-07-01",
+        "buy_price": 450.0,
+        "current_price": 470.0,
+        "pct_move_since_buy": 4.4,
+        "grade": "correct",
+        "reason": "thesis playing out",
     }
 
 
 def test_idx53_bad_sell_grade_dropped_good_kept():
     from src.agents.evening_analyst import EveningAnalystAgent
 
-    parsed = {"sell_grades": [
-        _good_sell_grade(),
-        {"symbol": "BAD", "grade": "correct"},  # missing required fields
-    ]}
+    parsed = {
+        "sell_grades": [
+            _good_sell_grade(),
+            {"symbol": "BAD", "grade": "correct"},  # missing required fields
+        ]
+    }
     out = EveningAnalystAgent._drop_invalid_entries(parsed, "sell_grades", SellGrade)
     assert len(out["sell_grades"]) == 1
     assert out["sell_grades"][0]["symbol"] == "AAPL"
@@ -794,8 +907,7 @@ def test_idx53_wrong_buy_grade_without_root_cause_dropped():
     from src.agents.evening_analyst import EveningAnalystAgent
 
     bad_wrong = dict(_good_buy_grade())
-    bad_wrong.update({"symbol": "TSLA", "grade": "wrong",
-                      "pct_move_since_buy": -9.0})  # no loss_root_cause
+    bad_wrong.update({"symbol": "TSLA", "grade": "wrong", "pct_move_since_buy": -9.0})  # no loss_root_cause
     parsed = {"buy_grades": [_good_buy_grade(), bad_wrong]}
     out = EveningAnalystAgent._drop_invalid_entries(parsed, "buy_grades", BuyGrade)
     assert len(out["buy_grades"]) == 1
@@ -831,9 +943,15 @@ def test_idx53_analyze_survives_one_bad_grade():
         "risk_rating": "moderate",
         "buy_grades": [
             _good_buy_grade(),
-            {"symbol": "TSLA", "buy_date": "2026-07-01", "buy_price": 300.0,
-             "current_price": 260.0, "pct_move_since_buy": -13.3,
-             "grade": "wrong", "reason": "chased top"},  # missing autopsy fields
+            {
+                "symbol": "TSLA",
+                "buy_date": "2026-07-01",
+                "buy_price": 300.0,
+                "current_price": 260.0,
+                "pct_move_since_buy": -13.3,
+                "grade": "wrong",
+                "reason": "chased top",
+            },  # missing autopsy fields
         ],
     }
     agent = _mk_agent(EveningAnalystAgent)
@@ -842,8 +960,11 @@ def test_idx53_analyze_survives_one_bad_grade():
         mock_result.parse_json.return_value = payload
         mock_run.return_value = mock_result
         report, _ = agent.analyze(
-            positions=[], macro_summary={}, total_value=10_000.0,
-            daily_pnl=0.0, daily_return_pct=0.0,
+            positions=[],
+            macro_summary={},
+            total_value=10_000.0,
+            daily_pnl=0.0,
+            daily_return_pct=0.0,
         )
     assert report is not None
     assert len(report.buy_grades) == 1
@@ -853,6 +974,7 @@ def test_idx53_analyze_survives_one_bad_grade():
 # ---------------------------------------------------------------------------
 # Board items 135 / 137 — two gaps left behind by the #519 fix (2026-09-18).
 # ---------------------------------------------------------------------------
+
 
 def test_item135_short_that_adds_shows_increment_and_resulting_weight():
     """Board item 135. #519 fixed the BUY-that-adds label and left the short
@@ -865,16 +987,26 @@ def test_item135_short_that_adds_shows_increment_and_resulting_weight():
 
     agent = _mk_agent(RiskManagerAgent)
     short = TradeDecision(
-        action="SHORT", symbol="XLU", allocation_pct=30.0,
-        entry_price=70.0, stop_loss=74.0, take_profit=60.0, reasoning="test",
+        action="SHORT",
+        symbol="XLU",
+        allocation_pct=30.0,
+        entry_price=70.0,
+        stop_loss=74.0,
+        take_profit=60.0,
+        reasoning="test",
     )
     msg = agent.build_user_message(
         portfolio_decision=_rm_pd([short]),
         # A short carries a NEGATIVE market_value.
-        positions=[_position(
-            symbol="XLU", qty=-200, current_price=70.0,
-            market_value=-20_000.0, unrealized_pnl=0.0,
-        )],
+        positions=[
+            _position(
+                symbol="XLU",
+                qty=-200,
+                current_price=70.0,
+                market_value=-20_000.0,
+                unrealized_pnl=0.0,
+            )
+        ],
         macro_summary={},
         rule_violations=[],
         total_value=100_000.0,
@@ -894,8 +1026,13 @@ def test_item135_short_against_a_long_is_not_called_an_add():
 
     agent = _mk_agent(RiskManagerAgent)
     short = TradeDecision(
-        action="SHORT", symbol="XLU", allocation_pct=30.0,
-        entry_price=70.0, stop_loss=74.0, take_profit=60.0, reasoning="test",
+        action="SHORT",
+        symbol="XLU",
+        allocation_pct=30.0,
+        entry_price=70.0,
+        stop_loss=74.0,
+        take_profit=60.0,
+        reasoning="test",
     )
     msg = agent.build_user_message(
         portfolio_decision=_rm_pd([short]),
@@ -920,9 +1057,11 @@ def test_item137_fresh_open_of_a_levered_name_states_gross_exposure():
     assert _gross_multiplier("SQQQ") == 3.0, "fixture assumes SQQQ is 3x"
     agent = _mk_agent(RiskManagerAgent)
     msg = agent.build_user_message(
-        portfolio_decision=_rm_pd([
-            _rm_decision(action="BUY", symbol="SQQQ", alloc=21.67),
-        ]),
+        portfolio_decision=_rm_pd(
+            [
+                _rm_decision(action="BUY", symbol="SQQQ", alloc=21.67),
+            ]
+        ),
         positions=[_position(symbol="AAPL", market_value=30_000.0)],
         macro_summary={},
         rule_violations=[],
@@ -942,9 +1081,11 @@ def test_item137_unlevered_fresh_open_label_is_unchanged():
 
     agent = _mk_agent(RiskManagerAgent)
     msg = agent.build_user_message(
-        portfolio_decision=_rm_pd([
-            _rm_decision(action="BUY", symbol="SPY", alloc=21.67),
-        ]),
+        portfolio_decision=_rm_pd(
+            [
+                _rm_decision(action="BUY", symbol="SPY", alloc=21.67),
+            ]
+        ),
         positions=[_position(symbol="AAPL", market_value=30_000.0)],
         macro_summary={},
         rule_violations=[],

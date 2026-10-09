@@ -8,6 +8,7 @@ A worktree is removed ONLY when every one of these is positively proven:
 Anything unproven (gh failure, no PR, open PR, git failure) is KEPT and listed.
 Judged by PR state, never content diff: squash merges make content comparison useless.
 """
+
 import argparse
 import json
 import os
@@ -23,10 +24,8 @@ import time
 # cluster: nothing observed live is within 3x of it. Wrongly kept costs disk only.
 STALE_HOURS = 30
 # A STALE removal may never touch these (other tenants / system), whatever git says.
-FORBIDDEN_PREFIXES = ("/home/dev", "/home/orca", "/home/northstar", "/var/lib/docker",
-                      "/var/lib/containerd")
-STALE_BUCKETS = ("uncommitted or untracked changes", "no PR found for branch",
-                 "detached HEAD, no branch to look up")
+FORBIDDEN_PREFIXES = ("/home/dev", "/home/orca", "/home/northstar", "/var/lib/docker", "/var/lib/containerd")
+STALE_BUCKETS = ("uncommitted or untracked changes", "no PR found for branch", "detached HEAD, no branch to look up")
 
 
 def run(args, cwd=None):
@@ -51,8 +50,7 @@ def list_worktrees(repo):
 
 
 def pr_states(branch, repo):
-    out = run(["gh", "pr", "list", "--head", branch, "--state", "all",
-               "--json", "number,state"], cwd=repo)
+    out = run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state"], cwd=repo)
     return json.loads(out)
 
 
@@ -115,8 +113,17 @@ def has_file_newer_than(path, cutoff):
     return False
 
 
-def judge_stale(wt, repo, reason, states=None, cwd=None, now=None,
-                commit_ts=newest_commit_ts, newer=has_file_newer_than, hours=STALE_HOURS):
+def judge_stale(
+    wt,
+    repo,
+    reason,
+    states=None,
+    cwd=None,
+    now=None,
+    commit_ts=newest_commit_ts,
+    newer=has_file_newer_than,
+    hours=STALE_HOURS,
+):
     """Second rule, only for the three never-landing buckets. Any doubt -> keep."""
     if reason not in STALE_BUCKETS:
         return False, reason
@@ -129,8 +136,7 @@ def judge_stale(wt, repo, reason, states=None, cwd=None, now=None,
         return False, reason + "; stale rule: live session directory"
     branch = (wt.get("branch") or "").removeprefix("refs/heads/")
     try:
-        if branch and any(p.get("state") not in ("MERGED", "CLOSED")
-                          for p in states(branch, repo)):
+        if branch and any(p.get("state") not in ("MERGED", "CLOSED") for p in states(branch, repo)):
             return False, reason + "; stale rule: open PR"
         cutoff = (now or time.time()) - hours * 3600
         if commit_ts(path) > cutoff or newer(path, cutoff):
@@ -170,8 +176,7 @@ def main(argv=None):
     if a.apply:
         for p, _ in remove:
             try:  # landed trees: no --force, git refuses a dirty tree; stale ones are dirty by design
-                run(["git", "worktree", "remove"] + (["--force"] if p in stale else []) + [p],
-                    cwd=a.repo)
+                run(["git", "worktree", "remove"] + (["--force"] if p in stale else []) + [p], cwd=a.repo)
             except Exception as e:
                 failed += 1
                 print(f"FAILED {p}: {e}")

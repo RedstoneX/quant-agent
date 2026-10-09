@@ -12,7 +12,8 @@ class PromptProjected:
     """The projected-portfolio preview; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         portfolio_constructor=None,
         risk_engine=None,
     ) -> None:
@@ -79,12 +80,10 @@ class PromptProjected:
         from src.portfolio_constructor import ConstructorConfig
         from src.risk.constants import risk_budget_allocation_pct
         from src.risk.rules import book_exposure, sector_side_gross
+
         if total_value <= 0:
             return ""
-        buy_candidates = [
-            a for a in analyses
-            if a.rating in ("buy", "strong_buy") and a.entry_price
-        ]
+        buy_candidates = [a for a in analyses if a.rating in ("buy", "strong_buy") and a.entry_price]
         if not positions and not buy_candidates:
             return ""
 
@@ -135,7 +134,9 @@ class PromptProjected:
         # no constructor is attached (a bare pipeline in a test) or when a
         # MagicMock config auto-creates a non-numeric attribute.
         cstr_cfg = getattr(
-            getattr(self, "portfolio_constructor", None), "cfg", None,
+            getattr(self, "portfolio_constructor", None),
+            "cfg",
+            None,
         )
 
         def _dial(name: str) -> float:
@@ -190,20 +191,14 @@ class PromptProjected:
             # desk's ordinary stop widths print things like "≤247%", which
             # is the rejected 225% arithmetic in another costume.
             reachable_pct = min(ceiling_pct, max_position_pct)
-            per_candidate.append(
-                f"{a.symbol} stop -{stop_distance_pct:.1f}% "
-                f"→ ≤{reachable_pct:.0f}%"
-            )
+            per_candidate.append(f"{a.symbol} stop -{stop_distance_pct:.1f}% → ≤{reachable_pct:.0f}%")
         run.symbol_sectors = cached_sectors
 
         def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
             if not sector_dict:
                 return "(empty)"
             sorted_secs = sorted(sector_dict.items(), key=lambda kv: -kv[1])[:5]
-            return ", ".join(
-                f"{sec} {side} {v / total_value * 100:.0f}%"
-                for (sec, side), v in sorted_secs
-            )
+            return ", ".join(f"{sec} {side} {v / total_value * 100:.0f}%" for (sec, side), v in sorted_secs)
 
         lines = [
             f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
@@ -216,11 +211,14 @@ class PromptProjected:
         # is measured; it is no longer applied to a projected book, which
         # cannot be computed here (see below).
         target_pct = getattr(
-            getattr(self, "risk_engine", None), "config", None,
+            getattr(self, "risk_engine", None),
+            "config",
+            None,
         )
         target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
         overweight = [
-            f"{sec} ({side})" for (sec, side), v in sector_gross.items()
+            f"{sec} ({side})"
+            for (sec, side), v in sector_gross.items()
             if v / total_value * 100 > target_pct and sec != "Unknown"
         ]
         if overweight:
@@ -242,17 +240,13 @@ class PromptProjected:
             composition = ", ".join(
                 f"{sec} {len(syms)} of {total_candidates} "
                 f"({len(syms) / total_candidates * 100:.0f}% of the candidate "
-                f"set: {', '.join(syms[:6])}"
-                + (f" +{len(syms) - 6} more" if len(syms) > 6 else "")
-                + ")"
+                f"set: {', '.join(syms[:6])}" + (f" +{len(syms) - 6} more" if len(syms) > 6 else "") + ")"
                 for sec, syms in sorted(
-                    by_sector.items(), key=lambda kv: (-len(kv[1]), kv[0]),
+                    by_sector.items(),
+                    key=lambda kv: (-len(kv[1]), kv[0]),
                 )
             )
-            lines.append(
-                f"- {total_candidates} BUY-rated candidate(s) on offer, "
-                f"by sector: {composition}"
-            )
+            lines.append(f"- {total_candidates} BUY-rated candidate(s) on offer, by sector: {composition}")
             if per_candidate:
                 n = len(per_candidate)
                 shown = per_candidate[:8]

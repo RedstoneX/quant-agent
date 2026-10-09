@@ -47,27 +47,34 @@ def await_sell_and_finalize(pipeline, prot, sell_status_by_id) -> None:
         logger.warning(
             "ExecutionStage: wait_for_order_terminal failed for %s: %s "
             "— treating as unknown status so finalize still runs",
-            order_id, e,
+            order_id,
+            e,
         )
         status = None
     sell_status_by_id[order_id] = status
     if status != "filled":
         logger.warning(
             "Sell order %s did not fill before buy phase (status=%s); buys will use current cash only",
-            order_id, status or "unknown",
+            order_id,
+            status or "unknown",
         )
     # The wait above returned, so the broker's fill_info is final.
     # Reprotect on actual residual (filled) or restore originals
     # (no-fill terminal). wait=False: this order was just waited on.
     pipeline._finalize_pending_protections(
-        [prot], context="ExecutionStage", wait=False,
+        [prot],
+        context="ExecutionStage",
+        wait=False,
     )
 
 
 def record_rotation_close(pipeline, ctx, leg, order) -> None:
     """Record and page the desk's own rotation close, when this SELL is one."""
     decision, qty, sell_limit, rotation_final_reason = (
-        leg.decision, leg.qty, leg.sell_limit, leg.rotation_final_reason
+        leg.decision,
+        leg.qty,
+        leg.sell_limit,
+        leg.rotation_final_reason,
     )
     # Phase 14b — this SELL is the desk's own rotation close.
     # Record it durably and page the owner NOW: broker
@@ -75,10 +82,7 @@ def record_rotation_close(pipeline, ctx, leg, order) -> None:
     # without a human or a model deciding to must never be
     # silent (see `_alert_rotation_executed`).
     rotation = ctx.rotation
-    if (
-        isinstance(rotation, dict)
-        and decision.symbol.upper() == rotation.get("held_symbol")
-    ):
+    if isinstance(rotation, dict) and decision.symbol.upper() == rotation.get("held_symbol"):
         rotation["sell_order_id"] = order.get("id")
         rotation["sell_qty"] = float(qty)
         if isinstance(rotation_final_reason, str):
@@ -91,21 +95,32 @@ def record_rotation_close(pipeline, ctx, leg, order) -> None:
             # said when. Written once, never edited.
             rotation["cleared_reason"] = rotation_final_reason
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "rotation",
-                "sell_cleared_reason", rotation_final_reason,
+                pipeline,
+                ctx,
+                decision.symbol,
+                "rotation",
+                "sell_cleared_reason",
+                rotation_final_reason,
                 broker_order_id=order.get("id"),
                 new_symbol=rotation.get("new_symbol"),
             )
         _record_pipeline_event(
-            pipeline, ctx, decision.symbol, "rotation",
-            "sell_submitted", rotation.get("reason", ""),
-            broker_order_id=order.get("id"), qty=qty,
+            pipeline,
+            ctx,
+            decision.symbol,
+            "rotation",
+            "sell_submitted",
+            rotation.get("reason", ""),
+            broker_order_id=order.get("id"),
+            qty=qty,
             limit_price=sell_limit,
             new_symbol=rotation.get("new_symbol"),
         )
         _alert_rotation_executed(
-            rotation=rotation, qty=float(qty),
-            limit_price=float(sell_limit), order_id=order.get("id"),
+            rotation=rotation,
+            qty=float(qty),
+            limit_price=float(sell_limit),
+            order_id=order.get("id"),
         )
 
 

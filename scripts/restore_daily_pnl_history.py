@@ -51,6 +51,7 @@ inserted (they are the only rows it touches).
 
 Exit codes: 0 ran, 2 bad input / refused, 3 the restore could not verify.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -64,8 +65,12 @@ from pathlib import Path
 #: restored row keeps the moment the evening run actually wrote it, rather
 #: than claiming to have been written today.
 COLUMNS = (
-    "date", "total_value", "daily_pnl", "daily_return_pct",
-    "equity_close", "timestamp",
+    "date",
+    "total_value",
+    "daily_pnl",
+    "daily_return_pct",
+    "equity_close",
+    "timestamp",
 )
 
 
@@ -74,9 +79,7 @@ def _read_rows(db_path: Path) -> list[dict]:
     try:
         conn.row_factory = sqlite3.Row
         cols = ", ".join(COLUMNS)
-        return [dict(r) for r in conn.execute(
-            f"SELECT {cols} FROM daily_pnl ORDER BY date"
-        )]
+        return [dict(r) for r in conn.execute(f"SELECT {cols} FROM daily_pnl ORDER BY date")]
     finally:
         conn.close()
 
@@ -91,13 +94,13 @@ def _peak(rows) -> tuple[str, float] | None:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True,
-                        help="database to copy missing daily_pnl rows FROM "
-                             "(a reset snapshot or backup; never written to)")
-    parser.add_argument("--target", required=True,
-                        help="database to restore INTO")
-    parser.add_argument("--apply", action="store_true",
-                        help="actually write (default is a dry run)")
+    parser.add_argument(
+        "--source",
+        required=True,
+        help="database to copy missing daily_pnl rows FROM (a reset snapshot or backup; never written to)",
+    )
+    parser.add_argument("--target", required=True, help="database to restore INTO")
+    parser.add_argument("--apply", action="store_true", help="actually write (default is a dry run)")
     args = parser.parse_args(argv)
 
     source, target = Path(args.source), Path(args.target)
@@ -131,9 +134,7 @@ def main(argv=None) -> int:
         print("\nDRY RUN — nothing written. Re-run with --apply to write.")
         return 0
 
-    backup = target.with_name(
-        f"{target.name}.pre-daily-pnl-restore-{time.strftime('%Y%m%dT%H%M%S')}"
-    )
+    backup = target.with_name(f"{target.name}.pre-daily-pnl-restore-{time.strftime('%Y%m%dT%H%M%S')}")
     shutil.copy2(target, backup)
     print(f"\nPre-write copy taken: {backup}")
 
@@ -150,8 +151,7 @@ def main(argv=None) -> int:
         conn.close()
 
     verify = _read_rows(target)
-    still_missing = [r["date"] for r in missing
-                     if r["date"] not in {v["date"] for v in verify}]
+    still_missing = [r["date"] for r in missing if r["date"] not in {v["date"] for v in verify}]
     if still_missing:
         print(f"ERROR: rows did not land: {still_missing}", file=sys.stderr)
         return 3

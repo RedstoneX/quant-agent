@@ -27,16 +27,24 @@ from src.models import (
 
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
 def _risk_rc() -> RiskReasoningChain:
     return RiskReasoningChain(
-        rr_audit="x", signal_fidelity="x", correlation_check="x",
-        event_risk="x", sizing_sanity="x", overall="x",
+        rr_audit="x",
+        signal_fidelity="x",
+        correlation_check="x",
+        event_risk="x",
+        sizing_sanity="x",
+        overall="x",
     )
 
 
@@ -170,6 +178,7 @@ def test_agent_log():
 
 # === Enum case normalization (LLM drift defense) ===
 
+
 def test_tech_analysis_result_normalizes_uppercase_enums():
     """LLM drift: 'BUY' / 'HIGH' instead of 'buy' / 'high' must not silently
     drop the symbol's analysis. Pydantic Literal is exact-match; without
@@ -181,7 +190,7 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
 
     r = TechAnalysisResult(
         symbol="NVDA",
-        rating="BUY",         # uppercase drift
+        rating="BUY",  # uppercase drift
         conviction="HIGH",
         entry_price=150.0,
         stop_loss=140.0,
@@ -191,8 +200,11 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
         setup_type="range",
         expected_horizon_sessions=10,
         reasoning_chain={
-            "trend": "x", "momentum": "x", "volatility": "x",
-            "volume": "x", "support_resistance": "x",
+            "trend": "x",
+            "momentum": "x",
+            "volatility": "x",
+            "volume": "x",
+            "support_resistance": "x",
         },
         reasoning="x",
         thesis_invalid_if="closes below support",
@@ -202,15 +214,21 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
     # Also tolerate stray whitespace (LLM emitting "  buy  ").
     r2 = TechAnalysisResult(
         symbol="NVDA",
-        rating="  Buy  ", conviction="  Medium  ",
-        entry_price=150.0, stop_loss=140.0, reference_target=180.0,
+        rating="  Buy  ",
+        conviction="  Medium  ",
+        entry_price=150.0,
+        stop_loss=140.0,
+        reference_target=180.0,
         support_levels=[140.0, 135.0],
         resistance_levels=[180.0],
         setup_type="range",
         expected_horizon_sessions=10,
         reasoning_chain={
-            "trend": "x", "momentum": "x", "volatility": "x",
-            "volume": "x", "support_resistance": "x",
+            "trend": "x",
+            "momentum": "x",
+            "volatility": "x",
+            "volume": "x",
+            "support_resistance": "x",
         },
         reasoning="x",
         thesis_invalid_if="closes below support",
@@ -226,8 +244,12 @@ def test_trade_decision_normalizes_lowercase_action():
     from src.models import TradeDecision
 
     d = TradeDecision(
-        action="buy", symbol="NVDA", allocation_pct=10,
-        entry_price=150, stop_loss=140, take_profit=170,
+        action="buy",
+        symbol="NVDA",
+        allocation_pct=10,
+        entry_price=150,
+        stop_loss=140,
+        take_profit=170,
         reasoning="x",
     )
     assert d.action == "BUY"
@@ -239,25 +261,27 @@ def test_macro_analysis_normalizes_regime_and_outlook():
     PM stalls with data_status=parse_error. Most painful failure mode."""
     from src.models import MacroAnalysis
 
-    a = MacroAnalysis.model_validate({
-        "reasoning_chain": {
-            "volatility_analysis": "x",
-            "yield_curve_analysis": "x",
-            "monetary_policy_analysis": "x",
-            "inflation_labor_credit": "x",
-            "cross_signal_synthesis": "x",
-            "sector_implications": "x",
-        },
-        "regime": "Risk-On",
-        "confidence": "HIGH",
-        "equity_outlook": "Bullish",
-        "position_guidance": {
-            "target_invested_pct": 70,
-            "cash_recommendation_pct": 30,
-            "reasoning": "x",
-        },
-        "summary": "x",
-    })
+    a = MacroAnalysis.model_validate(
+        {
+            "reasoning_chain": {
+                "volatility_analysis": "x",
+                "yield_curve_analysis": "x",
+                "monetary_policy_analysis": "x",
+                "inflation_labor_credit": "x",
+                "cross_signal_synthesis": "x",
+                "sector_implications": "x",
+            },
+            "regime": "Risk-On",
+            "confidence": "HIGH",
+            "equity_outlook": "Bullish",
+            "position_guidance": {
+                "target_invested_pct": 70,
+                "cash_recommendation_pct": 30,
+                "reasoning": "x",
+            },
+            "summary": "x",
+        }
+    )
     assert a.regime == "risk-on"
     assert a.confidence == "high"
     assert a.equity_outlook == "bullish"
@@ -295,6 +319,7 @@ def test_evening_report_normalizes_all_three_enums():
 
 # === BuyGrade loss-autopsy fields ===
 
+
 def test_buy_grade_wrong_requires_loss_root_cause():
     """Every losing BUY must be classified by root cause — without it the
     quarterly meta-reflector can't aggregate patterns and propose targeted
@@ -304,9 +329,14 @@ def test_buy_grade_wrong_requires_loss_root_cause():
     # Valid: grade=wrong WITH both loss_root_cause AND thesis_trajectory
     # (both required on 'wrong' grades — see _loss_fields_required validator)
     bg = BuyGrade(
-        symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=180,
-        pct_move_since_buy=-10.0, grade="wrong",
-        reason="chased the top", loss_root_cause="greed_top_chasing",
+        symbol="NVDA",
+        buy_date="2026-04-15",
+        buy_price=200,
+        current_price=180,
+        pct_move_since_buy=-10.0,
+        grade="wrong",
+        reason="chased the top",
+        loss_root_cause="greed_top_chasing",
         thesis_trajectory="intact",
     )
     assert bg.loss_root_cause == "greed_top_chasing"
@@ -314,8 +344,13 @@ def test_buy_grade_wrong_requires_loss_root_cause():
     # Invalid: grade=wrong WITHOUT loss_root_cause → reject
     with pytest.raises(ValidationError, match="loss_root_cause"):
         BuyGrade(
-            symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=180,
-            pct_move_since_buy=-10.0, grade="wrong", reason="bad call",
+            symbol="NVDA",
+            buy_date="2026-04-15",
+            buy_price=200,
+            current_price=180,
+            pct_move_since_buy=-10.0,
+            grade="wrong",
+            reason="bad call",
             thesis_trajectory="intact",
         )
 
@@ -330,8 +365,13 @@ def test_buy_grade_wrong_requires_thesis_trajectory():
 
     with pytest.raises(ValidationError, match="thesis_trajectory"):
         BuyGrade(
-            symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=180,
-            pct_move_since_buy=-10.0, grade="wrong", reason="bad call",
+            symbol="NVDA",
+            buy_date="2026-04-15",
+            buy_price=200,
+            current_price=180,
+            pct_move_since_buy=-10.0,
+            grade="wrong",
+            reason="bad call",
             loss_root_cause="greed_top_chasing",
             # thesis_trajectory missing
         )
@@ -343,14 +383,23 @@ def test_buy_grade_correct_does_not_require_loss_root_cause():
     from src.models import BuyGrade
 
     bg_correct = BuyGrade(
-        symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=215,
-        pct_move_since_buy=7.5, grade="correct", reason="thesis playing out",
+        symbol="NVDA",
+        buy_date="2026-04-15",
+        buy_price=200,
+        current_price=215,
+        pct_move_since_buy=7.5,
+        grade="correct",
+        reason="thesis playing out",
     )
     assert bg_correct.loss_root_cause is None
 
     bg_premature = BuyGrade(
-        symbol="AMD", buy_date="2026-04-15", buy_price=150, current_price=145,
-        pct_move_since_buy=-3.3, grade="premature",
+        symbol="AMD",
+        buy_date="2026-04-15",
+        buy_price=150,
+        current_price=145,
+        pct_move_since_buy=-3.3,
+        grade="premature",
         reason="bought early, thesis alive",
     )
     assert bg_premature.loss_root_cause is None
@@ -365,8 +414,12 @@ def test_buy_grade_macro_warning_ignored_requires_evidence_ref():
     # Invalid: macro_warning_ignored without missed_warning_ref
     with pytest.raises(ValidationError, match="missed_warning_ref"):
         BuyGrade(
-            symbol="MU", buy_date="2026-04-05", buy_price=100, current_price=85,
-            pct_move_since_buy=-15.0, grade="wrong",
+            symbol="MU",
+            buy_date="2026-04-05",
+            buy_price=100,
+            current_price=85,
+            pct_move_since_buy=-15.0,
+            grade="wrong",
             reason="ignored credit spread warning",
             loss_root_cause="macro_warning_ignored",
             thesis_trajectory="broken",
@@ -374,8 +427,12 @@ def test_buy_grade_macro_warning_ignored_requires_evidence_ref():
 
     # Valid: cite the specific warning
     bg = BuyGrade(
-        symbol="MU", buy_date="2026-04-05", buy_price=100, current_price=85,
-        pct_move_since_buy=-15.0, grade="wrong",
+        symbol="MU",
+        buy_date="2026-04-05",
+        buy_price=100,
+        current_price=85,
+        pct_move_since_buy=-15.0,
+        grade="wrong",
         reason="ignored macro warning",
         loss_root_cause="macro_warning_ignored",
         thesis_trajectory="broken",
@@ -389,8 +446,13 @@ def test_buy_grade_market_relative_move_pct_optional():
     from src.models import BuyGrade
 
     bg = BuyGrade(
-        symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=180,
-        pct_move_since_buy=-10.0, grade="wrong", reason="tape turned",
+        symbol="NVDA",
+        buy_date="2026-04-15",
+        buy_price=200,
+        current_price=180,
+        pct_move_since_buy=-10.0,
+        grade="wrong",
+        reason="tape turned",
         loss_root_cause="systemic_drawdown",
         thesis_trajectory="intact",
         market_relative_move_pct=-0.5,  # we fell 10%, market fell 9.5%
@@ -400,6 +462,7 @@ def test_buy_grade_market_relative_move_pct_optional():
 
 # === MissedOpportunity ===
 
+
 def test_missed_opportunity_real_miss_requires_theme():
     """trend_timing_miss / theme_blindspot / fundamentals_mispricing need a
     theme label so the quarterly report can aggregate. noise_rally and
@@ -408,7 +471,9 @@ def test_missed_opportunity_real_miss_requires_theme():
 
     # Valid real miss with theme
     m = MissedOpportunity(
-        symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+        symbol="VST",
+        move_pct=22.3,
+        miss_category="theme_blindspot",
         theme_if_any="nuclear/power",
         lesson="Nuclear capex theme never entered news tracker; add coverage",
     )
@@ -417,13 +482,17 @@ def test_missed_opportunity_real_miss_requires_theme():
     # Invalid: real miss category without theme
     with pytest.raises(ValidationError, match="theme_if_any"):
         MissedOpportunity(
-            symbol="VST", move_pct=22.3, miss_category="trend_timing_miss",
+            symbol="VST",
+            move_pct=22.3,
+            miss_category="trend_timing_miss",
             lesson="missed the run",
         )
 
     # Valid: escape-hatch category without theme
     m_noise = MissedOpportunity(
-        symbol="XYZ", move_pct=9.1, miss_category="noise_rally",
+        symbol="XYZ",
+        move_pct=9.1,
+        miss_category="noise_rally",
         lesson="No signal, no macro thesis — legitimate skip",
     )
     assert m_noise.theme_if_any is None
@@ -436,18 +505,23 @@ def test_missed_opportunity_lesson_length_bounded():
 
     with pytest.raises(ValidationError):
         MissedOpportunity(
-            symbol="VST", move_pct=10, miss_category="noise_rally",
+            symbol="VST",
+            move_pct=10,
+            miss_category="noise_rally",
             lesson="",  # empty rejected
         )
 
     with pytest.raises(ValidationError):
         MissedOpportunity(
-            symbol="VST", move_pct=10, miss_category="noise_rally",
+            symbol="VST",
+            move_pct=10,
+            miss_category="noise_rally",
             lesson="x" * 500,  # over 400 chars rejected
         )
 
 
 # === MissedOpportunitySnapshot ===
+
 
 def test_missed_opportunity_snapshot_python_facts_only():
     """Snapshot is the digest payload handed TO the LLM. No subjective fields
@@ -455,9 +529,13 @@ def test_missed_opportunity_snapshot_python_facts_only():
     from src.models import MissedOpportunitySnapshot
 
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
-        held_during_window=False, had_ta_signal=False,
-        had_news_signal=False, had_earnings_signal=False,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
+        held_during_window=False,
+        had_ta_signal=False,
+        had_news_signal=False,
+        had_earnings_signal=False,
         source="top_mover",
         theme_tags=["nuclear", "power"],
         recent_earnings_signal=None,
@@ -472,9 +550,13 @@ def test_missed_opportunity_snapshot_python_facts_only():
 
     # Normalization kicks in — uppercase symbols
     snap_lower = MissedOpportunitySnapshot(
-        symbol="  vst ", move_pct=22.3, window_days=5,
-        held_during_window=False, had_ta_signal=False,
-        had_news_signal=False, had_earnings_signal=False,
+        symbol="  vst ",
+        move_pct=22.3,
+        window_days=5,
+        held_during_window=False,
+        had_ta_signal=False,
+        had_news_signal=False,
+        had_earnings_signal=False,
         source="universe",
     )
     assert snap_lower.symbol == "VST"
@@ -485,9 +567,13 @@ def test_missed_opportunity_snapshot_carries_quality_metrics():
     from src.models import MissedOpportunitySnapshot
 
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
-        held_during_window=False, had_ta_signal=True,
-        had_news_signal=True, had_earnings_signal=True,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
+        held_during_window=False,
+        had_ta_signal=True,
+        had_news_signal=True,
+        had_earnings_signal=True,
         source="both",
         avg_dollar_volume_20d_m=180.5,
         volume_confirmation_ratio=2.1,
@@ -505,7 +591,9 @@ def test_missed_opportunity_addition_recommendation_no_by_default():
     from src.models import MissedOpportunity
 
     m = MissedOpportunity(
-        symbol="VST", move_pct=22.3, miss_category="noise_rally",
+        symbol="VST",
+        move_pct=22.3,
+        miss_category="noise_rally",
         lesson="low volume top-mover, no fundamental anchor",
     )
     assert m.universe_addition_recommendation == "no"
@@ -519,19 +607,25 @@ def test_evening_reasoning_chain_has_seven_required_steps():
 
     with pytest.raises(ValidationError, match="thesis_health_review"):
         EveningReasoningChain(
-            performance_attribution="a", outlook_retrospection="b",
+            performance_attribution="a",
+            outlook_retrospection="b",
             # thesis_health_review omitted
-            decision_quality_review="c", calibration_meta="d",
-            market_regime_read="e", tomorrow_preparation="f",
+            decision_quality_review="c",
+            calibration_meta="d",
+            market_regime_read="e",
+            tomorrow_preparation="f",
         )
 
     # Empty string also rejected
     with pytest.raises(ValidationError):
         EveningReasoningChain(
-            performance_attribution="a", outlook_retrospection="b",
+            performance_attribution="a",
+            outlook_retrospection="b",
             thesis_health_review="",  # empty
-            decision_quality_review="c", calibration_meta="d",
-            market_regime_read="e", tomorrow_preparation="f",
+            decision_quality_review="c",
+            calibration_meta="d",
+            market_regime_read="e",
+            tomorrow_preparation="f",
         )
 
 
@@ -542,15 +636,24 @@ def test_buy_grade_thesis_trajectory_optional_for_back_compat():
 
     # No trajectory — still valid
     bg = BuyGrade(
-        symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=215,
-        pct_move_since_buy=7.5, grade="correct", reason="thesis playing out",
+        symbol="NVDA",
+        buy_date="2026-04-15",
+        buy_price=200,
+        current_price=215,
+        pct_move_since_buy=7.5,
+        grade="correct",
+        reason="thesis playing out",
     )
     assert bg.thesis_trajectory is None
 
     # With trajectory — the value-lens path
     bg_v = BuyGrade(
-        symbol="NVDA", buy_date="2026-04-15", buy_price=200, current_price=180,
-        pct_move_since_buy=-10.0, grade="correct",  # correct DESPITE price
+        symbol="NVDA",
+        buy_date="2026-04-15",
+        buy_price=200,
+        current_price=180,
+        pct_move_since_buy=-10.0,
+        grade="correct",  # correct DESPITE price
         reason="price noise, thesis intact per Q1 capex +18%",
         thesis_trajectory="strengthening",
     )
@@ -562,15 +665,22 @@ def test_sell_grade_thesis_trajectory_optional():
     from src.models import SellGrade
 
     sg = SellGrade(
-        symbol="GOOGL", sell_date="2026-04-18", sell_price=320,
-        current_price=335, pct_move_since_sell=4.7,
-        grade="premature", reason="left on table",
+        symbol="GOOGL",
+        sell_date="2026-04-18",
+        sell_price=320,
+        current_price=335,
+        pct_move_since_sell=4.7,
+        grade="premature",
+        reason="left on table",
     )
     assert sg.thesis_trajectory_at_sell is None
 
     sg_v = SellGrade(
-        symbol="GOOGL", sell_date="2026-04-18", sell_price=320,
-        current_price=335, pct_move_since_sell=4.7,
+        symbol="GOOGL",
+        sell_date="2026-04-18",
+        sell_price=320,
+        current_price=335,
+        pct_move_since_sell=4.7,
         grade="correct",  # correct SELL despite price going up
         reason="exited on thesis break — ad-rev guidance cut",
         thesis_trajectory_at_sell="broken",
@@ -585,13 +695,17 @@ def test_missed_opportunity_value_entry_missed_requires_theme():
 
     with pytest.raises(ValidationError, match="theme_if_any"):
         MissedOpportunity(
-            symbol="MU", move_pct=-18.2, miss_category="value_entry_missed",
+            symbol="MU",
+            move_pct=-18.2,
+            miss_category="value_entry_missed",
             lesson="memory cycle dip, fundamentals intact",
             # theme_if_any omitted
         )
 
     m = MissedOpportunity(
-        symbol="MU", move_pct=-18.2, miss_category="value_entry_missed",
+        symbol="MU",
+        move_pct=-18.2,
+        miss_category="value_entry_missed",
         theme_if_any="memory-cycle",
         theme_durability="1_3_year_cycle",
         lesson="DRAM ASPs bottoming per Q1 print — classic cyclical entry we skipped",
@@ -606,7 +720,9 @@ def test_missed_opportunity_theme_durability_required_with_theme():
 
     # Default "unknown" still counts as set — validator only rejects None
     m = MissedOpportunity(
-        symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+        symbol="VST",
+        move_pct=22.3,
+        miss_category="theme_blindspot",
         theme_if_any="nuclear/power",
         lesson="nuclear capex never entered our news tracker",
     )
@@ -614,7 +730,9 @@ def test_missed_opportunity_theme_durability_required_with_theme():
 
     # Explicit secular — the kind that should trigger universe add
     m_secular = MissedOpportunity(
-        symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+        symbol="VST",
+        move_pct=22.3,
+        miss_category="theme_blindspot",
         theme_if_any="nuclear/power",
         theme_durability="multi_year_secular",
         lesson="datacenter-driven power demand is multi-year",
@@ -628,11 +746,17 @@ def test_missed_opportunity_snapshot_carries_valuation():
     from src.models import MissedOpportunitySnapshot
 
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=True, had_news_signal=True, had_earnings_signal=True,
+        had_ta_signal=True,
+        had_news_signal=True,
+        had_earnings_signal=True,
         source="top_mover",
-        trailing_pe=18.5, forward_pe=15.2, ps_ratio=2.1,
+        trailing_pe=18.5,
+        forward_pe=15.2,
+        ps_ratio=2.1,
         valuation_signal="fair",
     )
     assert snap.valuation_signal == "fair"
@@ -646,9 +770,13 @@ def test_missed_opportunity_snapshot_value_entry_candidate_flag():
     from src.models import MissedOpportunitySnapshot
 
     snap = MissedOpportunitySnapshot(
-        symbol="MU", move_pct=-18.0, window_days=5,
+        symbol="MU",
+        move_pct=-18.0,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=False, had_news_signal=True, had_earnings_signal=True,
+        had_ta_signal=False,
+        had_news_signal=True,
+        had_earnings_signal=True,
         source="universe",
         valuation_signal="cheap",
         value_entry_candidate=True,
@@ -656,9 +784,13 @@ def test_missed_opportunity_snapshot_value_entry_candidate_flag():
     assert snap.value_entry_candidate is True
     # Default is False
     snap2 = MissedOpportunitySnapshot(
-        symbol="X", move_pct=22.0, window_days=5,
+        symbol="X",
+        move_pct=22.0,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=False, had_news_signal=False, had_earnings_signal=False,
+        had_ta_signal=False,
+        had_news_signal=False,
+        had_earnings_signal=False,
         source="top_mover",
     )
     assert snap2.value_entry_candidate is False
@@ -669,18 +801,25 @@ def test_evening_report_has_new_structured_fields():
     discipline_notes are all optional with [] defaults — pre-upgrade
     payloads still parse."""
     from src.models import (
-        EveningReasoningChain, EveningReport,
+        EveningReasoningChain,
+        EveningReport,
     )
 
     rc = EveningReasoningChain(
-        performance_attribution="a", outlook_retrospection="b",
+        performance_attribution="a",
+        outlook_retrospection="b",
         thesis_health_review="h",
-        decision_quality_review="c", calibration_meta="d",
-        market_regime_read="e", tomorrow_preparation="f",
+        decision_quality_review="c",
+        calibration_meta="d",
+        market_regime_read="e",
+        tomorrow_preparation="f",
     )
     r = EveningReport(
-        reasoning_chain=rc, daily_summary="x", lessons="y",
-        tomorrow_outlook="z", risk_rating="low",
+        reasoning_chain=rc,
+        daily_summary="x",
+        lessons="y",
+        tomorrow_outlook="z",
+        risk_rating="low",
     )
     assert r.this_week_thesis_catalysts == []
     assert r.thesis_updates == []
@@ -689,8 +828,11 @@ def test_evening_report_has_new_structured_fields():
 
     # Populated path
     r2 = EveningReport(
-        reasoning_chain=rc, daily_summary="x", lessons="y",
-        tomorrow_outlook="z", risk_rating="low",
+        reasoning_chain=rc,
+        daily_summary="x",
+        lessons="y",
+        tomorrow_outlook="z",
+        risk_rating="low",
         this_week_thesis_catalysts=[
             "NVDA Q1 earnings Thu after close — AI capex guide",
             "FOMC minutes Wed — rate-sensitive REITs at risk",
@@ -711,7 +853,9 @@ def test_missed_opportunity_addition_requires_reason_when_non_no():
     # Missing reason when recommendation is "add" → reject
     with pytest.raises(ValidationError, match="universe_addition_reason"):
         MissedOpportunity(
-            symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+            symbol="VST",
+            move_pct=22.3,
+            miss_category="theme_blindspot",
             theme_if_any="nuclear/power",
             lesson="nuclear theme ran, we missed it",
             universe_addition_recommendation="add",
@@ -721,7 +865,9 @@ def test_missed_opportunity_addition_requires_reason_when_non_no():
     # Missing reason when recommendation is "watch" → also reject
     with pytest.raises(ValidationError, match="universe_addition_reason"):
         MissedOpportunity(
-            symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+            symbol="VST",
+            move_pct=22.3,
+            miss_category="theme_blindspot",
             theme_if_any="nuclear/power",
             lesson="nuclear theme ran, we missed it",
             universe_addition_recommendation="watch",
@@ -730,7 +876,9 @@ def test_missed_opportunity_addition_requires_reason_when_non_no():
 
     # With proper reason → accept
     m = MissedOpportunity(
-        symbol="VST", move_pct=22.3, miss_category="theme_blindspot",
+        symbol="VST",
+        move_pct=22.3,
+        miss_category="theme_blindspot",
         theme_if_any="nuclear/power",
         lesson="nuclear theme ran — universe had no coverage",
         universe_addition_recommendation="watch",
@@ -745,6 +893,7 @@ def test_missed_opportunity_addition_requires_reason_when_non_no():
 
 # === EveningReport with missed_opportunities ===
 
+
 def test_evening_report_missed_opportunities_default_empty():
     """New field must default to empty list so existing-DB / pre-v-upgrade
     EveningReport instances still construct cleanly."""
@@ -754,22 +903,30 @@ def test_evening_report_missed_opportunities_default_empty():
     )
 
     rc = EveningReasoningChain(
-        performance_attribution="a", outlook_retrospection="b",
+        performance_attribution="a",
+        outlook_retrospection="b",
         thesis_health_review="health",
-        decision_quality_review="c", calibration_meta="d",
-        market_regime_read="e", tomorrow_preparation="f",
+        decision_quality_review="c",
+        calibration_meta="d",
+        market_regime_read="e",
+        tomorrow_preparation="f",
     )
     rep = EveningReport(
-        reasoning_chain=rc, daily_summary="x", lessons="y",
-        tomorrow_outlook="z", risk_rating="low",
+        reasoning_chain=rc,
+        daily_summary="x",
+        lessons="y",
+        tomorrow_outlook="z",
+        risk_rating="low",
     )
     assert rep.missed_opportunities == []
 
 
 # === Meta-reflection schema (PR3) ===
 
+
 def _valid_meta_chain():
     from src.models import MetaReasoningChain
+
     return MetaReasoningChain(
         performance_vs_benchmark="SPY +4%, we +1.5%, alpha -2.5%",
         secular_theme_audit="Nuclear theme ran +45% in Q1, we held 0% of it",
@@ -795,6 +952,7 @@ def _valid_meta_chain():
 
 def _valid_theme_coverage():
     from src.models import ThemeCoverage
+
     return ThemeCoverage(
         themes_missed_entirely=["nuclear/power"],
     )
@@ -802,12 +960,12 @@ def _valid_theme_coverage():
 
 def _valid_loss_pattern():
     from src.models import LossPattern
+
     return LossPattern(
         root_cause="greed_top_chasing",
         occurrences=3,
         total_loss_pct=-36.0,
-        example_trades=["MU 2026-01-15 -15%", "NVDA 2026-02-03 -12%",
-                         "AVGO 2026-02-20 -9%"],
+        example_trades=["MU 2026-01-15 -15%", "NVDA 2026-02-03 -12%", "AVGO 2026-02-20 -9%"],
         attributable_agent="tech_analyst",
         proposed_guard=(
             "Before issuing a buy rating on a stock trading within 2% of "
@@ -818,6 +976,7 @@ def _valid_loss_pattern():
 
 def _valid_loss_report(patterns=None):
     from src.models import LossPatternReport
+
     return LossPatternReport(
         top_patterns=patterns or [],
         systemic_vs_alpha_split="72% alpha-destruction, 28% systemic",
@@ -832,10 +991,13 @@ def test_meta_reasoning_chain_rejects_empty_steps():
 
     with pytest.raises(ValidationError):
         MetaReasoningChain(
-            performance_vs_benchmark="",   # ← empty
-            secular_theme_audit="x", loss_autopsy_audit="x",
-            agent_hit_rate_audit="x", missed_theme_diagnosis="x",
-            style_bias_identification="x", prompt_edit_reasoning="x",
+            performance_vs_benchmark="",  # ← empty
+            secular_theme_audit="x",
+            loss_autopsy_audit="x",
+            agent_hit_rate_audit="x",
+            missed_theme_diagnosis="x",
+            style_bias_identification="x",
+            prompt_edit_reasoning="x",
         )
 
 
@@ -847,19 +1009,18 @@ def test_prompt_learning_requires_numeric_fact_in_justification():
     # No digits → reject
     with pytest.raises(ValidationError, match="number"):
         PromptLearning(
-            agent_name="tech_analyst", operation="append",
+            agent_name="tech_analyst",
+            operation="append",
             learning_text="Pay closer attention to valuation before buying.",
             justification="We've been too aggressive lately on entries.",
         )
 
     # With digits → ok
     ok = PromptLearning(
-        agent_name="tech_analyst", operation="append",
+        agent_name="tech_analyst",
+        operation="append",
         learning_text="Flag stretched valuations above 40x forward PE.",
-        justification=(
-            "Q1 2026 showed 3 of 5 wrongs were greed_top_chasing; "
-            "alpha destruction -22%."
-        ),
+        justification=("Q1 2026 showed 3 of 5 wrongs were greed_top_chasing; alpha destruction -22%."),
     )
     assert ok.agent_name == "tech_analyst"
 
@@ -871,13 +1032,15 @@ def test_prompt_learning_retract_requires_target_hash():
 
     with pytest.raises(ValidationError, match="retract_target_hash"):
         PromptLearning(
-            agent_name="tech_analyst", operation="retract",
+            agent_name="tech_analyst",
+            operation="retract",
             learning_text="Withdraw the prior rule — it didn't help.",
             justification="Q2 still saw 4 greed_top_chasing despite Q1 learning.",
         )
 
     ok = PromptLearning(
-        agent_name="tech_analyst", operation="retract",
+        agent_name="tech_analyst",
+        operation="retract",
         learning_text="Withdraw the prior rule — it didn't help.",
         justification="Q2 still saw 4 greed_top_chasing despite Q1 learning.",
         retract_target_hash="abc123",
@@ -905,13 +1068,15 @@ def test_prompt_learning_length_bounded():
 
     with pytest.raises(ValidationError):
         PromptLearning(
-            agent_name="tech_analyst", operation="append",
+            agent_name="tech_analyst",
+            operation="append",
             learning_text="x" * 5,  # too short
             justification="Q1 2026 showed issues" + "x" * 30,
         )
     with pytest.raises(ValidationError):
         PromptLearning(
-            agent_name="tech_analyst", operation="append",
+            agent_name="tech_analyst",
+            operation="append",
             learning_text="y" * 250,  # too long
             justification="Q1 2026 showed issues" + "y" * 30,
         )
@@ -924,11 +1089,12 @@ def test_loss_pattern_requires_proposed_guard():
 
     with pytest.raises(ValidationError):
         LossPattern(
-            root_cause="greed_top_chasing", occurrences=3,
+            root_cause="greed_top_chasing",
+            occurrences=3,
             total_loss_pct=-36.0,
             example_trades=["MU 2026-01-15 -15%"],
             attributable_agent="tech_analyst",
-            proposed_guard="",   # empty
+            proposed_guard="",  # empty
         )
 
 
@@ -938,7 +1104,8 @@ def test_loss_pattern_example_trades_bounded():
 
     with pytest.raises(ValidationError):
         LossPattern(
-            root_cause="greed_top_chasing", occurrences=3,
+            root_cause="greed_top_chasing",
+            occurrences=3,
             total_loss_pct=-36.0,
             example_trades=[],  # must have at least 1
             attributable_agent="tech_analyst",
@@ -965,7 +1132,9 @@ def test_loss_pattern_proposed_guard_cap_matches_lesson():
     )
     assert len(guard_390) > 240 and len(guard_390) <= 400
     lp = LossPattern(
-        root_cause="greed_top_chasing", occurrences=5, total_loss_pct=-72.0,
+        root_cause="greed_top_chasing",
+        occurrences=5,
+        total_loss_pct=-72.0,
         example_trades=["NVDA 2026-05-01 -13%", "AVGO 2026-05-08 -15%"],
         attributable_agent="portfolio_manager",
         proposed_guard=guard_390,
@@ -975,7 +1144,9 @@ def test_loss_pattern_proposed_guard_cap_matches_lesson():
     # Over 400 still rejected.
     with pytest.raises(ValidationError):
         LossPattern(
-            root_cause="greed_top_chasing", occurrences=5, total_loss_pct=-72.0,
+            root_cause="greed_top_chasing",
+            occurrences=5,
+            total_loss_pct=-72.0,
             example_trades=["NVDA 2026-05-01 -13%"],
             attributable_agent="portfolio_manager",
             proposed_guard="x" * 500,
@@ -988,7 +1159,8 @@ def test_quarterly_meta_reflection_composes_and_caps_learnings():
     from src.models import PromptLearning, QuarterlyMetaReflection
 
     good_learning = PromptLearning(
-        agent_name="tech_analyst", operation="append",
+        agent_name="tech_analyst",
+        operation="append",
         learning_text="Flag stretched valuations above 40x forward PE.",
         justification="Q1 2026: 3 of 5 wrongs were greed_top_chasing.",
     )
@@ -1089,21 +1261,26 @@ def _valid_earnings_analysis_dict() -> dict:
             "segments": "[UNSOURCED:segment_data_not_disclosed]",
         },
         "profitability": {
-            "gross_margin": "45%", "operating_margin": "20%",
-            "net_income": "$2.0 billion", "eps": "$1.00 diluted",
+            "gross_margin": "45%",
+            "operating_margin": "20%",
+            "net_income": "$2.0 billion",
+            "eps": "$1.00 diluted",
         },
         "cash_flow": {
-            "operating_cf": "$3.0 billion", "free_cf": "$2.5 billion",
+            "operating_cf": "$3.0 billion",
+            "free_cf": "$2.5 billion",
             "capex": "$0.5 billion",
         },
         "balance_sheet": {
-            "cash_and_equivalents": "$4.0 billion", "total_debt": "$1.0 billion",
+            "cash_and_equivalents": "$4.0 billion",
+            "total_debt": "$1.0 billion",
             "assessment": "Healthy balance sheet",
         },
         "management_highlights": ["Demand remained stable across core products"],
         "guidance": "Management did not provide numeric guidance",
         "investment_implications": {
-            "sentiment": "bullish", "conviction": "medium",
+            "sentiment": "bullish",
+            "conviction": "medium",
             "reasoning_chain": {
                 "fundamental_quality": "Revenue +5% with margin expansion",
                 "growth_trajectory": "Operating leverage building QoQ",
@@ -1119,7 +1296,8 @@ def _valid_earnings_analysis_dict() -> dict:
 
 def test_earnings_revenue_segments_unsourced_token_coerces_to_empty_list():
     revenue = EarningsRevenue(
-        total="$10.0 billion", yoy_growth="+5%",
+        total="$10.0 billion",
+        yoy_growth="+5%",
         segments="[UNSOURCED:segment_data_not_disclosed]",
     )
     assert revenue.segments == []
@@ -1150,10 +1328,7 @@ _UNSOURCED_PROMPT_TO_MODEL = {
 
 def test_every_unsourced_prompt_is_mapped_here():
     prompts_dir = Path(__file__).resolve().parents[1] / "config" / "prompts"
-    actual = {
-        p.name for p in prompts_dir.glob("*.md")
-        if "UNSOURCED" in p.read_text()
-    }
+    actual = {p.name for p in prompts_dir.glob("*.md") if "UNSOURCED" in p.read_text()}
     assert actual == set(_UNSOURCED_PROMPT_TO_MODEL), (
         "a prompt file's use of the [UNSOURCED:...] token changed — add/"
         "remove it in _UNSOURCED_PROMPT_TO_MODEL above, and audit its "
@@ -1195,9 +1370,7 @@ def test_unsourced_prompts_list_fields_tolerate_the_bare_token():
                 if get_origin(field.annotation) is not list:
                     continue
                 checked += 1
-                result = sub_cls._unsourced_token_on_list_field_means_empty(
-                    {field_name: "[UNSOURCED:some_reason]"}
-                )
+                result = sub_cls._unsourced_token_on_list_field_means_empty({field_name: "[UNSOURCED:some_reason]"})
                 assert result[field_name] == [], (
                     f"{sub_cls.__name__}.{field_name} does not coerce a bare "
                     "UNSOURCED token to [] — either add coercion or confirm "
@@ -1210,9 +1383,12 @@ def test_unsourced_prompts_list_fields_tolerate_the_bare_token():
 # item 163 — PM risk-narrative-mismatch flag on TargetPosition
 # --------------------------------------------------------------------------
 
+
 def _target(thesis: str, risk_pct: float) -> TargetPosition:
     return TargetPosition(
-        symbol="NVDA", risk_allocation_pct=risk_pct, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=risk_pct,
+        conviction="high",
         thesis=thesis,
     )
 
@@ -1240,8 +1416,7 @@ def test_risk_narrative_incidental_percentage_does_not_false_flag():
     (target weight, stop distance, a price gain, a macro figure) must not
     trip the flag even though they numerically differ from risk_allocation_pct."""
     t = _target(
-        "Target weight 8%, stop set 12% below entry, stock is up 25% off "
-        "its low; GDP grew 3% last quarter.",
+        "Target weight 8%, stop set 12% below entry, stock is up 25% off its low; GDP grew 3% last quarter.",
         1.5,
     )
     assert t.risk_narrative_mismatch is False
@@ -1262,7 +1437,9 @@ def test_risk_narrative_skipped_without_authoritative_field():
     """No risk_allocation_pct means no authoritative number to check prose
     against -- legacy target_weight_pct-only targets are never flagged."""
     t = TargetPosition(
-        symbol="NVDA", target_weight_pct=5.0, conviction="high",
+        symbol="NVDA",
+        target_weight_pct=5.0,
+        conviction="high",
         thesis="Risking 4% on this idea.",
     )
     assert t.risk_narrative_mismatch is False

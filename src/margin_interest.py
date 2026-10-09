@@ -80,10 +80,7 @@ DAYS_PER_YEAR_ALPACA_CONVENTION = 360
 #: See the module docstring for why: paper trading's treatment of margin
 #: interest is unconfirmed in either direction, so this must never read as
 #: an observed broker charge.
-ESTIMATE_LABEL = (
-    "ESTIMATE — paper trading's handling of margin interest is unconfirmed; "
-    "not an observed broker charge"
-)
+ESTIMATE_LABEL = "ESTIMATE — paper trading's handling of margin interest is unconfirmed; not an observed broker charge"
 
 
 @dataclass(frozen=True)
@@ -148,12 +145,14 @@ def days_charged_until_next_trading_day(
                 return offset
     except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
         logger.warning(
-            "trading-calendar lookahead failed; assuming 1 day charged: %s", exc,
+            "trading-calendar lookahead failed; assuming 1 day charged: %s",
+            exc,
         )
         return 1
     logger.warning(
         "no trading day found within %d days of %s; assuming 1 day charged",
-        max_lookahead_days, today,
+        max_lookahead_days,
+        today,
     )
     return 1
 
@@ -200,7 +199,9 @@ def estimate_daily_interest(debit_balance: float, rate_pct: float) -> float:
 
 
 def build_estimate(
-    debit_balance: float, rate_pct: float, days_charged: int = 1,
+    debit_balance: float,
+    rate_pct: float,
+    days_charged: int = 1,
 ) -> MarginInterestEstimate | None:
     """The full estimate, or `None` when there is nothing to report.
 
@@ -274,10 +275,7 @@ def _closure_name(days_charged: int) -> str:
 #: indistinguishable from the tracker being dead, so a failed read says it
 #: failed. Never a fabricated zero — "not available" and "$0.00" are
 #: different claims about the world and must read differently.
-UNAVAILABLE_LINE = (
-    "💳 margin interest: not available — the account's cash balance "
-    "could not be read this time"
-)
+UNAVAILABLE_LINE = "💳 margin interest: not available — the account's cash balance could not be read this time"
 
 #: Rendered when no usable interest rate is configured. Kept SEPARATE from
 #: the zero line on purpose: `build_estimate` returns `None` both when
@@ -287,8 +285,7 @@ UNAVAILABLE_LINE = (
 #: the day the owner most needs to know the tracker is broken — the
 #: inverse of what his "so I know it's still working" asked for.
 RATE_UNAVAILABLE_LINE = (
-    "💳 margin interest: not available — no borrowing rate is configured, "
-    "so nothing can be worked out"
+    "💳 margin interest: not available — no borrowing rate is configured, so nothing can be worked out"
 )
 
 
@@ -299,7 +296,8 @@ def _money(usd: float) -> str:
 
 
 def format_daily_line(
-    end_of_day_cash: float | None, rate_pct: float | None,
+    end_of_day_cash: float | None,
+    rate_pct: float | None,
     days_charged: int = 1,
 ) -> str:
     """ALWAYS exactly one owner-facing line. Never `None`, never silent.
@@ -350,14 +348,8 @@ def format_daily_line(
         return line
     if end_of_day_cash < 0:
         # A deficit the desk treats as settlement noise, not borrowing.
-        return (
-            f"💳 margin interest: $0.00/day — overnight cash "
-            f"{_money(end_of_day_cash)}, too small to charge on"
-        )
-    return (
-        f"💳 margin interest: $0.00/day — overnight cash "
-        f"{_money(end_of_day_cash)}, nothing borrowed"
-    )
+        return f"💳 margin interest: $0.00/day — overnight cash {_money(end_of_day_cash)}, too small to charge on"
+    return f"💳 margin interest: $0.00/day — overnight cash {_money(end_of_day_cash)}, nothing borrowed"
 
 
 @dataclass(frozen=True)
@@ -420,10 +412,7 @@ def compare_estimate_to_broker_activity(
             "to simulate this cost"
         )
     else:
-        note = (
-            f"INT activity present but net ${observed:,.2f} — not a "
-            "confirmed charge"
-        )
+        note = f"INT activity present but net ${observed:,.2f} — not a confirmed charge"
     return IntActivityComparison(
         estimate_usd=estimate.daily_usd,
         observed_usd=observed,
@@ -518,11 +507,14 @@ def _bucket_dated_amounts(
     """
     if not dated_amounts:
         return CumulativeMarginInterest(
-            this_week_usd=0.0, current_month_usd=0.0,
+            this_week_usd=0.0,
+            current_month_usd=0.0,
             current_month_label=today.strftime("%B %Y"),
-            prior_months=[], all_time_usd=0.0,
+            prior_months=[],
+            all_time_usd=0.0,
             all_time_since=today.isoformat(),
-            is_estimate=is_estimate, source="no_data",
+            is_estimate=is_estimate,
+            source="no_data",
         )
     week_start = _week_start(today)
     month_start = _month_start(today)
@@ -536,10 +528,12 @@ def _bucket_dated_amounts(
         prev_end = cursor - timedelta(days=1)
         total = sum(amt for d, amt in dated_amounts if prev_start <= d <= prev_end)
         if total > 0:
-            prior_months.append({
-                "label": prev_start.strftime("%B %Y"),
-                "usd": total,
-            })
+            prior_months.append(
+                {
+                    "label": prev_start.strftime("%B %Y"),
+                    "usd": total,
+                }
+            )
         cursor = prev_start
 
     all_time = sum(amt for _, amt in dated_amounts)
@@ -557,7 +551,8 @@ def _bucket_dated_amounts(
 
 
 def bucket_broker_activities(
-    activities: list[dict], today: date,
+    activities: list[dict],
+    today: date,
 ) -> CumulativeMarginInterest | None:
     """Bucket the broker's own FULL `INT` activity history (no `after`
     filter — see `AlpacaBroker.get_margin_interest_activities`) into the
@@ -595,9 +590,7 @@ def bucket_estimate_rows(rows: list[dict], today: date) -> CumulativeMarginInter
     further fallback below this one.
     """
     parsed = [
-        (date.fromisoformat(str(r["date"])[:10]), float(r.get("period_usd", 0.0) or 0.0))
-        for r in rows
-        if r.get("date")
+        (date.fromisoformat(str(r["date"])[:10]), float(r.get("period_usd", 0.0) or 0.0)) for r in rows if r.get("date")
     ]
     return _bucket_dated_amounts(parsed, today, is_estimate=True, source="estimate")
 
@@ -737,9 +730,7 @@ def reconstruct_daily_cash_balances(activities: list[dict]) -> dict[date, float]
     nearest earlier entry themselves (`nearest_prior_balance`) rather than
     this function inventing a flat row for every calendar day.
     """
-    dated = [
-        (d, a) for a in activities if (d := activity_effective_date(a)) is not None
-    ]
+    dated = [(d, a) for a in activities if (d := activity_effective_date(a)) is not None]
     dated.sort(key=lambda pair: (pair[0], pair[1].get("id", "")))
     running = 0.0
     by_date: dict[date, float] = {}
@@ -814,9 +805,7 @@ def backfill_daily_estimates(
     rows: list[BackfilledDayEstimate] = []
     for d in sorted(trading_days):
         prior_cash = nearest_prior_balance(by_date, d)
-        debit_balance = (
-            overnight_debit_balance(prior_cash) if prior_cash is not None else 0.0
-        )
+        debit_balance = overnight_debit_balance(prior_cash) if prior_cash is not None else 0.0
         days_charged = days_charged_until_next_trading_day(is_trading_day, d)
         estimate = build_estimate(debit_balance, rate_pct, days_charged)
         rows.append(
@@ -884,9 +873,7 @@ def format_borrowing_cost_lines(
             f"(Alpaca's 360-day convention; a Friday is charged as three "
             f"nights), roughly {_money(carried.annual_usd)}/yr if carried."
         )
-    if isinstance(headroom_usd, (int, float)) and not isinstance(
-        headroom_usd, bool
-    ) and headroom_usd > 0:
+    if isinstance(headroom_usd, (int, float)) and not isinstance(headroom_usd, bool) and headroom_usd > 0:
         headroom_daily = estimate_daily_interest(float(headroom_usd), rate_pct)
         if headroom_daily > 0:
             lines.append(

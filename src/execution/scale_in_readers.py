@@ -3,6 +3,7 @@
 Split out of ``scale_in`` (re-exported there). No ledger handle exists on these
 paths, so a swallowed fault logs its full traceback and writes no row.
 """
+
 from __future__ import annotations
 
 import os
@@ -42,8 +43,11 @@ def pending_scale_in_rows_from_path(db_path: str | os.PathLike | None) -> list[d
     """
     if not db_path:
         return []
-    rows = _read_rows(db_path, "SELECT id, symbol, created_at, position_qty_before_sell "
-                      "FROM pending_protection_restores WHERE sell_order_id = ? ORDER BY created_at ASC")
+    rows = _read_rows(
+        db_path,
+        "SELECT id, symbol, created_at, position_qty_before_sell "
+        "FROM pending_protection_restores WHERE sell_order_id = ? ORDER BY created_at ASC",
+    )
     return [dict(r) for r in rows or [] if r["symbol"]]
 
 

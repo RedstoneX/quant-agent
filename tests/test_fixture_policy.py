@@ -3,6 +3,7 @@
 Offline: no network, no fixtures-dir mutation — every check builds its own
 manifests under `tmp_path` so this suite can never corrupt a real fixture.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -42,6 +43,7 @@ def _ok_manifest(**extra) -> dict:
 
 # --- admissible baseline ----------------------------------------------------
 
+
 def test_clean_manifest_is_admissible(tmp_path):
     path = _write(tmp_path, "ok.json", _ok_manifest())
     verdict = fp.check_fixture(path)
@@ -49,6 +51,7 @@ def test_clean_manifest_is_admissible(tmp_path):
 
 
 # --- rule (a): every data section needs source + fetched_on + fetch --------
+
 
 def test_missing_provenance_block_is_quarantined(tmp_path):
     path = _write(tmp_path, "bad.json", {"filing": {"symbol": "MRVL"}})
@@ -95,6 +98,7 @@ def test_missing_fetch_function_is_quarantined(tmp_path):
 
 # --- rule (b): desk provenance / trust cut-off ------------------------------
 
+
 def test_desk_source_marker_is_quarantined_while_cutoff_unset(tmp_path):
     assert fp.DESK_DATA_TRUSTED_FROM is None  # the guard this test protects
     manifest = _ok_manifest()
@@ -137,6 +141,7 @@ def test_changing_the_trust_cutoff_needs_an_incident_history_justification():
 
 # --- rule (c): agent-output / old-code-derived keys -------------------------
 
+
 def test_agent_output_key_anywhere_is_quarantined(tmp_path):
     manifest = _ok_manifest()
     manifest["filing"]["prior_ratings"] = {"AAPL": {"rating": "buy"}}
@@ -166,12 +171,15 @@ def test_nested_forbidden_key_is_caught(tmp_path):
 
 # --- blobs -------------------------------------------------------------
 
+
 def test_blob_sha256_mismatch_is_quarantined(tmp_path):
     blob_bytes = b"raw filing bytes"
     (tmp_path / "blob.bin").write_bytes(blob_bytes)
-    manifest = _ok_manifest(_blobs={
-        "blob.bin": {"sha256": "0" * 64, "source": "yfinance"},
-    })
+    manifest = _ok_manifest(
+        _blobs={
+            "blob.bin": {"sha256": "0" * 64, "source": "yfinance"},
+        }
+    )
     path = _write(tmp_path, "bad.json", manifest)
     verdict = fp.check_fixture(path)
     assert not verdict.admissible
@@ -179,9 +187,11 @@ def test_blob_sha256_mismatch_is_quarantined(tmp_path):
 
 
 def test_missing_blob_is_quarantined(tmp_path):
-    manifest = _ok_manifest(_blobs={
-        "missing.bin": {"sha256": "0" * 64, "source": "yfinance"},
-    })
+    manifest = _ok_manifest(
+        _blobs={
+            "missing.bin": {"sha256": "0" * 64, "source": "yfinance"},
+        }
+    )
     path = _write(tmp_path, "bad.json", manifest)
     verdict = fp.check_fixture(path)
     assert not verdict.admissible
@@ -192,9 +202,11 @@ def test_blob_with_valid_hash_and_source_admits(tmp_path):
     blob_bytes = gzip.compress(b"raw filing bytes")
     (tmp_path / "blob.bin.gz").write_bytes(blob_bytes)
     sha = hashlib.sha256(blob_bytes).hexdigest()
-    manifest = _ok_manifest(_blobs={
-        "blob.bin.gz": {"sha256": sha, "source": "yfinance"},
-    })
+    manifest = _ok_manifest(
+        _blobs={
+            "blob.bin.gz": {"sha256": sha, "source": "yfinance"},
+        }
+    )
     path = _write(tmp_path, "ok.json", manifest)
     verdict = fp.check_fixture(path)
     assert verdict.admissible, verdict.problems
@@ -202,6 +214,7 @@ def test_blob_with_valid_hash_and_source_admits(tmp_path):
 
 
 # --- check_all: quarantine list + stray files -------------------------------
+
 
 def test_check_all_flags_stray_unowned_files(tmp_path):
     _write(tmp_path, "ok.json", _ok_manifest())

@@ -1,4 +1,5 @@
 """Midday/close position review session (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -147,22 +148,23 @@ class PositionReviewSession:
         # (misconfigured mock, broker returning a placeholder) defaults to
         # "proceed and let downstream checks handle it" rather than crashing.
         from datetime import datetime as _dt
+
         session_close = None
         if hasattr(self._broker, "get_session_close"):
             try:
                 session_close = self._broker.get_session_close()
             except Exception as exc:
                 logger.warning(
-                    "early_close check: get_session_close failed (%s); "
-                    "proceeding with %s run",
-                    exc, session_type,
+                    "early_close check: get_session_close failed (%s); proceeding with %s run",
+                    exc,
+                    session_type,
                 )
                 session_close = None
         if isinstance(session_close, _dt) and et_now() >= session_close:
             logger.info(
-                "%s run skipped: regular session already closed today at %s ET "
-                "(early-close day)",
-                session_type, session_close.strftime("%H:%M"),
+                "%s run skipped: regular session already closed today at %s ET (early-close day)",
+                session_type,
+                session_close.strftime("%H:%M"),
             )
             return {
                 "status": "early_close",
@@ -202,7 +204,8 @@ class PositionReviewSession:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "%s stop-out reconcile failed (non-fatal): %s",
-                session_type, exc,
+                session_type,
+                exc,
             )
         # Item 101: surface a broker-made stop-out / re-protection to owner.
         self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
@@ -255,10 +258,7 @@ class PositionReviewSession:
         # last_equity (prior trading-day close), not a run-scoped figure.
         daily_pnl = (total_value - last_equity) if last_equity else 0.0
         daily_return_pct = (daily_pnl / last_equity * 100) if last_equity else 0.0
-        total_pnl, total_return_pct, total_pnl_since = (
-            self._total_pnl_since_reset(total_value)
-        )
-
+        total_pnl, total_return_pct, total_pnl_since = self._total_pnl_since_reset(total_value)
 
         # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
         # used to sit here: sell 15% of any position once its unrealised
@@ -289,13 +289,18 @@ class PositionReviewSession:
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
+                run_id,
+                session=session_type,
+                error=exc,
                 where=f"{session_type}-paid-preflight",
                 orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
+                extra={
+                    "session": session_type,
+                    "positions": len(positions),
+                    "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
+                },
             )
 
         # 2. News + Earnings update — capture developments since morning.
@@ -309,19 +314,25 @@ class PositionReviewSession:
             # deliberate scope limit, not an oversight; see the PR
             # description.
             session_news, session_news_coverage = self._run_news_update(
-                run_id, session=session_type,
+                run_id,
+                session=session_type,
                 held_symbols=self._news_held_symbols(positions),
             )
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
+                run_id,
+                session=session_type,
+                error=exc,
                 where=f"{session_type}-paid-news",
                 orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
+                extra={
+                    "session": session_type,
+                    "positions": len(positions),
+                    "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
+                },
             )
         if session_news_coverage is not None and session_news_coverage.status != "ok":
             # midday/close have no data_status mechanism of their own (that
@@ -334,37 +345,46 @@ class PositionReviewSession:
             logger.info("%s news: %s", session_type.capitalize(), session_news.pm_briefing[:200])
         try:
             _, session_earnings = self._load_earnings_analyses(
-                run_id, session=session_type, ctx=ctx,
+                run_id,
+                session=session_type,
+                ctx=ctx,
             )
         except PaidAnalysisSuspended as exc:
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
+                run_id,
+                session=session_type,
+                error=exc,
                 where=f"{session_type}-paid-earnings",
                 orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
+                extra={
+                    "session": session_type,
+                    "positions": len(positions),
+                    "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
+                },
             )
         except Exception as e:  # noqa: BLE001 — reviewer proceeds without earnings
-            logger.error("%s: earnings load failed (continuing without): %s",
-                         session_type, e)
+            logger.error("%s: earnings load failed (continuing without): %s", session_type, e)
             session_earnings = []
 
         circuit_state = self._cost_circuit_status()
         if circuit_state.get("suspended"):
             self._reconcile_fills()
             return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, orders=orders,
+                run_id,
+                session=session_type,
+                orders=orders,
                 where=f"{session_type}-post-news-circuit-open",
-                error=PaidAnalysisSuspended(
-                    str(circuit_state.get("trigger_detail") or "cost circuit opened")
-                ),
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
+                error=PaidAnalysisSuspended(str(circuit_state.get("trigger_detail") or "cost circuit opened")),
+                extra={
+                    "session": session_type,
+                    "positions": len(positions),
+                    "stop_coverage_gaps": coverage_gaps,
+                    # Spec §11.2 — gross exposure and its ceiling.
+                    "leverage": dict(ctx.leverage),
+                },
             )
 
         # 3. LLM position review — memory-heavy, 6-step CoT.
@@ -419,7 +439,9 @@ class PositionReviewSession:
             # closes that gap. Codex r11 P2.
             self._reconcile_fills()
             morning_trades = self._db.get_trades(
-                limit=50, today_only=True, executed_only=True,
+                limit=50,
+                today_only=True,
+                executed_only=True,
             )
 
             # Board item 89 defect 3 (and item 104's eighth trade-affecting
@@ -458,7 +480,9 @@ class PositionReviewSession:
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "%s: entry-context lookup failed for %s: %s",
-                        session_type, _sym, e,
+                        session_type,
+                        _sym,
+                        e,
                     )
                     continue
                 if _row:
@@ -482,7 +506,9 @@ class PositionReviewSession:
             # on the trade row and the calibration query is gone from this
             # path entirely, so there is nothing to accidentally reconnect.
             position_facts = self._build_position_facts(
-                review_positions, morning_trades, total_value,
+                review_positions,
+                morning_trades,
+                total_value,
             )
 
             # Phase 3.2 / audit §1.5 — the reviewer's memory of its OWN prior
@@ -492,7 +518,8 @@ class PositionReviewSession:
             # while everything it measured six hours ago improved. That is
             # exactly how EPD and MRVL were sold on intact theses.
             metric_deltas = self._build_review_metric_deltas(
-                position_facts, run_id=run_id,
+                position_facts,
+                run_id=run_id,
             )
 
             # Memory layers — share the same helpers PM uses.
@@ -521,9 +548,7 @@ class PositionReviewSession:
             # symbols actually being reviewed right here, at the one place
             # both sets are in scope, so a sold-out name can never reach
             # the reviewer's prompt or its action list again.
-            already_trimmed_today = self._symbols_already_trimmed_today() & {
-                p.symbol for p in review_positions
-            }
+            already_trimmed_today = self._symbols_already_trimmed_today() & {p.symbol for p in review_positions}
             # Board item 74 — the seat must SEE which triggers it has already
             # spent today, or the executor's refusal is an invisible filter.
             # Same text the enforcement reads, so prompt and gate cannot rot
@@ -531,31 +556,35 @@ class PositionReviewSession:
             # nothing is spent.
             try:
                 from src.risk.spent_trigger import (
-                    format_spent_triggers_block, keep_executed_acted_triggers,
+                    format_spent_triggers_block,
+                    keep_executed_acted_triggers,
                     parse_acted_triggers,
                 )
+
                 _acted_rows = self._db.get_acted_exit_triggers_today()
                 # Same fill verification the executor applies, so the seat is
                 # never told a trigger is spent by a cut that sold nothing.
                 _executed_ids = {
                     str(r.get("broker_order_id"))
                     for r in (self._db.get_trades(today_only=True, limit=200) or [])
-                    if r.get("broker_order_id")
-                    and self._trade_executed_or_pending(r)
+                    if r.get("broker_order_id") and self._trade_executed_or_pending(r)
                 }
                 _acted = keep_executed_acted_triggers(
                     None if _acted_rows is None else parse_acted_triggers(_acted_rows),
                     executed_order_ids=_executed_ids,
                 )
                 spent_triggers_block = (
-                    "" if _acted is None else format_spent_triggers_block(
-                        _acted, {p.symbol for p in review_positions},
+                    ""
+                    if _acted is None
+                    else format_spent_triggers_block(
+                        _acted,
+                        {p.symbol for p in review_positions},
                     )
                 )
             except Exception as _e:  # noqa: BLE001
                 logger.warning(
-                    "spent trigger: prompt block unavailable (%s) — the "
-                    "executor still enforces it", _e,
+                    "spent trigger: prompt block unavailable (%s) — the executor still enforces it",
+                    _e,
                 )
                 spent_triggers_block = ""
 
@@ -572,64 +601,69 @@ class PositionReviewSession:
             # ctx was built above, so this is the same headroom execution
             # will see for this session's entries.
             from src.pipeline_stages import (
-                _entry_deployment_budget, _session_gross_ceiling,
-            )
-            margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
-                _entry_deployment_budget(
-                    self, ctx, review_positions, total_value, review_cash,
-                )
-            )
-            _margin_ceiling = _session_gross_ceiling(self, ctx)
-            margin_ladder_multiple = (
-                _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
-            )
-            margin_ladder_rung = (
-                _margin_ceiling.rung if _margin_ceiling is not None else None
+                _entry_deployment_budget,
+                _session_gross_ceiling,
             )
 
+            margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = _entry_deployment_budget(
+                self,
+                ctx,
+                review_positions,
+                total_value,
+                review_cash,
+            )
+            _margin_ceiling = _session_gross_ceiling(self, ctx)
+            margin_ladder_multiple = _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+            margin_ladder_rung = _margin_ceiling.rung if _margin_ceiling is not None else None
+
             review_kwargs = dict(
-                    positions=review_positions,
-                    macro_summary=macro_summary,
-                    cash_balance=review_cash,
-                    reserve_balance=reserve_balance,
-                    total_value=total_value,
-                    session_type=session_type,
-                    position_facts=position_facts,
-                    metric_deltas=metric_deltas,
-                    morning_trades=morning_trades,
-                    # Board item 89 defect 3 — see the build above.
-                    entry_context=entry_context,
-                    news_intel=session_news,
-                    earnings_analyses=session_earnings,
-                    macro_analysis=macro_analysis_dict,
-                    weekly_narrative=weekly_narrative,
-                    macro_trajectory=macro_trajectory,
-                    active_state_changes=active_state_changes,
-                    calibration_note=calibration_note,
-                    own_recent_decisions=own_recent_decisions,
-                    trade_grade_summary=trade_grade_summary,
-                    yesterday_insights=yesterday_insights,
-                    recent_performance=recent_performance,
-                    already_trimmed_today=already_trimmed_today,
-                    spent_triggers_block=spent_triggers_block,
-                    allow_margin=bool(getattr(self._config.risk, "allow_margin", False)),
-                    margin_headroom_usd=margin_headroom_usd,
-                    margin_ladder_backed=margin_ladder_backed,
-                    margin_ladder_multiple=margin_ladder_multiple,
-                    margin_ladder_rung=margin_ladder_rung,
+                positions=review_positions,
+                macro_summary=macro_summary,
+                cash_balance=review_cash,
+                reserve_balance=reserve_balance,
+                total_value=total_value,
+                session_type=session_type,
+                position_facts=position_facts,
+                metric_deltas=metric_deltas,
+                morning_trades=morning_trades,
+                # Board item 89 defect 3 — see the build above.
+                entry_context=entry_context,
+                news_intel=session_news,
+                earnings_analyses=session_earnings,
+                macro_analysis=macro_analysis_dict,
+                weekly_narrative=weekly_narrative,
+                macro_trajectory=macro_trajectory,
+                active_state_changes=active_state_changes,
+                calibration_note=calibration_note,
+                own_recent_decisions=own_recent_decisions,
+                trade_grade_summary=trade_grade_summary,
+                yesterday_insights=yesterday_insights,
+                recent_performance=recent_performance,
+                already_trimmed_today=already_trimmed_today,
+                spent_triggers_block=spent_triggers_block,
+                allow_margin=bool(getattr(self._config.risk, "allow_margin", False)),
+                margin_headroom_usd=margin_headroom_usd,
+                margin_ladder_backed=margin_ladder_backed,
+                margin_ladder_multiple=margin_ladder_multiple,
+                margin_ladder_rung=margin_ladder_rung,
             )
             try:
                 review, md_result = self._position_reviewer.review(**review_kwargs)
             except PaidAnalysisSuspended as exc:
                 self._reconcile_fills()
                 return self._paid_suspension_after_late_safety(
-                    run_id, session=session_type, error=exc,
+                    run_id,
+                    session=session_type,
+                    error=exc,
                     where=f"{session_type}-paid-reviewer",
                     orders=orders,
-                    extra={"session": session_type, "positions": len(positions),
-                           "stop_coverage_gaps": coverage_gaps,
-                           # Spec §11.2 — gross exposure and its ceiling.
-                           "leverage": dict(ctx.leverage)},
+                    extra={
+                        "session": session_type,
+                        "positions": len(positions),
+                        "stop_coverage_gaps": coverage_gaps,
+                        # Spec §11.2 — gross exposure and its ceiling.
+                        "leverage": dict(ctx.leverage),
+                    },
                 )
             review_log_kwargs = agent_log_kwargs(md_result)
             if review is None:
@@ -639,10 +673,9 @@ class PositionReviewSession:
                     "position_review_parse_error" if review is None else None,
                     result=md_result,
                 ),
-                agent_name="position_reviewer", run_id=run_id,
-                input_summary=(
-                    f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
-                ),
+                agent_name="position_reviewer",
+                run_id=run_id,
+                input_summary=(f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"),
                 input_message=md_result.user_message,
                 output_summary=review.overall_assessment if review else "parse_error",
                 full_response=md_result.raw_text,
@@ -659,7 +692,10 @@ class PositionReviewSession:
             # still unsubstantiated, and records a durable reason for what
             # survives both. See `_substantiate_exit_triggers`.
             review = self._substantiate_exit_triggers(
-                review, ctx=ctx, run_id=run_id, review_kwargs=review_kwargs,
+                review,
+                ctx=ctx,
+                run_id=run_id,
+                review_kwargs=review_kwargs,
             )
 
             # Refresh the broker book before dispatching the LLM's
@@ -671,22 +707,22 @@ class PositionReviewSession:
                 if fresh_positions:
                     positions = fresh_positions
             except Exception as e:  # noqa: BLE001
-                logger.warning("post-review position refresh failed "
-                               "(using pre-review snapshot): %s", e)
+                logger.warning("post-review position refresh failed (using pre-review snapshot): %s", e)
             # Phase 3.7 — deterministic trailing FIRST, before the LLM's
             # discretionary TRAIL_STOP is considered. Arithmetic does not
             # need a language model's permission, and a winner's stop
             # should not depend on one remembering to propose a move.
-            orders.extend(
-                self._apply_deterministic_trails(review_positions, run_id=run_id)
-            )
+            orders.extend(self._apply_deterministic_trails(review_positions, run_id=run_id))
 
             # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
             # as well as entries. Until this landed the entire sell side
             # skipped the veto layer the buy side has always had.
             risk_vetoed, _exit_verdict = self._risk_review_exits(
-                review, review_positions, run_id=run_id,
-                total_value=total_value, macro_summary=macro_summary,
+                review,
+                review_positions,
+                run_id=run_id,
+                total_value=total_value,
+                macro_summary=macro_summary,
                 position_facts=position_facts,
                 # This loop fetched all of these before the position
                 # reviewer ran; until 2026-09-13 none of them reached the
@@ -698,13 +734,17 @@ class PositionReviewSession:
                 reserve_balance=reserve_balance,
                 recent_performance=recent_performance,
             )
-            orders.extend(self._midday_execute_llm_actions(
-                review_positions, review, run_id,
-                already_trimmed_today=already_trimmed_today,
-                metric_deltas=metric_deltas,
-                risk_vetoed_symbols=risk_vetoed,
-                position_facts=position_facts,
-            ))
+            orders.extend(
+                self._midday_execute_llm_actions(
+                    review_positions,
+                    review,
+                    run_id,
+                    already_trimmed_today=already_trimmed_today,
+                    metric_deltas=metric_deltas,
+                    risk_vetoed_symbols=risk_vetoed,
+                    position_facts=position_facts,
+                )
+            )
 
             # Take-profit revision flags, adjudicated LAST — after every
             # exit decision this session makes. A re-derived target
@@ -728,13 +768,15 @@ class PositionReviewSession:
                 # seat flagged (item 194); `seat` here is only the label
                 # worn by the outcomes that a seat did raise.
                 target_revisions = self._adjudicate_target_revision_flags(
-                    review, review_positions, run_id=run_id,
+                    review,
+                    review_positions,
+                    run_id=run_id,
                     seat="position_reviewer",
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error(
-                    "target revision sweep failed (non-fatal, no target "
-                    "was changed): %s", exc,
+                    "target revision sweep failed (non-fatal, no target was changed): %s",
+                    exc,
                 )
                 target_revisions = []
 
@@ -743,10 +785,13 @@ class PositionReviewSession:
             # the metrics are deterministic and their continuity is the point.
             self._persist_review_metrics(position_facts, run_id=run_id)
 
-        logger.info("%s: %d positions, risk=%s, %d orders",
-                     session_type.capitalize(), len(positions),
-                     review.risk_level if review else "no_positions",
-                     len(orders))
+        logger.info(
+            "%s: %d positions, risk=%s, %d orders",
+            session_type.capitalize(),
+            len(positions),
+            review.risk_level if review else "no_positions",
+            len(orders),
+        )
         # Reconcile everything still marked submitted (today's new orders +
         # any lingering from morning that didn't reach terminal in time).
         self._reconcile_fills()
@@ -756,10 +801,7 @@ class PositionReviewSession:
         self._sync_positions_from_broker()
 
         return {
-            "status": (
-                "reviewed" if not review_positions or review is not None
-                else "position_review_parse_error"
-            ),
+            "status": ("reviewed" if not review_positions or review is not None else "position_review_parse_error"),
             "session": session_type,
             "positions": len(positions),
             "review": review.model_dump() if review else None,

@@ -10,7 +10,10 @@ from pydantic import ValidationError
 
 from src.agents.base import BaseAgent, AgentResult
 from src.models import (
-    NewsIntelligenceReport, StateChange, StockNewsItem, parse_telemetry,
+    NewsIntelligenceReport,
+    StateChange,
+    StockNewsItem,
+    parse_telemetry,
 )
 from src.data_paths import parse_failure_dir
 
@@ -40,9 +43,15 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "news
 PARSE_FAILURE_DIR = parse_failure_dir()
 
 
-def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
-                            parsed: object, error: str,
-                            affected_symbols: list[str] | None = None) -> None:
+def _persist_parse_failure(
+    *,
+    agent_name: str,
+    session: str,
+    raw_text: str,
+    parsed: object,
+    error: str,
+    affected_symbols: list[str] | None = None,
+) -> None:
     """Best-effort dump of a parse/validation failure's raw evidence.
 
     NEVER raises. This is purely a forensic-display gap fix (mirrors
@@ -85,9 +94,11 @@ def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
         tmp_path.rename(path)  # atomic — see earnings_analyst._save_analysis
     except Exception as e:  # noqa: BLE001 — capture must never mask the real failure
         logger.warning(
-            "Failed to persist news_analyst parse-failure evidence "
-            "(session=%s): %s", session, e,
+            "Failed to persist news_analyst parse-failure evidence (session=%s): %s",
+            session,
+            e,
         )
+
 
 # Tokens too common to anchor an event on — they'd let any hallucinated event
 # survive a keyword match. Deliberately conservative: we only want to exclude
@@ -216,7 +227,8 @@ class NewsAnalystAgent(BaseAgent):
         if guidance is None:
             logger.warning(
                 "news_analyst: no session guidance for session=%r; using the "
-                "neutral entry rather than defaulting to MORNING", session,
+                "neutral entry rather than defaulting to MORNING",
+                session,
             )
             guidance = self._UNKNOWN_SESSION_GUIDANCE
         session_section = f"## Session Mode\n{guidance}\n"
@@ -232,8 +244,8 @@ class NewsAnalystAgent(BaseAgent):
             prior_sentiment = prior_session_report.get("market_sentiment") or "?"
             prior_state_changes = prior_session_report.get("state_changes") or []
             sc_lines = [
-                f"- [{sc.get('conviction','?').upper()}] {sc.get('event','')}: "
-                f"{sc.get('previous_state','')} → {sc.get('new_state','')}"
+                f"- [{sc.get('conviction', '?').upper()}] {sc.get('event', '')}: "
+                f"{sc.get('previous_state', '')} → {sc.get('new_state', '')}"
                 for sc in prior_state_changes[:5]
             ]
             sc_text = "\n".join(sc_lines) or "(none)"
@@ -255,7 +267,9 @@ State changes captured earlier:
 ```
 """
         else:
-            narrative_section = "## Previous Macro Narrative\nNo previous narrative. Build one from scratch using today's news.\n"
+            narrative_section = (
+                "## Previous Macro Narrative\nNo previous narrative. Build one from scratch using today's news.\n"
+            )
 
         # Stock-specific news section.
         # audit round 2 #12: the loop used to discard the symbol key and,
@@ -306,13 +320,14 @@ State changes captured earlier:
                 + shown
                 + "\nEvery ticker listed here was tagged in the headlines above. "
                 "Emit a `stock_news` key for each. If the mention is incidental "
-                "or not decision-relevant, emit `\"TICKER\": []` — an empty list. "
+                'or not decision-relevant, emit `"TICKER": []` — an empty list. '
                 "Do not invent headlines. Do not omit a key."
             )
         else:
             stock_section = "## Stock-Specific News\nNo universe symbols detected in today's headlines."
 
         from src.trading_calendar import session_date_key
+
         today = session_date_key()
 
         # Coverage section — always present, even when coverage is full,
@@ -434,19 +449,23 @@ Analyze all the above and produce your intelligence report as JSON."""
                 "news_analyst: dropped %d state_change(s) whose event "
                 "keywords and affected_symbols are absent from the input "
                 "headlines — likely hallucination: %s",
-                len(dropped), dropped,
+                len(dropped),
+                dropped,
             )
             return report.model_copy(update={"state_changes": kept})
         return report
 
-    def analyze(self, news_text: str, universe: list[str] | None = None,
-                stock_mentions: dict | None = None,
-                previous_narrative: dict | None = None,
-                session: str = "morning",
-                prior_session_report: dict | None = None,
-                news_coverage=None,
-                _retry_used: bool = False,
-                ) -> tuple[NewsIntelligenceReport | None, AgentResult]:
+    def analyze(
+        self,
+        news_text: str,
+        universe: list[str] | None = None,
+        stock_mentions: dict | None = None,
+        previous_narrative: dict | None = None,
+        session: str = "morning",
+        prior_session_report: dict | None = None,
+        news_coverage=None,
+        _retry_used: bool = False,
+    ) -> tuple[NewsIntelligenceReport | None, AgentResult]:
         """`_retry_used` is a per-CALL flag, not instance state (item 152,
         2026-09-25): the earlier version set `self._heal_retry_used = True`
         on the agent instance and never cleared it. `self.news_analyst` is a
@@ -484,17 +503,24 @@ Analyze all the above and produce your intelligence report as JSON."""
             if _retry_used:
                 logger.error("News analyst returned non-JSON response after one heal retry")
                 _persist_parse_failure(
-                    agent_name=self.name, session=session, raw_text=result.raw_text,
-                    parsed=None, error="non-JSON response (parse_json() returned None)",
+                    agent_name=self.name,
+                    session=session,
+                    raw_text=result.raw_text,
+                    parsed=None,
+                    error="non-JSON response (parse_json() returned None)",
                     affected_symbols=self._affected_symbols(stock_mentions, universe),
                 )
                 return None, result
             logger.warning("News analyst returned non-JSON response; one paid heal retry")
             return self.analyze(
-                news_text, universe=universe, stock_mentions=stock_mentions,
-                previous_narrative=previous_narrative, session=session,
+                news_text,
+                universe=universe,
+                stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative,
+                session=session,
                 prior_session_report=prior_session_report,
-                news_coverage=news_coverage, _retry_used=True,
+                news_coverage=news_coverage,
+                _retry_used=True,
             )
         # Per-entry isolation: a single malformed StockNewsItem (e.g. empty
         # headline) or StateChange (e.g. bad conviction enum) must not drop
@@ -518,15 +544,18 @@ Analyze all the above and produce your intelligence report as JSON."""
         parsed, unreadable_fields = self._drop_invalid_market_sentiment(parsed)
         if unreadable_fields and not _retry_used:
             logger.warning(
-                "News analyst: unreadable top-level field(s) %s; one paid "
-                "heal retry before dropping anything",
+                "News analyst: unreadable top-level field(s) %s; one paid heal retry before dropping anything",
                 ", ".join(f"{k}={v!r}" for k, v in sorted(unreadable_fields.items())),
             )
             return self.analyze(
-                news_text, universe=universe, stock_mentions=stock_mentions,
-                previous_narrative=previous_narrative, session=session,
+                news_text,
+                universe=universe,
+                stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative,
+                session=session,
                 prior_session_report=prior_session_report,
-                news_coverage=news_coverage, _retry_used=True,
+                news_coverage=news_coverage,
+                _retry_used=True,
             )
         try:
             report = NewsIntelligenceReport(**parsed)
@@ -539,24 +568,34 @@ Analyze all the above and produce your intelligence report as JSON."""
                 # closed for the technical seat's own final-failure line.
                 logger.error("News analysis failed to parse after one heal retry: %s", e)
                 _persist_parse_failure(
-                    agent_name=self.name, session=session, raw_text=result.raw_text,
-                    parsed=parsed, error=str(e),
+                    agent_name=self.name,
+                    session=session,
+                    raw_text=result.raw_text,
+                    parsed=parsed,
+                    error=str(e),
                     affected_symbols=self._affected_symbols(stock_mentions, universe),
                 )
                 return None, result
             logger.warning("News analysis failed to parse (%s); one paid heal retry", e)
             return self.analyze(
-                news_text, universe=universe, stock_mentions=stock_mentions,
-                previous_narrative=previous_narrative, session=session,
+                news_text,
+                universe=universe,
+                stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative,
+                session=session,
                 prior_session_report=prior_session_report,
-                news_coverage=news_coverage, _retry_used=True,
+                news_coverage=news_coverage,
+                _retry_used=True,
             )
         report.unreadable_fields = unreadable_fields
         report = self._filter_hallucinated_state_changes(
-            report, news_text, prior_session_report=prior_session_report,
+            report,
+            news_text,
+            prior_session_report=prior_session_report,
         )
         report.dropped_news_symbols = self._find_dropped_news_symbols(
-            stock_mentions=stock_mentions, report=report,
+            stock_mentions=stock_mentions,
+            report=report,
         )
         # Complete the structured map without inventing headlines: a shown
         # symbol the seat omitted becomes an explicit empty list, so
@@ -572,8 +611,7 @@ Analyze all the above and produce your intelligence report as JSON."""
         return report, result
 
     @staticmethod
-    def _affected_symbols(stock_mentions: dict | None,
-                          universe: list[str] | None) -> list[str]:
+    def _affected_symbols(stock_mentions: dict | None, universe: list[str] | None) -> list[str]:
         """Which stocks lose this seat when the whole answer is unreadable.
 
         Board item 152. `stock_mentions` is the deterministic, pre-LLM
@@ -633,7 +671,8 @@ Analyze all the above and produce your intelligence report as JSON."""
             return parsed, unreadable
         logger.warning(
             "News analyst: market_sentiment %r is not a word the desk can "
-            "read — the seat's sentiment reads ABSENT, not neutral", raw,
+            "read — the seat's sentiment reads ABSENT, not neutral",
+            raw,
         )
         parsed = dict(parsed)
         parsed.pop("market_sentiment")
@@ -642,7 +681,9 @@ Analyze all the above and produce your intelligence report as JSON."""
 
     @staticmethod
     def _find_dropped_news_symbols(
-        *, stock_mentions: dict | None, report: NewsIntelligenceReport,
+        *,
+        stock_mentions: dict | None,
+        report: NewsIntelligenceReport,
     ) -> list[str]:
         """Which requested symbols the seat's own answer omits — PM TEST GATE
         item 4, second half.
@@ -672,7 +713,9 @@ Analyze all the above and produce your intelligence report as JSON."""
             logger.error(
                 "News analyst: seat's answer is missing %d requested "
                 "symbol(s) that had real headline coverage — treat as LOST, "
-                "not as absence of news: %s", len(dropped), dropped,
+                "not as absence of news: %s",
+                len(dropped),
+                dropped,
             )
         return dropped
 
@@ -698,8 +741,9 @@ Analyze all the above and produce your intelligence report as JSON."""
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "News analyst: dropping non-dict state_changes entry at "
-                    "index %d: %r", i, item,
+                    "News analyst: dropping non-dict state_changes entry at index %d: %r",
+                    i,
+                    item,
                 )
                 continue
             try:
@@ -708,7 +752,8 @@ Analyze all the above and produce your intelligence report as JSON."""
                 event = item.get("event") or f"<idx {i}>"
                 logger.warning(
                     "News analyst: dropping malformed state_change %r: %s",
-                    event, e,
+                    event,
+                    e,
                 )
                 continue
             valid.append(item)
@@ -744,15 +789,18 @@ Analyze all the above and produce your intelligence report as JSON."""
             if not isinstance(items, list):
                 logger.warning(
                     "News analyst: stock_news[%s] is %s, not list — dropping",
-                    sym, type(items).__name__,
+                    sym,
+                    type(items).__name__,
                 )
                 continue
             valid: list[dict] = []
             for i, item in enumerate(items):
                 if not isinstance(item, dict):
                     logger.warning(
-                        "News analyst: dropping non-dict stock_news entry "
-                        "under %s at index %d: %r", sym, i, item,
+                        "News analyst: dropping non-dict stock_news entry under %s at index %d: %r",
+                        sym,
+                        i,
+                        item,
                     )
                     continue
                 try:
@@ -760,8 +808,10 @@ Analyze all the above and produce your intelligence report as JSON."""
                 except ValidationError as e:
                     headline = (item.get("headline") or f"<idx {i}>")[:80]
                     logger.warning(
-                        "News analyst: dropping malformed stock_news entry "
-                        "under %s (%s): %s", sym, headline, e,
+                        "News analyst: dropping malformed stock_news entry under %s (%s): %s",
+                        sym,
+                        headline,
+                        e,
                     )
                     continue
                 valid.append(item)

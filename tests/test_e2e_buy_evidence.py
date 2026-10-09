@@ -18,6 +18,7 @@ network — and then reads the ledger row the run actually inserted.
 The companion test below BREAKS the write and shows this checker goes
 red, because a check that has never been seen fail is not evidence.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -47,9 +48,7 @@ def _entry_rows(tmp_path: Path) -> list[sqlite3.Row]:
             names = {r[1] for r in conn.execute("PRAGMA table_info(trades)")}
             if not names:
                 continue
-            rows += list(conn.execute(
-                "SELECT * FROM trades WHERE action IN ('BUY', 'SHORT')"
-            ))
+            rows += list(conn.execute("SELECT * FROM trades WHERE action IN ('BUY', 'SHORT')"))
         except sqlite3.DatabaseError:
             continue
         finally:
@@ -72,8 +71,7 @@ def _assert_evidence_present(rows) -> None:
 def test_a_real_buy_writes_its_entry_evidence(tmp_path, monkeypatch):
     result, _trace, trading = _run_session(tmp_path, monkeypatch)
     assert result["status"] == "executed", (
-        f"the session never reached execution: {result.get('status')} "
-        f"{result.get('error', '')}"
+        f"the session never reached execution: {result.get('status')} {result.get('error', '')}"
     )
     buys = [o for o in trading.submitted if str(o.side).lower().endswith("buy")]
     assert [o.symbol for o in buys] == [SYMBOL], (
@@ -83,7 +81,8 @@ def test_a_real_buy_writes_its_entry_evidence(tmp_path, monkeypatch):
 
 
 def test_the_evidence_check_fails_when_the_constructor_stops_pinning_it(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Sensitivity: break the write at its source and the checker must go
     red. `shipped_stop_level_basis` is the constructor method that pins
@@ -92,13 +91,13 @@ def test_the_evidence_check_fails_when_the_constructor_stops_pinning_it(
     from src.portfolio_constructor.stops import StopRules
 
     with patch.object(
-        StopRules, "shipped_stop_level_basis",
+        StopRules,
+        "shipped_stop_level_basis",
         lambda self, *a, **k: None,
     ):
         result, _trace, _trading = _run_session(tmp_path, monkeypatch)
     assert result["status"] == "executed", (
-        f"the broken run must still execute, or it proves nothing: "
-        f"{result.get('status')}"
+        f"the broken run must still execute, or it proves nothing: {result.get('status')}"
     )
     with pytest.raises(AssertionError) as caught:
         _assert_evidence_present(_entry_rows(tmp_path))
@@ -116,6 +115,7 @@ def test_the_evidence_check_fails_when_the_constructor_stops_pinning_it(
 # on — `stop_level_basis` is the column that records that, and it is
 # asserted above.
 
+
 class _Decision:
     def __init__(self, setup_type=None, structural_ceiling=None):
         self.setup_type = setup_type
@@ -125,8 +125,10 @@ class _Decision:
 def test_a_scale_in_keeps_the_positions_own_pinned_verdict():
     """An ADD must never reclassify a position that already has a verdict."""
     from src.entry_evidence import (
-        pinned_setup_type, pinned_structural_ceiling,
+        pinned_setup_type,
+        pinned_structural_ceiling,
     )
+
     prior = {"setup_type": "breakout", "structural_ceiling": 1}
     fresh = _Decision(setup_type="range", structural_ceiling=False)
     assert pinned_setup_type(prior, fresh, is_scale_in=True) == "breakout"
@@ -142,8 +144,10 @@ def test_a_scale_in_onto_a_pre_feature_row_reports_the_hole_honestly():
     true answer for those rows.
     """
     from src.entry_evidence import (
-        pinned_setup_type, pinned_structural_ceiling,
+        pinned_setup_type,
+        pinned_structural_ceiling,
     )
+
     pre_feature = {"setup_type": "range", "structural_ceiling": None}
     fresh = _Decision(setup_type="breakout", structural_ceiling=True)
     assert pinned_structural_ceiling(pre_feature, fresh, is_scale_in=True) is None
@@ -153,10 +157,14 @@ def test_a_scale_in_onto_a_pre_feature_row_reports_the_hole_honestly():
     assert pinned_structural_ceiling({}, fresh, is_scale_in=True) is None
     assert pinned_setup_type({}, fresh, is_scale_in=True) is None
     # False is a real verdict, not a hole: it must survive the round trip.
-    assert pinned_structural_ceiling(
-        {"structural_ceiling": 0}, _Decision(structural_ceiling=True),
-        is_scale_in=True,
-    ) is False
+    assert (
+        pinned_structural_ceiling(
+            {"structural_ceiling": 0},
+            _Decision(structural_ceiling=True),
+            is_scale_in=True,
+        )
+        is False
+    )
 
 
 def test_the_add_records_its_own_verdict_as_its_own_evidence():
@@ -170,10 +178,12 @@ def test_the_add_records_its_own_verdict_as_its_own_evidence():
     fresh = _Decision(setup_type="breakout", structural_ceiling=True)
     payload = json.loads(scale_in_own_verdict(pre_feature, fresh))
     assert payload["fields"]["structural_ceiling"] == {
-        "add_verdict": True, "position_already_held_a_verdict": False,
+        "add_verdict": True,
+        "position_already_held_a_verdict": False,
     }
     assert payload["fields"]["setup_type"] == {
-        "add_verdict": "breakout", "position_already_held_a_verdict": True,
+        "add_verdict": "breakout",
+        "position_already_held_a_verdict": True,
     }
     # An add that computed nothing writes no evidence row at all.
     assert scale_in_own_verdict(pre_feature, _Decision()) is None
@@ -181,10 +191,15 @@ def test_the_add_records_its_own_verdict_as_its_own_evidence():
 
 def test_a_fresh_entry_never_reads_a_prior_row():
     from src.entry_evidence import pinned_structural_ceiling
-    assert pinned_structural_ceiling(
-        {"structural_ceiling": 1}, _Decision(structural_ceiling=False),
-        is_scale_in=False,
-    ) is False
+
+    assert (
+        pinned_structural_ceiling(
+            {"structural_ceiling": 1},
+            _Decision(structural_ceiling=False),
+            is_scale_in=False,
+        )
+        is False
+    )
 
 
 class _StubDb:
@@ -235,7 +250,8 @@ def test_record_scale_in_own_verdict_files_alongside_and_never_raises():
     import json
 
     from src.entry_evidence import (
-        SCALE_IN_EVIDENCE_AGENT, record_scale_in_own_verdict,
+        SCALE_IN_EVIDENCE_AGENT,
+        record_scale_in_own_verdict,
     )
 
     fresh = _Decision(setup_type="breakout", structural_ceiling=True)
@@ -243,25 +259,41 @@ def test_record_scale_in_own_verdict_files_alongside_and_never_raises():
     prior = {"setup_type": "range", "structural_ceiling": None}
     db, log = _StubDb(), _Logged()
     record_scale_in_own_verdict(
-        db, log, run_id="r1", decision_id="d1", decision=fresh,
-        prior_row=prior, is_scale_in=True,
+        db,
+        log,
+        run_id="r1",
+        decision_id="d1",
+        decision=fresh,
+        prior_row=prior,
+        is_scale_in=True,
     )
     [row] = db.evidence
     assert (row["run_id"], row["decision_id"], row["symbol"]) == ("r1", "d1", "TEST")
     assert row["agent_name"] == SCALE_IN_EVIDENCE_AGENT and row["scope"] == "symbol"
     assert json.loads(row["evidence_json"])["fields"]["structural_ceiling"] == {
-        "add_verdict": True, "position_already_held_a_verdict": False,
+        "add_verdict": True,
+        "position_already_held_a_verdict": False,
     }
     # Not a scale-in: nothing is filed.
     db = _StubDb()
     record_scale_in_own_verdict(
-        db, log, run_id="r1", decision_id="d1", decision=fresh,
-        prior_row=None, is_scale_in=False,
+        db,
+        log,
+        run_id="r1",
+        decision_id="d1",
+        decision=fresh,
+        prior_row=None,
+        is_scale_in=False,
     )
     assert db.evidence == []
     # A ledger failure is logged, never raised into the buy path.
     record_scale_in_own_verdict(
-        _StubDb(fail=True), log, run_id="r1", decision_id="d1",
-        decision=fresh, prior_row=prior, is_scale_in=True,
+        _StubDb(fail=True),
+        log,
+        run_id="r1",
+        decision_id="d1",
+        decision=fresh,
+        prior_row=prior,
+        is_scale_in=True,
     )
     assert len(log.warnings) == 1 and log.warnings[0][1] == "TEST"

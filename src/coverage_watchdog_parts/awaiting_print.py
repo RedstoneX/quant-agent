@@ -54,7 +54,10 @@ AWAITING_FIRST_PRINT_CODES: frozenset[str] = frozenset({"no_trade_print_today"})
 
 
 def awaiting_first_print(
-    *, refusal_code: str, still_covered: bool, market_open: bool,
+    *,
+    refusal_code: str,
+    still_covered: bool,
+    market_open: bool,
 ) -> bool:
     """Whether a repair that did not place is waiting on the TAPE rather than
     reporting a failure of the desk. Pure; reads no state and no clock.
@@ -74,34 +77,32 @@ def awaiting_first_print(
       `session_awaiting_print_symbols`, which is what makes the silence
       end rather than simply lapse into the expected overnight bucket.
     """
-    return (
-        bool(market_open)
-        and bool(still_covered)
-        and str(refusal_code or "") in AWAITING_FIRST_PRINT_CODES
-    )
+    return bool(market_open) and bool(still_covered) and str(refusal_code or "") in AWAITING_FIRST_PRINT_CODES
 
 
 def _awaiting_print_state(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("awaiting_first_print_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
         return set()
-    return {
-        str(sym).strip().upper()
-        for sym in (raw.get("symbols") or [])
-        if str(sym).strip()
-    }
+    return {str(sym).strip().upper() for sym in (raw.get("symbols") or []) if str(sym).strip()}
 
 
 def _write_awaiting_print_state(
-    state: dict[str, Any], day: str, symbols: set[str],
+    state: dict[str, Any],
+    day: str,
+    symbols: set[str],
 ) -> None:
     state["awaiting_first_print_symbols"] = {
-        "day": day, "symbols": sorted(symbols),
+        "day": day,
+        "symbols": sorted(symbols),
     }
 
 
 def note_awaiting_first_print(
-    symbol: str, *, now: datetime | None = None, path: Path | None = None,
+    symbol: str,
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
     state: dict[str, Any] | None = None,
 ) -> None:
     """Record that `symbol` spent a pass of THIS session waiting for its
@@ -128,8 +129,11 @@ def note_awaiting_first_print(
 
 
 def clear_awaiting_first_print(
-    symbols: Iterable[str], *, now: datetime | None = None,
-    path: Path | None = None, state: dict[str, Any] | None = None,
+    symbols: Iterable[str],
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
+    state: dict[str, Any] | None = None,
 ) -> None:
     """Forget the awaiting-print state for names whose gap has closed."""
     day = repair_failure_alert_day(now)
@@ -145,7 +149,9 @@ def clear_awaiting_first_print(
 
 
 def session_awaiting_print_symbols(
-    *, now: datetime | None = None, path: Path | None = None,
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
     state: dict[str, Any] | None = None,
 ) -> set[str]:
     """The names that waited on a first print at some point today and have

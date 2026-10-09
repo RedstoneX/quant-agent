@@ -15,6 +15,7 @@ of the entry-pinned kwargs. Such a call must pass all three kwargs, and none
 may be a literal (a constant would be a fabricated default, strictly worse
 than a NULL). The baseline below is SHRINK-ONLY and starts empty.
 """
+
 from __future__ import annotations
 
 import ast
@@ -25,8 +26,12 @@ from src.storage.db import Database
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 EVIDENCE = ("structural_ceiling", "entry_atr", "stop_basis")
 ENTRY_PINNED = frozenset(EVIDENCE) | {
-    "setup_type", "stop_level_basis", "expected_horizon_sessions",
-    "conviction", "requested_risk_pct", "allocated_risk_pct",
+    "setup_type",
+    "stop_level_basis",
+    "expected_horizon_sessions",
+    "conviction",
+    "requested_risk_pct",
+    "allocated_risk_pct",
 }
 # Sites allowed to lack evidence, as "relpath:line-independent key". Shrink only.
 GRANDFATHERED: frozenset[str] = frozenset()
@@ -47,9 +52,9 @@ def violations(root: pathlib.Path = SRC) -> list[str]:
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "insert_trade"):
+            if not (
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "insert_trade"
+            ):
                 continue
             if any(k.arg is None for k in node.keywords) or not _is_entry(node):
                 continue
@@ -66,18 +71,20 @@ def violations(root: pathlib.Path = SRC) -> list[str]:
 def test_no_entry_insert_site_omits_the_evidence_values():
     assert violations() == [], (
         "an entry trade-insert site must pass structural_ceiling, entry_atr "
-        "and stop_basis, each derived (never a literal default): "
-        + "; ".join(violations())
+        "and stop_basis, each derived (never a literal default): " + "; ".join(violations())
     )
 
 
 def test_the_guard_sees_the_one_real_buy_site():
     """A guard that finds no entry site proves nothing."""
     sites = [
-        p for p in SRC.rglob("*.py")
+        p
+        for p in SRC.rglob("*.py")
         for n in ast.walk(ast.parse(p.read_text()))
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-        and n.func.attr == "insert_trade" and _is_entry(n)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "insert_trade"
+        and _is_entry(n)
     ]
     assert [p.name for p in sites] == ["entry_record.py"]
 
@@ -100,10 +107,19 @@ def test_a_buy_written_through_the_ledger_carries_all_three(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     row = db.insert_trade(
-        symbol="ZZZ", action="BUY", qty=1.0, price=10.0, reasoning="r",
-        run_id="run", stop_loss=9.0, take_profit=12.0,
-        fill_status="pending_submit", setup_type="range",
-        structural_ceiling=True, entry_atr=0.7, stop_basis="structural",
+        symbol="ZZZ",
+        action="BUY",
+        qty=1.0,
+        price=10.0,
+        reasoning="r",
+        run_id="run",
+        stop_loss=9.0,
+        take_profit=12.0,
+        fill_status="pending_submit",
+        setup_type="range",
+        structural_ceiling=True,
+        entry_atr=0.7,
+        stop_basis="structural",
     )
     got = db.conn.execute(
         "SELECT structural_ceiling, entry_atr, stop_basis FROM trades WHERE id=?",
@@ -120,16 +136,17 @@ def test_the_constructor_always_hands_the_insert_a_measured_ceiling_verdict():
     non-None code, so a NULL `stop_basis` means "not level-honoured", not lost.)
     """
     import sys
+
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
     import test_risk_based_sizing as t
     from src.portfolio_constructor import PortfolioConstructor
 
     for computed in ([t._TIGHT_STOP, t._UPPER_LEVEL], []):
         out = PortfolioConstructor().construct_orders(
-            targets=[t._risk_target("MSFT", 1.0)], positions=[],
-            analyses=[t._vol_analysis(
-                "MSFT", t._ENTRY, t._TIGHT_STOP, t._UPPER_LEVEL,
-                atr=t._ATR, computed=computed)],
-            total_value=t.EQUITY, price_map={"MSFT": t._ENTRY},
+            targets=[t._risk_target("MSFT", 1.0)],
+            positions=[],
+            analyses=[t._vol_analysis("MSFT", t._ENTRY, t._TIGHT_STOP, t._UPPER_LEVEL, atr=t._ATR, computed=computed)],
+            total_value=t.EQUITY,
+            price_map={"MSFT": t._ENTRY},
         )
         assert out[0].structural_ceiling is (len(computed) > 0)

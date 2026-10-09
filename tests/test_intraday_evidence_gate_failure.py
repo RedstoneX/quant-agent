@@ -36,7 +36,8 @@ def test_public_intraday_gate_crash_stops_before_pm_risk_and_execution(
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.scheduler.format_session_result", return_value="FAILED intra_check")
 def test_live_scheduler_receives_gate_fault_and_notifies_owner(
-    mock_format, mock_compute_indicators,
+    mock_format,
+    mock_compute_indicators,
 ):
     mock_compute_indicators.return_value = MagicMock()
     pipeline = _pipeline_reaching_the_gate()
@@ -54,7 +55,9 @@ def test_live_scheduler_receives_gate_fault_and_notifies_owner(
     assert isinstance(error, EvidenceGateEvaluationError)
     assert "boom" in str(error)
     scheduler.notifier.send.assert_called_with(
-        "FAILED intra_check", symbols=[], preserve_structural_markup=True,
+        "FAILED intra_check",
+        symbols=[],
+        preserve_structural_markup=True,
         category="operational",
     )
 
@@ -67,9 +70,7 @@ def test_one_shot_main_receives_gate_fault_notifies_and_stays_nonzero(monkeypatc
     notifier = MagicMock()
     notifier.send.side_effect = lambda message, **_kwargs: sent.append(message) or True
     pipeline = MagicMock()
-    pipeline.run_intra_check.side_effect = EvidenceGateEvaluationError(
-        "evidence gate evaluation failed: boom"
-    )
+    pipeline.run_intra_check.side_effect = EvidenceGateEvaluationError("evidence gate evaluation failed: boom")
 
     monkeypatch.setattr(main_mod, "TelegramNotifier", lambda: notifier)
     monkeypatch.setattr(main_mod, "load_config", lambda _path: MagicMock())
@@ -80,7 +81,4 @@ def test_one_shot_main_receives_gate_fault_notifies_and_stays_nonzero(monkeypatc
     with pytest.raises(EvidenceGateEvaluationError, match="boom"):
         main_mod.main()
 
-    assert any(
-        "FAILED" in message and "evidence gate evaluation failed: boom" in message
-        for message in sent
-    )
+    assert any("FAILED" in message and "evidence gate evaluation failed: boom" in message for message in sent)

@@ -107,6 +107,7 @@ class _GetOnlyMiddleware(BaseHTTPMiddleware):
 # page's build-time commit no longer matching the commit running right now.
 # --------------------------------------------------------------------------
 
+
 def _board_live_sha() -> str | None:
     """Read the commit the production box is running, right now.
 
@@ -171,7 +172,7 @@ def _freshness_banner(built_sha: str | None, live_sha: str | None) -> str:
             "does not clear on its own within a few minutes, the rebuild "
             "that should have refreshed it is not running."
             f'<span class="stale-detail">built {built_sha[:9]} &middot; '
-            f'running {live_sha[:9]}</span></div>'
+            f"running {live_sha[:9]}</span></div>"
         )
     return ""
 

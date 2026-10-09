@@ -61,32 +61,42 @@ _MACRO_SERIES_UNITS: dict[str, str] = {
 _MACRO_SERIES_RE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("vix", re.compile(r"\bVIX\b", re.IGNORECASE)),
     ("dollar_index", re.compile(r"\b(?:DXY|dollar\s+index)\b", re.IGNORECASE)),
-    ("ig_credit_spread", re.compile(
-        r"\b(?:IG\s+(?:OAS|credit\s+spread|spread)"
-        r"|investment[\s-]grade\s+(?:OAS|spread))\b", re.IGNORECASE)),
-    ("credit_spread", re.compile(
-        r"\b(?:HY\s+(?:OAS|credit\s+spread|spread)"
-        r"|high[\s-]yield\s+(?:OAS|spread))\b", re.IGNORECASE)),
+    (
+        "ig_credit_spread",
+        re.compile(
+            r"\b(?:IG\s+(?:OAS|credit\s+spread|spread)"
+            r"|investment[\s-]grade\s+(?:OAS|spread))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "credit_spread",
+        re.compile(
+            r"\b(?:HY\s+(?:OAS|credit\s+spread|spread)"
+            r"|high[\s-]yield\s+(?:OAS|spread))\b",
+            re.IGNORECASE,
+        ),
+    ),
     ("fed_funds_rate", re.compile(r"\bfed\s+funds(?:\s+rate)?\b", re.IGNORECASE)),
     ("inflation", re.compile(r"\bcore\s+CPI\b", re.IGNORECASE)),
-    ("unemployment", re.compile(
-        r"\b(?:UNRATE|unemployment\s+rate)\b", re.IGNORECASE)),
-    ("treasury_10y", re.compile(
-        r"\b10[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
-    ("treasury_2y", re.compile(
-        r"\b2[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
+    ("unemployment", re.compile(r"\b(?:UNRATE|unemployment\s+rate)\b", re.IGNORECASE)),
+    ("treasury_10y", re.compile(r"\b10[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
+    ("treasury_2y", re.compile(r"\b2[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
 )
 
 #: A number with an optional explicit unit suffix. Integers ARE allowed here
 #: (unlike the bare-price shapes) because the named series has already removed
 #: the ambiguity that the decimal requirement existed to guard against.
 _MACRO_NUMBER_RE = re.compile(
-    r"([\d,]+(?:\.\d+)?)\s*(bps|bp|%|percent)?", re.IGNORECASE,
+    r"([\d,]+(?:\.\d+)?)\s*(bps|bp|%|percent)?",
+    re.IGNORECASE,
 )
 
 
 def _macro_threshold_in_series_unit(
-    text: str, series_unit: str, series_span: "tuple[int, int]",
+    text: str,
+    series_unit: str,
+    series_span: "tuple[int, int]",
 ) -> "tuple[float | None, str]":
     """The stated threshold converted into `series_unit`, or (None, why).
 
@@ -104,24 +114,17 @@ def _macro_threshold_in_series_unit(
             continue
         value = _clean_number(m.group(1))
         raw_unit = (m.group(2) or "").lower()
-        unit = {"bp": "bps", "bps": "bps", "%": "pct",
-                "percent": "pct"}.get(raw_unit)
+        unit = {"bp": "bps", "bps": "bps", "%": "pct", "percent": "pct"}.get(raw_unit)
         if series_unit == "index":
             if unit is not None:
-                return None, (
-                    f"index-valued series quoted in '{raw_unit}' — "
-                    "not converting"
-                )
+                return None, (f"index-valued series quoted in '{raw_unit}' — not converting")
             return value, ""
         if series_unit == "bps":
             if unit == "bps":
                 return value, ""
             if unit == "pct":
                 return value * 100.0, ""
-            return None, (
-                "spread threshold has no unit — 'bps' or '%' must be stated, "
-                "the unit is not being guessed"
-            )
+            return None, ("spread threshold has no unit — 'bps' or '%' must be stated, the unit is not being guessed")
         if unit == "bps":
             return value / 100.0, ""
         return value, ""

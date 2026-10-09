@@ -58,7 +58,8 @@ def _position(db, symbol, qty=10, entry=100.0, price=110.0):
 
 
 def test_a_plan_the_constructor_dropped_is_reported_not_silently_lost(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Item 89 defect 6. The constructor ended a plan on size alone before
     any order existed. It left a durable per-symbol row and reached NO
@@ -70,24 +71,34 @@ def test_a_plan_the_constructor_dropped_is_reported_not_silently_lost(
     run = "run-silent-drop"
     _agent_log(db, run, "portfolio_manager", "1 target")
     _evidence(
-        db, run, "portfolio_manager", "proposed_order",
+        db,
+        run,
+        "portfolio_manager",
+        "proposed_order",
         {"action": "BUY", "symbol": "NVDA", "allocation_pct": 0.2},
         symbol="NVDA",
     )
-    _pipeline_event(db, run, "NVDA", {
-        "stage": "deterministic_gate",
-        "outcome": "blocked",
-        "reason": "constructor_refused",
-        "refusal": "delta_below_min_trade_weight",
-        "detail": (
-            "the desk decided to open this but the position it asked for "
-            "was 0.20% of the account, and the desk does not place a new "
-            "trade smaller than 0.50% of the account."
-        ),
-    })
+    _pipeline_event(
+        db,
+        run,
+        "NVDA",
+        {
+            "stage": "deterministic_gate",
+            "outcome": "blocked",
+            "reason": "constructor_refused",
+            "refusal": "delta_below_min_trade_weight",
+            "detail": (
+                "the desk decided to open this but the position it asked for "
+                "was 0.20% of the account, and the desk does not place a new "
+                "trade smaller than 0.50% of the account."
+            ),
+        },
+    )
 
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 12.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        12.0,
     )
 
     # NOT TAKEN, not BLOCKED / FAILED (2026-09-23). The minimum trade size
@@ -106,21 +117,29 @@ def test_a_plan_the_constructor_dropped_is_reported_not_silently_lost(
 
 
 def test_a_dropped_plan_with_no_recorded_reason_says_so_and_invents_nothing(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _DECISION_TIME)
     run = "run-drop-no-reason"
     _agent_log(db, run, "portfolio_manager", "1 target")
-    _pipeline_event(db, run, "AMD", {
-        "stage": "deterministic_gate",
-        "outcome": "blocked",
-        "reason": "constructor_dropped",
-        "detail": "",
-    })
+    _pipeline_event(
+        db,
+        run,
+        "AMD",
+        {
+            "stage": "deterministic_gate",
+            "outcome": "blocked",
+            "reason": "constructor_dropped",
+            "detail": "",
+        },
+    )
 
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 9.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        9.0,
     )
 
     assert "did not record why" in msg
@@ -134,23 +153,31 @@ def test_a_data_fault_is_not_reported_as_a_dropped_plan(tmp_path, monkeypatch):
     _pin_clock(monkeypatch, _DECISION_TIME)
     run = "run-fault"
     _agent_log(db, run, "portfolio_manager", "1 target")
-    _pipeline_event(db, run, "TSLA", {
-        "stage": "deterministic_gate",
-        "outcome": "unmeasurable",
-        "reason": "data_fault",
-        "fault": "no_atr",
-        "detail": "no volatility reading available",
-    })
+    _pipeline_event(
+        db,
+        run,
+        "TSLA",
+        {
+            "stage": "deterministic_gate",
+            "outcome": "unmeasurable",
+            "reason": "data_fault",
+            "fault": "no_atr",
+            "detail": "no volatility reading available",
+        },
+    )
 
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 9.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        9.0,
     )
 
     assert "Stopped by the desk before an order was placed" not in msg
 
 
 def test_a_dropped_plan_does_not_make_a_quiet_half_hour_tick_speak(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The owner's silence rule is ratified: one message an hour for
     oversight, and a quiet half-hour tick sends NOTHING. A constructor
@@ -159,18 +186,24 @@ def test_a_dropped_plan_does_not_make_a_quiet_half_hour_tick_speak(
     db = _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     run = "run-quiet"
-    _pipeline_event(db, run, "NVDA", {
-        "stage": "deterministic_gate",
-        "outcome": "blocked",
-        "reason": "constructor_refused",
-        "refusal": "delta_below_min_trade_weight",
-        "detail": "below the minimum trade size",
-    })
+    _pipeline_event(
+        db,
+        run,
+        "NVDA",
+        {
+            "stage": "deterministic_gate",
+            "outcome": "blocked",
+            "reason": "constructor_refused",
+            "refusal": "delta_below_min_trade_weight",
+            "detail": "below the minimum trade size",
+        },
+    )
 
     msg = trader_feed.format_session_result(
         "intra_check",
         {
-            "status": "ok", "run_id": run,
+            "status": "ok",
+            "run_id": run,
             "intraday_scan": {"status": "no_opportunity", "run_id": run},
         },
         3.0,
@@ -183,7 +216,8 @@ def test_a_dropped_plan_does_not_make_a_quiet_half_hour_tick_speak(
 
 
 def test_an_order_that_never_filled_is_explained_in_words_not_a_status_token(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _DECISION_TIME)
@@ -192,7 +226,9 @@ def test_an_order_that_never_filled_is_explained_in_words_not_a_status_token(
     _trade(db, run, "AMD", "BUY", qty=3, price=550.0, status="canceled")
 
     msg = trader_feed.format_session_result(
-        "morning", {"status": "no_trades", "run_id": run, "orders": []}, 11.0,
+        "morning",
+        {"status": "no_trades", "run_id": run, "orders": []},
+        11.0,
     )
 
     assert "the order was cancelled before anything filled" in msg
@@ -251,7 +287,8 @@ def test_a_resting_partially_filled_order_is_not_reported_as_failed():
 
 
 def test_the_review_header_count_matches_the_positions_it_lists(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Item 89 defect 2. `run_position_review` reports `positions` as the
     count from the START of the session, before its own exits ran and
@@ -268,7 +305,9 @@ def test_the_review_header_count_matches_the_positions_it_lists(
     msg = trader_feed.format_session_result(
         "midday",
         {
-            "status": "reviewed", "run_id": run, "orders": [],
+            "status": "reviewed",
+            "run_id": run,
+            "orders": [],
             # Three at the start of the session; one was sold.
             "positions": 3,
             "review": {"risk_level": "moderate", "actions": []},
@@ -285,7 +324,8 @@ def test_the_review_header_count_matches_the_positions_it_lists(
 
 
 def test_the_review_header_says_nothing_extra_when_nothing_changed(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _DECISION_TIME)
@@ -296,7 +336,9 @@ def test_the_review_header_says_nothing_extra_when_nothing_changed(
     msg = trader_feed.format_session_result(
         "midday",
         {
-            "status": "reviewed", "run_id": run, "orders": [],
+            "status": "reviewed",
+            "run_id": run,
+            "orders": [],
             "positions": 1,
             "review": {"risk_level": "low", "actions": []},
         },
@@ -322,10 +364,7 @@ def test_no_spec_section_number_is_cited_in_the_refusal_the_owner_reads():
     from src.portfolio_constructor import PortfolioConstructor
 
     source = inspect.getsource(PortfolioConstructor._plan_risk_targets)
-    refusal_strings = [
-        line for line in source.splitlines()
-        if "net at or below" in line or "net out in favour" in line
-    ]
+    refusal_strings = [line for line in source.splitlines() if "net at or below" in line or "net out in favour" in line]
     assert refusal_strings, "the agreement-net refusal text moved; re-point this guard"
     for line in refusal_strings:
         assert "§9.4" not in line
@@ -345,7 +384,8 @@ def test_the_dropped_plan_sentence_names_no_internal_bookkeeping():
 
 
 def test_the_entry_reason_for_an_overnight_position_is_read_from_its_entry_row(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Item 89 defect 3 (and item 104's eighth prompt defect — one root
     cause). The reviewer's only source for an entry thesis was a lookup
@@ -356,8 +396,13 @@ def test_the_entry_reason_for_an_overnight_position_is_read_from_its_entry_row(
     from src.models import Position
 
     position = Position(
-        symbol="RSG", qty=12, avg_entry=240.0, current_price=252.0,
-        market_value=3024.0, unrealized_pnl=144.0, sector="Industrials",
+        symbol="RSG",
+        qty=12,
+        avg_entry=240.0,
+        current_price=252.0,
+        market_value=3024.0,
+        unrealized_pnl=144.0,
+        sector="Industrials",
     )
     agent = PositionReviewerAgent.__new__(PositionReviewerAgent)
     prompt = PositionReviewerAgent.build_user_message(
@@ -370,7 +415,8 @@ def test_the_entry_reason_for_an_overnight_position_is_read_from_its_entry_row(
         morning_trades=[],
         entry_context={
             "RSG": {
-                "symbol": "RSG", "action": "BUY",
+                "symbol": "RSG",
+                "action": "BUY",
                 "reasoning": "Cascade Investment open-market purchase",
             },
         },
@@ -381,14 +427,20 @@ def test_the_entry_reason_for_an_overnight_position_is_read_from_its_entry_row(
 
 
 def test_a_genuinely_blank_entry_reason_is_reported_as_not_recorded(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     from src.agents.position_reviewer import PositionReviewerAgent
     from src.models import Position
 
     position = Position(
-        symbol="RSG", qty=12, avg_entry=240.0, current_price=252.0,
-        market_value=3024.0, unrealized_pnl=144.0, sector="Industrials",
+        symbol="RSG",
+        qty=12,
+        avg_entry=240.0,
+        current_price=252.0,
+        market_value=3024.0,
+        unrealized_pnl=144.0,
+        sector="Industrials",
     )
     agent = PositionReviewerAgent.__new__(PositionReviewerAgent)
     prompt = PositionReviewerAgent.build_user_message(

@@ -2,7 +2,18 @@ from datetime import date
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field, ValidationInfo, computed_field, field_validator, model_validator
 from src.models.tech_reread import TechRereadFields
-from src.models.base import ACTIONABLE_TECH_RATINGS, LLMOutputModel, SOFT_EXIT_UNKNOWN, _normalize_enum_case_fields, _normalize_symbol, missing_stated_falsifier, parse_telemetry, reward_to_risk, stated_soft_exit
+from src.models.base import (
+    ACTIONABLE_TECH_RATINGS,
+    LLMOutputModel,
+    SOFT_EXIT_UNKNOWN,
+    _normalize_enum_case_fields,
+    _normalize_symbol,
+    missing_stated_falsifier,
+    parse_telemetry,
+    reward_to_risk,
+    stated_soft_exit,
+)
+
 
 class Nomination(LLMOutputModel):
     """A research seat's request that Technical examine a candidate.
@@ -26,6 +37,7 @@ class Nomination(LLMOutputModel):
     internal name, only that it may nominate. It defaults to "" so a
     directly-constructed Nomination (e.g. in a test) doesn't require it.
     """
+
     symbol: str
     seat: str = ""
     conviction: Literal["low", "medium", "high"]
@@ -147,6 +159,7 @@ class TechnicalIndicators(BaseModel):
     def normalize_symbol(cls, value: str) -> str:
         return _normalize_symbol(value)
 
+
 class VerdictEvidence(BaseModel):
     """One checkable fact backing an `AnalystVerdict`.
 
@@ -161,17 +174,17 @@ class VerdictEvidence(BaseModel):
     `TechAnalysisResult.to_verdict`), never parsed from an LLM response. A
     null here would be our own bug and should fail loudly.
     """
-    label: str = Field(min_length=1)          # e.g. "stop_loss", "trend", "risk_reward"
-    value: float | None = None                # a price, a level, a ratio
-    as_of: date | None = None                 # a dated event
-    text: str = ""                            # the observation, when it is not a number
+
+    label: str = Field(min_length=1)  # e.g. "stop_loss", "trend", "risk_reward"
+    value: float | None = None  # a price, a level, a ratio
+    as_of: date | None = None  # a dated event
+    text: str = ""  # the observation, when it is not a number
 
     @model_validator(mode="after")
     def _require_something_checkable(self):
         if self.value is None and self.as_of is None and not self.text.strip():
             raise ValueError(
-                f"evidence {self.label!r} carries no value, no date and no "
-                "text — a label alone is not a checkable fact"
+                f"evidence {self.label!r} carries no value, no date and no text — a label alone is not a checkable fact"
             )
         return self
 
@@ -224,6 +237,7 @@ class AnalystVerdict(BaseModel):
 
     Not an `LLMOutputModel` — see `VerdictEvidence` for why.
     """
+
     seat: str = Field(min_length=1)
     symbol: str
     direction: Literal["bullish", "bearish", "neutral"]
@@ -249,8 +263,7 @@ class AnalystVerdict(BaseModel):
         if self.direction == "neutral":
             if self.magnitude not in (None, 0.0):
                 raise ValueError(
-                    f"{self.symbol}: a neutral verdict cannot carry magnitude "
-                    f"{self.magnitude} — neutral means no lean"
+                    f"{self.symbol}: a neutral verdict cannot carry magnitude {self.magnitude} — neutral means no lean"
                 )
             return self
         # Item 65, 2026-09-26. A seat that HAS a strength scale and puts a
@@ -303,7 +316,11 @@ class AnalystVerdict(BaseModel):
 #: score, making the chosen spacing load-bearing. Item 90's settlement route
 #: is structural reformulation, not fitting these values to desk outcomes.
 RATING_MAGNITUDE: dict[str, float] = {
-    "strong_buy": 1.0, "buy": 0.5, "neutral": 0.0, "sell": 0.5, "strong_sell": 1.0,
+    "strong_buy": 1.0,
+    "buy": 0.5,
+    "neutral": 0.0,
+    "sell": 0.5,
+    "strong_sell": 1.0,
 }
 
 #: `AnalystVerdict.magnitude` for a DIRECTIONAL verdict from a seat that
@@ -393,8 +410,11 @@ RATING_MAGNITUDE: dict[str, float] = {
 NO_STATED_STRENGTH: None = None
 
 RATING_DIRECTION: dict[str, str] = {
-    "strong_buy": "bullish", "buy": "bullish", "neutral": "neutral",
-    "sell": "bearish", "strong_sell": "bearish",
+    "strong_buy": "bullish",
+    "buy": "bullish",
+    "neutral": "neutral",
+    "sell": "bearish",
+    "strong_sell": "bearish",
 }
 
 
@@ -420,11 +440,11 @@ class TechReasoningChain(LLMOutputModel):
     # one-sentence rule would fight. Removed rather than left as an
     # unenforced, prompt-contradicting instruction sent to the model on
     # every call.
-    trend: str = Field(min_length=1)                 # MA alignment, price vs MA20/50/200
-    momentum: str = Field(min_length=1)              # RSI level, MACD cross direction
-    volatility: str = Field(min_length=1)            # BB position, ATR expansion/contraction
-    volume: str = Field(min_length=1)                # volume confirming or diverging vs trend
-    support_resistance: str = Field(min_length=1)    # key levels from indicators + recent pivots
+    trend: str = Field(min_length=1)  # MA alignment, price vs MA20/50/200
+    momentum: str = Field(min_length=1)  # RSI level, MACD cross direction
+    volatility: str = Field(min_length=1)  # BB position, ATR expansion/contraction
+    volume: str = Field(min_length=1)  # volume confirming or diverging vs trend
+    support_resistance: str = Field(min_length=1)  # key levels from indicators + recent pivots
 
 
 class TechAnalystAnswerItem(LLMOutputModel):
@@ -614,9 +634,7 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
     #: this level" without a tolerance — docs/WORK.md item 215. Python-set
     #: from `find_structural_levels`, never emitted by a model; missing means
     #: unknown, which fails closed to "not level-backed".
-    computed_level_bars: dict[float, list[tuple[float, float]]] = Field(
-        default_factory=dict
-    )
+    computed_level_bars: dict[float, list[tuple[float, float]]] = Field(default_factory=dict)
     # PYTHON-SET (2026-09-12): what the bar history behind `computed_levels`
     # was — one of the COVERAGE_* states in `src/data/levels.py`. An empty
     # `computed_levels` with coverage "measured" is a chart with no
@@ -677,7 +695,9 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         else:
             return None
         ratio = reward_to_risk(
-            self.entry_price, self.stop_loss, self.reference_target,
+            self.entry_price,
+            self.stop_loss,
+            self.reference_target,
             is_short=is_short,
         )
         return None if ratio is None else round(ratio, 2)
@@ -755,14 +775,15 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         if self.entry_price is not None:
             is_short = self.rating in ("sell", "strong_sell")
             for price, touches in self.computed_level_touches.items():
-                on_risk_side = (
-                    price >= self.entry_price if is_short else price <= self.entry_price
-                )
+                on_risk_side = price >= self.entry_price if is_short else price <= self.entry_price
                 if on_risk_side:
                     stop_side_level_touches += touches
-        evidence.append(VerdictEvidence(
-            label="stop_side_level_touches", value=float(stop_side_level_touches),
-        ))
+        evidence.append(
+            VerdictEvidence(
+                label="stop_side_level_touches",
+                value=float(stop_side_level_touches),
+            )
+        )
         chain = self.reasoning_chain
         for label in ("trend", "momentum", "volatility", "volume", "support_resistance"):
             text = getattr(chain, label, "") or ""
@@ -773,8 +794,7 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         if not invalidation and direction != "neutral" and self.stop_loss is not None:
             side = "below" if direction == "bullish" else "above"
             invalidation = (
-                f"close {side} stop {self.stop_loss} (hard stop; the analyst "
-                "stated no separate soft invalidation)"
+                f"close {side} stop {self.stop_loss} (hard stop; the analyst stated no separate soft invalidation)"
             )
         return AnalystVerdict(
             seat="technical",
@@ -795,7 +815,8 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(
-            values, lower_fields=("rating", "conviction"),
+            values,
+            lower_fields=("rating", "conviction"),
         )
 
     @model_validator(mode="after")
@@ -816,13 +837,9 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
             return self
 
         if self.entry_price is None or self.entry_price <= 0:
-            raise ValueError(
-                f"{self.symbol}: rating={self.rating} requires entry_price > 0"
-            )
+            raise ValueError(f"{self.symbol}: rating={self.rating} requires entry_price > 0")
         if self.stop_loss is None or self.stop_loss <= 0:
-            raise ValueError(
-                f"{self.symbol}: rating={self.rating} requires stop_loss > 0"
-            )
+            raise ValueError(f"{self.symbol}: rating={self.rating} requires stop_loss > 0")
         if self.rating in ("buy", "strong_buy"):
             if self.stop_loss >= self.entry_price:
                 raise ValueError(
@@ -876,10 +893,7 @@ class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
         # omit — the prompt says leave it empty. Nothing here invents a
         # falsifier string; the chunk retry re-asks, then the name is
         # refused before the book.
-        if (
-            self.rating in ACTIONABLE_TECH_RATINGS
-            and missing_stated_falsifier(self.thesis_invalid_if)
-        ):
+        if self.rating in ACTIONABLE_TECH_RATINGS and missing_stated_falsifier(self.thesis_invalid_if):
             raise ValueError(
                 f"{self.symbol}: rating={self.rating} requires a real "
                 f"non-empty thesis_invalid_if (I'll sell if); empty or "

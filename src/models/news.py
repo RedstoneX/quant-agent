@@ -3,8 +3,15 @@ from pydantic import field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 from src.quantities import collapse_stances
 from src.models.base import LLMOutputModel, _normalize_enum_case_fields
-from src.models.analysis import AnalystVerdict, NO_STATED_STRENGTH, Nomination, VerdictEvidence, _sanitize_nominations_field
+from src.models.analysis import (
+    AnalystVerdict,
+    NO_STATED_STRENGTH,
+    Nomination,
+    VerdictEvidence,
+    _sanitize_nominations_field,
+)
 from src.models.macro import MacroNarrative
+
 
 class StateChange(LLMOutputModel):
     event: str
@@ -77,7 +84,8 @@ class StockNewsItem(LLMOutputModel):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(
-            values, lower_fields=("sentiment", "conviction"),
+            values,
+            lower_fields=("sentiment", "conviction"),
         )
 
 
@@ -352,10 +360,7 @@ class NewsIntelligenceReport(LLMOutputModel):
                 "bullish/bearish/neutral, so it was dropped. Treat the news "
                 "seat as having given NO sentiment; it is NOT neutral"
             )
-        return (
-            "ABSENT — the seat gave no sentiment. Treat it as having given "
-            "NO sentiment; it is NOT neutral"
-        )
+        return "ABSENT — the seat gave no sentiment. Treat it as having given NO sentiment; it is NOT neutral"
 
     def format_dropped_symbols_block(self) -> str:
         """Prompt text naming symbols shown real headlines but omitted from
@@ -372,7 +377,7 @@ class NewsIntelligenceReport(LLMOutputModel):
             "but its structured answer for them did not survive parsing "
             "(a dropped response, not a judgment that there was nothing "
             "to report). Treat coverage for these names as UNKNOWN, "
-            "never as clean and never as \"no news\":\n"
+            'never as clean and never as "no news":\n'
         ).format(n=len(self.dropped_news_symbols))
         return header + "\n".join(f"- {sym}" for sym in self.dropped_news_symbols)
 
@@ -380,12 +385,11 @@ class NewsIntelligenceReport(LLMOutputModel):
     @classmethod
     def _normalize_enum_case(cls, values):
         return _normalize_enum_case_fields(
-            values, lower_fields=("market_sentiment", "confidence"),
+            values,
+            lower_fields=("market_sentiment", "confidence"),
         )
 
     @model_validator(mode="before")
     @classmethod
     def _sanitize_nominations(cls, values):
         return _sanitize_nominations_field(values)
-
-

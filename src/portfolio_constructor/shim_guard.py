@@ -1,4 +1,5 @@
 """Recursion guard for the per-call shims in src/portfolio_constructor (same shape as src/cost_circuit/parts/shim_guard.py)."""
+
 from __future__ import annotations
 import functools
 

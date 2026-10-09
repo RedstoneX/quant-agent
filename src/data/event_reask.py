@@ -3,6 +3,7 @@
 Split out of `MacroEventCalendarProvider.prefetch_release_schedules` (board
 item 187) so the provider module stays under its file-size baseline.
 """
+
 from __future__ import annotations
 
 
@@ -25,9 +26,7 @@ def prefetch_with_reasks(provider):
         # nothing, so no retry count is invented: the data decides.
         while merged is not None and merged.failed:
             missing = {f.release_id for f in merged.failed}
-            provider.releases = tuple(
-                r for r in configured if r.release_id in missing
-            )
+            provider.releases = tuple(r for r in configured if r.release_id in missing)
             provider.get_upcoming_events()
             again = provider.last_coverage
             if again is None or again.succeeded == 0:

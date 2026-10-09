@@ -52,11 +52,17 @@ def _merged_call(
     input_message = "\n\n".join(f"--- {label} ---\n{msg}" for label, msg, _ in parts)
     full_response = "\n\n".join(f"--- {label} ---\n{resp}" for label, _, resp in parts)
     return RecordedCall(
-        row_id=row_id, agent_name=agent_name, run_id=run_id,
-        timestamp="2026-08-28 13:32:42", model="google/gemini-3.5-flash-lite",
-        input_message=input_message, full_response=full_response,
-        input_tokens=input_tokens, output_tokens=output_tokens,
-        cost_usd=cost_usd, finish_reason=finish_reason,
+        row_id=row_id,
+        agent_name=agent_name,
+        run_id=run_id,
+        timestamp="2026-08-28 13:32:42",
+        model="google/gemini-3.5-flash-lite",
+        input_message=input_message,
+        full_response=full_response,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+        finish_reason=finish_reason,
         actual_provider=actual_provider,
     )
 
@@ -73,12 +79,16 @@ def test_unmerge_recovers_one_call_per_chunk():
             ("chunk 3/3", "GOOG bars here", '{"symbol": "GOOG"}'),
             ("missing-symbol recovery", "AAPL retry bars", '{"symbol": "AAPL"}'),
         ],
-        input_tokens=1000, output_tokens=400, cost_usd=0.04,
+        input_tokens=1000,
+        output_tokens=400,
+        cost_usd=0.04,
     )
     parts = _unmerge_chunked_call(call)
     assert len(parts) == 4
     assert [p.part_label for p in parts] == [
-        "chunk 1/3 (1/4)", "chunk 2/3 (2/4)", "chunk 3/3 (3/4)",
+        "chunk 1/3 (1/4)",
+        "chunk 2/3 (2/4)",
+        "chunk 3/3 (3/4)",
         "missing-symbol recovery (4/4)",
     ]
     assert parts[0].input_message == "AAPL bars here"
@@ -103,7 +113,9 @@ def test_unmerge_preserves_exact_token_and_cost_totals():
             ("chunk 3/3", "x" * 80, "y" * 30),
             ("missing-symbol recovery", "x" * 500, "y" * 90),
         ],
-        input_tokens=326591, output_tokens=22612, cost_usd=0.0417039,
+        input_tokens=326591,
+        output_tokens=22612,
+        cost_usd=0.0417039,
     )
     parts = _unmerge_chunked_call(call)
     assert sum(p.input_tokens for p in parts) == 326591
@@ -118,7 +130,9 @@ def test_unmerge_cost_none_stays_none_on_every_part():
     have a cost invented for any of its recovered parts."""
     call = _merged_call(
         parts=[("chunk 1/2", "a", "b"), ("chunk 2/2", "c", "d")],
-        input_tokens=100, output_tokens=50, cost_usd=None,
+        input_tokens=100,
+        output_tokens=50,
+        cost_usd=None,
         actual_provider="anthropic",
     )
     parts = _unmerge_chunked_call(call)
@@ -128,12 +142,18 @@ def test_unmerge_cost_none_stays_none_on_every_part():
 def test_unmerge_leaves_non_chunked_row_untouched():
     """A normal single-call agent (no chunk markers at all) is unaffected."""
     call = RecordedCall(
-        row_id=230, agent_name="news_analyst_morning", run_id="run-be9f8f06",
-        timestamp="2026-08-28 13:31:02", model="google/gemini-3.5-flash-lite",
+        row_id=230,
+        agent_name="news_analyst_morning",
+        run_id="run-be9f8f06",
+        timestamp="2026-08-28 13:31:02",
+        model="google/gemini-3.5-flash-lite",
         input_message="ordinary news prompt, no markers",
         full_response='{"headline": "..."}',
-        input_tokens=500, output_tokens=100, cost_usd=0.002,
-        finish_reason="stop", actual_provider="openrouter",
+        input_tokens=500,
+        output_tokens=100,
+        cost_usd=0.002,
+        finish_reason="stop",
+        actual_provider="openrouter",
     )
     parts = _unmerge_chunked_call(call)
     assert parts == [call]
@@ -145,12 +165,18 @@ def test_unmerge_falls_back_when_markers_dont_match():
     be un-merged; a mismatch is an admission it can't be done reliably, not a
     guess — the row replays as one call exactly as it always has."""
     call = RecordedCall(
-        row_id=999, agent_name="tech_analyst", run_id="run-x",
-        timestamp="t", model="m",
+        row_id=999,
+        agent_name="tech_analyst",
+        run_id="run-x",
+        timestamp="t",
+        model="m",
         input_message="--- chunk 1/2 ---\na\n\n--- chunk 2/2 ---\nb",
         full_response="--- chunk 1/2 ---\nc",  # only one section on this side
-        input_tokens=10, output_tokens=10, cost_usd=0.01,
-        finish_reason="stop", actual_provider="openrouter",
+        input_tokens=10,
+        output_tokens=10,
+        cost_usd=0.01,
+        finish_reason="stop",
+        actual_provider="openrouter",
     )
     parts = _unmerge_chunked_call(call)
     assert parts == [call]
@@ -171,7 +197,9 @@ def test_response_library_matches_each_chunk_independently():
             ("chunk 1/2", "AAPL MSFT bars 40day rsi macd", '{"symbol": "AAPL", "rating": "buy"}'),
             ("chunk 2/2", "GOOG AMZN bars 40day rsi macd", '{"symbol": "GOOG", "rating": "sell"}'),
         ],
-        input_tokens=2000, output_tokens=200, cost_usd=0.01,
+        input_tokens=2000,
+        output_tokens=200,
+        cost_usd=0.01,
     )
     library = ResponseLibrary([call], source_run_id="run-be9f8f06")
     assert library.available() == {"tech_analyst": 2}
@@ -194,7 +222,9 @@ def test_response_library_matches_each_chunk_independently():
 def test_exact_capture_replay_rejects_a_similar_but_changed_prompt():
     call = _merged_call(
         parts=[("chunk 1/1", "AAPL risk as of morning", "recorded answer")],
-        input_tokens=12, output_tokens=3, cost_usd=0.001,
+        input_tokens=12,
+        output_tokens=3,
+        cost_usd=0.001,
     )
     library = ResponseLibrary([call], exact_prompts=True)
 
@@ -202,8 +232,7 @@ def test_exact_capture_replay_rejects_a_similar_but_changed_prompt():
         library.match("tech_analyst", "AAPL risk as of midday")
     assert library.findings[-1]["kind"] == "missing_exact_recorded_prompt"
     assert len(library.unused()) == 1
-    assert library.match("tech_analyst", "AAPL risk as of morning").full_response == \
-        "recorded answer"
+    assert library.match("tech_analyst", "AAPL risk as of morning").full_response == "recorded answer"
 
 
 def test_response_library_reports_expanded_count_not_row_count():
@@ -217,13 +246,23 @@ def test_response_library_reports_expanded_count_not_row_count():
             ("chunk 3/3", "c", "3"),
             ("missing-symbol recovery", "d", "4"),
         ],
-        input_tokens=400, output_tokens=40, cost_usd=0.02,
+        input_tokens=400,
+        output_tokens=40,
+        cost_usd=0.02,
     )
     other = RecordedCall(
-        row_id=230, agent_name="news_analyst_morning", run_id="run-be9f8f06",
-        timestamp="t", model="m", input_message="news prompt",
-        full_response="{}", input_tokens=10, output_tokens=5, cost_usd=0.001,
-        finish_reason="stop", actual_provider="openrouter",
+        row_id=230,
+        agent_name="news_analyst_morning",
+        run_id="run-be9f8f06",
+        timestamp="t",
+        model="m",
+        input_message="news prompt",
+        full_response="{}",
+        input_tokens=10,
+        output_tokens=5,
+        cost_usd=0.001,
+        finish_reason="stop",
+        actual_provider="openrouter",
     )
     library = ResponseLibrary([call, other], source_run_id="run-be9f8f06")
     assert library.available() == {"tech_analyst": 4, "news_analyst": 1}
@@ -239,7 +278,9 @@ def test_response_library_still_matches_by_similarity_within_chunks():
             ("chunk 1/2", "alpha beta gamma delta epsilon", "resp-1"),
             ("chunk 2/2", "zeta eta theta iota kappa", "resp-2"),
         ],
-        input_tokens=200, output_tokens=20, cost_usd=0.001,
+        input_tokens=200,
+        output_tokens=20,
+        cost_usd=0.001,
     )
     library = ResponseLibrary([call])
     # Ask for chunk 2's content FIRST — matching must still find the right
@@ -274,7 +315,9 @@ def test_match_does_not_crash_when_two_unmerged_parts_of_one_row_tie():
             ("chunk 1/2", "AAPL MSFT bars rsi macd", "resp-1"),
             ("chunk 2/2", "GOOG AMZN bars rsi macd", "resp-2"),
         ],
-        input_tokens=200, output_tokens=20, cost_usd=0.001,
+        input_tokens=200,
+        output_tokens=20,
+        cost_usd=0.001,
     )
     library = ResponseLibrary([call])
     # Shares zero words with either chunk -> both score 0.0 -> exact tie on
@@ -323,12 +366,15 @@ def test_select_replay_run_pins_the_most_recent_complete_run(tmp_path):
     """The default has to be one run, and the newest usable one."""
     from ops.rehearsal.replay import select_replay_run
 
-    db = _history_db(tmp_path, [
-        ("run-old", "tech_analyst", "2026-08-30 13:30:00"),
-        ("run-old", "portfolio_manager", "2026-08-30 13:34:00"),
-        ("run-new", "tech_analyst", "2026-09-01 13:30:00"),
-        ("run-new", "portfolio_manager", "2026-09-01 13:34:00"),
-    ])
+    db = _history_db(
+        tmp_path,
+        [
+            ("run-old", "tech_analyst", "2026-08-30 13:30:00"),
+            ("run-old", "portfolio_manager", "2026-08-30 13:34:00"),
+            ("run-new", "tech_analyst", "2026-09-01 13:30:00"),
+            ("run-new", "portfolio_manager", "2026-09-01 13:34:00"),
+        ],
+    )
     choice = select_replay_run(db, "morning")
     assert choice.run_id == "run-new"
     assert choice.mode == "auto" and choice.complete
@@ -341,12 +387,15 @@ def test_select_replay_run_skips_a_run_that_never_reached_the_decision(tmp_path)
     pinning to it would inject a MissingRecordedResponse production never had."""
     from ops.rehearsal.replay import select_replay_run
 
-    db = _history_db(tmp_path, [
-        ("run-whole", "tech_analyst", "2026-08-30 13:30:00"),
-        ("run-whole", "portfolio_manager", "2026-08-30 13:34:00"),
-        ("run-stub", "news_analyst_morning", "2026-09-01 13:30:00"),
-        ("run-stub", "macro_analyst", "2026-09-01 13:31:00"),
-    ])
+    db = _history_db(
+        tmp_path,
+        [
+            ("run-whole", "tech_analyst", "2026-08-30 13:30:00"),
+            ("run-whole", "portfolio_manager", "2026-08-30 13:34:00"),
+            ("run-stub", "news_analyst_morning", "2026-09-01 13:30:00"),
+            ("run-stub", "macro_analyst", "2026-09-01 13:31:00"),
+        ],
+    )
     choice = select_replay_run(db, "morning")
     assert choice.run_id == "run-whole"
 
@@ -356,14 +405,19 @@ def test_select_replay_run_will_not_replay_the_future(tmp_path):
     is not something that morning could have produced."""
     from ops.rehearsal.replay import select_replay_run
 
-    db = _history_db(tmp_path, [
-        ("run-before", "tech_analyst", "2026-09-01 13:30:00"),
-        ("run-before", "portfolio_manager", "2026-09-01 13:34:00"),
-        ("run-after", "tech_analyst", "2026-09-02 13:30:00"),
-        ("run-after", "portfolio_manager", "2026-09-02 13:34:00"),
-    ])
+    db = _history_db(
+        tmp_path,
+        [
+            ("run-before", "tech_analyst", "2026-09-01 13:30:00"),
+            ("run-before", "portfolio_manager", "2026-09-01 13:34:00"),
+            ("run-after", "tech_analyst", "2026-09-02 13:30:00"),
+            ("run-after", "portfolio_manager", "2026-09-02 13:34:00"),
+        ],
+    )
     choice = select_replay_run(
-        db, "morning", not_after_utc="2026-09-01 13:35:00",
+        db,
+        "morning",
+        not_after_utc="2026-09-01 13:35:00",
     )
     assert choice.run_id == "run-before"
 
@@ -373,12 +427,15 @@ def test_select_replay_run_never_pins_a_rehearsals_own_rows(tmp_path):
     Replaying a replay would be self-referential nonsense."""
     from ops.rehearsal.replay import select_replay_run
 
-    db = _history_db(tmp_path, [
-        ("run-real", "tech_analyst", "2026-09-01 13:30:00"),
-        ("run-real", "portfolio_manager", "2026-09-01 13:34:00"),
-        ("rehearsal-morning-20260902", "tech_analyst", "2026-09-02 13:30:00"),
-        ("rehearsal-morning-20260902", "portfolio_manager", "2026-09-02 13:34:00"),
-    ])
+    db = _history_db(
+        tmp_path,
+        [
+            ("run-real", "tech_analyst", "2026-09-01 13:30:00"),
+            ("run-real", "portfolio_manager", "2026-09-01 13:34:00"),
+            ("rehearsal-morning-20260902", "tech_analyst", "2026-09-02 13:30:00"),
+            ("rehearsal-morning-20260902", "portfolio_manager", "2026-09-02 13:34:00"),
+        ],
+    )
     assert select_replay_run(db, "morning").run_id == "run-real"
 
 
@@ -387,9 +444,12 @@ def test_select_replay_run_says_so_when_it_cannot_pin_anything(tmp_path):
     how the unpinned default hid for as long as it did."""
     from ops.rehearsal.replay import select_replay_run
 
-    db = _history_db(tmp_path, [
-        ("evening-x", "evening_analyst", "2026-09-01 00:00:00"),
-    ])
+    db = _history_db(
+        tmp_path,
+        [
+            ("evening-x", "evening_analyst", "2026-09-01 00:00:00"),
+        ],
+    )
     choice = select_replay_run(db, "morning")
     assert choice.run_id is None
     assert choice.complete is False

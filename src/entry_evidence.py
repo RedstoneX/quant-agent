@@ -30,6 +30,7 @@ Deliberately generic in the field it resolves, so the whole class is
 closed rather than this one column: any entry-pinned fact added later
 gets the same behaviour by being resolved through `pinned_value`.
 """
+
 from __future__ import annotations
 
 import json
@@ -90,15 +91,21 @@ def pinned_value(
 
 def pinned_setup_type(prior_row, decision, *, is_scale_in: bool) -> str | None:
     value = pinned_value(
-        prior_row, decision, "setup_type", is_scale_in=is_scale_in,
+        prior_row,
+        decision,
+        "setup_type",
+        is_scale_in=is_scale_in,
     )
     return value or None
 
 
 def pinned_structural_ceiling(prior_row, decision, *, is_scale_in: bool) -> bool | None:
     return pinned_value(
-        prior_row, decision, "structural_ceiling",
-        cast=bool, is_scale_in=is_scale_in,
+        prior_row,
+        decision,
+        "structural_ceiling",
+        cast=bool,
+        is_scale_in=is_scale_in,
     )
 
 
@@ -122,19 +129,14 @@ def scale_in_own_verdict(prior_row, decision) -> str | None:
         held = (prior_row or {}).get(field, _SENTINEL)
         fields[field] = {
             "add_verdict": cast(fresh) if cast else fresh,
-            "position_already_held_a_verdict": (
-                held is not _SENTINEL and held is not None and held != ""
-            ),
+            "position_already_held_a_verdict": (held is not _SENTINEL and held is not None and held != ""),
         }
     if not fields:
         return None
     return json.dumps(
         {
             "source": SCALE_IN_EVIDENCE_AGENT,
-            "note": (
-                "the add's own classification; the held position's entry "
-                "verdict is unchanged by this row"
-            ),
+            "note": ("the add's own classification; the held position's entry verdict is unchanged by this row"),
             "fields": fields,
         },
         sort_keys=True,
@@ -161,19 +163,32 @@ def resolve_entry_pins(db, decision, *, is_short: bool, is_scale_in: bool):
         db.get_symbol_last_buy(
             decision.symbol,
             action="SHORT" if is_short else "BUY",
-        ) if is_scale_in else None
+        )
+        if is_scale_in
+        else None
     )
     setup_type = pinned_setup_type(
-        _existing_buy, decision, is_scale_in=is_scale_in,
+        _existing_buy,
+        decision,
+        is_scale_in=is_scale_in,
     )
     structural_ceiling = pinned_structural_ceiling(
-        _existing_buy, decision, is_scale_in=is_scale_in,
+        _existing_buy,
+        decision,
+        is_scale_in=is_scale_in,
     )
     return _existing_buy, setup_type, structural_ceiling
 
 
 def record_scale_in_own_verdict(
-    db, logger, *, run_id, decision_id, decision, prior_row, is_scale_in: bool,
+    db,
+    logger,
+    *,
+    run_id,
+    decision_id,
+    decision,
+    prior_row,
+    is_scale_in: bool,
 ) -> None:
     """File a top-up's own verdict in `specialist_evidence`; no-op otherwise.
 
@@ -202,5 +217,6 @@ def record_scale_in_own_verdict(
             except Exception as exc:  # pragma: no cover - forensic only
                 logger.warning(
                     "scale-in evidence not recorded for %s: %s",
-                    decision.symbol, exc,
+                    decision.symbol,
+                    exc,
                 )

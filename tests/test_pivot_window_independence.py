@@ -32,7 +32,11 @@ def _bars(lows: list[float]) -> list[OHLCV]:
     return [
         OHLCV(
             date=start + _dt.timedelta(days=i),
-            open=lo + 1, high=lo + 2, low=lo, close=lo + 1, volume=1_000,
+            open=lo + 1,
+            high=lo + 2,
+            low=lo,
+            close=lo + 1,
+            volume=1_000,
         )
         for i, lo in enumerate(lows)
     ]
@@ -77,10 +81,32 @@ def test_window_5_lows_are_a_subset_of_window_3_lows_never_the_reverse():
     asymmetry runs one way, which is why the looser window is the trailing
     one and why nothing here is a safety gap.
     """
-    lows = [120, 118, 116, 114, 112, 100, 112, 114, 116, 118, 120,   # wide V
-            130,
-            90, 91, 102, 101, 100, 96, 100, 101, 102, 91, 90,        # narrow V
-            130]
+    lows = [
+        120,
+        118,
+        116,
+        114,
+        112,
+        100,
+        112,
+        114,
+        116,
+        118,
+        120,  # wide V
+        130,
+        90,
+        91,
+        102,
+        101,
+        100,
+        96,
+        100,
+        101,
+        102,
+        91,
+        90,  # narrow V
+        130,
+    ]
     bars = _bars(lows)
 
     window5 = {p[1] for p in _find_pivots(bars, LEVELS_WINDOW) if p[2] == "S"}
@@ -116,9 +142,7 @@ def test_pivot_window_is_not_a_public_knob_on_the_trailing_path():
     `compute_trailing_stop` does not, so no caller can accidentally pass one
     module's window into the other.
     """
-    trailing_params = inspect.signature(
-        trailing_mod.compute_trailing_stop
-    ).parameters
+    trailing_params = inspect.signature(trailing_mod.compute_trailing_stop).parameters
     assert "pivot_window" not in trailing_params
 
     levels_params = inspect.signature(levels_mod.find_structural_levels).parameters

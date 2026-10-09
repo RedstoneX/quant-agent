@@ -3,6 +3,7 @@
 Every collaborator is an explicit keyword-only constructor argument, so each
 class is built from stubs alone (clause 5 of tests/boundary_harness.py).
 """
+
 from __future__ import annotations
 
 import inspect
@@ -35,11 +36,16 @@ def test_every_lifted_piece_is_constructible_from_stubs(cls):
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
 
 
-@pytest.mark.parametrize("module", [
-    "src.protection.owner_alerts", "src.protection.sell_finalization",
-    "src.protection.fill_reconciler", "src.protection.repeg_drain",
-    "src.protection.coverage_election",
-])
+@pytest.mark.parametrize(
+    "module",
+    [
+        "src.protection.owner_alerts",
+        "src.protection.sell_finalization",
+        "src.protection.fill_reconciler",
+        "src.protection.repeg_drain",
+        "src.protection.coverage_election",
+    ],
+)
 def test_every_lifted_module_passes_the_boundary_check(module):
     verdict = check_boundary(module)
     assert verdict.passed, verdict.failures
@@ -47,6 +53,7 @@ def test_every_lifted_module_passes_the_boundary_check(module):
 
 def test_moved_helpers_still_resolve_on_the_mixin_module():
     import src.pipeline_protection as mixin_module
+
     assert mixin_module._WAL_SELL_SENTINEL is _WAL_SELL_SENTINEL
     assert mixin_module._finite_float_or_none is _finite_float_or_none
     assert mixin_module._reconciled_exit_action is _reconciled_exit_action

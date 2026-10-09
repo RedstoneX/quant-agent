@@ -32,11 +32,18 @@ class ConvictionLedgerStore:
         self._lock = lock
 
     def _insert_evidence(
-        self, *, run_id: str, agent_name: str, kind: str, scope: str,
-        evidence_json: str, symbol: str | None = None,
+        self,
+        *,
+        run_id: str,
+        agent_name: str,
+        kind: str,
+        scope: str,
+        evidence_json: str,
+        symbol: str | None = None,
         decision_id: str | None = None,
     ) -> int:
         """The one WRITE path, under the shared retrying process lock."""
+
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO specialist_evidence "
@@ -46,10 +53,14 @@ class ConvictionLedgerStore:
             )
             self.conn.commit()
             return cur.lastrowid or 0
+
         return locked_write(self._lock, _do, label="insert_conviction_credit")
 
     def get_conviction_credits(
-        self, *, seat: str | None = None, limit: int | None = None,
+        self,
+        *,
+        seat: str | None = None,
+        limit: int | None = None,
     ) -> list:
         """Every persisted `SeatCredit`, oldest first. Read back, not recomputed.
 
@@ -70,9 +81,8 @@ class ConvictionLedgerStore:
         historical `weight` key are deliberately ignored.
         """
         from src.conviction_ledger import SeatCredit
-        sql = (
-            "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
-        )
+
+        sql = "SELECT evidence_json FROM specialist_evidence WHERE kind = ?"
         params: list = [CONVICTION_CREDIT_KIND]
         if seat:
             sql += " AND agent_name = ?"
@@ -84,23 +94,28 @@ class ConvictionLedgerStore:
         with self._lock:
             rows = self.conn.execute(sql, tuple(params)).fetchall()
         import json as _json
+
         out = []
         for row in rows:
             try:
                 data = _json.loads(row["evidence_json"])
                 r = float(data["r_multiple"])
-                out.append(SeatCredit(
-                    seat=data["seat"], symbol=data["symbol"], side=data["side"],
-                    stance=data.get("stance", ""),
-                    conviction=data.get("conviction", "medium"),
-                    r_multiple=r,
-                    credit=round(r if data["side"] == "supported" else -r, 4),
-                    resolved_at=data.get("resolved_at", ""),
-                    position_id=data.get("position_id"),
-                    decision_id=data.get("decision_id"),
-                    direction=data.get("direction", "long"),
-                    nominated=bool(data.get("nominated")),
-                ))
+                out.append(
+                    SeatCredit(
+                        seat=data["seat"],
+                        symbol=data["symbol"],
+                        side=data["side"],
+                        stance=data.get("stance", ""),
+                        conviction=data.get("conviction", "medium"),
+                        r_multiple=r,
+                        credit=round(r if data["side"] == "supported" else -r, 4),
+                        resolved_at=data.get("resolved_at", ""),
+                        position_id=data.get("position_id"),
+                        decision_id=data.get("decision_id"),
+                        direction=data.get("direction", "long"),
+                        nominated=bool(data.get("nominated")),
+                    )
+                )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Skipping malformed conviction_credit row: %s", e)
         return out
@@ -165,8 +180,11 @@ class ConvictionLedgerStore:
 
         already = self._scored_position_ids()
         counters = {
-            "closed_positions": 0, "scored_positions": 0, "credits_written": 0,
-            "skipped_already_scored": 0, "skipped_no_r": 0,
+            "closed_positions": 0,
+            "scored_positions": 0,
+            "credits_written": 0,
+            "skipped_already_scored": 0,
+            "skipped_no_r": 0,
             "skipped_no_stances": 0,
         }
         for position_id, chain in chains.items():
@@ -179,51 +197,72 @@ class ConvictionLedgerStore:
                 continue
             r = (
                 _r_multiple(
-                    closed.exit_price, closed.entry_price,
-                    closed.initial_stop, closed.qty,
+                    closed.exit_price,
+                    closed.entry_price,
+                    closed.initial_stop,
+                    closed.qty,
                 )
-                if closed.initial_stop is not None else None
+                if closed.initial_stop is not None
+                else None
             )
             if r is None:
                 counters["skipped_no_r"] += 1
                 continue
             stances = read_seat_stances(
-                self.conn, self._lock,
-                decision_id=closed.decision_id or "", symbol=closed.symbol,
+                self.conn,
+                self._lock,
+                decision_id=closed.decision_id or "",
+                symbol=closed.symbol,
             )
             if not stances:
                 counters["skipped_no_stances"] += 1
                 continue
             credits = score_position(
-                symbol=closed.symbol, direction=closed.direction, r_multiple=r,
-                stances=stances, position_id=position_id,
-                decision_id=closed.decision_id, resolved_at=closed.closed_at,
+                symbol=closed.symbol,
+                direction=closed.direction,
+                r_multiple=r,
+                stances=stances,
+                position_id=position_id,
+                decision_id=closed.decision_id,
+                resolved_at=closed.closed_at,
             )
             if not credits:
                 counters["skipped_no_stances"] += 1
                 continue
-            run_id = next(
-                (str(row.get("run_id") or "") for row in chain if row.get("run_id")),
-                "",
-            ) or f"ledger-{position_id}"
+            run_id = (
+                next(
+                    (str(row.get("run_id") or "") for row in chain if row.get("run_id")),
+                    "",
+                )
+                or f"ledger-{position_id}"
+            )
             for credit in credits:
                 self._insert_evidence(
-                    run_id=run_id, decision_id=credit.decision_id,
-                    agent_name=credit.seat, kind=CONVICTION_CREDIT_KIND,
-                    scope="symbol", symbol=credit.symbol,
-                    evidence_json=_json.dumps({
-                        "seat": credit.seat, "symbol": credit.symbol,
-                        "side": credit.side, "stance": credit.stance,
-                        # `conviction` is recorded, never applied — no
-                        # `weight` key is written any more (2026-08-31).
-                        "conviction": credit.conviction,
-                        "r_multiple": credit.r_multiple, "credit": credit.credit,
-                        "resolved_at": credit.resolved_at,
-                        "position_id": credit.position_id,
-                        "decision_id": credit.decision_id,
-                        "direction": credit.direction,
-                        "nominated": credit.nominated,
-                    }, sort_keys=True),
+                    run_id=run_id,
+                    decision_id=credit.decision_id,
+                    agent_name=credit.seat,
+                    kind=CONVICTION_CREDIT_KIND,
+                    scope="symbol",
+                    symbol=credit.symbol,
+                    evidence_json=_json.dumps(
+                        {
+                            "seat": credit.seat,
+                            "symbol": credit.symbol,
+                            "side": credit.side,
+                            "stance": credit.stance,
+                            # `conviction` is recorded, never applied — no
+                            # `weight` key is written any more (2026-08-31).
+                            "conviction": credit.conviction,
+                            "r_multiple": credit.r_multiple,
+                            "credit": credit.credit,
+                            "resolved_at": credit.resolved_at,
+                            "position_id": credit.position_id,
+                            "decision_id": credit.decision_id,
+                            "direction": credit.direction,
+                            "nominated": credit.nominated,
+                        },
+                        sort_keys=True,
+                    ),
                 )
                 counters["credits_written"] += 1
             counters["scored_positions"] += 1
@@ -231,7 +270,9 @@ class ConvictionLedgerStore:
 
 
 def build_conviction_ledger_store(
-    *, conn: sqlite3.Connection, lock: threading.Lock,
+    *,
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
 ) -> ConvictionLedgerStore:
     """Build the store from its collaborators BY VALUE."""
     return ConvictionLedgerStore(conn=conn, lock=lock)

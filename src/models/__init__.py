@@ -1,4 +1,5 @@
 """`src.models` package: the former single module, split by subject; every public name re-exported."""
+
 from src.models.base import (
     reward_to_risk,
     _normalize_symbol,
@@ -144,5 +145,6 @@ from src.models.meta import (
 
 # Board item 78: a later blank write must not erase a stated falsifier.
 from src.models.soft_exit_guard import install as _install_soft_exit_guard
+
 for _guarded in (TargetPosition, TradeDecision):
     _install_soft_exit_guard(_guarded)

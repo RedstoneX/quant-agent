@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def fetch_release_dates(
-    provider, release: MacroRelease, start: date, end: date,
+    provider,
+    release: MacroRelease,
+    start: date,
+    end: date,
 ) -> tuple[list[date], str]:
     """Forward dates for one release. Returns (dates, failure_reason); the
     reason is "" on success.
@@ -55,41 +58,43 @@ def fetch_release_dates(
     }
     url = f"{FRED_RELEASE_DATES_URL}?{urlencode(params)}"
 
-    retries = (
-        provider.max_retries
-        if provider._consecutive_failed < provider.breaker_after_failed_releases
-        else 0
-    )
+    retries = provider.max_retries if provider._consecutive_failed < provider.breaker_after_failed_releases else 0
     for attempt in range(retries + 1):
         remaining = (
-            provider._deadline - time.monotonic() if provider._deadline is not None
-            else provider.request_timeout_s
+            provider._deadline - time.monotonic() if provider._deadline is not None else provider.request_timeout_s
         )
         if remaining <= 0:
             logger.warning(
-                "FRED release-dates deadline exceeded before attempt %d/%d "
-                "for %s — degrading now",
-                attempt + 1, retries + 1, release.label,
+                "FRED release-dates deadline exceeded before attempt %d/%d for %s — degrading now",
+                attempt + 1,
+                retries + 1,
+                release.label,
             )
             return [], "fetch_deadline_exceeded"
         try:
             payload = provider._http_get_json(
-                url, timeout=min(provider.request_timeout_s, remaining),
+                url,
+                timeout=min(provider.request_timeout_s, remaining),
             )
         except Exception as e:  # noqa: BLE001 — any transport shape degrades
             reason = str(e) or type(e).__name__
             if attempt < retries:
                 backoff = provider._next_backoff(attempt)
                 logger.warning(
-                    "FRED release-dates error for %s (attempt %d/%d): %s — "
-                    "retrying in %.1fs",
-                    release.label, attempt + 1, retries + 1, e, backoff,
+                    "FRED release-dates error for %s (attempt %d/%d): %s — retrying in %.1fs",
+                    release.label,
+                    attempt + 1,
+                    retries + 1,
+                    e,
+                    backoff,
                 )
                 if backoff > 0:
                     time.sleep(backoff)
                 continue
             logger.warning(
-                "FRED release-dates error for %s: %s", release.label, e,
+                "FRED release-dates error for %s: %s",
+                release.label,
+                e,
             )
             return [], reason
 

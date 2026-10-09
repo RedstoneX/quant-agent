@@ -44,6 +44,7 @@ from src.pipeline import TradingPipeline, _missed_ops_quality_metrics
 from src.quantities import ETF_LEVERAGE, avg_dollar_volume, inverse_etf_symbols
 from src.risk.rules import RiskRuleEngine
 from tests.pipeline_factory import build_pipeline
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -53,17 +54,45 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CASH = 40_000.0
 BOOK = [
-    Position(symbol="SGOV", qty=140, avg_entry=100.0, current_price=100.0,
-             market_value=14_000.0, unrealized_pnl=0.0, sector="Unknown"),
-    Position(symbol="NVDA", qty=100, avg_entry=380.0, current_price=400.0,
-             market_value=40_000.0, unrealized_pnl=2_000.0, sector="Technology"),
-    Position(symbol="MSFT", qty=50, avg_entry=390.0, current_price=400.0,
-             market_value=20_000.0, unrealized_pnl=500.0, sector="Technology"),
+    Position(
+        symbol="SGOV",
+        qty=140,
+        avg_entry=100.0,
+        current_price=100.0,
+        market_value=14_000.0,
+        unrealized_pnl=0.0,
+        sector="Unknown",
+    ),
+    Position(
+        symbol="NVDA",
+        qty=100,
+        avg_entry=380.0,
+        current_price=400.0,
+        market_value=40_000.0,
+        unrealized_pnl=2_000.0,
+        sector="Technology",
+    ),
+    Position(
+        symbol="MSFT",
+        qty=50,
+        avg_entry=390.0,
+        current_price=400.0,
+        market_value=20_000.0,
+        unrealized_pnl=500.0,
+        sector="Technology",
+    ),
     # -3x inverse ETF: a hedge SUBTRACTS from net exposure, at 3x notional.
-    Position(symbol="SQQQ", qty=200, avg_entry=20.0, current_price=20.0,
-             market_value=4_000.0, unrealized_pnl=0.0, sector="Unknown"),
+    Position(
+        symbol="SQQQ",
+        qty=200,
+        avg_entry=20.0,
+        current_price=20.0,
+        market_value=4_000.0,
+        unrealized_pnl=0.0,
+        sector="Unknown",
+    ),
 ]
-EQUITY = CASH + sum(p.market_value for p in BOOK)   # $118,000
+EQUITY = CASH + sum(p.market_value for p in BOOK)  # $118,000
 RESERVE_PCT = 5.0
 SWEEP_SYMBOL = "SGOV"
 
@@ -81,8 +110,10 @@ def _book_as_api_payload() -> dict:
                 "unrealized_pnl": p.unrealized_pnl,
                 "is_cash_equivalent": p.symbol == SWEEP_SYMBOL,
                 "direction": (
-                    "cash_equivalent" if p.symbol == SWEEP_SYMBOL
-                    else "bearish_hedge" if p.symbol in inverse_etf_symbols()
+                    "cash_equivalent"
+                    if p.symbol == SWEEP_SYMBOL
+                    else "bearish_hedge"
+                    if p.symbol in inverse_etf_symbols()
                     else "long"
                 ),
             }
@@ -96,13 +127,16 @@ def _pipeline() -> TradingPipeline:
     p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
-            enabled=True, symbol=SWEEP_SYMBOL,
+            enabled=True,
+            symbol=SWEEP_SYMBOL,
             min_order_usd=500.0,
         ),
         risk=RiskConfig(
-            max_position_pct=20, max_total_position_pct=90,
+            max_position_pct=20,
+            max_total_position_pct=90,
             max_sector_pct=40,
-            require_stop_loss=True, allow_margin=False,
+            require_stop_loss=True,
+            allow_margin=False,
         ),
     )
     p.cash_sweeper = CashSweeper(pipeline=p)
@@ -146,7 +180,7 @@ def test_conservative_figure_survives_under_its_own_name(api_routes):
     """The reserve-adjusted figure is still reported — it is genuinely
     useful — but it may never occupy the word "deployable" again."""
     liq = api_routes._compute_liquidity(CASH, EQUITY)
-    assert liq.reserve_usd == pytest.approx(5_900.0)          # 5% of $118k
+    assert liq.reserve_usd == pytest.approx(5_900.0)  # 5% of $118k
     assert liq.cash_above_reserve == pytest.approx(34_100.0)  # the OLD "deployable"
     assert liq.deployable_cash != liq.cash_above_reserve
 
@@ -165,6 +199,7 @@ def test_sweep_reserve_formula_is_written_exactly_once():
     2026-10-01 (board item 190) and the sweeper's own `reserve_usd` wrapper
     went with the retired feature; the shared arithmetic did not move."""
     from src.quantities import sweep_reserve_usd as _reserve
+
     assert _reserve(EQUITY, RESERVE_PCT) == pytest.approx(5_900.0)
 
     offenders = []
@@ -172,9 +207,7 @@ def test_sweep_reserve_formula_is_written_exactly_once():
         if path.name == "quantities.py":
             continue
         text = path.read_text()
-        if re.search(r"reserve_pct\s*\]?\s*/\s*100", text) or re.search(
-            r"max\(\s*cash\s*-\s*reserve", text
-        ):
+        if re.search(r"reserve_pct\s*\]?\s*/\s*100", text) or re.search(r"max\(\s*cash\s*-\s*reserve", text):
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
         "the sweep reserve / reserve-adjusted cash formula is retyped in: "
@@ -191,20 +224,31 @@ def test_sweep_reserve_formula_is_written_exactly_once():
 def _rule_two_percentage() -> float:
     """The percentage `max_total_position_pct` actually judges, extracted by
     running the real rule and reading the violation it emits."""
-    engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20,
-        max_total_position_pct=0.0001,   # trip it so the value is reported
-        max_sector_pct=40,
-        require_stop_loss=False, allow_margin=False,
-    ))
+    engine = RiskRuleEngine(
+        RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=0.0001,  # trip it so the value is reported
+            max_sector_pct=40,
+            require_stop_loss=False,
+            allow_margin=False,
+        )
+    )
     investable = [p for p in BOOK if p.symbol != SWEEP_SYMBOL]
     decision = TradeDecision(
-        symbol="AAPL", action="BUY", allocation_pct=0.0,
-        entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+        symbol="AAPL",
+        action="BUY",
+        allocation_pct=0.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
         reasoning="probe measurement, allocates nothing",
     )
     violations = engine.check(
-        decision=decision, positions=investable, total_value=EQUITY, cash=CASH,)
+        decision=decision,
+        positions=investable,
+        total_value=EQUITY,
+        cash=CASH,
+    )
     hit = [v for v in violations if v.rule == "max_total_position_pct"]
     assert hit, "expected the net-exposure rule to report its measurement"
     return hit[0].value
@@ -262,9 +306,7 @@ def test_cockpit_reads_exposure_from_the_server():
     were simply deleted."""
     hero = (REPO_ROOT / "frontend" / "src" / "components" / "HeroBand.tsx").read_text()
     assert "account.exposure?.net_exposure_pct" in hero
-    code = "\n".join(
-        ln for ln in hero.splitlines() if not ln.strip().startswith("//")
-    )
+    code = "\n".join(ln for ln in hero.splitlines() if not ln.strip().startswith("//"))
     assert "(longMv + hedgeMv) / total" not in code
 
 
@@ -290,12 +332,10 @@ def _bars_with_one_halt(n: int = 25) -> list[OHLCV]:
     inside the trailing 20. Dropping that session instead of counting it as
     a real zero is what put the three implementations 5.26% apart."""
     bars = [
-        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=101.0,
-              low=99.0, close=100.0, volume=120_000)
+        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=101.0, low=99.0, close=100.0, volume=120_000)
         for i in range(n)
     ]
-    bars[-5] = OHLCV(date=bars[-5].date, open=100.0, high=100.0,
-                     low=100.0, close=100.0, volume=0)
+    bars[-5] = OHLCV(date=bars[-5].date, open=100.0, high=100.0, low=100.0, close=100.0, volume=0)
     return bars
 
 
@@ -306,7 +346,7 @@ def test_all_three_call_sites_measure_the_same_dollar_volume(monkeypatch):
     import src.pipeline as pipeline_mod
 
     bars = _bars_with_one_halt()
-    expected_usd = 11_400_000.0   # 19 sessions x $12M / 20 sessions
+    expected_usd = 11_400_000.0  # 19 sessions x $12M / 20 sessions
 
     # a) the shared definition itself
     assert avg_dollar_volume(bars) == pytest.approx(expected_usd)
@@ -327,9 +367,7 @@ def test_all_three_call_sites_measure_the_same_dollar_volume(monkeypatch):
         min_external_price_usd=5.0,
         min_external_avg_dollar_volume_usd=10_000_000.0,
     )
-    p.broker.get_transient_equity_eligibility = MagicMock(
-        return_value={"eligible": True}
-    )
+    p.broker.get_transient_equity_eligibility = MagicMock(return_value={"eligible": True})
     p.market = MagicMock()
     p.market.get_ohlcv = MagicMock(return_value=bars)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Technology")
@@ -345,14 +383,12 @@ def test_the_window_is_twenty_sessions_not_twenty_one():
     from src.data import context as context_mod
 
     bars = [
-        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=101.0,
-              low=99.0, close=100.0, volume=100_000)
+        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=101.0, low=99.0, close=100.0, volume=100_000)
         for i in range(30)
     ]
     # Make the 21st-from-last bar enormous. A 21-bar window sees it; the
     # correct 20-bar window does not.
-    bars[-21] = OHLCV(date=bars[-21].date, open=100.0, high=100.0,
-                      low=100.0, close=100.0, volume=100_000_000)
+    bars[-21] = OHLCV(date=bars[-21].date, open=100.0, high=100.0, low=100.0, close=100.0, volume=100_000_000)
     ctx = context_mod.compute_market_context(bars)
     assert ctx.avg_dollar_volume_20d == pytest.approx(10_000_000.0)
 
@@ -373,8 +409,7 @@ def test_a_window_where_nothing_traded_is_unknown_not_zero():
     volume feed, and reporting that as $0 would fabricate a measurement
     (and would read to a `< threshold` gate as "definitely illiquid")."""
     dead = [
-        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=100.0,
-              low=100.0, close=100.0, volume=0)
+        OHLCV(date=date(2026, 8, 1) + timedelta(days=i), open=100.0, high=100.0, low=100.0, close=100.0, volume=0)
         for i in range(25)
     ]
     assert avg_dollar_volume(dead) is None
@@ -430,17 +465,13 @@ def test_no_hardcoded_inverse_etf_roster_outside_the_leverage_table():
     # The exact four-symbol roster, in any order — not `src/data/earnings.py`'s
     # broader "ETFs have no 10-Q" list, which is a different (also
     # hand-maintained, also pre-existing) set and out of scope here.
-    pattern = re.compile(
-        r"\{\s*(?:[\"'](?:SH|SDS|PSQ|SQQQ)[\"']\s*,?\s*){4}\}"
-    )
+    pattern = re.compile(r"\{\s*(?:[\"'](?:SH|SDS|PSQ|SQQQ)[\"']\s*,?\s*){4}\}")
     for path in _python_sources():
         if path.name == "quantities.py":
             continue
         if pattern.search(path.read_text()):
             offenders.append(str(path.relative_to(REPO_ROOT)))
-    assert not offenders, (
-        f"a hand-maintained inverse-ETF roster survives in: {offenders}"
-    )
+    assert not offenders, f"a hand-maintained inverse-ETF roster survives in: {offenders}"
 
 
 # ---------------------------------------------------------------------------
@@ -456,10 +487,7 @@ def _python_sources() -> list[Path]:
         root = REPO_ROOT / base
         if not root.is_dir():
             continue
-        out.extend(
-            p for p in sorted(root.rglob("*.py"))
-            if "__pycache__" not in p.parts
-        )
+        out.extend(p for p in sorted(root.rglob("*.py")) if "__pycache__" not in p.parts)
     return out
 
 

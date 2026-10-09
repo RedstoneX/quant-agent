@@ -24,6 +24,7 @@ Numbers come from the close file's constants (seeded trade and fixture
 bars); nothing here is picked. No network, no broker, no live provider,
 no production database: `tmp_path/desk.db` is the whole world.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,22 +32,32 @@ import sqlite3
 from pathlib import Path
 
 from src.trader_feed.stored import (
-    read_stored_session_report, render_stored_session_report,
+    read_stored_session_report,
+    render_stored_session_report,
 )
 from tests.test_e2e_close_existing_book import (
-    HOLD, INITIAL_STOP, ONE_R_PRICE, QTY, SYMBOL, _assert_hermetic,
-    _assert_untouched, _assert_whole_position_sold_after_clearing_its_stop,
-    _bars, _run_close,
+    HOLD,
+    INITIAL_STOP,
+    ONE_R_PRICE,
+    QTY,
+    SYMBOL,
+    _assert_hermetic,
+    _assert_untouched,
+    _assert_whole_position_sold_after_clearing_its_stop,
+    _bars,
+    _run_close,
 )
 
-SELL = [{
-    "action": "SELL", "symbol": SYMBOL,
-    "reason": "thesis invalidated: closed below the support the entry was "
-              "measured on",
-    "exit_trigger": "thesis_invalid",
-    "trigger_evidence": f"thesis_invalid_if was 'closes below {INITIAL_STOP}'; "
-                        f"the structure that held the range is gone",
-}]
+SELL = [
+    {
+        "action": "SELL",
+        "symbol": SYMBOL,
+        "reason": "thesis invalidated: closed below the support the entry was measured on",
+        "exit_trigger": "thesis_invalid",
+        "trigger_evidence": f"thesis_invalid_if was 'closes below {INITIAL_STOP}'; "
+        f"the structure that held the range is gone",
+    }
+]
 
 
 def _stored_close_row(tmp_path: Path) -> dict:
@@ -62,10 +73,18 @@ def _stored_close_row(tmp_path: Path) -> dict:
 
 
 def _money_visible(payload: dict) -> dict:
-    return {k: payload.get(k) for k in (
-        "status", "session", "positions", "orders", "run_id",
-        "stop_coverage_gaps", "leverage",
-    )}
+    return {
+        k: payload.get(k)
+        for k in (
+            "status",
+            "session",
+            "positions",
+            "orders",
+            "run_id",
+            "stop_coverage_gaps",
+            "leverage",
+        )
+    }
 
 
 def _recorded_action(payload: dict) -> dict:
@@ -80,8 +99,8 @@ def _ledger_rows(tmp_path: Path, action: str) -> list[tuple]:
     con = sqlite3.connect(f"file:{tmp_path / 'desk.db'}?mode=ro", uri=True)
     try:
         return con.execute(
-            "SELECT symbol, action, qty, reasoning, run_id, fill_status "
-            "FROM trades WHERE action=? ORDER BY id", (action,),
+            "SELECT symbol, action, qty, reasoning, run_id, fill_status FROM trades WHERE action=? ORDER BY id",
+            (action,),
         ).fetchall()
     finally:
         con.close()
@@ -102,9 +121,9 @@ def _metric_snapshots(tmp_path: Path) -> list[tuple]:
 
 def _assert_stored_row_matches_the_run(record: dict, result: dict) -> None:
     payload = record["payload"]
-    assert _money_visible(payload) == _money_visible(
-        json.loads(json.dumps(result, default=str))), (
-        _money_visible(payload), _money_visible(result),
+    assert _money_visible(payload) == _money_visible(json.loads(json.dumps(result, default=str))), (
+        _money_visible(payload),
+        _money_visible(result),
     )
     assert record.get("mode", "close") == "close", record
     assert payload["status"] == "reviewed" and payload["session"] == "close"
@@ -112,11 +131,13 @@ def _assert_stored_row_matches_the_run(record: dict, result: dict) -> None:
     assert payload["run_id"] == result["run_id"] and payload["run_id"]
 
 
-def test_a_hold_review_is_stored_verbatim_with_its_reason_and_rereadable(
-        tmp_path, monkeypatch):
+def test_a_hold_review_is_stored_verbatim_with_its_reason_and_rereadable(tmp_path, monkeypatch):
     bars = _bars(end=ONE_R_PRICE - 1.0)
     result, trace, trading, attempts = _run_close(
-        tmp_path, monkeypatch, bars=bars, actions=HOLD,
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        actions=HOLD,
     )
     _assert_hermetic(result, trace, trading, attempts)
     _assert_untouched(trading, INITIAL_STOP)
@@ -132,8 +153,7 @@ def test_a_hold_review_is_stored_verbatim_with_its_reason_and_rereadable(
     book = record.get("positions")
     if isinstance(book, str):
         book = json.loads(book)
-    assert [(p.get("symbol"), float(p.get("qty"))) for p in (book or [])] == [
-        (SYMBOL, QTY)], book
+    assert [(p.get("symbol"), float(p.get("qty"))) for p in (book or [])] == [(SYMBOL, QTY)], book
 
     text = render_stored_session_report("close", record)
     assert SYMBOL in text and "HOLD" in text, text
@@ -144,11 +164,13 @@ def test_a_hold_review_is_stored_verbatim_with_its_reason_and_rereadable(
     assert json.loads(snapshots[0][2]), snapshots[0]
 
 
-def test_a_substantiated_sell_is_recorded_as_a_fill_with_its_reason(
-        tmp_path, monkeypatch):
+def test_a_substantiated_sell_is_recorded_as_a_fill_with_its_reason(tmp_path, monkeypatch):
     bars = _bars(end=ONE_R_PRICE - 1.0)
     result, trace, trading, attempts = _run_close(
-        tmp_path, monkeypatch, bars=bars, actions=SELL,
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        actions=SELL,
     )
     _assert_hermetic(result, trace, trading, attempts)
     _assert_whole_position_sold_after_clearing_its_stop(trading)

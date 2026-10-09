@@ -1,9 +1,11 @@
 """Expected-sessions dead-man step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
 
 from src.sentinel.guarded import record_guarded_pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,14 +50,14 @@ class ExpectedSessionsMissingSession:
             # marker — skip both probes for it.
             try:
                 from src import decision_checkpoint as _dc0
+
                 legit_early_exit = _dc0.read_status("morning") is not None
             except Exception:  # noqa: BLE001
                 legit_early_exit = False
             #  (a) research logged but the PM never ran → died during research.
             try:
                 agents = self._db.agent_names_logged_on("run-")
-                if (not legit_early_exit and agents
-                        and "portfolio_manager" not in agents):
+                if not legit_early_exit and agents and "portfolio_manager" not in agents:
                     missing.append("morning (research ran, PM never did — killed mid-run?)")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("missing-session check: agent probe failed: %s", exc)
@@ -64,11 +66,10 @@ class ExpectedSessionsMissingSession:
             try:
                 import json as _json
                 from src import decision_checkpoint as _dc
+
                 p = _dc.checkpoint_path("morning")
                 if p.exists() and _json.loads(p.read_text()).get("consumed") is False:
-                    missing.append(
-                        "morning (PM plan never risk-reviewed — checkpoint unconsumed)"
-                    )
+                    missing.append("morning (PM plan never risk-reviewed — checkpoint unconsumed)")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("missing-session check: checkpoint probe failed: %s", exc)
         return missing

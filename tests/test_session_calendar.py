@@ -18,7 +18,7 @@ from src.session_calendar import (
 )
 from src.trading_calendar import ET, SESSION_WINDOWS
 
-NORMAL_DAY = date(2026, 10, 5)     # an ordinary Monday
+NORMAL_DAY = date(2026, 10, 5)  # an ordinary Monday
 EARLY_CLOSE_DAY = date(2026, 11, 27)  # the day after US Thanksgiving
 HOLIDAY = date(2026, 11, 26)
 
@@ -152,9 +152,7 @@ def test_no_date_is_hardcoded_in_the_module():
     import src.session_calendar as module
 
     source = Path(module.__file__).read_text()
-    code = "\n".join(
-        line for line in source.splitlines() if not line.strip().startswith("#")
-    )
+    code = "\n".join(line for line in source.splitlines() if not line.strip().startswith("#"))
     code = re.sub(r'"""(?:.|\n)*?"""', "", code)
     assert not re.search(r"\b(19|20)\d{2}\s*,\s*\d{1,2}\s*,\s*\d{1,2}\b", code)
     assert not re.search(r"\bdate\(\s*\d", code)

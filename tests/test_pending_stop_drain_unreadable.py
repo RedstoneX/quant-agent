@@ -4,6 +4,7 @@ The drain re-tests each owed level against what rests on the broker. Reading a
 failed broker answer as "nothing resting" applied the owed level even when a
 tighter stop was live, moving a protective stop in the direction that loses more.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -34,8 +35,7 @@ def world(monkeypatch):
     deleted, applied = [], []
     store = SimpleNamespace(get_all=lambda _t: list(rows), delete=lambda _t, i: deleted.append(i))
     monkeypatch.setattr(drain, "_store", store)
-    monkeypatch.setattr(drain, "replace_stop_and_record",
-                        lambda b, d, s, lvl, **k: applied.append(lvl) or {"id": "x"})
+    monkeypatch.setattr(drain, "replace_stop_and_record", lambda b, d, s, lvl, **k: applied.append(lvl) or {"id": "x"})
     monkeypatch.setattr(drain, "accepted_stop_order", lambda o: True)
     monkeypatch.setattr(drain, "record_guarded_pass", lambda *a, **k: None)
     monkeypatch.setattr(stop_read, "_sleep", lambda s: None)

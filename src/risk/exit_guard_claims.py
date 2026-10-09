@@ -119,7 +119,8 @@ from src.risk.state_change_parser import StateChangeParser
 #: flip" is answered identically everywhere in this module rather than by a
 #: second, silently-diverging definition.
 _REGIME_FLIP_CLAIM_RE = re.compile(
-    r"\bregime (?:shift|flip|flipped)\b|\brisk[- ]off\b", re.IGNORECASE,
+    r"\bregime (?:shift|flip|flipped)\b|\brisk[- ]off\b",
+    re.IGNORECASE,
 )
 
 #: Phrases that assert a HIGH-conviction bearish state_change. Same two
@@ -199,7 +200,7 @@ _NEGATION_LOOKBACK_CHARS = 40
 
 
 def _is_negated(text: str, match: re.Match) -> bool:
-    window = text[max(0, match.start() - _NEGATION_LOOKBACK_CHARS):match.start()]
+    window = text[max(0, match.start() - _NEGATION_LOOKBACK_CHARS) : match.start()]
     return bool(_NEGATION_CUE_RE.search(window))
 
 
@@ -357,12 +358,12 @@ def holding_discipline_claim_check(
     # row, so pointing a symbol-level check at it would manufacture an
     # "unverifiable" on every such exit and tell the reviewer nothing.
     from src.risk.exit_trigger import ExitTrigger, normalize_trigger
+
     _trigger = normalize_trigger(exit_trigger)
-    _claims_regime = (
-        claims_regime_flip(reason) or _trigger is ExitTrigger.REGIME_SHIFT
-    )
+    _claims_regime = claims_regime_flip(reason) or _trigger is ExitTrigger.REGIME_SHIFT
     _claims_bearish = claims_bearish_state_change(reason) or _trigger in (
-        ExitTrigger.BEARISH_STATE_CHANGE, ExitTrigger.ADVERSE_NEWS,
+        ExitTrigger.BEARISH_STATE_CHANGE,
+        ExitTrigger.ADVERSE_NEWS,
     )
 
     if _claims_regime:
@@ -389,13 +390,13 @@ def holding_discipline_claim_check(
         # whether the trigger arrived as prose or as a structured field.
         claim_label = (
             "an adverse news event naming it"
-            if _trigger is ExitTrigger.ADVERSE_NEWS
-            and not claims_bearish_state_change(reason)
+            if _trigger is ExitTrigger.ADVERSE_NEWS and not claims_bearish_state_change(reason)
             else "a HIGH-conviction bearish state change"
         )
         by_date = state_change_parser(active_state_changes, asof)
         try:
             from src.trading_calendar import et_today
+
             today_iso = str(asof) if asof is not None else str(et_today())
         except Exception:  # pragma: no cover - clock/tz failure
             today_iso = None
@@ -409,9 +410,7 @@ def holding_discipline_claim_check(
             # treating "not found" as "false" would manufacture false
             # positives on legitimate exits.
             unverifiable.append(
-                f"claims {claim_label} today, but "
-                f"no same-day Active News State Change row names {symbol_u} "
-                f"either way"
+                f"claims {claim_label} today, but no same-day Active News State Change row names {symbol_u} either way"
             )
         elif "bearish" not in symbol_directions:
             rendered = ", ".join(sorted(symbol_directions)) or "no recorded direction"
@@ -429,8 +428,9 @@ def holding_discipline_claim_check(
         return HoldingDisciplineClaimCheck(
             "false",
             f"{symbol_u}: {action} on a structurally-protected position — "
-            f"reasoning " + "; and ".join(contradictions) +
-            f". This is a provable contradiction of a checkable claim: the "
+            f"reasoning "
+            + "; and ".join(contradictions)
+            + f". This is a provable contradiction of a checkable claim: the "
             f"exit is BLOCKED on the justification given. thesis_invalid_if "
             f"(which this module cannot verify either way) may independently "
             f"justify this exit — if so it can be re-proposed citing that.",
@@ -440,8 +440,9 @@ def holding_discipline_claim_check(
         return HoldingDisciplineClaimCheck(
             "unverifiable",
             f"{symbol_u}: {action} on a structurally-protected position — "
-            f"reasoning " + "; and ".join(unverifiable) +
-            f". NOT treated as false and NOT blocked — absence of proof is "
+            f"reasoning "
+            + "; and ".join(unverifiable)
+            + f". NOT treated as false and NOT blocked — absence of proof is "
             f"not proof of a false claim. Recorded for review only.",
             tuple(unverifiable),
         )

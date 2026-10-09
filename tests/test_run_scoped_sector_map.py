@@ -13,6 +13,7 @@ The fix is structural rather than a cleanup call: the map is a field on
 forget and no exit path that can carry it, because the next run never sees
 the previous run's context at all.
 """
+
 from types import SimpleNamespace
 
 from src.models import Position
@@ -27,8 +28,15 @@ def _analyses():
 
 def _positions():
     return [
-        Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
-                 market_value=3000, unrealized_pnl=0, sector="Technology"),
+        Position(
+            symbol="MSFT",
+            qty=10,
+            avg_entry=400,
+            current_price=400,
+            market_value=3000,
+            unrealized_pnl=0,
+            sector="Technology",
+        ),
     ]
 
 
@@ -72,9 +80,7 @@ def test_an_early_exit_cannot_leak_the_previous_runs_sectors():
 def test_nothing_outside_the_run_context_stores_the_sector_map():
     """No pipeline-instance sector cache survives anywhere in src."""
     import pathlib
+
     root = pathlib.Path(__file__).resolve().parents[1] / "src"
-    offenders = [
-        str(f) for f in root.rglob("*.py")
-        if "_last_symbol_sectors" in f.read_text()
-    ]
+    offenders = [str(f) for f in root.rglob("*.py") if "_last_symbol_sectors" in f.read_text()]
     assert not offenders, f"instance-level sector cache is back in: {offenders}"

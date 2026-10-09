@@ -20,11 +20,7 @@ logger = logging.getLogger("src.pipeline")
 class OwnerAlerts:
     """Owner alerts for stop coverage: the Telegram/feed messages the desk files when a protective stop is missing, unfilled, unreadable, pending, repaired or declined."""
 
-    def __init__(self, *,
-                 broker,
-                 still_uncovered,
-                 alert_owner_no_stop,
-                 format_qty) -> None:
+    def __init__(self, *, broker, still_uncovered, alert_owner_no_stop, format_qty) -> None:
         self.broker = broker
         self._still_uncovered = still_uncovered
         self._alert_owner_no_stop = alert_owner_no_stop
@@ -41,16 +37,23 @@ class OwnerAlerts:
         try:
             held = abs(float(gap.get("held_qty") or 0))
             _ok, specs = self.broker.snapshot_protective_stops(
-                symbol, side=("buy" if gap.get("is_short") else "sell"),
+                symbol,
+                side=("buy" if gap.get("is_short") else "sell"),
             )
             covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
             record_guarded_pass(self.broker, "owner_alerts.still_uncovered_reread")
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.broker, "owner_alerts.still_uncovered_reread", exc, log=logger,
-                                context={"symbol": symbol, "effect": "alerting anyway"})
+            record_guarded_pass(
+                self.broker,
+                "owner_alerts.still_uncovered_reread",
+                exc,
+                log=logger,
+                context={"symbol": symbol, "effect": "alerting anyway"},
+            )
             logger.warning(
-                "could not re-read stops for %s before alerting (%s) — "
-                "alerting anyway", symbol, exc,
+                "could not re-read stops for %s before alerting (%s) — alerting anyway",
+                symbol,
+                exc,
             )
             return True
         if covered + 1e-6 >= held:
@@ -58,7 +61,9 @@ class OwnerAlerts:
                 "%s is fully stop-covered (%.4f of %.4f) by the time the "
                 "alert was about to go out — another process placed it. Not "
                 "paging the owner about a failure that succeeded.",
-                symbol, covered, held,
+                symbol,
+                covered,
+                held,
             )
             return False
         return True
@@ -79,10 +84,8 @@ class OwnerAlerts:
             from src.coverage_alert_release import release_elected_unfilled_alert
             from src.coverage_watchdog import claim_elected_unfilled_alert
             from src.trader_feed import _profiles, format_coverage_gap_line
-            symbols = [
-                str(r.get("symbol")).strip() for r in rows
-                if str(r.get("symbol") or "").strip()
-            ]
+
+            symbols = [str(r.get("symbol")).strip() for r in rows if str(r.get("symbol") or "").strip()]
             fresh = set(claim_elected_unfilled_alert(symbols))
             if not fresh:
                 logger.info(
@@ -91,17 +94,12 @@ class OwnerAlerts:
                     ", ".join(symbols) or "(unnamed)",
                 )
                 return
-            send = [
-                r for r in rows
-                if str(r.get("symbol") or "").strip().upper() in fresh
-            ]
+            send = [r for r in rows if str(r.get("symbol") or "").strip().upper() in fresh]
             try:
                 profiles = _profiles(send)
             except Exception:  # noqa: BLE001
                 profiles = None
-            detail = "\n".join(
-                format_coverage_gap_line(row, profiles) for row in send
-            )
+            detail = "\n".join(format_coverage_gap_line(row, profiles) for row in send)
             sent_ok = _notifier.send_owner_alert(
                 "\U0001f534 A PROTECTIVE STOP FIRED AND DID NOT FILL\n"
                 f"{len(send)} position(s) have traded past their protective "
@@ -121,7 +119,8 @@ class OwnerAlerts:
                 released = release_elected_unfilled_alert(fresh)
                 logger.critical(
                     "Stop-unfilled alert for %s NOT delivered; claim %s",
-                    sorted(fresh), "rolled back" if released else "ROLLBACK FAILED",
+                    sorted(fresh),
+                    "rolled back" if released else "ROLLBACK FAILED",
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("elected-but-unfilled stop owner alert failed: %s", exc)
@@ -160,29 +159,20 @@ class OwnerAlerts:
             still_open = [g for g in failures if self._still_uncovered(g)]
             if not still_open:
                 return
-            symbols = [
-                str(g.get("symbol")).strip() for g in still_open
-                if str(g.get("symbol") or "").strip()
-            ]
+            symbols = [str(g.get("symbol")).strip() for g in still_open if str(g.get("symbol") or "").strip()]
             fresh = set(claim_repair_failure_alert(symbols))
             if not fresh:
                 logger.info(
-                    "Session stop-repair failure on %s already reported to "
-                    "the owner today — not paging again.",
+                    "Session stop-repair failure on %s already reported to the owner today — not paging again.",
                     ", ".join(symbols) or "(unnamed)",
                 )
                 return
-            rows = [
-                g for g in still_open
-                if str(g.get("symbol") or "").strip().upper() in fresh
-            ]
+            rows = [g for g in still_open if str(g.get("symbol") or "").strip().upper() in fresh]
             try:
                 profiles = _profiles(rows)
             except Exception:  # noqa: BLE001
                 profiles = None
-            detail = "\n".join(
-                format_coverage_gap_line(row, profiles) for row in rows
-            )
+            detail = "\n".join(format_coverage_gap_line(row, profiles) for row in rows)
             _notifier.send_owner_alert(
                 "🔴 COULD NOT PUT THE PROTECTIVE STOP BACK\n"
                 f"{len(rows)} position(s) lost part of their protective stop "
@@ -212,7 +202,8 @@ class OwnerAlerts:
         try:
             from src import notifier as _notifier
             from src.coverage_watchdog import (
-                claim_typed_alert, release_typed_alert,
+                claim_typed_alert,
+                release_typed_alert,
             )
 
             fresh: set[str] = set()
@@ -230,18 +221,17 @@ class OwnerAlerts:
             # per-trading-day discipline, same fail-towards-telling-him-
             # twice behaviour when the state file cannot be read. A gap
             # carrying no symbol cannot be claimed and is always sent.
-            claimable = sorted({
-                str(g.get("symbol", "")).strip().upper() for g in naked
-                if str(g.get("symbol", "")).strip()
-            })
+            claimable = sorted(
+                {str(g.get("symbol", "")).strip().upper() for g in naked if str(g.get("symbol", "")).strip()}
+            )
             if claimable:
                 fresh = set(claim_typed_alert("no_stop_at_all", claimable))
                 if not fresh:
                     return
                 naked = [
-                    g for g in naked
-                    if str(g.get("symbol", "")).strip().upper() in fresh
-                    or not str(g.get("symbol", "")).strip()
+                    g
+                    for g in naked
+                    if str(g.get("symbol", "")).strip().upper() in fresh or not str(g.get("symbol", "")).strip()
                 ]
 
             # The refusal REASON, not just the shortfall (docs/WORK.md item
@@ -252,8 +242,7 @@ class OwnerAlerts:
             # `repair_stop_coverage` and omitted when it has nothing to say.
             detail = "\n".join(
                 f"  {g.get('symbol', '?')}: held {g.get('held_qty')}, "
-                f"covered {g.get('covered_qty')}"
-                + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
+                f"covered {g.get('covered_qty')}" + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
                 for g in naked
             )
             landed = _notifier.send_owner_alert(
@@ -290,7 +279,10 @@ class OwnerAlerts:
 
     @staticmethod
     def _alert_owner_stop_pending_acceptance(
-        symbol: str, residual_qty: str, order_id: str, status: str,
+        symbol: str,
+        residual_qty: str,
+        order_id: str,
+        status: str,
         stop_price: float,
     ) -> None:
         """Page the owner that a replacement protective stop has been
@@ -323,7 +315,8 @@ class OwnerAlerts:
         try:
             from src import notifier as _notifier
             from src.coverage_watchdog import (
-                claim_typed_alert, release_typed_alert,
+                claim_typed_alert,
+                release_typed_alert,
             )
 
             sym = str(symbol).strip().upper()
@@ -381,14 +374,12 @@ class OwnerAlerts:
         try:
             from src import notifier as _notifier
             from src.coverage_watchdog import (
-                UnreadableStop, claim_unreadable_stop_alert,
+                UnreadableStop,
+                claim_unreadable_stop_alert,
                 unreadable_stop_text,
             )
 
-            by_symbol = {
-                str(r.get("symbol", "")).strip().upper(): r for r in rows
-                if str(r.get("symbol", "")).strip()
-            }
+            by_symbol = {str(r.get("symbol", "")).strip().upper(): r for r in rows if str(r.get("symbol", "")).strip()}
             fresh = claim_unreadable_stop_alert(list(by_symbol))
             if not fresh:
                 return
@@ -399,13 +390,17 @@ class OwnerAlerts:
                     held = abs(float(row.get("held_qty") or 0))
                 except (TypeError, ValueError):
                     held = 0.0
-                described.append(UnreadableStop(
-                    symbol=sym, held_qty=held,
-                    reason=str(row.get("read_error") or "reason not recorded"),
-                    is_short=bool(row.get("is_short")),
-                ))
+                described.append(
+                    UnreadableStop(
+                        symbol=sym,
+                        held_qty=held,
+                        reason=str(row.get("read_error") or "reason not recorded"),
+                        is_short=bool(row.get("is_short")),
+                    )
+                )
             delivered = _notifier.send_owner_alert(
-                unreadable_stop_text(described), symbols=fresh,
+                unreadable_stop_text(described),
+                symbols=fresh,
             )
             if not delivered:
                 # The claim was already recorded, so these symbols are now
@@ -445,7 +440,8 @@ class OwnerAlerts:
         try:
             from src import notifier as _notifier
             from src.coverage_watchdog import (
-                claim_exit_declined_alert, exit_declined_text,
+                claim_exit_declined_alert,
+                exit_declined_text,
             )
 
             name = str(symbol or "").strip().upper()
@@ -454,7 +450,8 @@ class OwnerAlerts:
             if not claim_exit_declined_alert([name]):
                 return
             delivered = _notifier.send_owner_alert(
-                exit_declined_text(name, side=side, why=why), symbols=[name],
+                exit_declined_text(name, side=side, why=why),
+                symbols=[name],
             )
             if not delivered:
                 # The claim is already recorded, so this symbol is silent
@@ -463,13 +460,18 @@ class OwnerAlerts:
                 logger.error(
                     "EXIT-DECLINED ALERT NOT DELIVERED for %s (%s %s) — the "
                     "finding stands and is claimed for today; read it here.",
-                    name, side.upper(), why,
+                    name,
+                    side.upper(),
+                    why,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("exit-declined owner alert failed: %s", exc)
 
     def _alert_owner_reprotect_left_naked(
-        self, symbol: str, residual_qty: float, covered_qty: float,
+        self,
+        symbol: str,
+        residual_qty: float,
+        covered_qty: float,
         reason: str,
     ) -> None:
         """Page the owner when reprotect ends with the residual UNPROTECTED.
@@ -495,16 +497,22 @@ class OwnerAlerts:
         try:
             held = float(residual_qty or 0.0)
             covered = max(0.0, min(float(covered_qty or 0.0), held))
-            self._alert_owner_no_stop([{
-                "symbol": symbol,
-                "held_qty": self._format_qty(held),
-                "covered_qty": self._format_qty(covered),
-                "repair_refusal": f"re-protect after partial exit: {reason}",
-            }])
+            self._alert_owner_no_stop(
+                [
+                    {
+                        "symbol": symbol,
+                        "held_qty": self._format_qty(held),
+                        "covered_qty": self._format_qty(covered),
+                        "repair_refusal": f"re-protect after partial exit: {reason}",
+                    }
+                ]
+            )
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.broker, "owner_alerts.reprotect_naked_alert", exc, log=logger,
-                                context={"symbol": symbol})
+            record_guarded_pass(
+                self.broker, "owner_alerts.reprotect_naked_alert", exc, log=logger, context={"symbol": symbol}
+            )
             logger.error(
                 "reprotect naked-position alert failed for %s: %s",
-                symbol, exc,
+                symbol,
+                exc,
             )

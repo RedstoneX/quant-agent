@@ -48,10 +48,14 @@ from src import evidence_gate
 from src.refusal_errors import PriceReadFailed, SizingPriceUnavailable
 from src.sentinel.entry_guard import record_swallowed
 from src.soft_exit_never_blank import (
-    record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
+    record_refusal_count,
+    soft_exit_heal_detail as _soft_exit_heal_detail,
 )
 from src.pipeline_stage_helpers import (  # noqa: F401
-    _live_stops_from_heat, _macro_regime, _persist_evidence, record_stage,
+    _live_stops_from_heat,
+    _macro_regime,
+    _persist_evidence,
+    record_stage,
 )
 from src.pipeline_candidate_records import _record_pipeline_event  # noqa: F401
 from src.sentinel.order_attempts import record_order_attempt_from_event
@@ -60,7 +64,9 @@ from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
 from src.data.event_calendar import (
-    EventCalendarCoverage, FOMCCoverage, fetch_earnings_proximity,
+    EventCalendarCoverage,
+    FOMCCoverage,
+    fetch_earnings_proximity,
     format_event_risk_block,
 )
 from src.data.levels import FAULT_NO_PRICE, FAULT_STALE_PRICE
@@ -69,9 +75,14 @@ from src.data.technical import compute_indicators
 from src.models import (
     ANALYSIS_DROP_KIND as _ANALYSIS_DROP_KIND,
     DROP_CODE_UNSPECIFIED,
-    NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
-    missing_stated_falsifier, open_target_missing_falsifier,
-    parse_telemetry, SOFT_EXIT_HEAL_EVENT_REASON,
+    NewsIntelligenceReport,
+    Nomination,
+    TechAnalysisResult,
+    TechnicalIndicators,
+    missing_stated_falsifier,
+    open_target_missing_falsifier,
+    parse_telemetry,
+    SOFT_EXIT_HEAL_EVENT_REASON,
     SOFT_EXIT_MISSING_AFTER_RETRY,
 )
 from src.nominations import select_nominations
@@ -81,23 +92,37 @@ from src.portfolio_constructor import (
 )
 from src.pipeline_context import RunContext
 from src.storage.event_journal import DatabaseEventJournal, pipeline_event_fields
+
 # Step 11 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): these bodies moved
 # out verbatim and are re-exported here so every original import path and
 # every `monkeypatch.setattr(pipeline_stages, ...)` patch target is unchanged.
 from src.pipeline_earnings_quality import (  # noqa: F401
-    _EARNINGS_DATA_QUALITY_RED_FLAGS, _EARNINGS_NOT_DISCLOSED,
-    _EARNINGS_XBRL_COMPARABLE_FIELDS, _EARNINGS_XBRL_DOLLAR_FLOOR,
-    _EARNINGS_XBRL_EPS_FLOOR, _EARNINGS_XBRL_TOLERANCE_PCT, _FIGURE_RE,
-    _UNIT_MULTIPLIERS, _classify_earnings_status,
-    _earnings_analysis_has_real_figures, _earnings_data_quality_flags_problem,
-    _earnings_field_disclosed, _earnings_xbrl_mismatch_fields,
+    _EARNINGS_DATA_QUALITY_RED_FLAGS,
+    _EARNINGS_NOT_DISCLOSED,
+    _EARNINGS_XBRL_COMPARABLE_FIELDS,
+    _EARNINGS_XBRL_DOLLAR_FLOOR,
+    _EARNINGS_XBRL_EPS_FLOOR,
+    _EARNINGS_XBRL_TOLERANCE_PCT,
+    _FIGURE_RE,
+    _UNIT_MULTIPLIERS,
+    _classify_earnings_status,
+    _earnings_analysis_has_real_figures,
+    _earnings_data_quality_flags_problem,
+    _earnings_field_disclosed,
+    _earnings_xbrl_mismatch_fields,
     _parse_reported_figure,
 )
 from src.pipeline_gross_ceiling import _session_gross_ceiling  # noqa: F401
 from src.pipeline_sizing import (  # noqa: F401
-    _DEFAULT_RISK_BUDGET_PCT, _entry_deployment_budget,
-    _execution_payoff_skip_reason, _fmt_shares, _fractional_sizing_allowed,
-    _min_order_usd, _qty_by_risk_budget, _risk_budget_pct, _single_name_execution_cap,
+    _DEFAULT_RISK_BUDGET_PCT,
+    _entry_deployment_budget,
+    _execution_payoff_skip_reason,
+    _fmt_shares,
+    _fractional_sizing_allowed,
+    _min_order_usd,
+    _qty_by_risk_budget,
+    _risk_budget_pct,
+    _single_name_execution_cap,
     _size_shares,
 )
 
@@ -112,10 +137,8 @@ from src import pipeline_earnings_quality as _pipeline_earnings_quality  # noqa:
 from src import pipeline_sizing as _pipeline_sizing  # noqa: E402
 
 _MOVED_NAME_OWNERS = {
-    **{n: _pipeline_earnings_quality for n in vars(_pipeline_earnings_quality)
-       if not n.startswith("__")},
-    **{n: _pipeline_sizing for n in vars(_pipeline_sizing)
-       if not n.startswith("__")},
+    **{n: _pipeline_earnings_quality for n in vars(_pipeline_earnings_quality) if not n.startswith("__")},
+    **{n: _pipeline_sizing for n in vars(_pipeline_sizing) if not n.startswith("__")},
 }
 for _n in ("logging", "math", "re", "annotations", "logger"):
     _MOVED_NAME_OWNERS.pop(_n, None)
@@ -138,7 +161,8 @@ if TYPE_CHECKING:
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.event_calendar import (
-        FOMCCalendarProvider, MacroEventCalendarProvider,
+        FOMCCalendarProvider,
+        MacroEventCalendarProvider,
     )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
@@ -227,17 +251,13 @@ def _book_risk_inputs(ctx, total_value: float):
     existing: dict[str, float] | None = None
     if heat is not None and total_value > 0:
         try:
-            existing = {
-                row.symbol: row.budget_risk_dollars / total_value * 100
-                for row in heat.per_position
-            }
+            existing = {row.symbol: row.budget_risk_dollars / total_value * 100 for row in heat.per_position}
         except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
             record_stage(ctx, "book_risk_map", e)
             existing = None
         else:
             record_stage(ctx, "book_risk_map")
     return (existing, list(clusters) if clusters else None)
-
 
 
 def _sizing_read(pipeline, read, arg, symbol: str, what: str):
@@ -253,10 +273,10 @@ def _sizing_read(pipeline, read, arg, symbol: str, what: str):
         return read(arg)
     except Exception as exc:  # noqa: BLE001 -- every failure refuses; unexpected ones are recorded
         if not isinstance(exc, PriceReadFailed):
-            logger.error("%s sizing %s read raised an UNEXPECTED error -- refused: %s",
-                         symbol, what, exc, exc_info=True)
-            record_swallowed(pipeline, f"sizing_price.{what.replace(' ', '_')}", exc,
-                             symbol=symbol)
+            logger.error(
+                "%s sizing %s read raised an UNEXPECTED error -- refused: %s", symbol, what, exc, exc_info=True
+            )
+            record_swallowed(pipeline, f"sizing_price.{what.replace(' ', '_')}", exc, symbol=symbol)
         raise SizingPriceUnavailable(f"{symbol}: {what} read failed") from exc
 
 
@@ -326,7 +346,8 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
                 logger.warning(
                     "%s sizing price refused: no today print and no today "
                     "session/minute bar — a quote mid or stale price cannot "
-                    "set the share count", symbol,
+                    "set the share count",
+                    symbol,
                 )
             return None
     elif stamped_is_real:
@@ -368,9 +389,7 @@ def _today_sizing_price(pipeline, symbol) -> float | None:
 # Neither exists today. Left as a follow-up.
 
 
-
-def _check_levels_coverage(db: "Database", ctx: RunContext,
-                            analyses: list["TechAnalysisResult"]) -> None:
+def _check_levels_coverage(db: "Database", ctx: RunContext, analyses: list["TechAnalysisResult"]) -> None:
     """Record this run's structural-level coverage; alert if it looks blind.
 
     2026-09-02, closing a hole found while checking whether 2026-09-01's
@@ -418,25 +437,30 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
         bars_missing = int(bars.get("bars_missing") or 0)
 
         resolved = len(analyses)
-        levels_empty_symbols = sorted(
-            a.symbol for a in analyses if not a.computed_levels
-        )
+        levels_empty_symbols = sorted(a.symbol for a in analyses if not a.computed_levels)
         levels_empty = len(levels_empty_symbols)
 
         import json as _json
+
         _persist_evidence(
-            db, run_id=ctx.run_id, agent_name="tech_analyst",
-            kind="levels_coverage", scope="run",
-            evidence_json=_json.dumps({
-                "universe": universe,
-                "bars_fetched": int(bars.get("bars_fetched") or 0),
-                "bars_missing": bars_missing,
-                "bars_missing_symbols": bars.get("bars_missing_symbols") or [],
-                "resolved": resolved,
-                "levels_present": resolved - levels_empty,
-                "levels_empty": levels_empty,
-                "levels_empty_symbols": levels_empty_symbols,
-            }, sort_keys=True),
+            db,
+            run_id=ctx.run_id,
+            agent_name="tech_analyst",
+            kind="levels_coverage",
+            scope="run",
+            evidence_json=_json.dumps(
+                {
+                    "universe": universe,
+                    "bars_fetched": int(bars.get("bars_fetched") or 0),
+                    "bars_missing": bars_missing,
+                    "bars_missing_symbols": bars.get("bars_missing_symbols") or [],
+                    "resolved": resolved,
+                    "levels_present": resolved - levels_empty,
+                    "levels_empty": levels_empty,
+                    "levels_empty_symbols": levels_empty_symbols,
+                },
+                sort_keys=True,
+            ),
         )
 
         blind, degraded = [], []
@@ -449,10 +473,7 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
                     f"is down"
                 )
             elif share >= LEVELS_DEGRADED_RUN_EMPTY_SHARE:
-                degraded.append(
-                    f"bar fetch failed for {bars_missing}/{universe} "
-                    f"universe symbols ({share:.0%})"
-                )
+                degraded.append(f"bar fetch failed for {bars_missing}/{universe} universe symbols ({share:.0%})")
         if resolved >= LEVELS_COVERAGE_MIN_SAMPLE:
             share = levels_empty / resolved
             if share >= LEVELS_BLIND_RUN_EMPTY_SHARE:
@@ -463,13 +484,13 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
                 )
             elif share >= LEVELS_DEGRADED_RUN_EMPTY_SHARE:
                 degraded.append(
-                    f"{levels_empty}/{resolved} analyzed symbols came back "
-                    f"with NO structural level ({share:.0%})"
+                    f"{levels_empty}/{resolved} analyzed symbols came back with NO structural level ({share:.0%})"
                 )
         if not (blind or degraded):
             return
 
         from src import notifier as _notifier
+
         header = "🔴 TECH DATA BLIND SPOT\n" if blind else "🟠 TECH DATA DEGRADED\n"
         _notifier.send_owner_alert(
             header + "; ".join(blind + degraded) + ".\n"
@@ -484,8 +505,7 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
         record_stage(SimpleNamespace(db=db), "levels_coverage")
 
 
-def _alert_owner_protection_failed(pipeline, spec: dict, protection,
-                                   entry_order_id: str) -> None:
+def _alert_owner_protection_failed(pipeline, spec: dict, protection, entry_order_id: str) -> None:
     """Spec §11.1 guard 2 — a stop that did not land ALERTS THE OWNER.
 
     Fires on two states, and says which:
@@ -557,8 +577,8 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
                     "An IMMEDIATE market cover is being submitted — a naked short "
                     "has unbounded loss and is not left to a sweep. Confirm it "
                     "landed."
-                    if is_short else
-                    "Place a stop manually or flatten the position. The 30-minute "
+                    if is_short
+                    else "Place a stop manually or flatten the position. The 30-minute "
                     "coverage sweep will also attempt an automatic repair."
                 )
                 body = (
@@ -594,7 +614,11 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
 
 
 def _alert_holding_discipline_block(
-    pipeline, *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
+    pipeline,
+    *,
+    symbol: str,
+    action: str,
+    reasons: tuple[str, ...] | list[str],
 ) -> None:
     """Standalone owner alert: an exit was BLOCKED because the justification
     the Risk Manager gave for it is contradicted by the desk's own data.
@@ -655,13 +679,17 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
     Nothing is emitted when no cancel happened: a naked add has no window.
     """
     from src.execution.scale_in import unprotected_window_seconds
+
     seconds = unprotected_window_seconds(spec.get("cancel_confirmed_at"))
     if seconds is None:
         return
     held = abs(float(spec.get("held_qty_before") or 0.0))
     price = float(spec.get("reference_price") or 0.0)
     _record_pipeline_event(
-        pipeline, ctx, spec.get("symbol"), "scale_in",
+        pipeline,
+        ctx,
+        spec.get("symbol"),
+        "scale_in",
         "unprotected_window_closed" if covered else "unprotected_window_still_open",
         "rearm_acknowledged" if covered else "rearm_did_not_land",
         window_seconds=seconds,
@@ -771,9 +799,7 @@ _STAGE_CLASS_MODULES = {
 
 # Step 11's moved names (sizing + earnings quality) join the SAME dict, so one
 # `__getattr__` and one write-through `__setattr__` serve every moved name.
-_STAGE_CLASS_MODULES.update(
-    {_name: _owner.__name__ for _name, _owner in _MOVED_NAME_OWNERS.items()}
-)
+_STAGE_CLASS_MODULES.update({_name: _owner.__name__ for _name, _owner in _MOVED_NAME_OWNERS.items()})
 
 
 def __getattr__(name: str):

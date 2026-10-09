@@ -38,7 +38,8 @@ FAKE_CHAT_ID = "-100SENTINELCHATID"
 
 def _load_module():
     spec = importlib.util.spec_from_file_location(
-        "telegram_test_under_test", SCRIPT,
+        "telegram_test_under_test",
+        SCRIPT,
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -83,7 +84,9 @@ def _ok_response(*args, **kwargs):
 
 
 def test_no_credentials_reports_not_configured_and_sends_nothing(
-    mod, monkeypatch, capsys,
+    mod,
+    monkeypatch,
+    capsys,
 ):
     monkeypatch.setattr(requests, "post", _no_post)
     assert _run(mod, monkeypatch) == 1
@@ -94,7 +97,9 @@ def test_no_credentials_reports_not_configured_and_sends_nothing(
 
 
 def test_partial_credentials_still_report_not_configured(
-    mod, monkeypatch, capsys,
+    mod,
+    monkeypatch,
+    capsys,
 ):
     """Token without chat_id is the classic half-finished setup. It must
     read as NOT CONFIGURED, not as a green check."""
@@ -108,11 +113,13 @@ def test_partial_credentials_still_report_not_configured(
 
 
 def test_report_names_the_source_of_each_value(mod, monkeypatch, capsys):
-    """"NOT SET, but I definitely set it" is the common support loop.
+    """ "NOT SET, but I definitely set it" is the common support loop.
     Saying where each value came from ends it."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", FAKE_TOKEN)
     monkeypatch.setattr(
-        mod, "_load_env_file", lambda: (True, {"TELEGRAM_BOT_TOKEN"}),
+        mod,
+        "_load_env_file",
+        lambda: (True, {"TELEGRAM_BOT_TOKEN"}),
     )
     monkeypatch.setattr(requests, "post", _no_post)
     _run(mod, monkeypatch)
@@ -132,7 +139,9 @@ def test_kill_switch_reports_muted_and_sends_nothing(mod, monkeypatch, capsys):
 
 
 def test_inert_kill_switch_value_is_not_reported_as_muted(
-    mod, monkeypatch, capsys,
+    mod,
+    monkeypatch,
+    capsys,
 ):
     """The notifier accepts exactly 1/true/yes, so TELEGRAM_DISABLED=0
     leaves pushes ON. A truthiness check here would blame the kill switch
@@ -147,7 +156,9 @@ def test_inert_kill_switch_value_is_not_reported_as_muted(
 
 
 def test_inert_kill_switch_value_still_sends_with_credentials(
-    mod, monkeypatch, capsys,
+    mod,
+    monkeypatch,
+    capsys,
 ):
     """Same predicate from the other side: 0 must not mute a configured
     notifier, or the tool would disagree with the sessions it predicts."""
@@ -160,7 +171,9 @@ def test_inert_kill_switch_value_still_sends_with_credentials(
 
 
 def test_dry_run_with_credentials_confirms_without_sending(
-    mod, monkeypatch, capsys,
+    mod,
+    monkeypatch,
+    capsys,
 ):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", FAKE_CHAT_ID)
@@ -204,8 +217,7 @@ def test_failure_path_output_carries_no_token(mod, monkeypatch, capsys, caplog):
     class _Failing:
         def raise_for_status(self):
             raise requests.HTTPError(
-                "401 Client Error: Unauthorized for url: "
-                f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
+                f"401 Client Error: Unauthorized for url: https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
             )
 
     monkeypatch.setattr(requests, "post", lambda *a, **k: _Failing())
@@ -280,11 +292,19 @@ def test_script_pulls_in_no_trading_or_broker_code(tmp_path):
 
     # "src.data." keeps the dot: src.data_paths is a pathlib-only path resolver, not market data.
     forbidden = (
-        "src.pipeline", "src.execution", "src.agents", "src.risk",
-        "src.data.", "src.storage", "src.portfolio_constructor", "alpaca",
+        "src.pipeline",
+        "src.execution",
+        "src.agents",
+        "src.risk",
+        "src.data.",
+        "src.storage",
+        "src.portfolio_constructor",
+        "alpaca",
     )
     code = _IMPORT_PROBE.format(
-        script=str(SCRIPT), sandbox=str(tmp_path), forbidden=forbidden,
+        script=str(SCRIPT),
+        sandbox=str(tmp_path),
+        forbidden=forbidden,
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("TELEGRAM")}
     env |= {
@@ -293,13 +313,14 @@ def test_script_pulls_in_no_trading_or_broker_code(tmp_path):
         "TELEGRAM_DISABLED": "",
     }
     proc = subprocess.run(
-        [sys.executable, "-c", code], env=env, capture_output=True, text=True,
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode == 0, proc.stderr
     assert "RC=0" in proc.stdout, proc.stdout
-    assert "BAD=[]" in proc.stdout, (
-        f"telegram_test.py must not import trading code: {proc.stdout}"
-    )
+    assert "BAD=[]" in proc.stdout, f"telegram_test.py must not import trading code: {proc.stdout}"
     assert FAKE_TOKEN not in proc.stdout
     assert FAKE_CHAT_ID not in proc.stdout
 
@@ -315,10 +336,7 @@ def test_env_file_wins_over_inherited_environment(monkeypatch, tmp_path):
     module = _load_module()
     monkeypatch.setattr(module, "PROJECT_ROOT", tmp_path)
     (tmp_path / module._ENV_FILENAME).write_text(
-        "# comment\n"
-        "\n"
-        f"export TELEGRAM_BOT_TOKEN={FAKE_TOKEN}\n"
-        f'TELEGRAM_CHAT_ID="{FAKE_CHAT_ID}"\n'
+        f'# comment\n\nexport TELEGRAM_BOT_TOKEN={FAKE_TOKEN}\nTELEGRAM_CHAT_ID="{FAKE_CHAT_ID}"\n'
     )
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "stale-shell-value")
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)

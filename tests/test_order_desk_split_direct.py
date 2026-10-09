@@ -1,4 +1,5 @@
 """order_desk_reads exercised directly with a fake desk and fake client."""
+
 from types import SimpleNamespace
 
 from src.execution.broker_parts import order_desk_reads as reads
@@ -59,5 +60,7 @@ def test_list_open_entry_orders_checked_filters_stops_and_side():
 def test_get_order_fill_info():
     o = _order(status="filled", filled_qty="3", filled_avg_price="2.5")
     assert reads.get_order_fill_info(_desk([o]), "z") == {
-        "status": "filled", "filled_qty": 3.0, "filled_avg_price": 2.5,
+        "status": "filled",
+        "filled_qty": 3.0,
+        "filled_avg_price": 2.5,
     }

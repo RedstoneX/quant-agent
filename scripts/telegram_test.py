@@ -29,6 +29,7 @@ DELIVERED. That ".env was never sourced" class is what the external
 dead-man's switch (HEALTHCHECKS_URL) exists to catch — see main.py's
 notifier construction comment.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -83,7 +84,7 @@ def _load_env_file() -> tuple[bool, set[str]]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             if line.startswith("export "):
-                line = line[len("export "):].lstrip()
+                line = line[len("export ") :].lstrip()
             k, v = line.split("=", 1)
             k = k.strip()
             if k not in _TELEGRAM_VARS:
@@ -91,8 +92,7 @@ def _load_env_file() -> tuple[bool, set[str]]:
             os.environ[k] = v.strip().strip('"').strip("'")
             applied.add(k)
     except Exception as exc:  # noqa: BLE001
-        print(f"{_ENV_FILENAME} present but unreadable "
-              f"({exc.__class__.__name__}); using the process environment only")
+        print(f"{_ENV_FILENAME} present but unreadable ({exc.__class__.__name__}); using the process environment only")
         return False, applied
     return True, applied
 
@@ -139,13 +139,17 @@ def main() -> int:
         # MUTED for a value the notifier ignores, and send the operator
         # chasing the wrong variable.
         if notifier.token and notifier.chat_id:
-            print("\nRESULT: MUTED — credentials are present but "
-                  "TELEGRAM_DISABLED is set to a value the notifier honours "
-                  "(1/true/yes). Remove the line to restore pushes.")
+            print(
+                "\nRESULT: MUTED — credentials are present but "
+                "TELEGRAM_DISABLED is set to a value the notifier honours "
+                "(1/true/yes). Remove the line to restore pushes."
+            )
         else:
-            print("\nRESULT: NOT CONFIGURED — set TELEGRAM_BOT_TOKEN and "
-                  "TELEGRAM_CHAT_ID (see .env.example). Trading is unaffected "
-                  "either way; status pushes are simply silent.")
+            print(
+                "\nRESULT: NOT CONFIGURED — set TELEGRAM_BOT_TOKEN and "
+                "TELEGRAM_CHAT_ID (see .env.example). Trading is unaffected "
+                "either way; status pushes are simply silent."
+            )
         return 1
 
     if args.dry_run:
@@ -167,9 +171,11 @@ def main() -> int:
     # because Telegram is down), so the cause is in the token-redacted
     # 'Telegram notify failed' warning it logged, not in a return value
     # we can inspect here.
-    print("\nRESULT: SEND FAILED — see the logged 'Telegram notify failed' "
-          "warning above for the cause (bad token, wrong chat_id, or "
-          "network/egress blocked).")
+    print(
+        "\nRESULT: SEND FAILED — see the logged 'Telegram notify failed' "
+        "warning above for the cause (bad token, wrong chat_id, or "
+        "network/egress blocked)."
+    )
     return 1
 
 

@@ -19,6 +19,7 @@ A refusal to read the tree is reported as REFUSED (exit 2), never as a violation
 
 Run: ``python -m scripts.ledger_dead_default_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -36,9 +37,7 @@ from scripts.ledger_substantiation_guard import _find_symbol
 Reader = Callable[[str], "str | None"]
 
 _MARK = re.compile(r"Dead default")
-_CITE = re.compile(
-    r"Dead default[^()]*?\(\s*(?:only caller:\s*)?(?P<path>[\w/.\-]+\.py)::(?P<sym>[\w.]+)\s*\)"
-)
+_CITE = re.compile(r"Dead default[^()]*?\(\s*(?:only caller:\s*)?(?P<path>[\w/.\-]+\.py)::(?P<sym>[\w.]+)\s*\)")
 _ID = re.compile(r"(?P<method>\w+)\((?P<param>\w+)\)$")
 
 
@@ -64,7 +63,7 @@ def _definition(tree: ast.Module, site_id: str, site: str) -> ast.AST | None:
     qual = _ID.sub(lambda m: m.group("method"), site_id)
     if not qual.startswith(module + "."):
         return None
-    node = _find_symbol(tree, qual[len(module) + 1:])
+    node = _find_symbol(tree, qual[len(module) + 1 :])
     return node if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
 
 

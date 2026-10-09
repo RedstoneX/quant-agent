@@ -11,12 +11,18 @@ def _call(*, attempts=1, chunks=None):
     message = "\n\n".join(f"--- {label} ---\n{prompt}" for label, prompt, _ in chunks)
     response = "\n\n".join(f"--- {label} ---\n{answer}" for label, _, answer in chunks)
     return RecordedCall(
-        row_id=718, agent_name="portfolio_manager", run_id="run-14170a8e",
-        timestamp="2026-10-01 14:00:00", model="m",
+        row_id=718,
+        agent_name="portfolio_manager",
+        run_id="run-14170a8e",
+        timestamp="2026-10-01 14:00:00",
+        model="m",
         input_message=message or "one retained prompt",
         full_response=response or '{"targets": []}',
-        input_tokens=100, output_tokens=20, cost_usd=0.001,
-        finish_reason="stop", actual_provider="openrouter",
+        input_tokens=100,
+        output_tokens=20,
+        cost_usd=0.001,
+        finish_reason="stop",
+        actual_provider="openrouter",
         provider_requests=attempts,
     )
 
@@ -30,10 +36,13 @@ def test_collapsed_provider_attempts_are_named_as_a_fidelity_gap():
 
 
 def test_chunk_markers_account_for_each_provider_attempt_without_a_gap():
-    call = _call(attempts=2, chunks=[
-        ("chunk 1/2", "first prompt", '{"symbol": "AAPL"}'),
-        ("chunk 2/2", "second prompt", '{"symbol": "MSFT"}'),
-    ])
+    call = _call(
+        attempts=2,
+        chunks=[
+            ("chunk 1/2", "first prompt", '{"symbol": "AAPL"}'),
+            ("chunk 2/2", "second prompt", '{"symbol": "MSFT"}'),
+        ],
+    )
     library = ResponseLibrary([call], source_run_id=call.run_id)
     assert not [f for f in library.findings if f["kind"] == "incomplete_provider_attempt_recording"]
 
@@ -60,13 +69,19 @@ def test_database_loader_carries_attempt_count_into_fidelity_check(tmp_path):
 
 def test_collapsed_attempt_history_makes_verdict_inconclusive():
     report = RehearsalReport(
-        session="morning", rehearsed_date="2026-10-01", run_id="r",
-        source_run_id="run-x", status="executed", completed=True,
-        findings=[{
-            "kind": "incomplete_provider_attempt_recording",
-            "agent": "portfolio_manager",
-            "detail": "three provider attempts occurred but only one was retained",
-        }],
+        session="morning",
+        rehearsed_date="2026-10-01",
+        run_id="r",
+        source_run_id="run-x",
+        status="executed",
+        completed=True,
+        findings=[
+            {
+                "kind": "incomplete_provider_attempt_recording",
+                "agent": "portfolio_manager",
+                "detail": "three provider attempts occurred but only one was retained",
+            }
+        ],
     )
     assert _verdict(report) == "INCONCLUSIVE"
     report.verdict = _verdict(report)

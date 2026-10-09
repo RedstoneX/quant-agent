@@ -1,4 +1,5 @@
 """src.cost_circuit.refusal -- moved verbatim from src/cost_circuit.py; see the package docstring."""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
@@ -41,9 +42,11 @@ def out_of_credit_detail() -> str:
 
     return f"{OUT_OF_CREDIT_DETAIL}. {balance_line()}"
 
+
 #: `trigger_code` written instead of `failed_call_unknown_cost` when the
 #: cause is a payment refusal.
 OUT_OF_CREDIT_TRIGGER_CODE = "provider_out_of_credit"
+
 
 def is_payment_refusal(error: BaseException | None) -> bool:
     """True when the provider refused the call for lack of credit.
@@ -56,10 +59,10 @@ def is_payment_refusal(error: BaseException | None) -> bool:
         return False
     for node in _cause_chain(error):
         status = getattr(node, "status_code", None)
-        if (isinstance(status, int) and not isinstance(status, bool)
-                and status in _PAYMENT_REFUSAL_STATUS_CODES):
+        if isinstance(status, int) and not isinstance(status, bool) and status in _PAYMENT_REFUSAL_STATUS_CODES:
             return True
     return False
+
 
 def any_payment_refusal(
     error: BaseException | None,
@@ -69,6 +72,7 @@ def any_payment_refusal(
     if is_payment_refusal(error):
         return True
     return any(is_payment_refusal(exc) for exc in (attempt_errors or []))
+
 
 def _fmt_settled(value: float | None) -> str:
     """A settled-cost dollar amount for any owner-facing alert built in this
@@ -87,7 +91,9 @@ def _fmt_settled(value: float | None) -> str:
     dependency on `src/notifier.py`.
     """
     from src.notifier import format_settled_money
+
     return format_settled_money(value)
+
 
 class PaidAnalysisSuspended(RuntimeError):
     """Raised before a paid provider request when the circuit is open."""
@@ -96,6 +102,7 @@ class PaidAnalysisSuspended(RuntimeError):
         self.trigger = trigger
         self.state = state or {}
         super().__init__(f"paid analysis suspended: {trigger}")
+
 
 class OptionalPaidAnalysisRetrySkipped(RuntimeError):
     """An optional repair was not reserved because its retry budget was spent.
@@ -109,6 +116,7 @@ class OptionalPaidAnalysisRetrySkipped(RuntimeError):
         self.trigger = trigger
         self.state = state or {}
         super().__init__(f"optional paid-analysis retry skipped: {trigger}")
+
 
 @dataclass
 class CallReservation:

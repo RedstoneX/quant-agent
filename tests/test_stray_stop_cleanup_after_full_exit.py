@@ -35,19 +35,25 @@ def _mk_pipeline() -> TradingPipeline:
 # 1. Finalize wiring: a full exit triggers stray-stop cleanup.
 # ==========================================================================
 
+
 def test_full_exit_cancels_stray_stop_long():
     """A SELL that takes a long fully flat must ask the broker to clear any
     stray protective SELL-stop left resting on the now-flat symbol."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+        "status": "filled",
+        "filled_qty": "10",
+        "filled_avg_price": "100",
     }
     # Cached residual would be 0 (10 - 10); the broker confirms position=0.
     p._current_position_qty_for_finalize = MagicMock(return_value=0.0)
 
     cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "sell-order-1", "NVDA", 10.0, cancelled,
+        "sell-order-1",
+        "NVDA",
+        10.0,
+        cancelled,
     )
 
     assert ok is True and retry == []
@@ -59,14 +65,20 @@ def test_full_exit_cancels_stray_stop_short_uses_buy_side():
     """Covering a short fully flat must clear a stray BUY-stop, not a SELL-stop."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "0", "filled_avg_price": None,
+        "status": "filled",
+        "filled_qty": "0",
+        "filled_avg_price": None,
     }
     # No fill on THIS cover, but a concurrent path already took it flat.
     p._current_position_qty_for_finalize = MagicMock(return_value=0.0)
 
     cancelled = [{"id": "buy-stop-old", "qty": 40, "stop_price": 262.5}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "cover-order-1", "TSLA", 40.0, cancelled, side="buy",
+        "cover-order-1",
+        "TSLA",
+        40.0,
+        cancelled,
+        side="buy",
     )
 
     assert ok is True and retry == []
@@ -81,13 +93,18 @@ def test_no_cancel_when_broker_read_failed_even_if_cached_residual_zero():
     live qty is unknown."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+        "status": "filled",
+        "filled_qty": "10",
+        "filled_avg_price": "100",
     }
     p._current_position_qty_for_finalize = MagicMock(return_value=None)
 
     cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "sell-order-readfail", "NVDA", 10.0, cancelled,
+        "sell-order-readfail",
+        "NVDA",
+        10.0,
+        cancelled,
     )
 
     assert ok is True and retry == []
@@ -102,7 +119,9 @@ def test_no_cancel_when_broker_still_reports_shares_even_if_cached_residual_zero
     the sweep must not regress that."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+        "status": "filled",
+        "filled_qty": "10",
+        "filled_avg_price": "100",
     }
     # Full cached exit (10-10=0) but broker reports 5 shares back on the book.
     p._current_position_qty_for_finalize = MagicMock(return_value=5.0)
@@ -110,7 +129,10 @@ def test_no_cancel_when_broker_still_reports_shares_even_if_cached_residual_zero
 
     cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "sell-order-reentry", "NVDA", 10.0, cancelled,
+        "sell-order-reentry",
+        "NVDA",
+        10.0,
+        cancelled,
     )
 
     assert ok is True and retry == []
@@ -122,14 +144,19 @@ def test_partial_exit_does_not_sweep_stray_stops():
     coverage, not a stray. The sweep must NOT run."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "4", "filled_avg_price": "100",
+        "status": "filled",
+        "filled_qty": "4",
+        "filled_avg_price": "100",
     }
     p._current_position_qty_for_finalize = MagicMock(return_value=6.0)
     p._reprotect_residual_after_partial_sell = MagicMock(return_value=True)
 
     cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "sell-order-2", "NVDA", 10.0, cancelled,
+        "sell-order-2",
+        "NVDA",
+        10.0,
+        cancelled,
     )
 
     assert ok is True and retry == []
@@ -141,14 +168,19 @@ def test_stray_cleanup_failure_is_not_fatal_to_the_exit():
     stop must be swallowed, not raised."""
     p = _mk_pipeline()
     p.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": "10", "filled_avg_price": "100",
+        "status": "filled",
+        "filled_qty": "10",
+        "filled_avg_price": "100",
     }
     p._current_position_qty_for_finalize = MagicMock(return_value=0.0)
     p.broker.cancel_stray_protective_stops.side_effect = RuntimeError("broker down")
 
     cancelled = [{"id": "stop-old", "qty": 10, "stop_price": 95.0}]
     ok, retry = p._finalize_protection_after_sell_core(
-        "sell-order-3", "NVDA", 10.0, cancelled,
+        "sell-order-3",
+        "NVDA",
+        10.0,
+        cancelled,
     )
 
     assert ok is True and retry == []
@@ -158,13 +190,19 @@ def test_stray_cleanup_failure_is_not_fatal_to_the_exit():
 # 2. Broker method: cancels each stray stop by id, no rollback.
 # ==========================================================================
 
+
 @patch("src.execution.broker.TradingClient")
 def test_cancel_stray_protective_stops_cancels_by_id(mock_tc_cls):
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
         SimpleNamespace(
-            id="stray-1", order_type="stop_limit", side="sell", symbol="NVDA",
-            qty="10", stop_price="95", limit_price="94.5",
+            id="stray-1",
+            order_type="stop_limit",
+            side="sell",
+            symbol="NVDA",
+            qty="10",
+            stop_price="95",
+            limit_price="94.5",
         ),
     ]
     mock_tc_cls.return_value = mock_client
@@ -196,8 +234,13 @@ def test_cancel_stray_protective_stops_never_restores(mock_tc_cls):
     mock_client = MagicMock()
     mock_client.get_orders.return_value = [
         SimpleNamespace(
-            id="stray-1", order_type="stop", side="sell", symbol="NVDA",
-            qty="10", stop_price="95", limit_price=None,
+            id="stray-1",
+            order_type="stop",
+            side="sell",
+            symbol="NVDA",
+            qty="10",
+            stop_price="95",
+            limit_price=None,
         ),
     ]
     mock_tc_cls.return_value = mock_client

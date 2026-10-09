@@ -1,4 +1,5 @@
 """Earnings-analyses load step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -22,7 +23,9 @@ class EarningsAnalysesLoadSession:
         self._earnings_provider = earnings_provider
 
     def run(
-        self, run_id: str, session: str = "morning",
+        self,
+        run_id: str,
+        session: str = "morning",
         ctx: RunContext | None = None,
         universe: list[str] | None = None,
     ) -> tuple[list, list]:
@@ -57,26 +60,32 @@ class EarningsAnalysesLoadSession:
             cached_results = self._earnings_analyst.analyze_reports(cached_reports)
 
             for r in new_reports:
-                cached_results.append({
-                    "symbol": r.symbol,
-                    "analysis": None,
-                    "is_new": True,
-                    "queued": True,
-                    "form_type": r.form_type,
-                    "filing_date": r.filing_date,
-                })
+                cached_results.append(
+                    {
+                        "symbol": r.symbol,
+                        "analysis": None,
+                        "is_new": True,
+                        "queued": True,
+                        "form_type": r.form_type,
+                        "filing_date": r.filing_date,
+                    }
+                )
 
             if new_reports:
                 symbols = ", ".join(r.symbol for r in new_reports)
                 logger.warning(
                     "[%s] %d filings missed pre-market preprocessing (%s); "
                     "surfacing as placeholder only — PM will size down.",
-                    session, len(new_reports), symbols,
+                    session,
+                    len(new_reports),
+                    symbols,
                 )
 
             logger.info(
                 "[%s] Earnings: %d cached analyses, %d unanalyzed placeholders",
-                session, len(cached_results) - len(new_reports), len(new_reports),
+                session,
+                len(cached_results) - len(new_reports),
+                len(new_reports),
             )
             return reports, cached_results
         except Exception as e:

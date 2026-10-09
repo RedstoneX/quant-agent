@@ -3,6 +3,7 @@
 Flags are a replay of the intents that were ACTED on, in order; nothing is
 stored twice. The writer lives in src/owner_intents.py (desk-side only).
 """
+
 import json
 import logging
 import os
@@ -19,13 +20,12 @@ PAUSE, RESUME = "PAUSE", "RESUME"
 class Flags:
     paused: bool = False
     unknown: bool = False  # could not read, no last known set
-    stale: bool = False    # read failed; this is the last known set
+    stale: bool = False  # read failed; this is the last known set
 
 
 def current_flags(conn) -> Flags:
     paused = False
-    for action, sym in conn.execute(
-            "SELECT action, symbol FROM owner_intents WHERE state='acted' ORDER BY id"):
+    for action, sym in conn.execute("SELECT action, symbol FROM owner_intents WHERE state='acted' ORDER BY id"):
         if action == PAUSE:
             paused = True
         elif action == RESUME:

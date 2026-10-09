@@ -15,6 +15,7 @@ from src.notifier.markup import (
     _dedupe_symbols,
 )
 
+
 def _append_leverage_line(lines: list[str], result: dict) -> None:
     """Spec §11.2 — how much the book owns, its ceiling, and how far it could
     fall before the broker sells without asking.
@@ -36,10 +37,7 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
     if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
         return
     # Colour-blind-safe: the state is carried by the WORD, never by hue alone.
-    de_levered = (
-        isinstance(leverage.get("base_ceiling_x"), (int, float))
-        and ceiling_x < leverage["base_ceiling_x"]
-    )
+    de_levered = isinstance(leverage.get("base_ceiling_x"), (int, float)) and ceiling_x < leverage["base_ceiling_x"]
     parts = [f"exposure: {gross_x:.2f}x of {ceiling_x:.2f}x allowed"]
     distance = leverage.get("distance_to_forced_liquidation_pct")
     if isinstance(distance, (int, float)):
@@ -137,9 +135,6 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
 _MAX_LOOKED_UP_COMPANIES = 12
 
 
-
-
-
 def _lookup_company_profiles(symbols: list, limit: int | None = None) -> dict[str, Any]:
     """symbol -> CompanyProfile for every symbol the cache already knows.
 
@@ -168,6 +163,7 @@ def _lookup_company_profiles(symbols: list, limit: int | None = None) -> dict[st
     cap = _MAX_LOOKED_UP_COMPANIES if limit is None else max(1, int(limit))
     try:
         from src.data.company import CompanyProfileStore
+
         return CompanyProfileStore().get_many(seen[:cap], allow_fetch=False)
     except Exception as e:  # noqa: BLE001 — never lose an alert over prose
         logger.warning("notifier: company profiles unavailable: %s", e)
@@ -220,9 +216,14 @@ def _append_company_identities(lines: list[str], symbols: list) -> None:
         profile = profiles.get(symbol)
         if profile is None:
             continue
-        bits = [b for b in (
-            getattr(profile, "name", None), getattr(profile, "industry", None),
-        ) if b]
+        bits = [
+            b
+            for b in (
+                getattr(profile, "name", None),
+                getattr(profile, "industry", None),
+            )
+            if b
+        ]
         if not bits:
             continue
         identities.append(f"  {symbol} — {' · '.join(bits)}")
@@ -256,15 +257,12 @@ def describe_target_revisions(result: dict | None) -> list[str]:
     that no longer clears the desk's own entry bar. Neither is reachable
     from here.
     """
-    rows = [r for r in ((result or {}).get("target_revisions") or [])
-            if isinstance(r, dict)]
+    rows = [r for r in ((result or {}).get("target_revisions") or []) if isinstance(r, dict)]
     if not rows:
         return []
     applied = [r for r in rows if r.get("applied")]
     pending = [
-        r for r in rows
-        if not r.get("applied")
-        and str(r.get("code") or "").upper().endswith("_PENDING_CONFIRMATION")
+        r for r in rows if not r.get("applied") and str(r.get("code") or "").upper().endswith("_PENDING_CONFIRMATION")
     ]
     if not applied and not pending:
         return []
@@ -281,10 +279,7 @@ def describe_target_revisions(result: dict | None) -> list[str]:
         try:
             if prior and new:
                 direction = "up" if float(new) > float(prior) else "down"
-                move = (
-                    f"${float(prior):,.2f} → ${float(new):,.2f} "
-                    f"({direction})"
-                )
+                move = f"${float(prior):,.2f} → ${float(new):,.2f} ({direction})"
         except (TypeError, ValueError):
             move = ""
         why = _target_revision_reason(str(row.get("trigger") or ""))
@@ -321,12 +316,9 @@ def describe_target_revisions(result: dict | None) -> list[str]:
             lines.append(_clip_text(f"      • {symbol}{quoted} — {why}", 420))
     held = len(rows) - len(applied) - len(pending)
     if held:
-        lines.append(
-            f"   ({held} other position(s) measured, target unchanged)"
-        )
+        lines.append(f"   ({held} other position(s) measured, target unchanged)")
     lines.append(
-        "   The target is a quoted number, not a sell order — the desk "
-        "still exits only when the trend itself is over."
+        "   The target is a quoted number, not a sell order — the desk still exits only when the trend itself is over."
     )
     return lines
 

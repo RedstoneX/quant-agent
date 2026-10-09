@@ -3,8 +3,6 @@
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
 
-
-
 # === The third route =======================================================
 #
 # REQUIREMENT: a genuinely DIFFERENT MODEL, not the same model on another
@@ -182,11 +180,11 @@ def select_tertiary_route(
     if fallback is not None:
         ladder_roads.add(fallback[0])
     if len(ladder_roads) != 1:
-        return tertiary          # the ladder already spans two roads
+        return tertiary  # the ladder already spans two roads
     if tertiary[0] not in ladder_roads:
-        return tertiary          # route 3 already leaves that road
+        return tertiary  # route 3 already leaves that road
     if alt[0] in ladder_roads:
-        return tertiary          # the substitute would not change the road
+        return tertiary  # the substitute would not change the road
     return alt
 
 
@@ -196,6 +194,7 @@ def _route_price(model: str) -> tuple[float | None, float | None]:
     — the journal records the gap rather than a confident zero."""
     try:
         from src.cost_table import PRICING
+
         row = PRICING.get(model)
         if not row:
             return None, None
@@ -228,8 +227,7 @@ def _route_price(model: str) -> tuple[float | None, float | None]:
 DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
 
 
-def seat_must_refuse_unmeasured_route(seat_name: str,
-                                      on_alt_road: bool) -> bool:
+def seat_must_refuse_unmeasured_route(seat_name: str, on_alt_road: bool) -> bool:
     """True when this seat must decline rather than answer on route 3.
 
     `on_alt_road` is `BaseAgent._tertiary_on_alt_road`: route 3 was swapped

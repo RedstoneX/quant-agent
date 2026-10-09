@@ -146,8 +146,12 @@ if str(REPO_ROOT) not in sys.path:
 # time (src/api/server.py), and scripts/ may import src/, never the reverse.
 from src import inflight  # noqa: E402
 from scripts.board_size_budget import (  # noqa: E402,F401 -- re-exported
-    WORK_MD_GROWTH_CAP_BYTES, WORK_MD_GROWTH_SHARE, WORK_MD_WARN_SHARE,
-    work_md_cap_blocker, work_md_cap_warning, work_md_growth_budget,
+    WORK_MD_GROWTH_CAP_BYTES,
+    WORK_MD_GROWTH_SHARE,
+    WORK_MD_WARN_SHARE,
+    work_md_cap_blocker,
+    work_md_cap_warning,
+    work_md_growth_budget,
 )
 
 
@@ -164,12 +168,16 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 # shelling out
 # --------------------------------------------------------------------------
 
+
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tuple[int, str]:
     """Run a command, never raise. Returns (returncode, stdout+stderr)."""
     try:
         p = subprocess.run(
-            cmd, cwd=str(cwd) if cwd else None, capture_output=True,
-            text=True, timeout=timeout,
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return p.returncode, (p.stdout + p.stderr).strip()
     except Exception as exc:  # noqa: BLE001 - a broken probe must not kill the board
@@ -207,6 +215,7 @@ def _prod_git(*args: str) -> tuple[bool, str]:
 # evidence rules
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class RuleResult:
     kind: str
@@ -235,8 +244,7 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         sha = str(rule.get("sha", ""))
         rc, _ = _run(["git", "merge-base", "--is-ancestor", sha, "origin/main"], repo_root)
         ok = rc == 0
-        return RuleResult(kind, PASS if ok else FAIL, note,
-                          f"{sha[:9]} {'is' if ok else 'is NOT'} in main")
+        return RuleResult(kind, PASS if ok else FAIL, note, f"{sha[:9]} {'is' if ok else 'is NOT'} in main")
 
     if kind == "pr_merged":
         num = rule.get("number")
@@ -256,8 +264,7 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         # box's git history is not a fixture and a CI runner's shallow clone
         # is not full history either.
         rc, out = _run(
-            ["git", "log", "origin/main", "--merges", "--format=%s",
-             f"--grep=^Merge pull request #{num} from ", "-1"],
+            ["git", "log", "origin/main", "--merges", "--format=%s", f"--grep=^Merge pull request #{num} from ", "-1"],
             repo_root,
         )
         if rc == 0 and out.strip():
@@ -265,15 +272,19 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         # No merge commit found. That is not proof of absence — a squash or
         # rebase merge leaves none — so fall through to GitHub rather than
         # calling it a failure, and report unknown if that is unavailable too.
-        rc, out = _run(["gh", "pr", "view", str(num), "--repo", "redstone-hq/quant-agent",
-                        "--json", "state", "-q", ".state"], repo_root)
+        rc, out = _run(
+            ["gh", "pr", "view", str(num), "--repo", "redstone-hq/quant-agent", "--json", "state", "-q", ".state"],
+            repo_root,
+        )
         if rc != 0:
             return RuleResult(
-                kind, UNKNOWN, note,
+                kind,
+                UNKNOWN,
+                note,
                 f"PR #{num}: no merge commit in main, and GitHub is unreachable "
-                "from here (the runtime account has no gh credential)")
-        return RuleResult(kind, PASS if out.strip() == "MERGED" else FAIL, note,
-                          f"PR #{num} is {out.strip()}")
+                "from here (the runtime account has no gh credential)",
+            )
+        return RuleResult(kind, PASS if out.strip() == "MERGED" else FAIL, note, f"PR #{num} is {out.strip()}")
 
     if kind == "file_exists":
         p = REPO_ROOT / str(rule.get("path", ""))
@@ -288,8 +299,9 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
             found = sym in p.read_text(errors="replace")
         except OSError as exc:
             return RuleResult(kind, UNKNOWN, note, str(exc))
-        return RuleResult(kind, PASS if found else FAIL, note,
-                          f"{sym!r} {'found' if found else 'NOT found'} in {rule.get('path')}")
+        return RuleResult(
+            kind, PASS if found else FAIL, note, f"{sym!r} {'found' if found else 'NOT found'} in {rule.get('path')}"
+        )
 
     if kind == "test_exists":
         p = REPO_ROOT / str(rule.get("path", ""))
@@ -301,16 +313,14 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         # identifier belongs. The file was fine; the ruler was bent. A broken
         # instrument is reported as unknown, loudly, and never as rot.
         if not _IDENTIFIER.match(test):
-            return RuleResult(kind, UNKNOWN, note,
-                              f"malformed rule: {test!r} is prose, not a test name")
+            return RuleResult(kind, UNKNOWN, note, f"malformed rule: {test!r} is prose, not a test name")
         if not p.exists():
             return RuleResult(kind, FAIL, note, f"{rule.get('path')} is missing")
         try:
             found = test in p.read_text(errors="replace")
         except OSError as exc:
             return RuleResult(kind, UNKNOWN, note, str(exc))
-        return RuleResult(kind, PASS if found else FAIL, note,
-                          f"{test} {'present' if found else 'MISSING'}")
+        return RuleResult(kind, PASS if found else FAIL, note, f"{test} {'present' if found else 'MISSING'}")
 
     if kind == "setting_equals":
         got = _setting(cfg, str(rule.get("key", "")))
@@ -318,8 +328,7 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
             return RuleResult(kind, FAIL, note, f"{rule.get('key')} not present in settings")
         want = rule.get("value")
         ok = str(got) == str(want)
-        return RuleResult(kind, PASS if ok else FAIL, note,
-                          f"{rule.get('key')} = {got!r} (expected {want!r})")
+        return RuleResult(kind, PASS if ok else FAIL, note, f"{rule.get('key')} = {got!r} (expected {want!r})")
 
     if kind == "setting_present":
         # Unlike setting_equals, this rule makes no claim about the value —
@@ -331,9 +340,12 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
         # flagging that the phase needs re-evaluating.
         got = _setting(cfg, str(rule.get("key", "")))
         present = got is not KeyError
-        return RuleResult(kind, PASS if present else FAIL, note,
-                          f"{rule.get('key')} {'is present' if present else 'is NOT present'} "
-                          "in settings")
+        return RuleResult(
+            kind,
+            PASS if present else FAIL,
+            note,
+            f"{rule.get('key')} {'is present' if present else 'is NOT present'} in settings",
+        )
 
     return RuleResult(kind, UNKNOWN, note, f"unrecognised rule kind {kind!r}")
 
@@ -363,8 +375,7 @@ def check_rule(rule: dict, cfg: dict, repo_root: Path = REPO_ROOT) -> RuleResult
 # flag ordinary sentences as readily as real jargon and teach him to ignore
 # the marker — the exact failure mode blocking on it was rejected for.
 
-_JARGON_PATH_EXT = re.compile(
-    r"\b[\w-]+\.(?:py|ya?ml|md|html|json|db|sh|toml|cfg|ini|log|txt)\b", re.I)
+_JARGON_PATH_EXT = re.compile(r"\b[\w-]+\.(?:py|ya?ml|md|html|json|db|sh|toml|cfg|ini|log|txt)\b", re.I)
 #: A leading "/" not glued onto a digit, so "3/15/2026" (a date) and "1/3" (a
 #: fraction) don't read as `/home/qamc/quant-agent` does.
 _JARGON_ABS_PATH = re.compile(r"(?<!\w)/[\w.-]+(?:/[\w.-]+)+")
@@ -400,15 +411,13 @@ def summary_engineering_markers(summary: str) -> list[str]:
     section comment above for why that line is drawn there.
     """
     found: list[str] = []
-    if (_JARGON_PATH_EXT.search(summary) or _JARGON_ABS_PATH.search(summary)
-            or _JARGON_DIR_ONLY.search(summary)):
+    if _JARGON_PATH_EXT.search(summary) or _JARGON_ABS_PATH.search(summary) or _JARGON_DIR_ONLY.search(summary):
         found.append("a file path")
     if _JARGON_PR_REF.search(summary):
         found.append("a PR or issue number")
     if any(_is_commit_hash_token(t) for t in _JARGON_HEX_TOKEN.findall(summary)):
         found.append("a commit hash")
-    if (_JARGON_BACKTICK.search(summary) or _JARGON_SNAKE_CASE.search(summary)
-            or _JARGON_FUNC_CALL.search(summary)):
+    if _JARGON_BACKTICK.search(summary) or _JARGON_SNAKE_CASE.search(summary) or _JARGON_FUNC_CALL.search(summary):
         found.append("a code identifier")
     return found
 
@@ -433,6 +442,7 @@ def summary_is_engineer_facing(summary: str) -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 # phases
 # --------------------------------------------------------------------------
+
 
 @dataclass
 class PhaseView:
@@ -637,16 +647,14 @@ class Prose:
 
     @property
     def has_any(self) -> bool:
-        return bool(self.plain or self.example or self.decision
-                    or self.recommendation or self.why_him)
+        return bool(self.plain or self.example or self.decision or self.recommendation or self.why_him)
 
     @property
     def jargon_markers(self) -> list[str]:
         """Engineering shapes found in the prose actually shown to him. Reuses
         the phase-summary detector, so one definition of "this was written for
         a developer" covers the whole page."""
-        joined = " ".join(p for p in (self.plain, self.example, self.decision,
-                                      self.recommendation) if p)
+        joined = " ".join(p for p in (self.plain, self.example, self.decision, self.recommendation) if p)
         return summary_engineering_markers(joined)
 
 
@@ -716,10 +724,7 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
         # directory is reading its files in name order, concatenated: the
         # parser below is unchanged, so a note means exactly what it meant
         # when every note lived in one file.
-        raw_text = "".join(
-            p.read_text() for p in sorted(path.glob("*.md"))
-            if p.name != "README.md"
-        )
+        raw_text = "".join(p.read_text() for p in sorted(path.glob("*.md")) if p.name != "README.md")
     else:
         raw_text = path.read_text()
     notes: dict[str, Prose] = {}
@@ -747,8 +752,7 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
 #: anybody — it is parked on purpose. It goes in the "no decision needed"
 #: section so it stops competing for the owner's attention, which is the
 #: entire reason that section exists.
-_PAUSED_WORDS = ("PAUSED", "PARKED", "DEFERRED", "ON HOLD", "NOT SCHEDULED",
-                 "MOOT")
+_PAUSED_WORDS = ("PAUSED", "PARKED", "DEFERRED", "ON HOLD", "NOT SCHEDULED", "MOOT")
 
 #: A status that NEGATES its own closure word — "deliberately NOT done yet",
 #: "STILL BROKEN, this file's own FIXED claim was wrong". Both are real lines
@@ -760,10 +764,20 @@ _PAUSED_WORDS = ("PAUSED", "PARKED", "DEFERRED", "ON HOLD", "NOT SCHEDULED",
 #: insurance added alongside the widened vocabulary below: the new words are
 #: all past participles, and a past participle in a plan reads identically to
 #: one in a result unless the tense in front of it is read too.
-_CLOSURE_NEGATIONS = ("NOT ", "STILL BROKEN", "STILL OPEN", "NEVER ",
-                      "WAS WRONG", "NO LONGER", "INCOMPLETE",
-                      "TO BE ", "WILL BE ", "SHOULD BE ", "NEEDS TO BE ",
-                      "YET TO BE ")
+_CLOSURE_NEGATIONS = (
+    "NOT ",
+    "STILL BROKEN",
+    "STILL OPEN",
+    "NEVER ",
+    "WAS WRONG",
+    "NO LONGER",
+    "INCOMPLETE",
+    "TO BE ",
+    "WILL BE ",
+    "SHOULD BE ",
+    "NEEDS TO BE ",
+    "YET TO BE ",
+)
 
 # ---------------------------------------------------------------------------
 # IN HAND — decided, or being built. Nothing needed from him.
@@ -792,12 +806,26 @@ _CLOSURE_NEGATIONS = ("NOT ", "STILL BROKEN", "STILL OPEN", "NEVER ",
 
 #: The owner has ruled. "OWNER CALL" is deliberately absent: the backlog
 #: writes "STILL OPEN, OWNER CALL" to mean a call is NEEDED, the opposite.
-_IN_HAND_DECIDED_WORDS = ("DECIDED", "RATIFIED", "APPROVED", "OWNER-REQUESTED",
-                          "OWNER'S DESIGN", "OWNER'S RULING", "OWNER RULING")
+_IN_HAND_DECIDED_WORDS = (
+    "DECIDED",
+    "RATIFIED",
+    "APPROVED",
+    "OWNER-REQUESTED",
+    "OWNER'S DESIGN",
+    "OWNER'S RULING",
+    "OWNER RULING",
+)
 
 #: Somebody is on it now.
-_IN_HAND_BUILDING_WORDS = ("IN FLIGHT", "IN PROGRESS", "IN BUILD", "BEING BUILT",
-                           "UNDER WAY", "UNDERWAY", "BUILD UNDERWAY")
+_IN_HAND_BUILDING_WORDS = (
+    "IN FLIGHT",
+    "IN PROGRESS",
+    "IN BUILD",
+    "BEING BUILT",
+    "UNDER WAY",
+    "UNDERWAY",
+    "BUILD UNDERWAY",
+)
 
 #: A word sitting immediately before a status word that reverses it:
 #: "NOT DECIDED", "NOT YET APPROVED", "TO BE DECIDED", "AWAITING APPROVAL".
@@ -816,8 +844,7 @@ _IN_HAND_LOOKBEHIND_WORDS = 3
 #: purpose: it is the same shape as a headline's own status ("SHIPPED
 #: 2026-09-04"), and it is what keeps an ordinary bold sentence ("**Three
 #: distinct defects, and they compound:**") from being read as a status.
-_STATUS_PARAGRAPH_RE = re.compile(
-    r"^\*\*([A-Z][A-Z'-]*(?:\s+[A-Z][A-Z'-]*)*),?\s+\d{4}-\d{2}-\d{2}\b")
+_STATUS_PARAGRAPH_RE = re.compile(r"^\*\*([A-Z][A-Z'-]*(?:\s+[A-Z][A-Z'-]*)*),?\s+\d{4}-\d{2}-\d{2}\b")
 
 #: A diagnosis that needs nothing fixed. "WORKING AS INTENDED" is already one
 #: of `_QUEUE_CLASSES`; "NOT A DEFECT" is the other way the backlog says it.
@@ -833,7 +860,7 @@ def _status_hit(text: str, words: tuple[str, ...]) -> bool:
     reversed by one of `_IN_HAND_NEGATIONS` within the few words before it."""
     for w in words:
         for m in re.finditer(r"\b" + re.escape(w) + r"\b", text):
-            before = text[:m.start()].split()[-_IN_HAND_LOOKBEHIND_WORDS:]
+            before = text[: m.start()].split()[-_IN_HAND_LOOKBEHIND_WORDS:]
             if not any(b.strip(",.;:") in _IN_HAND_NEGATIONS for b in before):
                 return True
     return False
@@ -1084,8 +1111,7 @@ class QueueItem:
         but the disagreement is itself a board defect (one of the two is
         wrong), so it is surfaced as its own category rather than dropped.
         """
-        return (not self.done and self.box_state == "outstanding"
-                and self.closure_claim == "finished")
+        return not self.done and self.box_state == "outstanding" and self.closure_claim == "finished"
 
     @property
     def closure_disagreement(self) -> str:
@@ -1098,11 +1124,9 @@ class QueueItem:
         if self.done or self.box_state == "none":
             return ""
         if self.box_state == "finished" and self.closure_claim != "finished":
-            return ("every DONE WHEN box is ticked, but its status text does "
-                    "not say so")
+            return "every DONE WHEN box is ticked, but its status text does not say so"
         if self.closure_disputed:
-            return ("its status text says finished, but DONE WHEN boxes are "
-                    "still open")
+            return "its status text says finished, but DONE WHEN boxes are still open"
         return ""
 
     @property
@@ -1190,8 +1214,7 @@ class QueueItem:
         return "open"
 
 
-def _parse_numbered_items(body: str, source: str = "backlog",
-                           notes: dict[str, Prose] | None = None) -> list[QueueItem]:
+def _parse_numbered_items(body: str, source: str = "backlog", notes: dict[str, Prose] | None = None) -> list[QueueItem]:
     """Shared parser behind every `**N. Title — ...**` numbered section this
     board reads. One shape, one parser, so a funnel-queue item and a PM-gate
     item can never silently drift into two different conventions.
@@ -1220,28 +1243,29 @@ def _parse_numbered_items(body: str, source: str = "backlog",
         headline, body_lines, i = _headline_and_body(lines, i)
         share_m = _QUEUE_SHARE_RE.search(headline)
         ref = f"{_SOURCE_REF_LABEL.get(source, 'item')} {rank}"
-        items.append(QueueItem(
-            rank=rank,
-            title=_tidy_title(headline),
-            classification=next(
-                (c for c in _QUEUE_CLASSES if c in headline.upper()), ""),
-            share=share_m.group(0) if share_m else "",
-            pct=int(share_m.group(3)) if share_m else None,
-            # The opening `~~` sits BEFORE the item number and is consumed by
-            # `_ITEM_OPEN_RE`, so only the closing one survives into the
-            # headline. Either spelling counts as struck through.
-            done="~~" in headline,
-            prose=notes.get(ref, Prose()),
-            headline=_strip_markdown(headline),
-            source=source,
-            raw_body=_strip_markdown(" ".join(body_lines)),
-            # References are read from the headline AND the body, because
-            # that is where the backlog actually writes them, and only from
-            # this item's own text — never from a neighbour's.
-            refs=extract_refs(headline + " " + " ".join(body_lines)),
-            status_leads=status_paragraph_leads(body_lines),
-            body_lines=tuple(body_lines),
-        ))
+        items.append(
+            QueueItem(
+                rank=rank,
+                title=_tidy_title(headline),
+                classification=next((c for c in _QUEUE_CLASSES if c in headline.upper()), ""),
+                share=share_m.group(0) if share_m else "",
+                pct=int(share_m.group(3)) if share_m else None,
+                # The opening `~~` sits BEFORE the item number and is consumed by
+                # `_ITEM_OPEN_RE`, so only the closing one survives into the
+                # headline. Either spelling counts as struck through.
+                done="~~" in headline,
+                prose=notes.get(ref, Prose()),
+                headline=_strip_markdown(headline),
+                source=source,
+                raw_body=_strip_markdown(" ".join(body_lines)),
+                # References are read from the headline AND the body, because
+                # that is where the backlog actually writes them, and only from
+                # this item's own text — never from a neighbour's.
+                refs=extract_refs(headline + " " + " ".join(body_lines)),
+                status_leads=status_paragraph_leads(body_lines),
+                body_lines=tuple(body_lines),
+            )
+        )
     return sorted(items, key=lambda i: i.rank)
 
 
@@ -1262,8 +1286,7 @@ def _headline_and_body(lines: list[str], start: int) -> tuple[str, list[str], in
         if nxt >= len(lines):
             break
         candidate = lines[nxt].strip()
-        if (not candidate or _HEADING_RE.match(candidate)
-                or _ITEM_OPEN_RE.match(candidate)):
+        if not candidate or _HEADING_RE.match(candidate) or _ITEM_OPEN_RE.match(candidate):
             break
         rest = rest + " " + candidate
         consumed += 1
@@ -1314,9 +1337,7 @@ def _tidy_title(rest: str) -> str:
     return title.strip().rstrip(".,").strip("~ ").strip()
 
 
-def load_funnel_queue(work_md: Path,
-                       notes: dict[str, Prose] | None = None
-                       ) -> tuple[list[QueueItem], str | None]:
+def load_funnel_queue(work_md: Path, notes: dict[str, Prose] | None = None) -> tuple[list[QueueItem], str | None]:
     """Parse the ranked funnel queue out of docs/WORK.md.
 
     `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
@@ -1344,10 +1365,7 @@ def load_funnel_queue(work_md: Path,
 
     items = _parse_numbered_items(body, source="backlog", notes=notes)
     if not items:
-        return [], (
-            "The queue heading is there but no numbered items could be read "
-            "from it, so its shape has changed."
-        )
+        return [], ("The queue heading is there but no numbered items could be read from it, so its shape has changed.")
     return items, None
 
 
@@ -1369,9 +1387,7 @@ _PM_GATE_STOP = "<!-- END PM TEST GATE -->"
 _PM_GATE_EMPTY_MARKER = "**The gate is EMPTY"
 
 
-def load_pm_gate(work_md: Path,
-                  notes: dict[str, Prose] | None = None
-                  ) -> tuple[list[QueueItem], str | None]:
+def load_pm_gate(work_md: Path, notes: dict[str, Prose] | None = None) -> tuple[list[QueueItem], str | None]:
     """Parse the PM-test-readiness gate out of docs/WORK.md.
 
     `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
@@ -1406,9 +1422,7 @@ def load_pm_gate(work_md: Path,
         if stop in body:
             body = body.split(stop, 1)[0]
 
-    has_empty_marker = any(
-        line.strip().startswith(_PM_GATE_EMPTY_MARKER)
-        for line in body.splitlines())
+    has_empty_marker = any(line.strip().startswith(_PM_GATE_EMPTY_MARKER) for line in body.splitlines())
     items = _parse_numbered_items(body, source="pm-gate", notes=notes)
 
     if items and has_empty_marker:
@@ -1420,10 +1434,7 @@ def load_pm_gate(work_md: Path,
     if not items:
         if has_empty_marker:
             return [], None
-        return [], (
-            "The gate heading is there but no numbered items could be read "
-            "from it, so its shape has changed."
-        )
+        return [], ("The gate heading is there but no numbered items could be read from it, so its shape has changed.")
     return items, None
 
 
@@ -1476,8 +1487,15 @@ _CLOSURE_EXEMPT_WORDS = ("PARTIALLY", "PARTIAL", "PENDING", "MOSTLY")
 #: what keeps "INCOMPLETE" from reading as "COMPLETE" and "MERGE ORDER
 #: MATTERS" from reading as "MERGED".
 _RENDER_CLOSURE_WORDS = _CLOSURE_WORDS + (
-    "SHIPPED", "REPLACED", "REDESIGNED", "CLOSED", "LANDED", "SUPERSEDED",
-    "DELIVERED", "COMPLETE", "COMPLETED",
+    "SHIPPED",
+    "REPLACED",
+    "REDESIGNED",
+    "CLOSED",
+    "LANDED",
+    "SUPERSEDED",
+    "DELIVERED",
+    "COMPLETE",
+    "COMPLETED",
 )
 
 #: RENDERING. A closure word next to one of these means the work itself is
@@ -1486,9 +1504,17 @@ _RENDER_CLOSURE_WORDS = _CLOSURE_WORDS + (
 #: the board exists to catch, so it gets its own section: not competing with
 #: live work, not claimed as signed off either.
 _RENDER_REVIEW_OWED_WORDS = (
-    "PENDING REVIEW", "PENDING SIGN-OFF", "PENDING SIGNOFF", "PENDING OWNER",
-    "AWAITING REVIEW", "AWAITING SIGN-OFF", "AWAITING SIGNOFF",
-    "NEEDS REVIEW", "NEEDS REVIEWING", "UNREVIEWED", "PENDING",
+    "PENDING REVIEW",
+    "PENDING SIGN-OFF",
+    "PENDING SIGNOFF",
+    "PENDING OWNER",
+    "AWAITING REVIEW",
+    "AWAITING SIGN-OFF",
+    "AWAITING SIGNOFF",
+    "NEEDS REVIEW",
+    "NEEDS REVIEWING",
+    "UNREVIEWED",
+    "PENDING",
 )
 
 #: RENDERING. A closure word next to one of these means real work is still
@@ -1532,9 +1558,10 @@ def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
 #: — and only that shape, so an item's OWN status is never touched: nothing
 #: here strips a bare "MERGED" or "FIXED" sitting on its own.
 _CROSS_REF_STATUS_RE = re.compile(
-    r"(?:\bPR\s*)?#\d+\s*\([^)]*\)"       # "PR #343 (merged)", "#343 (fixed)"
-    r"|\bitems?\s+#?\d+\s*\([^)]*\)",     # "item 12 (fixed)"
-    re.I)
+    r"(?:\bPR\s*)?#\d+\s*\([^)]*\)"  # "PR #343 (merged)", "#343 (fixed)"
+    r"|\bitems?\s+#?\d+\s*\([^)]*\)",  # "item 12 (fixed)"
+    re.I,
+)
 
 
 def _strip_cross_references(tail: str) -> str:
@@ -1582,7 +1609,7 @@ def _strip_other_item_clauses(tail: str, own_rank: int | None) -> str:
     for part in _CLAUSE_SPLIT_RE.split(tail):
         for m in _OTHER_ITEM_REF_RE.finditer(part):
             if own_rank is None or int(m.group(1)) != own_rank:
-                part = part[:m.start()]
+                part = part[: m.start()]
                 break
         out.append(part)
     return "".join(out)
@@ -1697,10 +1724,8 @@ def _normalize_title_for_dup_check(title: str) -> str:
 #: it. Matched against `raw_body` (markdown already stripped by
 #: `_parse_numbered_items`), case-insensitively, and read from BOTH sides of
 #: a flagged pair — either item may carry the marker naming the other.
-_NEAR_NEIGHBOUR_RE = re.compile(
-    r"item\s+(\d+)\s+is\s+a\s+near-neighbour", re.IGNORECASE)
-_DISTINCT_FROM_RE = re.compile(
-    r"distinct\s+from\s+item\s+(\d+)", re.IGNORECASE)
+_NEAR_NEIGHBOUR_RE = re.compile(r"item\s+(\d+)\s+is\s+a\s+near-neighbour", re.IGNORECASE)
+_DISTINCT_FROM_RE = re.compile(r"distinct\s+from\s+item\s+(\d+)", re.IGNORECASE)
 
 
 def _explicit_distinct_targets(raw_body: str) -> set[int]:
@@ -1733,27 +1758,26 @@ def find_near_duplicate_open_items(work_md: Path) -> list[str]:
     if problem:
         return []
     open_items = [item for item in items if item.state == "open"]
-    normalized = [
-        (item, _normalize_title_for_dup_check(item.title))
-        for item in open_items
-    ]
+    normalized = [(item, _normalize_title_for_dup_check(item.title)) for item in open_items]
     flagged: list[str] = []
     for idx, (item_a, norm_a) in enumerate(normalized):
         if not norm_a:
             continue
-        for item_b, norm_b in normalized[idx + 1:]:
+        for item_b, norm_b in normalized[idx + 1 :]:
             if not norm_b:
                 continue
             if norm_a == norm_b:
                 kind = "identical"
-            elif (min(len(norm_a), len(norm_b)) >= _DUP_TITLE_MIN_LEN
-                  and difflib.SequenceMatcher(None, norm_a, norm_b).ratio()
-                  >= _DUP_TITLE_RATIO):
+            elif (
+                min(len(norm_a), len(norm_b)) >= _DUP_TITLE_MIN_LEN
+                and difflib.SequenceMatcher(None, norm_a, norm_b).ratio() >= _DUP_TITLE_RATIO
+            ):
                 kind = "near-identical"
             else:
                 continue
-            if (item_b.rank in _explicit_distinct_targets(item_a.raw_body)
-                    or item_a.rank in _explicit_distinct_targets(item_b.raw_body)):
+            if item_b.rank in _explicit_distinct_targets(item_a.raw_body) or item_a.rank in _explicit_distinct_targets(
+                item_b.raw_body
+            ):
                 continue
             flagged.append(
                 f"item {item_a.rank} and item {item_b.rank} look like the "
@@ -1803,9 +1827,7 @@ _BOARD_FINISHED_WORDS = _RENDER_CLOSURE_WORDS + _NO_ACTION_WORDS + ("SETTLED",)
 #: is contested"), and no genuinely finished item in the real backlog uses it
 #: to describe itself.
 _BOARD_STILL_OPEN_WORDS = (
-    _RENDER_PART_DONE_WORDS + _RENDER_REVIEW_OWED_WORDS
-    + _CLOSURE_EXEMPT_WORDS + _PAUSED_WORDS
-    + ("OPEN", "STILL OPEN")
+    _RENDER_PART_DONE_WORDS + _RENDER_REVIEW_OWED_WORDS + _CLOSURE_EXEMPT_WORDS + _PAUSED_WORDS + ("OPEN", "STILL OPEN")
 )
 
 #: The SECOND, independent way `find_finished_items_still_on_board` decides
@@ -1883,6 +1905,7 @@ def _done_when_criterion_marks(lines) -> list[str]:
         marks.append(m.group(1))
     return marks
 
+
 #: The literal marker an item's own body may write to say its `DONE WHEN`
 #: block can be fully ticked and the item STILL cannot close, because
 #: closing it needs an event the desk cannot manufacture -- a real fill, a
@@ -1917,7 +1940,7 @@ def _done_when_checkbox_marks(raw_body: str) -> list[str]:
     idx = raw_body.find("DONE WHEN:")
     if idx == -1:
         return []
-    return _marks_in_bullet_run(raw_body[idx + len("DONE WHEN:"):])
+    return _marks_in_bullet_run(raw_body[idx + len("DONE WHEN:") :])
 
 
 def _all_done_when_boxes_checked(raw_body: str) -> bool:
@@ -1935,8 +1958,7 @@ def _all_done_when_boxes_checked(raw_body: str) -> bool:
     return bool(marks) and all(m.lower() == "x" for m in marks)
 
 
-def find_finished_items_still_on_board(
-        work_md: Path, board_notes: Path) -> list[str]:
+def find_finished_items_still_on_board(work_md: Path, board_notes: Path) -> list[str]:
     """Board items that declare themselves finished -- in their own status
     text OR in their own `DONE WHEN` checkboxes -- but are still sitting in
     `docs/WORK.md`.
@@ -1988,8 +2010,7 @@ def find_finished_items_still_on_board(
     """
     notes = load_board_notes(board_notes)
     flagged: list[str] = []
-    for items, _problem in (load_funnel_queue(work_md, notes=notes),
-                             load_pm_gate(work_md, notes=notes)):
+    for items, _problem in (load_funnel_queue(work_md, notes=notes), load_pm_gate(work_md, notes=notes)):
         for item in items:
             if item.done:
                 continue
@@ -1997,8 +2018,7 @@ def find_finished_items_still_on_board(
             headline_finished = False
             if not any(w in tail for w in _CLOSURE_NEGATIONS):
                 scan = _strip_cross_references(tail)
-                if (_closure_hit(scan, _BOARD_FINISHED_WORDS)
-                        and not _closure_hit(scan, _BOARD_STILL_OPEN_WORDS)):
+                if _closure_hit(scan, _BOARD_FINISHED_WORDS) and not _closure_hit(scan, _BOARD_STILL_OPEN_WORDS):
                     headline_finished = True
             checkbox_finished = (
                 item.box_state == "finished"
@@ -2011,20 +2031,23 @@ def find_finished_items_still_on_board(
                 reason = (
                     "declares itself finished "
                     f"({item.headline[:120]!r}) AND every box in its own "
-                    "DONE WHEN block is ticked")
+                    "DONE WHEN block is ticked"
+                )
             elif checkbox_finished:
                 reason = (
                     "every box in its own DONE WHEN block is ticked, even "
                     "though its headline status does not say so "
-                    f"({item.headline[:120]!r})")
+                    f"({item.headline[:120]!r})"
+                )
             else:
                 reason = f"declares itself finished ({item.headline[:120]!r})"
             flagged.append(
                 f"{item.ref} {reason} but is still on the board. "
                 "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
                 "opening with one plain-language line), then delete its "
-                "docs/WORK.md block AND its matching '## " + item.ref +
-                "' block in its docs/board_notes/ file, and add its number to "
+                "docs/WORK.md block AND its matching '## "
+                + item.ref
+                + "' block in its docs/board_notes/ file, and add its number to "
                 "the retired line at the end of the relevant list in "
                 "docs/WORK.md."
             )
@@ -2067,9 +2090,9 @@ class PendingDecision:
         return f"decision due {self.due.isoformat()}"
 
 
-def load_pending_decisions(work_md: Path, today: dt.date | None = None,
-                            notes: dict[str, Prose] | None = None
-                            ) -> list[PendingDecision]:
+def load_pending_decisions(
+    work_md: Path, today: dt.date | None = None, notes: dict[str, Prose] | None = None
+) -> list[PendingDecision]:
     """Decisions the owner still owes an answer on, soonest first.
 
     `notes` is `docs/board_notes/`, already parsed by `load_board_notes`.
@@ -2120,12 +2143,16 @@ def load_pending_decisions(work_md: Path, today: dt.date | None = None,
             if not s or s.startswith("**") or _PROSE_LINE_RE.match(nxt):
                 break
             text.append(s)
-        out.append(PendingDecision(
-            due, _strip_markdown(" ".join(text)), (due - today).days,
-            notes.get(f"decision due {due.isoformat()}", Prose()),
-            refs=extract_refs(question + " " + " ".join(body)),
-            raw_body=_strip_markdown(" ".join(body)),
-        ))
+        out.append(
+            PendingDecision(
+                due,
+                _strip_markdown(" ".join(text)),
+                (due - today).days,
+                notes.get(f"decision due {due.isoformat()}", Prose()),
+                refs=extract_refs(question + " " + " ".join(body)),
+                raw_body=_strip_markdown(" ".join(body)),
+            )
+        )
     return sorted(out, key=lambda p: p.due)
 
 
@@ -2150,6 +2177,7 @@ def load_phases(manifest: Path, cfg: dict) -> list[PhaseView]:
 # --------------------------------------------------------------------------
 # live state
 # --------------------------------------------------------------------------
+
 
 def live_state() -> dict[str, Any]:
     s: dict[str, Any] = {}
@@ -2197,8 +2225,11 @@ def _read_ledger() -> dict[str, Any]:
     and copied first if we cannot open it in place.
     """
     out: dict[str, Any] = {
-        "spend_today": None, "day": None, "circuit": None,
-        "sessions_today": None, "costs_exact": None,
+        "spend_today": None,
+        "day": None,
+        "circuit": None,
+        "sessions_today": None,
+        "costs_exact": None,
     }
     db = PROD_CHECKOUT / "data" / "quant_agent.db"
     tmp: Path | None = None
@@ -2215,22 +2246,19 @@ def _read_ledger() -> dict[str, Any]:
         conn.row_factory = sqlite3.Row
         today = datetime.now(ET).strftime("%Y-%m-%d")
         row = conn.execute(
-            "SELECT day, incremental_cost_usd AS spend, costs_exact "
-            "FROM llm_budget_days WHERE day=?", (today,),
+            "SELECT day, incremental_cost_usd AS spend, costs_exact FROM llm_budget_days WHERE day=?",
+            (today,),
         ).fetchone()
         if row:
             out["day"] = row["day"]
             out["spend_today"] = float(row["spend"] or 0)
             out["costs_exact"] = bool(row["costs_exact"])
-        st = conn.execute(
-            "SELECT suspended, trigger_code FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()
+        st = conn.execute("SELECT suspended, trigger_code FROM llm_circuit_state WHERE singleton=1").fetchone()
         if st:
-            out["circuit"] = ("halted: " + str(st["trigger_code"] or "unknown trigger")
-                              if int(st["suspended"] or 0) else "clear")
-        n = conn.execute(
-            "SELECT COUNT(*) AS n FROM llm_budget_sessions WHERE day=?", (today,)
-        ).fetchone()
+            out["circuit"] = (
+                "halted: " + str(st["trigger_code"] or "unknown trigger") if int(st["suspended"] or 0) else "clear"
+            )
+        n = conn.execute("SELECT COUNT(*) AS n FROM llm_budget_sessions WHERE day=?", (today,)).fetchone()
         out["sessions_today"] = int(n["n"]) if n else None
         # A day with no sessions has no budget row, which is not the same thing
         # as a budget that could not be read. Reporting "unknown" there is a
@@ -2271,6 +2299,7 @@ def read_settings() -> dict:
 # --------------------------------------------------------------------------
 # render
 # --------------------------------------------------------------------------
+
 
 def _esc(s: Any) -> str:
     return html.escape(str(s), quote=True)
@@ -2325,7 +2354,7 @@ def _render_summary(summary: Any) -> str:
     if outstanding:
         parts.append(
             f'<p class="ps-outstanding"><span class="ps-label">Still outstanding'
-            f'&nbsp;&mdash;</span> {_esc(outstanding)}</p>'
+            f"&nbsp;&mdash;</span> {_esc(outstanding)}</p>"
         )
 
     return f'<div class="ps">{"".join(parts)}</div>'
@@ -2367,15 +2396,15 @@ def _row(p: PhaseView) -> str:
     if p.summary_flagged:
         jargon = (
             '<div class="jargon-flag">Not written for you &mdash; this reads '
-            'like a note for a developer. Needs a plain-English rewrite.'
+            "like a note for a developer. Needs a plain-English rewrite."
             f'<span class="jargon-why">{_esc(p.summary_flag_reason)}</span></div>'
         )
     return (
         f'<tr><td><span class="chip {cls}">{_esc(label)}</span></td>'
-        f'<td><b>{_ref_tag("stage " + p.id)}{_esc(_strip_markdown(p.title))}</b>'
-        f'{jargon}'
-        f'{_render_summary(p.summary)}'
-        f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
+        f"<td><b>{_ref_tag('stage ' + p.id)}{_esc(_strip_markdown(p.title))}</b>"
+        f"{jargon}"
+        f"{_render_summary(p.summary)}"
+        f"<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>"
     )
 
 
@@ -2391,17 +2420,20 @@ def _row(p: PhaseView) -> str:
 #: What an item is missing, phrased as the gap it is rather than as an error.
 #: The board says "nobody has written this yet" and stops there. It does not
 #: write it, and it does not paper over it.
-_NO_PLAIN = ("Nobody has written the plain-English version of this one yet. "
-             "The backlog's own engineering notes are below, marked as such "
-             "&mdash; they are not a substitute for it, and nothing has been "
-             "invented to stand in.")
-_NO_EXAMPLE = ("No real-world example yet. Without one this item is hard to "
-               "judge &mdash; it needs a concrete case adding to the backlog.")
+_NO_PLAIN = (
+    "Nobody has written the plain-English version of this one yet. "
+    "The backlog's own engineering notes are below, marked as such "
+    "&mdash; they are not a substitute for it, and nothing has been "
+    "invented to stand in."
+)
+_NO_EXAMPLE = (
+    "No real-world example yet. Without one this item is hard to "
+    "judge &mdash; it needs a concrete case adding to the backlog."
+)
 
 
 def _prose_block(label: str, text: str, cls: str) -> str:
-    return (f'<div class="pb {cls}"><span class="pb-k">{label}</span>'
-            f'<p>{_esc(text)}</p></div>')
+    return f'<div class="pb {cls}"><span class="pb-k">{label}</span><p>{_esc(text)}</p></div>'
 
 
 #: How much of an item's raw engineering body is worth showing inside the
@@ -2433,16 +2465,17 @@ def _raw_source_block(raw: str) -> str:
     cut = len(text) > _RAW_SOURCE_CHARS
     if cut:
         text = text[:_RAW_SOURCE_CHARS].rsplit(" ", 1)[0] + "…"
-    tail = ('<span class="raw-cut">Shortened here. The rest is in the backlog, '
-            'unchanged.</span>' if cut else "")
-    return ('<details class="raw"><summary>Engineering notes from the backlog '
-            '&mdash; not an explanation</summary>'
-            f'<div class="raw-body"><p>{_esc(text)}</p>{tail}</div></details>')
+    tail = '<span class="raw-cut">Shortened here. The rest is in the backlog, unchanged.</span>' if cut else ""
+    return (
+        '<details class="raw"><summary>Engineering notes from the backlog '
+        "&mdash; not an explanation</summary>"
+        f'<div class="raw-body"><p>{_esc(text)}</p>{tail}</div></details>'
+    )
 
 
-def _render_prose(prose: Prose, *, want_example: bool = True,
-                  want_recommendation: bool = False,
-                  raw_source: str = "") -> str:
+def _render_prose(
+    prose: Prose, *, want_example: bool = True, want_recommendation: bool = False, raw_source: str = ""
+) -> str:
     """One item's owner-facing prose, with its gaps stated rather than hidden.
 
     `want_example` / `want_recommendation` say whether the ABSENCE of that
@@ -2467,50 +2500,55 @@ def _render_prose(prose: Prose, *, want_example: bool = True,
     # Never an invented explanation, and never the raw notes presented as
     # though they were one.
     if not prose.has_any:
-        tail = (' There is no recommendation either, so there is nothing here '
-                'to agree or disagree with &mdash; ask for one before ruling.'
-                if want_recommendation else '')
-        return ('<div class="pb pb-gap"><span class="pb-k">No plain-English '
-                'version yet</span><p>Nobody has written this one up for you '
-                'yet &mdash; no explanation and no example &mdash; so there is '
-                'nothing on this card that was written for you. It is listed '
-                'rather than hidden, and nothing has been invented to fill the '
-                f'gap.{tail}</p></div>'
-                + _raw_source_block(raw_source))
+        tail = (
+            " There is no recommendation either, so there is nothing here "
+            "to agree or disagree with &mdash; ask for one before ruling."
+            if want_recommendation
+            else ""
+        )
+        return (
+            '<div class="pb pb-gap"><span class="pb-k">No plain-English '
+            "version yet</span><p>Nobody has written this one up for you "
+            "yet &mdash; no explanation and no example &mdash; so there is "
+            "nothing on this card that was written for you. It is listed "
+            "rather than hidden, and nothing has been invented to fill the "
+            f"gap.{tail}</p></div>" + _raw_source_block(raw_source)
+        )
 
     if prose.plain:
         parts.append(_prose_block("In plain language", prose.plain, "pb-plain"))
     else:
-        parts.append(f'<div class="pb pb-gap"><span class="pb-k">No '
-                     f'plain-English version yet</span><p>{_NO_PLAIN}</p></div>')
+        parts.append(
+            f'<div class="pb pb-gap"><span class="pb-k">No plain-English version yet</span><p>{_NO_PLAIN}</p></div>'
+        )
         parts.append(_raw_source_block(raw_source))
 
     if prose.example:
         parts.append(_prose_block("For example", prose.example, "pb-eg"))
     elif want_example:
-        parts.append(f'<div class="pb pb-gap"><span class="pb-k">No example '
-                     f'yet</span><p>{_NO_EXAMPLE}</p></div>')
+        parts.append(f'<div class="pb pb-gap"><span class="pb-k">No example yet</span><p>{_NO_EXAMPLE}</p></div>')
 
     if prose.decision:
-        parts.append(_prose_block("What you have to decide", prose.decision,
-                                  "pb-dec"))
+        parts.append(_prose_block("What you have to decide", prose.decision, "pb-dec"))
     if prose.recommendation:
-        parts.append(_prose_block("Our recommendation", prose.recommendation,
-                                  "pb-rec"))
+        parts.append(_prose_block("Our recommendation", prose.recommendation, "pb-rec"))
     elif want_recommendation:
-        parts.append('<div class="pb pb-gap"><span class="pb-k">No '
-                     'recommendation yet</span><p>Nobody has written a '
-                     'recommendation for this one, so there is nothing here to '
-                     'agree or disagree with. Ask for one before ruling.</p>'
-                     '</div>')
+        parts.append(
+            '<div class="pb pb-gap"><span class="pb-k">No '
+            "recommendation yet</span><p>Nobody has written a "
+            "recommendation for this one, so there is nothing here to "
+            "agree or disagree with. Ask for one before ruling.</p>"
+            "</div>"
+        )
 
     markers = prose.jargon_markers
     if markers:
         parts.append(
             '<div class="pb pb-jargon"><span class="pb-k">Written for a '
-            'developer</span><p>The words above still say what they say, but '
-            'they contain ' + _esc(", ".join(markers)) + ' &mdash; so this one '
-            'needs rewriting for you. Nothing is hidden.</p></div>')
+            "developer</span><p>The words above still say what they say, but "
+            "they contain " + _esc(", ".join(markers)) + " &mdash; so this one "
+            "needs rewriting for you. Nothing is hidden.</p></div>"
+        )
     return "".join(parts)
 
 
@@ -2526,8 +2564,7 @@ def _ref_tag(ref: str) -> str:
 def _ref_chips(refs: tuple[str, ...]) -> str:
     """Tracking references, one quiet chip each. Empty when the backlog named
     none — this never invents a reference to fill the row out."""
-    return "".join(f'<span class="chip chip-quiet">{_esc(r)}</span>'
-                   for r in refs)
+    return "".join(f'<span class="chip chip-quiet">{_esc(r)}</span>' for r in refs)
 
 
 def _wording_note(text: str, what: str) -> str:
@@ -2541,11 +2578,13 @@ def _wording_note(text: str, what: str) -> str:
     markers = summary_engineering_markers(text)
     if not markers:
         return ""
-    return ('<div class="pb pb-jargon"><span class="pb-k">Developer wording'
-            f'</span><p>The {_esc(what)} above is the backlog\'s own, and it '
-            'contains ' + _esc(", ".join(markers)) + '. It needs renaming in '
-            'plain English; it is shown as written rather than quietly '
-            'reworded here.</p></div>')
+    return (
+        '<div class="pb pb-jargon"><span class="pb-k">Developer wording'
+        f"</span><p>The {_esc(what)} above is the backlog's own, and it "
+        "contains " + _esc(", ".join(markers)) + ". It needs renaming in "
+        "plain English; it is shown as written rather than quietly "
+        "reworded here.</p></div>"
+    )
 
 
 def _when_label(d: PendingDecision) -> str:
@@ -2619,17 +2658,16 @@ def _render_owner_call_cards(items: list[QueueItem]) -> str:
         rows.append(
             '<article class="card">'
             '<div class="chips"><span class="chip chip-strong">Your call</span>'
-            f'{_ref_chips(i.refs)}</div>'
-            f'<h3>{_ref_tag(i.ref)}{_esc(_first_sentence(i.prose.decision))}</h3>'
-            f'{_prose_block("Why only you", i.prose.why_him, "pb-dec")}'
-            f'{_render_prose(i.prose, want_recommendation=True, raw_source=i.raw_body)}'
-            '</article>'
+            f"{_ref_chips(i.refs)}</div>"
+            f"<h3>{_ref_tag(i.ref)}{_esc(_first_sentence(i.prose.decision))}</h3>"
+            f"{_prose_block('Why only you', i.prose.why_him, 'pb-dec')}"
+            f"{_render_prose(i.prose, want_recommendation=True, raw_source=i.raw_body)}"
+            "</article>"
         )
     return "\n".join(rows)
 
 
-def _render_decisions(decisions: list[PendingDecision],
-                      owner_calls: list[QueueItem] | None = None) -> str:
+def _render_decisions(decisions: list[PendingDecision], owner_calls: list[QueueItem] | None = None) -> str:
     """Everything waiting on the owner: formal DECIDE-BY lines first (they
     carry a due date CI enforces), then backlog items whose own prose names
     a live decision that is his alone. Nothing here is an agent's to make.
@@ -2639,8 +2677,9 @@ def _render_decisions(decisions: list[PendingDecision],
     """
     owner_calls = owner_calls or []
     if not decisions and not owner_calls:
-        return ('<div class="note">Nothing is waiting on you. Every judgement '
-                'call that was open has been answered.</div>')
+        return (
+            '<div class="note">Nothing is waiting on you. Every judgement call that was open has been answered.</div>'
+        )
     rows = []
     for d in decisions:
         rows.append(
@@ -2648,17 +2687,16 @@ def _render_decisions(decisions: list[PendingDecision],
             f'<div class="chips"><span class="chip chip-strong">Your call</span>'
             f'<span class="chip">{_esc(_when_label(d))}</span>'
             f'<span class="chip chip-quiet">by {_esc(d.due.strftime("%-d %B"))}</span>'
-            f'{_ref_chips(d.refs)}</div>'
-            f'<h3>{_ref_tag(d.ref)}{_esc(d.question)}</h3>'
-            f'{_render_prose(d.prose, want_recommendation=True, raw_source=d.raw_body)}'
-            f'{_wording_note(d.question, "question")}'
-            '</article>'
+            f"{_ref_chips(d.refs)}</div>"
+            f"<h3>{_ref_tag(d.ref)}{_esc(d.question)}</h3>"
+            f"{_render_prose(d.prose, want_recommendation=True, raw_source=d.raw_body)}"
+            f"{_wording_note(d.question, 'question')}"
+            "</article>"
         )
     return "\n".join(rows) + _render_owner_call_cards(owner_calls)
 
 
-def _render_open_queue(items: list[QueueItem], problem: str | None,
-                       empty_message: str = "Nothing is queued.") -> str:
+def _render_open_queue(items: list[QueueItem], problem: str | None, empty_message: str = "Nothing is queued.") -> str:
     """What is next, in order: one line each, opening to the full explanation.
 
     Mobile first — the line is the whole tap target and everything else is
@@ -2670,8 +2708,7 @@ def _render_open_queue(items: list[QueueItem], problem: str | None,
     result is a deliberately cleared gate, not an absence of work.
     """
     if problem:
-        return (f'<div class="note"><b>The running order could not be read.</b> '
-                f'{_esc(problem)}</div>')
+        return f'<div class="note"><b>The running order could not be read.</b> {_esc(problem)}</div>'
     if not items:
         return f'<div class="note">{_esc(empty_message)}</div>'
     rows = []
@@ -2688,8 +2725,7 @@ def _render_open_queue(items: list[QueueItem], problem: str | None,
             # "Partly", not "mostly": the same chip covers "PARTIALLY FIXED"
             # and "MOSTLY FIXED", and calling a partial fix mostly done
             # overstates it in the one direction that costs him a surprise.
-            meta.append('<span class="chip">partly done &mdash; some work '
-                        'still outstanding</span>')
+            meta.append('<span class="chip">partly done &mdash; some work still outstanding</span>')
         meta.append(_ref_chips(it.refs))
         if not it.prose.plain:
             meta.append('<span class="chip chip-gap">no plain-English version yet</span>')
@@ -2698,15 +2734,14 @@ def _render_open_queue(items: list[QueueItem], problem: str | None,
             f'<summary><span class="q-n">{_esc(it.ref)}</span>'
             f'<span class="q-t">{_esc(it.title)}</span></summary>'
             f'<div class="q-body"><div class="chips">{"".join(meta)}</div>'
-            f'{_render_prose(it.prose, raw_source=it.raw_body)}'
-            f'{_wording_note(it.title, "name")}</div>'
-            '</details>'
+            f"{_render_prose(it.prose, raw_source=it.raw_body)}"
+            f"{_wording_note(it.title, 'name')}</div>"
+            "</details>"
         )
     return "\n".join(rows)
 
 
-def _render_one_liners(items: list[QueueItem], empty: str,
-                       *, struck: bool = False) -> str:
+def _render_one_liners(items: list[QueueItem], empty: str, *, struck: bool = False) -> str:
     """A plain one-line-each list — used for what is paused and what is
     already resolved. Neither needs anything from him, so neither gets the
     weight of a card."""
@@ -2715,14 +2750,11 @@ def _render_one_liners(items: list[QueueItem], empty: str,
     rows = []
     for it in items:
         cls = "ol ol-done" if struck else "ol"
-        rows.append(f'<div class="{cls}"><span class="q-n">{_esc(it.ref)}</span>'
-                    f'<span>{_esc(it.title)}</span></div>')
+        rows.append(f'<div class="{cls}"><span class="q-n">{_esc(it.ref)}</span><span>{_esc(it.title)}</span></div>')
     return "\n".join(rows)
 
 
-def _render_finished_unmarked(
-        items: list[QueueItem],
-        disputed: "list[QueueItem] | tuple[()]" = ()) -> str:
+def _render_finished_unmarked(items: list[QueueItem], disputed: "list[QueueItem] | tuple[()]" = ()) -> str:
     """Items their own author has written up as finished, which the backlog
     has not struck through.
 
@@ -2738,17 +2770,17 @@ def _render_finished_unmarked(
     """
     rows = []
     if not items:
-        rows.append('<div class="note">Every finished item in the backlog is '
-                    'also ticked off as finished.</div>')
+        rows.append('<div class="note">Every finished item in the backlog is also ticked off as finished.</div>')
     for it in items:
         rows.append(
             '<div class="ol ol-done ol-untidy">'
             f'<span class="q-n">{_esc(it.ref)}</span>'
-            f'<span>{_esc(it.title)} '
-            '<em>&mdash; every one of its own DONE WHEN boxes is ticked; the '
-            'backlog has not ticked it off yet, so that one line needs '
-            'tidying.</em>'
-            '</span></div>')
+            f"<span>{_esc(it.title)} "
+            "<em>&mdash; every one of its own DONE WHEN boxes is ticked; the "
+            "backlog has not ticked it off yet, so that one line needs "
+            "tidying.</em>"
+            "</span></div>"
+        )
     rows.extend(_render_closure_disagreements(list(items) + list(disputed)))
     return "\n".join(rows)
 
@@ -2770,9 +2802,10 @@ def _render_closure_disagreements(items: list[QueueItem]) -> list[str]:
         rows.append(
             '<div class="ol ol-untidy">'
             f'<span class="q-n">{_esc(it.ref)}</span>'
-            f'<span>{_esc(it.title)} '
-            f'<em>&mdash; {_esc(note)}; one of the two is wrong.</em>'
-            '</span></div>')
+            f"<span>{_esc(it.title)} "
+            f"<em>&mdash; {_esc(note)}; one of the two is wrong.</em>"
+            "</span></div>"
+        )
     return rows
 
 
@@ -2785,33 +2818,36 @@ def _render_in_hand(items: list[QueueItem]) -> str:
     still his to rule on. Never struck through: none of it is finished.
     """
     if not items:
-        return ('<div class="note">Nothing is in hand. Every item that has '
-                'been decided or started is either finished or waiting on '
-                'you.</div>')
+        return (
+            '<div class="note">Nothing is in hand. Every item that has '
+            "been decided or started is either finished or waiting on "
+            "you.</div>"
+        )
     rows = []
     for it in items:
         rows.append(
             '<div class="ol ol-inhand"><span class="q-n">'
-            f'{_esc(it.ref)}</span>'
-            f'<span>{_esc(it.title)} '
-            f'<em>&mdash; {_esc(it.in_hand_state)}; nothing needed from you.</em>'
-            '</span></div>')
+            f"{_esc(it.ref)}</span>"
+            f"<span>{_esc(it.title)} "
+            f"<em>&mdash; {_esc(it.in_hand_state)}; nothing needed from you.</em>"
+            "</span></div>"
+        )
     return "\n".join(rows)
 
 
 def _render_no_action(items: list[QueueItem]) -> str:
     """Causes that were checked and turned out to be by design."""
     if not items:
-        return ('<div class="note">Nothing has been checked and found to be '
-                'working as intended.</div>')
+        return '<div class="note">Nothing has been checked and found to be working as intended.</div>'
     rows = []
     for it in items:
         rows.append(
             '<div class="ol ol-noaction"><span class="q-n">'
-            f'{_esc(it.ref)}</span>'
-            f'<span>{_esc(it.title)} '
-            '<em>&mdash; checked; working as intended, nothing to fix.</em>'
-            '</span></div>')
+            f"{_esc(it.ref)}</span>"
+            f"<span>{_esc(it.title)} "
+            "<em>&mdash; checked; working as intended, nothing to fix.</em>"
+            "</span></div>"
+        )
     return "\n".join(rows)
 
 
@@ -2824,15 +2860,16 @@ def _render_review_owed(items: list[QueueItem]) -> str:
     reporting only the second puts finished work back in the running order.
     """
     if not items:
-        return ('<div class="note">Nothing is waiting on a review.</div>')
+        return '<div class="note">Nothing is waiting on a review.</div>'
     rows = []
     for it in items:
         rows.append(
             '<div class="ol ol-review"><span class="q-n">'
-            f'{_esc(it.ref)}</span>'
-            f'<span>{_esc(it.title)} '
-            '<em>&mdash; the work is done; a review is still owed.</em>'
-            '</span></div>')
+            f"{_esc(it.ref)}</span>"
+            f"<span>{_esc(it.title)} "
+            "<em>&mdash; the work is done; a review is still owed.</em>"
+            "</span></div>"
+        )
     return "\n".join(rows)
 
 
@@ -2857,9 +2894,15 @@ def _render_review_owed(items: list[QueueItem]) -> str:
 #: does not summarise or interpret: it renames, and the numbers it reports are
 #: the ones the rule actually found.
 _HUMAN_WORDS = {
-    "pct": "percent", "usd": "dollars", "atr": "daily range",
-    "min": "minimum", "max": "maximum", "llm": "AI", "pm": "portfolio manager",
-    "rr": "reward to risk", "cfg": "configuration",
+    "pct": "percent",
+    "usd": "dollars",
+    "atr": "daily range",
+    "min": "minimum",
+    "max": "maximum",
+    "llm": "AI",
+    "pm": "portfolio manager",
+    "rr": "reward to risk",
+    "cfg": "configuration",
 }
 
 
@@ -2867,7 +2910,7 @@ def _humanise_identifier(name: str) -> str:
     """`risk.min_stop_atr_multiple` -> "minimum stop daily range multiple"."""
     tail = name.rsplit(".", 1)[-1]
     if tail.startswith("test_"):
-        tail = tail[len("test_"):]
+        tail = tail[len("test_") :]
     words = [_HUMAN_WORDS.get(w, w) for w in tail.split("_") if w]
     #: A date written as separate underscore-joined parts (2026_08_28) would
     #: read as three unrelated numbers once the underscores become spaces.
@@ -2881,32 +2924,30 @@ def _plain_failure(result: "RuleResult") -> str:
     detail = result.detail or ""
     m = re.match(r"^(\S+)\s*=\s*(.+?)\s*\(expected\s*(.+?)\)\s*$", detail)
     if m:
-        return (f"it expects the {_humanise_identifier(m.group(1))} to be "
-                f"{m.group(3)}, and it is {m.group(2)}")
+        return f"it expects the {_humanise_identifier(m.group(1))} to be {m.group(3)}, and it is {m.group(2)}"
     m = re.match(r"^(\S+)\s+is NOT present in settings\s*$", detail)
     if m:
-        return (f"it looks for a setting called {_humanise_identifier(m.group(1))}, "
-                "which no longer exists under that name")
+        return (
+            f"it looks for a setting called {_humanise_identifier(m.group(1))}, which no longer exists under that name"
+        )
     m = re.match(r"^(\S+)\s+MISSING\s*$", detail)
     if m:
-        return (f"it looks for a test called {_humanise_identifier(m.group(1))}, "
-                "which no longer exists under that name")
+        return f"it looks for a test called {_humanise_identifier(m.group(1))}, which no longer exists under that name"
     return ""
 
 
 def _failure_lines(contradicted: list["PhaseView"]) -> list[tuple[str, list[str]]]:
     out: list[tuple[str, list[str]]] = []
     for ph in contradicted:
-        reasons = [r for r in (_plain_failure(x) for x in ph.results
-                               if x.verdict == FAIL) if r]
+        reasons = [r for r in (_plain_failure(x) for x in ph.results if x.verdict == FAIL) if r]
         if reasons:
             out.append((_strip_markdown(ph.title), reasons))
     return out
 
 
-def _render_right_now(contradicted: list[PhaseView],
-                      decisions: list[PendingDecision],
-                      open_items: list[QueueItem]) -> str:
+def _render_right_now(
+    contradicted: list[PhaseView], decisions: list[PendingDecision], open_items: list[QueueItem]
+) -> str:
     #: A backlog headline is often a full sentence of engineering prose. Set
     #: at the top card's display size it stops being a heading and becomes a
     #: paragraph in heading clothing, which is what made this card read as a
@@ -2915,59 +2956,64 @@ def _render_right_now(contradicted: list[PhaseView],
     #: a shortened title is a second name that drifts from the real one.
     long_title = 72
 
-    def card(kind: str, title: str, inner: str, *,
-             ref: str = "", refs: tuple[str, ...] = ()) -> str:
+    def card(kind: str, title: str, inner: str, *, ref: str = "", refs: tuple[str, ...] = ()) -> str:
         h_cls = "rn-h rn-h-long" if len(title) > long_title else "rn-h"
-        return (f'<article class="rn"><div class="chips">'
-                f'<span class="chip chip-strong">Right now</span>'
-                f'<span class="chip">{_esc(kind)}</span>'
-                f'{_ref_chips(refs)}</div>'
-                f'<h2 class="{h_cls}">'
-                f'{_ref_tag(ref) if ref else ""}{_esc(title)}</h2>{inner}</article>')
+        return (
+            f'<article class="rn"><div class="chips">'
+            f'<span class="chip chip-strong">Right now</span>'
+            f'<span class="chip">{_esc(kind)}</span>'
+            f"{_ref_chips(refs)}</div>"
+            f'<h2 class="{h_cls}">'
+            f"{_ref_tag(ref) if ref else ''}{_esc(title)}</h2>{inner}</article>"
+        )
 
     if contradicted:
         n = len(contradicted)
         groups = _failure_lines(contradicted)
         total = sum(len(r) for _, r in groups)
         detail = "".join(
-            f'<p><strong>{_esc(title)}</strong><br>'
-            + "<br>".join(_esc(r[0].upper() + r[1:]) for r in reasons)
-            + "</p>"
-            for title, reasons in groups)
-        example = (groups[0][1][0] if groups and groups[0][1] else "")
+            f"<p><strong>{_esc(title)}</strong><br>" + "<br>".join(_esc(r[0].upper() + r[1:]) for r in reasons) + "</p>"
+            for title, reasons in groups
+        )
+        example = groups[0][1][0] if groups and groups[0][1] else ""
         return card(
             "a proof that has gone out of date",
-            f'{n} finished item{"s" if n != 1 else ""} can no longer prove '
-            f'{"they are" if n != 1 else "it is"} still finished',
+            f"{n} finished item{'s' if n != 1 else ''} can no longer prove "
+            f"{'they are' if n != 1 else 'it is'} still finished",
             '<div class="pb pb-plain"><span class="pb-k">In plain language'
-            '</span><p>Every finished piece of work carries a short list of '
-            'automatic checks that prove it is still in place, and this page '
-            're-runs all of them each time it is built. '
-            f'{total} of those checks now fail. A failing check means the '
-            'check and the system disagree &mdash; it does NOT by itself mean '
-            'the work broke. A setting deliberately changed since the check '
-            'was written fails it exactly the same way real breakage would, '
-            'so each one has to be read before it is believed.</p></div>'
-            + (f'<div class="pb pb-ex"><span class="pb-k">For example</span>'
-               f'<p>One failing check says {_esc(example)}. '
-               'If that difference is a decision already taken, the check is '
-               'simply out of date. If nobody decided it, something moved '
-               'that should not have.</p></div>' if example else "")
+            "</span><p>Every finished piece of work carries a short list of "
+            "automatic checks that prove it is still in place, and this page "
+            "re-runs all of them each time it is built. "
+            f"{total} of those checks now fail. A failing check means the "
+            "check and the system disagree &mdash; it does NOT by itself mean "
+            "the work broke. A setting deliberately changed since the check "
+            "was written fails it exactly the same way real breakage would, "
+            "so each one has to be read before it is believed.</p></div>"
+            + (
+                f'<div class="pb pb-ex"><span class="pb-k">For example</span>'
+                f"<p>One failing check says {_esc(example)}. "
+                "If that difference is a decision already taken, the check is "
+                "simply out of date. If nobody decided it, something moved "
+                "that should not have.</p></div>"
+                if example
+                else ""
+            )
             + f'<div class="pb pb-dec"><span class="pb-k">What is failing'
-              f'</span>{detail}</div>'
+            f"</span>{detail}</div>"
             '<div class="pb pb-dec"><span class="pb-k">What you have to decide'
-            '</span><p>For each one: was this a change you made on purpose, or '
-            'not? That answer decides whether the check gets updated or the '
-            'system gets investigated. Nobody can settle it from this page '
-            'alone.</p></div>'
+            "</span><p>For each one: was this a change you made on purpose, or "
+            "not? That answer decides whether the check gets updated or the "
+            "system gets investigated. Nobody can settle it from this page "
+            "alone.</p></div>"
             '<div class="pb pb-rec"><span class="pb-k">Our recommendation'
-            '</span><p>Work through them one at a time rather than treating '
-            'the whole group as an alarm. Where a check names a setting or a '
-            'test that was renamed, updating the check is the fix. Where a '
-            'check expects a number you have since changed on purpose, the '
-            'check is stale and should follow your decision. Anything left '
-            'over after that is the real finding, and it is the only part '
-            'worth alarm.</p></div>')
+            "</span><p>Work through them one at a time rather than treating "
+            "the whole group as an alarm. Where a check names a setting or a "
+            "test that was renamed, updating the check is the fix. Where a "
+            "check expects a number you have since changed on purpose, the "
+            "check is stale and should follow your decision. Anything left "
+            "over after that is the real finding, and it is the only part "
+            "worth alarm.</p></div>",
+        )
 
     overdue = [d for d in decisions if d.overdue]
     due = overdue or [d for d in decisions if d.days_left <= 7]
@@ -2978,11 +3024,12 @@ def _render_right_now(contradicted: list[PhaseView],
             d.question,
             f'<div class="chips"><span class="chip">{_esc(_when_label(d))}</span>'
             f'<span class="chip chip-quiet">by '
-            f'{_esc(d.due.strftime("%-d %B %Y"))}</span></div>'
-            + _render_prose(d.prose, want_recommendation=True,
-                            raw_source=d.raw_body)
+            f"{_esc(d.due.strftime('%-d %B %Y'))}</span></div>"
+            + _render_prose(d.prose, want_recommendation=True, raw_source=d.raw_body)
             + _wording_note(d.question, "question"),
-            ref=d.ref, refs=d.refs)
+            ref=d.ref,
+            refs=d.refs,
+        )
 
     if open_items:
         # Nothing is waiting on his decision — the card says so in its own
@@ -2990,24 +3037,28 @@ def _render_right_now(contradicted: list[PhaseView],
         # callers pass only genuinely open items here: anything decided,
         # being built, or checked-and-fine has already been bucketed away.
         it = open_items[0]
-        return card("no decision is waiting on you — this is next in the "
-                    "running order", it.title,
-                    _render_prose(it.prose, raw_source=it.raw_body)
-                    + _wording_note(it.title, "name"),
-                    ref=it.ref, refs=it.refs)
+        return card(
+            "no decision is waiting on you — this is next in the running order",
+            it.title,
+            _render_prose(it.prose, raw_source=it.raw_body) + _wording_note(it.title, "name"),
+            ref=it.ref,
+            refs=it.refs,
+        )
 
-    return ('<article class="rn rn-clear"><div class="chips">'
-            '<span class="chip chip-strong">Right now</span></div>'
-            '<h2 class="rn-h">Nothing needs you</h2>'
-            '<div class="pb pb-plain"><span class="pb-k">In plain language'
-            '</span><p>No finished work has stopped proving out, no judgement '
-            'call is waiting on you, and the running order is empty. There is '
-            'nothing on this page to act on.</p></div></article>')
+    return (
+        '<article class="rn rn-clear"><div class="chips">'
+        '<span class="chip chip-strong">Right now</span></div>'
+        '<h2 class="rn-h">Nothing needs you</h2>'
+        '<div class="pb pb-plain"><span class="pb-k">In plain language'
+        "</span><p>No finished work has stopped proving out, no judgement "
+        "call is waiting on you, and the running order is empty. There is "
+        "nothing on this page to act on.</p></div></article>"
+    )
 
 
-def _safely(loader: Any, work_md: Path, what: str,
-            notes: dict[str, Prose] | None = None
-            ) -> tuple[list[QueueItem], str | None]:
+def _safely(
+    loader: Any, work_md: Path, what: str, notes: dict[str, Prose] | None = None
+) -> tuple[list[QueueItem], str | None]:
     """Run a backlog loader; turn any breakage into a sentence, never a crash.
 
     The loaders already report a moved heading or a changed item shape as a
@@ -3022,9 +3073,11 @@ def _safely(loader: Any, work_md: Path, what: str,
     try:
         return loader(work_md, notes=notes)
     except Exception as exc:  # noqa: BLE001 - a sentence beats a stack trace
-        return [], (f"The backlog could not be read, so {what} is not shown "
-                    f"here. The file itself needs looking at "
-                    f"({type(exc).__name__}).")
+        return [], (
+            f"The backlog could not be read, so {what} is not shown "
+            f"here. The file itself needs looking at "
+            f"({type(exc).__name__})."
+        )
 
 
 def _pm_gate_lede(open_count: int, total: int) -> str:
@@ -3035,9 +3088,8 @@ def _pm_gate_lede(open_count: int, total: int) -> str:
     deliberately empty gate. Say the clear state in words instead.
     """
     if total == 0 and open_count == 0:
-        return ("Every feed is signed off. Nothing is blocking the model "
-                "test on this gate.")
-    return (f"{open_count} of {total} feeds are still not signed off.")
+        return "Every feed is signed off. Nothing is blocking the model test on this gate."
+    return f"{open_count} of {total} feeds are still not signed off."
 
 
 def _unexplained_note(unexplained: int, total: int) -> str:
@@ -3048,17 +3100,22 @@ def _unexplained_note(unexplained: int, total: int) -> str:
     if total == 0:
         return ""
     if unexplained == 0:
-        return ("Every live item below has a plain-English explanation and a "
-                "real example.")
-    return (f"{unexplained} of the {total} have no plain-English explanation "
-            "yet. They are still listed, and marked as such &mdash; nothing "
-            "on this page is invented to fill a gap.")
+        return "Every live item below has a plain-English explanation and a real example."
+    return (
+        f"{unexplained} of the {total} have no plain-English explanation "
+        "yet. They are still listed, and marked as such &mdash; nothing "
+        "on this page is invented to fill a gap."
+    )
 
 
-def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
-           work_md: Path | None = None,
-           board_notes: Path | None = None,
-           in_flight: inflight.InFlight = inflight.NOT_ATTEMPTED) -> str:
+def render(
+    phases: list[PhaseView],
+    state: dict[str, Any],
+    template: Path,
+    work_md: Path | None = None,
+    board_notes: Path | None = None,
+    in_flight: inflight.InFlight = inflight.NOT_ATTEMPTED,
+) -> str:
     """`in_flight` is what GitHub said was open when `main` asked it (see
     `inflight.read_in_flight`). The default is the explicit "nobody asked"
     state, so a preview or a test renders an honest "could not read" line
@@ -3087,9 +3144,9 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     if settled:
         rows += (
             '<details class="finished">'
-            f'<summary>{len(settled)} finished and verified &mdash; expand to review</summary>'
+            f"<summary>{len(settled)} finished and verified &mdash; expand to review</summary>"
             f'<table class="plan">{"".join(_row(p) for p in settled)}</table>'
-            '</details>'
+            "</details>"
         )
 
     alarm = ""
@@ -3097,19 +3154,19 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         names = ", ".join(_esc(_strip_markdown(p.title)) for p in contradicted)
         alarm = (
             '<div class="item gap"><span class="chip chip-strong">Proof failed</span>'
-            f'<h3>{len(contradicted)} piece(s) of finished work no longer prove '
-            'they are finished</h3>'
-            f'<p>{names}</p>'
-            '<p>A check and the system disagree. That can mean the work broke, '
-            'or it can mean the check still expects something you changed on '
-            'purpose. The card at the top of this page lists each one.</p></div>'
+            f"<h3>{len(contradicted)} piece(s) of finished work no longer prove "
+            "they are finished</h3>"
+            f"<p>{names}</p>"
+            "<p>A check and the system disagree. That can mean the work broke, "
+            "or it can mean the check still expects something you changed on "
+            "purpose. The card at the top of this page lists each one.</p></div>"
         )
     else:
         alarm = (
             '<div class="item done"><span class="chip chip-quiet">All clear</span>'
-            '<h3>Everything recorded as finished still proves it</h3>'
-            '<p>Nothing claims to be done on evidence that has since stopped '
-            'holding.</p></div>'
+            "<h3>Everything recorded as finished still proves it</h3>"
+            "<p>Nothing claims to be done on evidence that has since stopped "
+            "holding.</p></div>"
         )
 
     # Reports, never gates: a flagged summary still renders in full further
@@ -3122,20 +3179,21 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         n = len(jargon_flagged)
         jargon_banner = (
             '<div class="jargon-banner"><b>'
-            f'{n} description{"s" if n != 1 else ""} below {"are" if n != 1 else "is"} '
-            'written for a developer, not for you.</b> They are marked where they '
-            'appear so you can tell them apart from the ones already in plain '
-            'English &mdash; nothing is hidden, they still say what they say.'
-            '</div>'
+            f"{n} description{'s' if n != 1 else ''} below {'are' if n != 1 else 'is'} "
+            "written for a developer, not for you.</b> They are marked where they "
+            "appear so you can tell them apart from the ones already in plain "
+            "English &mdash; nothing is hidden, they still say what they say."
+            "</div>"
         )
 
     if state.get("in_sync") is True:
-        deploy = ('<span class="dot ok"></span> The machine is running the latest '
-                  'finished work.')
+        deploy = '<span class="dot ok"></span> The machine is running the latest finished work.'
     elif state.get("undeployed_merges"):
-        deploy = (f'<span class="dot warn"></span> '
-                  f'{state["undeployed_merges"]} finished change(s) are not on the '
-                  'machine yet.')
+        deploy = (
+            f'<span class="dot warn"></span> '
+            f"{state['undeployed_merges']} finished change(s) are not on the "
+            "machine yet."
+        )
     else:
         deploy = '<span class="dot unk"></span> Deploy state could not be read.'
 
@@ -3151,7 +3209,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     timestamp = now.strftime("%A %-d %B %Y &middot; %H:%M ET")
     body = body.replace("{{STAMP}}", timestamp)
     # Commit hash in short form, visually subordinate with smaller font
-    stamp_hash = f"<span style=\"font-size:10px;opacity:0.65\">built from {cur_sha_short}</span>" if cur_sha_short else ""
+    stamp_hash = f'<span style="font-size:10px;opacity:0.65">built from {cur_sha_short}</span>' if cur_sha_short else ""
     body = body.replace("{{STAMP_HASH}}", stamp_hash)
     # The full commit this page was built against, stamped into a
     # machine-readable <meta> tag. src/api/server.py reads it back out at
@@ -3162,14 +3220,18 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{BUILT_SHA}}", _esc(state.get("box_sha_full") or ""))
     body = body.replace("{{DEPLOY}}", deploy)
     body = body.replace("{{CIRCUIT}}", _fmt(state.get("circuit")))
-    body = body.replace("{{SPEND}}", f"${spend:.2f}" if spend is not None else
-                        '<span class="unk">unknown</span>')
+    body = body.replace("{{SPEND}}", f"${spend:.2f}" if spend is not None else '<span class="unk">unknown</span>')
     body = body.replace("{{SPEND_PCT}}", str(pct if pct is not None else 0))
-    body = body.replace("{{SPEND_NOTE}}",
-                        ("nothing has run today" if spend == 0
-                         and state.get("sessions_today") == 0
-                         else f"of the ${limit:.2f} daily limit &mdash; {pct}% used")
-                        if pct is not None else "daily spend could not be read")
+    body = body.replace(
+        "{{SPEND_NOTE}}",
+        (
+            "nothing has run today"
+            if spend == 0 and state.get("sessions_today") == 0
+            else f"of the ${limit:.2f} daily limit &mdash; {pct}% used"
+        )
+        if pct is not None
+        else "daily spend could not be read",
+    )
     body = body.replace("{{SESSIONS}}", _fmt(state.get("sessions_today")))
 
     # --- everything below comes out of the backlog, the source of truth ----
@@ -3188,10 +3250,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         notes = load_board_notes(board_notes)
     except Exception:  # noqa: BLE001 - a blank prose set beats a stack trace
         notes = {}
-    queue_items, queue_problem = _safely(load_funnel_queue, work_md,
-                                         "the running order", notes=notes)
-    pm_gate_items, pm_gate_problem = _safely(load_pm_gate, work_md,
-                                             "the model-test gate", notes=notes)
+    queue_items, queue_problem = _safely(load_funnel_queue, work_md, "the running order", notes=notes)
+    pm_gate_items, pm_gate_problem = _safely(load_pm_gate, work_md, "the model-test gate", notes=notes)
     try:
         decisions = load_pending_decisions(work_md, notes=notes)
     except Exception:  # noqa: BLE001 - see above
@@ -3203,8 +3263,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # Finished by their own account, not ticked off in the backlog. Drawn as
     # finished — see `_render_finished_unmarked` for why that is the honest
     # reading and why drawing them as live work was the defect.
-    finished_unmarked = [i for i in queue_items
-                         if i.bucket == "finished_unmarked"]
+    finished_unmarked = [i for i in queue_items if i.bucket == "finished_unmarked"]
     review_owed = [i for i in queue_items if i.bucket == "review_owed"]
     # Prose says finished, the item's own boxes say otherwise. Left in the
     # running order (the boxes win, so it is live work) and named in the
@@ -3222,32 +3281,29 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # his own complaint. Removed from every bucket below by reference, never
     # copied, so one item can never show twice.
     owner_calls = sorted(
-        owner_call_items(queue_items) + owner_call_items(pm_gate_items),
-        key=lambda i: (i.source, i.rank))
+        owner_call_items(queue_items) + owner_call_items(pm_gate_items), key=lambda i: (i.source, i.rank)
+    )
     owner_call_refs = {i.ref for i in owner_calls}
     open_items = [i for i in open_items if i.ref not in owner_call_refs]
     paused_items = [i for i in paused_items if i.ref not in owner_call_refs]
     resolved_items = [i for i in resolved_items if i.ref not in owner_call_refs]
-    finished_unmarked = [i for i in finished_unmarked
-                         if i.ref not in owner_call_refs]
+    finished_unmarked = [i for i in finished_unmarked if i.ref not in owner_call_refs]
     review_owed = [i for i in review_owed if i.ref not in owner_call_refs]
-    closure_disputed = [i for i in closure_disputed
-                        if i.ref not in owner_call_refs]
+    closure_disputed = [i for i in closure_disputed if i.ref not in owner_call_refs]
     in_hand = [i for i in in_hand if i.ref not in owner_call_refs]
     no_action = [i for i in no_action if i.ref not in owner_call_refs]
     unexplained = [i for i in open_items if not i.prose.plain]
 
-    body = body.replace("{{RIGHT_NOW}}",
-                        _render_right_now(contradicted, decisions, open_items))
+    body = body.replace("{{RIGHT_NOW}}", _render_right_now(contradicted, decisions, open_items))
     body = body.replace("{{DECISIONS}}", _render_decisions(decisions, owner_calls))
     body = body.replace("{{QUEUE}}", _render_open_queue(open_items, queue_problem))
-    body = body.replace("{{PAUSED}}", _render_one_liners(
-        paused_items,
-        "Nothing is parked. Everything in the backlog is either being worked "
-        "on or already finished."))
-    body = body.replace("{{FINISHED_UNMARKED}}",
-                        _render_finished_unmarked(finished_unmarked,
-                                                  closure_disputed))
+    body = body.replace(
+        "{{PAUSED}}",
+        _render_one_liners(
+            paused_items, "Nothing is parked. Everything in the backlog is either being worked on or already finished."
+        ),
+    )
+    body = body.replace("{{FINISHED_UNMARKED}}", _render_finished_unmarked(finished_unmarked, closure_disputed))
     body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
     body = body.replace("{{IN_HAND}}", _render_in_hand(in_hand))
     body = body.replace("{{IN_HAND_COUNT}}", str(len(in_hand)))
@@ -3257,28 +3313,31 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{IN_FLIGHT}}", inflight.render_in_flight(in_flight))
     body = body.replace("{{NO_ACTION}}", _render_no_action(no_action))
     body = body.replace("{{NO_ACTION_COUNT}}", str(len(no_action)))
-    body = body.replace("{{RESOLVED}}", _render_one_liners(
-        resolved_items,
-        "Nothing has been signed off as finished yet.", struck=True))
+    body = body.replace(
+        "{{RESOLVED}}", _render_one_liners(resolved_items, "Nothing has been signed off as finished yet.", struck=True)
+    )
     body = body.replace("{{QUEUE_OPEN}}", str(len(open_items)))
     body = body.replace("{{QUEUE_TOTAL}}", str(len(queue_items)))
     body = body.replace("{{PAUSED_COUNT}}", str(len(paused_items)))
     body = body.replace("{{RESOLVED_COUNT}}", str(len(resolved_items)))
     body = body.replace("{{FINISHED_UNMARKED_COUNT}}", str(len(finished_unmarked)))
     body = body.replace("{{REVIEW_OWED_COUNT}}", str(len(review_owed)))
-    body = body.replace("{{UNEXPLAINED_NOTE}}",
-                        _unexplained_note(len(unexplained), len(open_items)))
+    body = body.replace("{{UNEXPLAINED_NOTE}}", _unexplained_note(len(unexplained), len(open_items)))
 
-    pm_gate_open = [i for i in pm_gate_items
-                   if not i.done and i.ref not in owner_call_refs]
-    body = body.replace("{{PM_GATE}}", _render_open_queue(
-        pm_gate_open, pm_gate_problem,
-        empty_message="Gate clear — nothing is blocking the model test."))
-    body = body.replace("{{PM_GATE_LEDE}}",
-                        _pm_gate_lede(len(pm_gate_open), len(pm_gate_items)))
-    body = body.replace("{{PM_GATE_DONE}}", _render_one_liners(
-        [i for i in pm_gate_items if i.done],
-        "None of the feeds have been signed off yet.", struck=True))
+    pm_gate_open = [i for i in pm_gate_items if not i.done and i.ref not in owner_call_refs]
+    body = body.replace(
+        "{{PM_GATE}}",
+        _render_open_queue(
+            pm_gate_open, pm_gate_problem, empty_message="Gate clear — nothing is blocking the model test."
+        ),
+    )
+    body = body.replace("{{PM_GATE_LEDE}}", _pm_gate_lede(len(pm_gate_open), len(pm_gate_items)))
+    body = body.replace(
+        "{{PM_GATE_DONE}}",
+        _render_one_liners(
+            [i for i in pm_gate_items if i.done], "None of the feeds have been signed off yet.", struck=True
+        ),
+    )
     body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)
     body = body.replace("{{RULES_TOTAL}}", str(total_rules))
@@ -3295,20 +3354,29 @@ def main() -> int:
     ap.add_argument("--out", default="data/board/index.html")
     ap.add_argument("--manifest", default="docs/phases.yaml")
     ap.add_argument("--template", default="scripts/status_board_template.html")
-    ap.add_argument("--work-md", default="docs/WORK.md",
-                    help="the backlog to render from; point it elsewhere to "
-                         "preview a page without touching the real one")
-    ap.add_argument("--board-notes", default="docs/board_notes",
-                    help="the owner-facing prose to render alongside the "
-                         "backlog's items; point it elsewhere to preview a "
-                         "page without touching the real one")
-    ap.add_argument("--no-github", action="store_true",
-                    help="do not ask GitHub what is in flight; the section "
-                         "then says the page was built without asking, "
-                         "never that nothing is in flight")
+    ap.add_argument(
+        "--work-md",
+        default="docs/WORK.md",
+        help="the backlog to render from; point it elsewhere to preview a page without touching the real one",
+    )
+    ap.add_argument(
+        "--board-notes",
+        default="docs/board_notes",
+        help="the owner-facing prose to render alongside the "
+        "backlog's items; point it elsewhere to preview a "
+        "page without touching the real one",
+    )
+    ap.add_argument(
+        "--no-github",
+        action="store_true",
+        help="do not ask GitHub what is in flight; the section "
+        "then says the page was built without asking, "
+        "never that nothing is in flight",
+    )
     ap.add_argument("--json", action="store_true", help="also print the findings as JSON")
-    ap.add_argument("--explain", metavar="PHASE_ID", default=None,
-                    help="print every rule and its verdict for one phase, then exit")
+    ap.add_argument(
+        "--explain", metavar="PHASE_ID", default=None, help="print every rule and its verdict for one phase, then exit"
+    )
     args = ap.parse_args()
 
     manifest = REPO_ROOT / args.manifest
@@ -3323,8 +3391,10 @@ def main() -> int:
         entries = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
         hit = [e for e in entries if str(e.get("id")) == args.explain]
         if not hit:
-            print(f"no phase with id {args.explain!r}. ids: "
-                  + ", ".join(str(e.get('id')) for e in entries), file=sys.stderr)
+            print(
+                f"no phase with id {args.explain!r}. ids: " + ", ".join(str(e.get("id")) for e in entries),
+                file=sys.stderr,
+            )
             return 2
         e = hit[0]
         print(f"{e.get('title')}  —  recorded as {e.get('status')}")
@@ -3349,33 +3419,48 @@ def main() -> int:
     board_notes = Path(args.board_notes)
     if not board_notes.is_absolute():
         board_notes = REPO_ROOT / board_notes
-    in_flight = (inflight.NOT_ATTEMPTED if args.no_github
-                 else inflight.read_in_flight())
+    in_flight = inflight.NOT_ATTEMPTED if args.no_github else inflight.read_in_flight()
     try:
-        out.write_text(render(phases, state, REPO_ROOT / args.template, work_md,
-                              board_notes, in_flight=in_flight))
+        out.write_text(render(phases, state, REPO_ROOT / args.template, work_md, board_notes, in_flight=in_flight))
     except OSError as exc:
         print(f"failed to write {out}: {exc}", file=sys.stderr)
         return 2
 
     contradicted = [p.title for p in phases if p.verdict == "CONTRADICTED"]
     if args.json:
-        print(json.dumps({
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "out": str(out),
-            "contradicted": contradicted,
-            "in_flight": ({"problem": in_flight.problem} if not in_flight.readable
-                          else {"read_at": in_flight.read_at,
-                                "items": [{"number": i.number, "title": i.title,
-                                           "stage": i.stage}
-                                          for i in in_flight.items]}),
-            "state": {k: v for k, v in state.items()},
-            "phases": [
-                {"id": p.id, "recorded": p.recorded, "verdict": p.verdict,
-                 "pass": p.passed, "fail": p.failed, "unknown": p.unknown}
-                for p in phases
-            ],
-        }, indent=2, default=str))
+        print(
+            json.dumps(
+                {
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "out": str(out),
+                    "contradicted": contradicted,
+                    "in_flight": (
+                        {"problem": in_flight.problem}
+                        if not in_flight.readable
+                        else {
+                            "read_at": in_flight.read_at,
+                            "items": [
+                                {"number": i.number, "title": i.title, "stage": i.stage} for i in in_flight.items
+                            ],
+                        }
+                    ),
+                    "state": {k: v for k, v in state.items()},
+                    "phases": [
+                        {
+                            "id": p.id,
+                            "recorded": p.recorded,
+                            "verdict": p.verdict,
+                            "pass": p.passed,
+                            "fail": p.failed,
+                            "unknown": p.unknown,
+                        }
+                        for p in phases
+                    ],
+                },
+                indent=2,
+                default=str,
+            )
+        )
     else:
         print(f"wrote {out}")
         print(f"phases: {len(phases)}  contradicted: {len(contradicted)}")

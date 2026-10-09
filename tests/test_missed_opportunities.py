@@ -54,7 +54,14 @@ def _pipeline_with(
     _build_missed_opportunities_digest touches. All other TradingPipeline
     attributes are absent — any accidental access will AttributeError the
     test, which is what we want."""
-    p = build_pipeline(broker=MagicMock(), market=MagicMock(), db=MagicMock(), news_store=MagicMock(), earnings_provider=MagicMock(), macro_store=MagicMock())
+    p = build_pipeline(
+        broker=MagicMock(),
+        market=MagicMock(),
+        db=MagicMock(),
+        news_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_store=MagicMock(),
+    )
 
     # Config — only the universe is read.
     p.config = MagicMock()
@@ -69,6 +76,7 @@ def _pipeline_with(
         if not closes:
             return []
         return _mk_ohlcv([(symbol, c) for c in closes])
+
     p.market.get_ohlcv.side_effect = _ohlcv
 
     # DB — only the two calls made by missed_ops helpers.
@@ -89,6 +97,7 @@ def _pipeline_with(
 # Core digest behavior
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker._get_sector", return_value="Technology")
 def test_digest_filters_below_threshold(_sec):
     """Symbols that moved less than move_threshold_pct (abs) must not appear.
@@ -96,13 +105,14 @@ def test_digest_filters_below_threshold(_sec):
     p = _pipeline_with(
         universe=["A", "B", "C"],
         market_closes_by_symbol={
-            "A": [100, 101, 102, 103, 104, 105],   # +5% — below 8%
-            "B": [100, 103, 106, 109, 112, 115],   # +15% — kept
+            "A": [100, 101, 102, 103, 104, 105],  # +5% — below 8%
+            "B": [100, 103, 106, 109, 112, 115],  # +15% — kept
             "C": [100, 100.5, 101, 100.7, 100.2, 100.6],  # ~flat — dropped
         },
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     syms = [s.symbol for s in out]
     assert syms == ["B"]
@@ -116,17 +126,18 @@ def test_digest_merges_universe_and_top_movers_with_source_tags(_sec):
     p = _pipeline_with(
         universe=["A", "B"],
         top_movers=[
-            {"symbol": "B", "percent_change": 18.0, "price": 50.0},   # both
-            {"symbol": "Z", "percent_change": 20.0, "price": 80.0},   # top_mover only
+            {"symbol": "B", "percent_change": 18.0, "price": 50.0},  # both
+            {"symbol": "Z", "percent_change": 20.0, "price": 80.0},  # top_mover only
         ],
         market_closes_by_symbol={
-            "A": [100, 105, 108, 110, 113, 118],   # +18%
-            "B": [50, 55, 57, 59, 60, 62],         # +24%
-            "Z": [80, 84, 88, 90, 93, 96],         # +20%
+            "A": [100, 105, 108, 110, 113, 118],  # +18%
+            "B": [50, 55, 57, 59, 60, 62],  # +24%
+            "Z": [80, 84, 88, 90, 93, 96],  # +20%
         },
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     by_sym = {s.symbol: s for s in out}
     assert by_sym["A"].source == "universe"
@@ -144,12 +155,13 @@ def test_digest_excludes_held_when_current_position(_sec):
     p = _pipeline_with(
         universe=["HELD", "NOTHELD"],
         market_closes_by_symbol={
-            "HELD":    [100, 105, 108, 110, 113, 118],
+            "HELD": [100, 105, 108, 110, 113, 118],
             "NOTHELD": [100, 105, 108, 110, 113, 118],
         },
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
         current_position_symbols={"HELD"},
     )
     syms = {s.symbol for s in out}
@@ -165,6 +177,7 @@ def test_digest_excludes_held_when_recent_trade(_sec):
     a "missed opportunity" we literally just took. Pre-filter prevents
     that contradiction reaching the LLM."""
     from src.trading_calendar import et_today
+
     recent_ts = et_today().isoformat() + " 10:30:00"
     p = _pipeline_with(
         universe=["R", "X"],
@@ -173,12 +186,12 @@ def test_digest_excludes_held_when_recent_trade(_sec):
             "X": [100, 105, 108, 110, 113, 118],
         },
         trades=[
-            {"symbol": "R", "timestamp": recent_ts, "action": "BUY",
-             "fill_status": "filled"},
+            {"symbol": "R", "timestamp": recent_ts, "action": "BUY", "fill_status": "filled"},
         ],
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     syms = {s.symbol for s in out}
     assert "R" not in syms  # recently traded → filtered out
@@ -191,34 +204,36 @@ def test_digest_sort_priority_signal_first_after_held_filter(_sec):
     not-held + signal → not-held + no-signal, ordered by |move_pct|
     within each group. HELD_SYM doesn't appear in the output at all."""
     import json as _json
-    tech_json = _json.dumps({
-        "analyses": [
-            {"symbol": "SIGNAL_NOTHELD", "rating": "buy"},
-            {"symbol": "HELD_SYM",       "rating": "buy"},
-        ]
-    })
+
+    tech_json = _json.dumps(
+        {
+            "analyses": [
+                {"symbol": "SIGNAL_NOTHELD", "rating": "buy"},
+                {"symbol": "HELD_SYM", "rating": "buy"},
+            ]
+        }
+    )
     from src.trading_calendar import et_today
+
     today_iso = et_today().isoformat()
     p = _pipeline_with(
         universe=["SIGNAL_NOTHELD", "BLIND_NOTHELD", "HELD_SYM"],
         market_closes_by_symbol={
             "SIGNAL_NOTHELD": [100, 104, 107, 109, 112, 115],  # +15%
-            "BLIND_NOTHELD":  [100, 105, 110, 115, 120, 125],  # +25% (biggest)
-            "HELD_SYM":       [100, 108, 115, 118, 122, 130],  # +30% (biggest, but held)
+            "BLIND_NOTHELD": [100, 105, 110, 115, 120, 125],  # +25% (biggest)
+            "HELD_SYM": [100, 108, 115, 118, 122, 130],  # +30% (biggest, but held)
         },
         tech_rows=[
-            {"timestamp": today_iso + " 09:35:00",
-             "full_response": tech_json},
+            {"timestamp": today_iso + " 09:35:00", "full_response": tech_json},
         ],
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
         current_position_symbols={"HELD_SYM"},
     )
     syms = [s.symbol for s in out]
-    assert "HELD_SYM" not in syms, (
-        f"held name must be filtered out, not just sorted last; got {syms}"
-    )
+    assert "HELD_SYM" not in syms, f"held name must be filtered out, not just sorted last; got {syms}"
     # SIGNAL_NOTHELD (had signal) beats BLIND_NOTHELD (no signal) regardless
     # of move size — that's the "we should have noticed" priority.
     assert syms[0] == "SIGNAL_NOTHELD"
@@ -230,16 +245,15 @@ def test_digest_top_n_caps_result(_sec):
     """Even with many candidates, digest caps at top_n — otherwise LLM
     prompt balloons."""
     syms = [f"S{i}" for i in range(30)]
-    closes_by_sym = {
-        s: [100] + [100 * (1 + 0.03 * (i + 1)) for i in range(5)]
-        for s in syms
-    }
+    closes_by_sym = {s: [100] + [100 * (1 + 0.03 * (i + 1)) for i in range(5)] for s in syms}
     p = _pipeline_with(
         universe=syms,
         market_closes_by_symbol=closes_by_sym,
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0, top_n=15,
+        lookback_days=5,
+        move_threshold_pct=8.0,
+        top_n=15,
     )
     assert len(out) == 15
 
@@ -272,6 +286,7 @@ def test_digest_survives_top_movers_api_failure(_sec):
 # Signal-tag enrichment
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker._get_sector", return_value="Technology")
 def test_digest_tech_signal_flag_handles_bare_list_shape(_sec):
     """Regression: production tech_analyst full_response is sometimes a
@@ -280,25 +295,31 @@ def test_digest_tech_signal_flag_handles_bare_list_shape(_sec):
     otherwise it silently treats every symbol as having no TA signal."""
     import json as _json
     from src.trading_calendar import et_today
+
     today_iso = et_today().isoformat()
 
     p = _pipeline_with(
         universe=["NVDA", "HOLDSYM"],
         market_closes_by_symbol={
-            "NVDA":    [100, 105, 108, 110, 113, 118],  # +18%
+            "NVDA": [100, 105, 108, 110, 113, 118],  # +18%
             "HOLDSYM": [100, 105, 108, 110, 113, 118],
         },
         tech_rows=[
             # BARE LIST — matches the production shape observed 2026-04-19
-            {"timestamp": today_iso + " 09:35:00",
-             "full_response": _json.dumps([
-                 {"symbol": "NVDA", "rating": "buy"},
-                 {"symbol": "HOLDSYM", "rating": "hold"},
-             ])},
+            {
+                "timestamp": today_iso + " 09:35:00",
+                "full_response": _json.dumps(
+                    [
+                        {"symbol": "NVDA", "rating": "buy"},
+                        {"symbol": "HOLDSYM", "rating": "hold"},
+                    ]
+                ),
+            },
         ],
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     by = {s.symbol: s for s in out}
     assert by["NVDA"].had_ta_signal is True
@@ -313,28 +334,31 @@ def test_digest_populates_ta_signal_flag_from_recent_logs(_sec):
     is 'buy' or 'strong_buy'. Any other rating → False."""
     import json as _json
     from src.trading_calendar import et_today
+
     today_iso = et_today().isoformat()
-    tech_json = _json.dumps({
-        "analyses": [
-            {"symbol": "BUY_SIG",   "rating": "buy"},
-            {"symbol": "HOLD_SIG",  "rating": "hold"},
-            {"symbol": "SELL_SIG",  "rating": "sell"},
-        ]
-    })
+    tech_json = _json.dumps(
+        {
+            "analyses": [
+                {"symbol": "BUY_SIG", "rating": "buy"},
+                {"symbol": "HOLD_SIG", "rating": "hold"},
+                {"symbol": "SELL_SIG", "rating": "sell"},
+            ]
+        }
+    )
     p = _pipeline_with(
         universe=["BUY_SIG", "HOLD_SIG", "SELL_SIG"],
         market_closes_by_symbol={
-            "BUY_SIG":  [100, 105, 108, 110, 113, 118],
+            "BUY_SIG": [100, 105, 108, 110, 113, 118],
             "HOLD_SIG": [100, 105, 108, 110, 113, 118],
             "SELL_SIG": [100, 105, 108, 110, 113, 118],
         },
         tech_rows=[
-            {"timestamp": today_iso + " 09:35:00",
-             "full_response": tech_json},
+            {"timestamp": today_iso + " 09:35:00", "full_response": tech_json},
         ],
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     by = {s.symbol: s for s in out}
     assert by["BUY_SIG"].had_ta_signal is True
@@ -350,31 +374,39 @@ def test_digest_populates_news_signal_from_state_changes(_sec, tmp_path):
     dated full_report.json files in the lookback window."""
     import json as _json
     from src.trading_calendar import et_today
+
     news_dir = tmp_path / "news"
     news_dir.mkdir()
     day_dir = news_dir / str(et_today())
     day_dir.mkdir()
-    (day_dir / "full_report.json").write_text(_json.dumps({
-        "state_changes": [{
-            "event": "AI capex cycle accelerating",
-            "affected_symbols": ["AI_SYM"],
-        }],
-        "stock_news": {
-            "STOCK_NEWS_SYM": [{"headline": "Q1 beat estimates"}],
-        },
-    }))
+    (day_dir / "full_report.json").write_text(
+        _json.dumps(
+            {
+                "state_changes": [
+                    {
+                        "event": "AI capex cycle accelerating",
+                        "affected_symbols": ["AI_SYM"],
+                    }
+                ],
+                "stock_news": {
+                    "STOCK_NEWS_SYM": [{"headline": "Q1 beat estimates"}],
+                },
+            }
+        )
+    )
 
     p = _pipeline_with(
         universe=["AI_SYM", "STOCK_NEWS_SYM", "NO_NEWS_SYM"],
         market_closes_by_symbol={
-            "AI_SYM":         [100, 105, 108, 110, 113, 118],
+            "AI_SYM": [100, 105, 108, 110, 113, 118],
             "STOCK_NEWS_SYM": [100, 105, 108, 110, 113, 118],
-            "NO_NEWS_SYM":    [100, 105, 108, 110, 113, 118],
+            "NO_NEWS_SYM": [100, 105, 108, 110, 113, 118],
         },
         news_dir_path=news_dir,
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     by = {s.symbol: s for s in out}
     assert by["AI_SYM"].had_news_signal is True
@@ -398,7 +430,8 @@ def test_digest_macro_sector_tailwind_from_stored_state(_sec):
         },
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     assert out[0].macro_sector_tailwind == "bullish"
 
@@ -412,7 +445,8 @@ def test_digest_macro_sector_tailwind_defaults_unknown(_sec):
         macro_state={"sector_guidance": {"Energy": "bullish"}},
     )
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     assert out[0].macro_sector_tailwind == "unknown"
 
@@ -420,6 +454,7 @@ def test_digest_macro_sector_tailwind_defaults_unknown(_sec):
 # ---------------------------------------------------------------------------
 # Persistence to insights.missed_opportunities_json
 # ---------------------------------------------------------------------------
+
 
 def test_save_evening_snapshot_persists_missed_opportunities(tmp_path):
     """Round-trip: MissedOpportunity pydantic → json column → dict back."""
@@ -431,28 +466,39 @@ def test_save_evening_snapshot_persists_missed_opportunities(tmp_path):
 
     mos = [
         MissedOpportunity(
-            symbol="VST", move_pct=22.3,
-            miss_category="theme_blindspot", theme_if_any="nuclear/power",
+            symbol="VST",
+            move_pct=22.3,
+            miss_category="theme_blindspot",
+            theme_if_any="nuclear/power",
             lesson="Nuclear theme never entered news tracker; add coverage",
         ),
         MissedOpportunity(
-            symbol="OKLO", move_pct=18.7,
-            miss_category="trend_timing_miss", theme_if_any="nuclear/power",
+            symbol="OKLO",
+            move_pct=18.7,
+            miss_category="trend_timing_miss",
+            theme_if_any="nuclear/power",
             lesson="News flagged capex 9d ago, PM never sized in",
         ),
     ]
     db.save_evening_snapshot(
-        date="2026-04-20", total_value=100_000, daily_pnl=200,
+        date="2026-04-20",
+        total_value=100_000,
+        daily_pnl=200,
         daily_return_pct=0.2,
-        tomorrow_outlook="x", lessons="y", suggested_actions=[],
-        risk_rating="low", tomorrow_bias="neutral",
-        tomorrow_conviction="medium", tomorrow_key_risks=[],
+        tomorrow_outlook="x",
+        lessons="y",
+        suggested_actions=[],
+        risk_rating="low",
+        tomorrow_bias="neutral",
+        tomorrow_conviction="medium",
+        tomorrow_key_risks=[],
         sell_decisions_assessment="",
         missed_opportunities=mos,
     )
     row = db.get_latest_insights(before_date="2026-04-21")
     assert row is not None
     import json
+
     persisted = json.loads(row["missed_opportunities_json"])
     assert len(persisted) == 2
     assert persisted[0]["symbol"] == "VST"
@@ -470,11 +516,17 @@ def test_save_evening_snapshot_missed_opportunities_optional(tmp_path):
     db.initialize()
 
     db.save_evening_snapshot(
-        date="2026-04-20", total_value=100_000, daily_pnl=0,
+        date="2026-04-20",
+        total_value=100_000,
+        daily_pnl=0,
         daily_return_pct=0.0,
-        tomorrow_outlook="x", lessons="y", suggested_actions=[],
-        risk_rating="low", tomorrow_bias="neutral",
-        tomorrow_conviction="medium", tomorrow_key_risks=[],
+        tomorrow_outlook="x",
+        lessons="y",
+        suggested_actions=[],
+        risk_rating="low",
+        tomorrow_bias="neutral",
+        tomorrow_conviction="medium",
+        tomorrow_key_risks=[],
         sell_decisions_assessment="",
     )
     row = db.get_latest_insights(before_date="2026-04-21")
@@ -493,8 +545,7 @@ def test_legacy_insights_row_missing_missed_opportunities_column(tmp_path):
     db.initialize()
     # Simulate a pre-migration row by inserting directly without the new col.
     db.conn.execute(
-        "INSERT INTO insights (date, tomorrow_outlook, lessons, risk_rating) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO insights (date, tomorrow_outlook, lessons, risk_rating) VALUES (?, ?, ?, ?)",
         ("2026-04-10", "legacy", "legacy lessons", "low"),
     )
     db.conn.commit()
@@ -512,21 +563,30 @@ def test_legacy_insights_row_missing_missed_opportunities_column(tmp_path):
 # Evening prompt rendering
 # ---------------------------------------------------------------------------
 
+
 def _make_evening_agent():
     from unittest.mock import patch as _patch
     from src.agents.evening_analyst import EveningAnalystAgent
+
     with _patch("anthropic.Anthropic"):
         return EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
 
 
 def _base_evening_kwargs():
     return dict(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
-        today_trades=[], prior_outlook=None,
-        recent_sells=[], recent_buys=[],
-        news_intel=None, earnings_analyses=[],
-        weekly_narrative="", active_state_changes="",
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
+        today_trades=[],
+        prior_outlook=None,
+        recent_sells=[],
+        recent_buys=[],
+        news_intel=None,
+        earnings_analyses=[],
+        weekly_narrative="",
+        active_state_changes="",
         outlook_calibration={},
     )
 
@@ -536,14 +596,20 @@ def test_evening_prompt_renders_missed_ops_section_with_snapshots():
     symbol with its source, move%, held flag, TA/news/earnings/macro
     context. The LLM uses these facts to classify miss_category."""
     from src.models import MissedOpportunitySnapshot
+
     agent = _make_evening_agent()
 
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
-        held_during_window=False, had_ta_signal=False,
-        had_news_signal=True, had_earnings_signal=False,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
+        held_during_window=False,
+        had_ta_signal=False,
+        had_news_signal=True,
+        had_earnings_signal=False,
         source="top_mover",
-        last_ta_rating=None, last_ta_date=None,
+        last_ta_rating=None,
+        last_ta_date=None,
         last_news_headline="Nuclear capex thesis accelerating",
         theme_tags=["nuclear-power"],
         recent_earnings_signal=None,
@@ -579,12 +645,17 @@ def test_evening_prompt_renders_market_relative_move_on_recent_buys():
     from systemic_drawdown without guessing."""
     agent = _make_evening_agent()
     kwargs = _base_evening_kwargs()
-    kwargs["recent_buys"] = [{
-        "symbol": "MU", "buy_date": "2026-04-15", "buy_price": 100,
-        "current_price": 85, "pct_move_since_buy": -15.0,
-        "market_relative_move_pct": -14.5,  # SPY ~ -0.5%, we fell 15% → alpha destruction
-        "reasoning": "chasing memory cycle",
-    }]
+    kwargs["recent_buys"] = [
+        {
+            "symbol": "MU",
+            "buy_date": "2026-04-15",
+            "buy_price": 100,
+            "current_price": 85,
+            "pct_move_since_buy": -15.0,
+            "market_relative_move_pct": -14.5,  # SPY ~ -0.5%, we fell 15% → alpha destruction
+            "reasoning": "chasing memory cycle",
+        }
+    ]
     msg = agent.build_user_message(**kwargs)
     assert "MU" in msg
     assert "vs SPY:" in msg
@@ -596,12 +667,17 @@ def test_evening_prompt_omits_spy_tag_when_relative_not_available():
     benchmark tag rendered; the row still appears with its own move."""
     agent = _make_evening_agent()
     kwargs = _base_evening_kwargs()
-    kwargs["recent_buys"] = [{
-        "symbol": "MU", "buy_date": "2026-04-15", "buy_price": 100,
-        "current_price": 85, "pct_move_since_buy": -15.0,
-        "market_relative_move_pct": None,
-        "reasoning": "chasing memory cycle",
-    }]
+    kwargs["recent_buys"] = [
+        {
+            "symbol": "MU",
+            "buy_date": "2026-04-15",
+            "buy_price": 100,
+            "current_price": 85,
+            "pct_move_since_buy": -15.0,
+            "market_relative_move_pct": None,
+            "reasoning": "chasing memory cycle",
+        }
+    ]
     msg = agent.build_user_message(**kwargs)
     assert "MU" in msg
     assert "vs SPY:" not in msg
@@ -610,6 +686,7 @@ def test_evening_prompt_omits_spy_tag_when_relative_not_available():
 # ---------------------------------------------------------------------------
 # _build_recent_buys_for_grading injects market_relative_move_pct
 # ---------------------------------------------------------------------------
+
 
 def test_recent_buys_injects_spy_relative_move(tmp_path):
     """Regression: the helper fetches SPY bars once and tags each BUY with
@@ -625,13 +702,13 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
     # Insert one executed BUY from ~3 days ago with reasonable buy_date.
     from src.trading_calendar import et_today
     from datetime import timedelta
+
     buy_d = et_today() - timedelta(days=3)
     p.db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, reasoning, "
         "run_id, fill_status, fill_qty, fill_price, timestamp) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("MU", "BUY", 10, 100.0, "test buy", "r1", "filled", 10, 100.0,
-         f"{buy_d.isoformat()} 09:35:00"),
+        ("MU", "BUY", 10, 100.0, "test buy", "r1", "filled", 10, 100.0, f"{buy_d.isoformat()} 09:35:00"),
     )
     p.db.conn.commit()
 
@@ -640,27 +717,28 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
     p.broker = MagicMock()
     # Keyed by symbol: the audit-round-2 fix fetches a LIVE SPY quote for the
     # benchmark leg, so SPY must return SPY's price, not the stock's.
-    p.broker.get_latest_price.side_effect = (
-        lambda sym: 100.5 if sym == "SPY" else 85.0
-    )
+    p.broker.get_latest_price.side_effect = lambda sym: 100.5 if sym == "SPY" else 85.0
 
     p.market = MagicMock()
+
     def _ohlcv(symbol, lookback_days=12):
         def _bar(d, close):
             b = MagicMock()
             b.date = d
             b.close = close
             return b
+
         if symbol == "SPY":
             # oldest → newest bars; buy_date match or nearby
             return [
                 _bar(et_today() - timedelta(days=10), 99.0),
-                _bar(et_today() - timedelta(days=5),  99.5),
-                _bar(buy_d,                            100.0),
-                _bar(et_today() - timedelta(days=2),  100.3),
-                _bar(et_today(),                      100.5),
+                _bar(et_today() - timedelta(days=5), 99.5),
+                _bar(buy_d, 100.0),
+                _bar(et_today() - timedelta(days=2), 100.3),
+                _bar(et_today(), 100.5),
             ]
         return []
+
     p.market.get_ohlcv.side_effect = _ohlcv
 
     out = p._build_recent_buys_for_grading(lookback_days=5)
@@ -677,8 +755,10 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
 # PM L3d — _build_recent_missed_lessons
 # ---------------------------------------------------------------------------
 
+
 def _pipeline_with_insights_rows(rows: list[dict]):
     from src.pipeline import TradingPipeline
+
     p = build_pipeline(db=MagicMock())
     p.db.get_recent_insights.return_value = rows
     return p
@@ -688,27 +768,47 @@ def test_recent_missed_lessons_surfaces_themes_seen_2plus_days():
     """A theme flagged on ≥ 2 distinct days counts as recurring and
     surfaces to PM's L3d. Single-day noise is filtered out."""
     import json
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": json.dumps([
-             {"symbol": "VST", "move_pct": 22.3,
-              "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "lesson": "nuclear capex theme never entered news tracker"},
-         ])},
-        {"date": "2026-04-17",
-         "missed_opportunities_json": json.dumps([
-             {"symbol": "OKLO", "move_pct": 18.7,
-              "miss_category": "trend_timing_miss",
-              "theme_if_any": "nuclear/power",
-              "lesson": "news flagged capex 9d ago, PM never sized"},
-             # One-day only — should NOT surface:
-             {"symbol": "TSLA", "move_pct": 11.0,
-              "miss_category": "trend_timing_miss",
-              "theme_if_any": "EV",
-              "lesson": "single day blip"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": json.dumps(
+                    [
+                        {
+                            "symbol": "VST",
+                            "move_pct": 22.3,
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "lesson": "nuclear capex theme never entered news tracker",
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "missed_opportunities_json": json.dumps(
+                    [
+                        {
+                            "symbol": "OKLO",
+                            "move_pct": 18.7,
+                            "miss_category": "trend_timing_miss",
+                            "theme_if_any": "nuclear/power",
+                            "lesson": "news flagged capex 9d ago, PM never sized",
+                        },
+                        # One-day only — should NOT surface:
+                        {
+                            "symbol": "TSLA",
+                            "move_pct": 11.0,
+                            "miss_category": "trend_timing_miss",
+                            "theme_if_any": "EV",
+                            "lesson": "single day blip",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_recent_missed_lessons(lookback_days=14)
     assert "nuclear/power" in out
     assert "VST" in out and "OKLO" in out
@@ -722,20 +822,32 @@ def test_recent_missed_lessons_ignores_escape_hatch_categories():
     """noise_rally and risk_disciplined aren't real misses — even if they
     repeat across days they shouldn't pollute PM's memory."""
     import json
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": json.dumps([
-             {"symbol": "X", "move_pct": 9.0,
-              "miss_category": "noise_rally",
-              "lesson": "no signal, legitimate skip"},
-         ])},
-        {"date": "2026-04-17",
-         "missed_opportunities_json": json.dumps([
-             {"symbol": "X", "move_pct": 9.0,
-              "miss_category": "noise_rally",
-              "lesson": "no signal day 2"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": json.dumps(
+                    [
+                        {
+                            "symbol": "X",
+                            "move_pct": 9.0,
+                            "miss_category": "noise_rally",
+                            "lesson": "no signal, legitimate skip",
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "missed_opportunities_json": json.dumps(
+                    [
+                        {"symbol": "X", "move_pct": 9.0, "miss_category": "noise_rally", "lesson": "no signal day 2"},
+                    ]
+                ),
+            },
+        ]
+    )
     assert p._build_recent_missed_lessons(lookback_days=14) == ""
 
 
@@ -745,10 +857,11 @@ def test_recent_missed_lessons_empty_on_no_insights():
 
 
 def test_recent_missed_lessons_malformed_json_gracefully_ignored():
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": "{ not json"},
-    ])
+    p = _pipeline_with_insights_rows(
+        [
+            {"date": "2026-04-18", "missed_opportunities_json": "{ not json"},
+        ]
+    )
     # No crash, just no output.
     assert p._build_recent_missed_lessons(lookback_days=14) == ""
 
@@ -757,28 +870,49 @@ def test_recent_missed_lessons_malformed_json_gracefully_ignored():
 # PM L3f — _build_recent_loss_pits
 # ---------------------------------------------------------------------------
 
+
 def test_recent_loss_pits_surfaces_causes_occurring_2plus_times():
     """Two or more wrong BUYs with the same loss_root_cause → repeat
     failure pattern worth showing PM before today's sizing."""
     import json
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "buy_grades_json": json.dumps([
-             {"symbol": "MU", "grade": "wrong",
-              "loss_root_cause": "greed_top_chasing",
-              "pct_move_since_buy": -15.0},
-         ])},
-        {"date": "2026-04-17",
-         "buy_grades_json": json.dumps([
-             {"symbol": "NVDA", "grade": "wrong",
-              "loss_root_cause": "greed_top_chasing",
-              "pct_move_since_buy": -12.0},
-             # Only once — not a pattern
-             {"symbol": "ORCL", "grade": "wrong",
-              "loss_root_cause": "timing_mistake",
-              "pct_move_since_buy": -6.0},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows(
+        [
+            {
+                "date": "2026-04-18",
+                "buy_grades_json": json.dumps(
+                    [
+                        {
+                            "symbol": "MU",
+                            "grade": "wrong",
+                            "loss_root_cause": "greed_top_chasing",
+                            "pct_move_since_buy": -15.0,
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "buy_grades_json": json.dumps(
+                    [
+                        {
+                            "symbol": "NVDA",
+                            "grade": "wrong",
+                            "loss_root_cause": "greed_top_chasing",
+                            "pct_move_since_buy": -12.0,
+                        },
+                        # Only once — not a pattern
+                        {
+                            "symbol": "ORCL",
+                            "grade": "wrong",
+                            "loss_root_cause": "timing_mistake",
+                            "pct_move_since_buy": -6.0,
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_recent_loss_pits(lookback_days=14)
     assert "greed_top_chasing × 2" in out
     assert "MU" in out and "NVDA" in out
@@ -791,22 +925,39 @@ def test_recent_loss_pits_shows_missed_warning_ref_for_macro_ignored():
     surface its cited evidence so PM sees what was ignored, not just
     that something was."""
     import json
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "buy_grades_json": json.dumps([
-             {"symbol": "MU", "grade": "wrong",
-              "loss_root_cause": "macro_warning_ignored",
-              "pct_move_since_buy": -15.0,
-              "missed_warning_ref": "news 2026-04-03 HIGH: spreads +80bps"},
-         ])},
-        {"date": "2026-04-17",
-         "buy_grades_json": json.dumps([
-             {"symbol": "STX", "grade": "wrong",
-              "loss_root_cause": "macro_warning_ignored",
-              "pct_move_since_buy": -10.0,
-              "missed_warning_ref": "macro 2026-04-02 HIGH: VIX breakout"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows(
+        [
+            {
+                "date": "2026-04-18",
+                "buy_grades_json": json.dumps(
+                    [
+                        {
+                            "symbol": "MU",
+                            "grade": "wrong",
+                            "loss_root_cause": "macro_warning_ignored",
+                            "pct_move_since_buy": -15.0,
+                            "missed_warning_ref": "news 2026-04-03 HIGH: spreads +80bps",
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "buy_grades_json": json.dumps(
+                    [
+                        {
+                            "symbol": "STX",
+                            "grade": "wrong",
+                            "loss_root_cause": "macro_warning_ignored",
+                            "pct_move_since_buy": -10.0,
+                            "missed_warning_ref": "macro 2026-04-02 HIGH: VIX breakout",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_recent_loss_pits(lookback_days=14)
     assert "macro_warning_ignored × 2" in out
     assert "spreads +80bps" in out
@@ -815,15 +966,20 @@ def test_recent_loss_pits_shows_missed_warning_ref_for_macro_ignored():
 def test_recent_loss_pits_ignores_correct_and_premature_grades():
     """Only `wrong` grades count — correct / premature aren't loss pits."""
     import json
-    p = _pipeline_with_insights_rows([
-        {"date": "2026-04-18",
-         "buy_grades_json": json.dumps([
-             {"symbol": "X", "grade": "correct",
-              "loss_root_cause": None, "pct_move_since_buy": 7.0},
-             {"symbol": "Y", "grade": "premature",
-              "loss_root_cause": None, "pct_move_since_buy": -2.0},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows(
+        [
+            {
+                "date": "2026-04-18",
+                "buy_grades_json": json.dumps(
+                    [
+                        {"symbol": "X", "grade": "correct", "loss_root_cause": None, "pct_move_since_buy": 7.0},
+                        {"symbol": "Y", "grade": "premature", "loss_root_cause": None, "pct_move_since_buy": -2.0},
+                    ]
+                ),
+            },
+        ]
+    )
     assert p._build_recent_loss_pits(lookback_days=14) == ""
 
 
@@ -831,25 +987,28 @@ def test_recent_loss_pits_ignores_correct_and_premature_grades():
 # PM prompt rendering L3d + L3f
 # ---------------------------------------------------------------------------
 
+
 def test_pm_prompt_renders_missed_lessons_and_loss_pits_sections():
     """PM build_user_message renders the two new memory sections when the
     helpers produce content; both sections include steering language PM
     should internalize, not just the raw facts."""
     from unittest.mock import patch as _patch
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     with _patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="k", model="claude-opus-4-6")
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], macro_analysis=None,
-        cash_balance=10_000, total_value=100_000,
+        analyses=[],
+        positions=[],
+        macro_analysis=None,
+        cash_balance=10_000,
+        total_value=100_000,
         recent_missed_lessons=(
             "- nuclear/power: 3 days (symbols: VST×2, OKLO) — latest lesson: "
-            "\"News flagged capex 9d ago, PM never sized\""
+            '"News flagged capex 9d ago, PM never sized"'
         ),
-        recent_loss_pits=(
-            "- greed_top_chasing × 3: MU (-15.0%), NVDA (-12.0%), AVGO (-9.0%)"
-        ),
+        recent_loss_pits=("- greed_top_chasing × 3: MU (-15.0%), NVDA (-12.0%), AVGO (-9.0%)"),
     )
     assert "Recurring Missed Themes" in msg
     assert "nuclear/power" in msg
@@ -864,12 +1023,16 @@ def test_pm_prompt_shows_default_when_no_missed_or_loss_history():
     section, not an empty stub."""
     from unittest.mock import patch as _patch
     from src.agents.portfolio_manager import PortfolioManagerAgent
+
     with _patch("anthropic.Anthropic"):
         agent = PortfolioManagerAgent(api_key="k", model="claude-opus-4-6")
 
     msg = agent.build_user_message(
-        analyses=[], positions=[], macro_analysis=None,
-        cash_balance=10_000, total_value=100_000,
+        analyses=[],
+        positions=[],
+        macro_analysis=None,
+        cash_balance=10_000,
+        total_value=100_000,
         recent_missed_lessons="",
         recent_loss_pits="",
     )
@@ -895,8 +1058,7 @@ def test_recent_buys_relative_move_none_when_spy_fetch_fails():
             "INSERT INTO trades (symbol, action, qty, price, reasoning, "
             "run_id, fill_status, fill_qty, fill_price, timestamp) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("NVDA", "BUY", 5, 200.0, "test", "r1", "filled", 5, 200.0,
-             f"{buy_d.isoformat()} 09:35:00"),
+            ("NVDA", "BUY", 5, 200.0, "test", "r1", "filled", 5, 200.0, f"{buy_d.isoformat()} 09:35:00"),
         )
         p.db.conn.commit()
 
@@ -914,6 +1076,7 @@ def test_recent_buys_relative_move_none_when_spy_fetch_fails():
 # ---------------------------------------------------------------------------
 # Quality metrics helper — _missed_ops_quality_metrics
 # ---------------------------------------------------------------------------
+
 
 def _ohlcv_with_volume(closes, volumes):
     """Build list[OHLCV-like] mocks with explicit close + volume per bar."""
@@ -1008,6 +1171,7 @@ def test_quality_metrics_insufficient_volume_bars_returns_none():
 # Liquidity pre-filter on top-movers
 # ---------------------------------------------------------------------------
 
+
 @patch("src.execution.broker._get_sector", return_value="Technology")
 def test_digest_drops_thin_liquidity_top_movers(_sec):
     """Top-movers with 20d avg dollar volume below the threshold (default $5M)
@@ -1019,6 +1183,7 @@ def test_digest_drops_thin_liquidity_top_movers(_sec):
             {"symbol": "LIQUID", "percent_change": 15.0, "price": 100.0},
         ],
     )
+
     # Override ohlcv to return bars with distinct volume profiles.
     # The digest uses the LAST `lookback_days + 1` bars for move%, so
     # put the rally at the end of the 25-bar trailing window.
@@ -1026,7 +1191,8 @@ def test_digest_drops_thin_liquidity_top_movers(_sec):
         if symbol == "THIN":
             closes = [5.0] * 19 + [5.0, 5.2, 5.4, 5.5, 5.7, 6.25]  # +25% last 5 days
             return _ohlcv_with_volume(
-                closes=closes, volumes=[100_000] * 25,  # $0.5M daily
+                closes=closes,
+                volumes=[100_000] * 25,  # $0.5M daily
             )
         if symbol == "LIQUID":
             closes = [100.0] * 19 + [100, 103, 106, 109, 112, 115]  # +15%
@@ -1035,15 +1201,15 @@ def test_digest_drops_thin_liquidity_top_movers(_sec):
                 volumes=[1_000_000] * 25,  # ~$100M daily dollar vol
             )
         return []
+
     p.market.get_ohlcv.side_effect = _ohlcv
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     syms = [s.symbol for s in out]
     assert "LIQUID" in syms
-    assert "THIN" not in syms, (
-        f"thin top-mover should have been filtered; got {syms}"
-    )
+    assert "THIN" not in syms, f"thin top-mover should have been filtered; got {syms}"
 
 
 @patch("src.execution.broker._get_sector", return_value="Technology")
@@ -1054,6 +1220,7 @@ def test_digest_never_drops_universe_symbols_for_liquidity(_sec):
     p = _pipeline_with(
         universe=["ILLIQUID_BUT_TRACKED"],
     )
+
     def _ohlcv(symbol, lookback_days=25):
         if symbol == "ILLIQUID_BUT_TRACKED":
             return _ohlcv_with_volume(
@@ -1061,19 +1228,20 @@ def test_digest_never_drops_universe_symbols_for_liquidity(_sec):
                 volumes=[10_000] * 6,  # $50k daily — well under $5M
             )
         return []
+
     p.market.get_ohlcv.side_effect = _ohlcv
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     syms = [s.symbol for s in out]
-    assert "ILLIQUID_BUT_TRACKED" in syms, (
-        "universe symbols must bypass the liquidity filter"
-    )
+    assert "ILLIQUID_BUT_TRACKED" in syms, "universe symbols must bypass the liquidity filter"
 
 
 # ---------------------------------------------------------------------------
 # Prompt rendering — new quality line
 # ---------------------------------------------------------------------------
+
 
 def test_evening_prompt_renders_quality_line():
     """The new quality metrics line must appear in the rendered section so
@@ -1087,17 +1255,24 @@ def test_evening_prompt_renders_quality_line():
         agent = EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
 
     snap = MissedOpportunitySnapshot(
-        symbol="VST", move_pct=22.3, window_days=5,
+        symbol="VST",
+        move_pct=22.3,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=False, had_news_signal=True, had_earnings_signal=False,
+        had_ta_signal=False,
+        had_news_signal=True,
+        had_earnings_signal=False,
         source="top_mover",
         avg_dollar_volume_20d_m=180.0,
         volume_confirmation_ratio=2.1,
         single_day_concentration_pct=34.0,
     )
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         missed_ops_snapshots=[snap],
     )
     assert "20d $vol 180.0M" in msg
@@ -1109,6 +1284,7 @@ def _pipeline_with_insights_rows_moj(rows: list[dict]):
     """Mirror of _pipeline_with_insights_rows tuned for
     `missed_opportunities_json` content."""
     from src.pipeline import TradingPipeline
+
     p = build_pipeline(db=MagicMock())
     p.db.get_recent_insights.return_value = rows
     return p
@@ -1118,18 +1294,29 @@ def _pipeline_with_insights_rows_moj(rows: list[dict]):
 # PM helper: _build_watchlist_candidates — aggregate by symbol
 # ---------------------------------------------------------------------------
 
+
 def test_watchlist_candidates_empty_when_no_recommendations():
     """Evening flagged everyone as 'no' (or there are no rows) → empty list.
     Script treats empty as "nothing cleared the quality bar — normal."""
     import json as _json
-    p = _pipeline_with_insights_rows_moj([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "noise_rally",
-              "universe_addition_recommendation": "no",
-              "lesson": "thin volume, no theme"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows_moj(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "VST",
+                            "miss_category": "noise_rally",
+                            "universe_addition_recommendation": "no",
+                            "lesson": "thin volume, no theme",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     assert p._build_watchlist_candidates(lookback_days=30) == []
 
 
@@ -1137,24 +1324,41 @@ def test_watchlist_candidates_aggregates_add_and_watch_counts():
     """Same symbol flagged 'add' on day 1 and 'watch' on day 2 → bucket
     has add_count=1, watch_count=1, total_flags=2."""
     import json as _json
-    p = _pipeline_with_insights_rows_moj([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "20d $vol $180M; vol_conf 2.1x",
-              "lesson": "x"},
-         ])},
-        {"date": "2026-04-17",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "watch",
-              "universe_addition_reason": "vol_conf 1.6x; 1d conc 45%",
-              "lesson": "x"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows_moj(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "VST",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "universe_addition_recommendation": "add",
+                            "universe_addition_reason": "20d $vol $180M; vol_conf 2.1x",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "VST",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "universe_addition_recommendation": "watch",
+                            "universe_addition_reason": "vol_conf 1.6x; 1d conc 45%",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_watchlist_candidates(lookback_days=30)
     assert len(out) == 1
     vst = out[0]
@@ -1173,34 +1377,57 @@ def test_watchlist_candidates_sorts_add_before_watch():
     """An 'add' flag outranks a 'watch' flag in the sort order —
     add clears all four quality bars, watch clears most-but-not-all."""
     import json as _json
-    p = _pipeline_with_insights_rows_moj([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "A_ONLY_WATCH", "miss_category": "theme_blindspot",
-              "theme_if_any": "ai-capex",
-              "universe_addition_recommendation": "watch",
-              "universe_addition_reason": "vol_conf 1.5x; marginal",
-              "lesson": "x"},
-             {"symbol": "B_ONE_ADD", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "$180M · 2.1x · distributed",
-              "lesson": "x"},
-         ])},
-        {"date": "2026-04-17",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "A_ONLY_WATCH", "miss_category": "theme_blindspot",
-              "theme_if_any": "ai-capex",
-              "universe_addition_recommendation": "watch",
-              "universe_addition_reason": "vol_conf 1.5x; marginal",
-              "lesson": "x"},
-             {"symbol": "A_ONLY_WATCH", "miss_category": "theme_blindspot",
-              "theme_if_any": "ai-capex",
-              "universe_addition_recommendation": "watch",
-              "universe_addition_reason": "vol_conf 1.5x; marginal",
-              "lesson": "x"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows_moj(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "A_ONLY_WATCH",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "ai-capex",
+                            "universe_addition_recommendation": "watch",
+                            "universe_addition_reason": "vol_conf 1.5x; marginal",
+                            "lesson": "x",
+                        },
+                        {
+                            "symbol": "B_ONE_ADD",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "universe_addition_recommendation": "add",
+                            "universe_addition_reason": "$180M · 2.1x · distributed",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+            {
+                "date": "2026-04-17",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "A_ONLY_WATCH",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "ai-capex",
+                            "universe_addition_recommendation": "watch",
+                            "universe_addition_reason": "vol_conf 1.5x; marginal",
+                            "lesson": "x",
+                        },
+                        {
+                            "symbol": "A_ONLY_WATCH",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "ai-capex",
+                            "universe_addition_recommendation": "watch",
+                            "universe_addition_reason": "vol_conf 1.5x; marginal",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_watchlist_candidates(lookback_days=30)
     # B has 1 add (beats watch); A has 3 watch
     assert [c["symbol"] for c in out] == ["B_ONE_ADD", "A_ONLY_WATCH"]
@@ -1210,19 +1437,32 @@ def test_watchlist_candidates_ignores_no_recommendations():
     """`no` recommendations don't contribute counts (prevent the table
     from being flooded with every noise_rally entry)."""
     import json as _json
-    p = _pipeline_with_insights_rows_moj([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "NOISE", "miss_category": "noise_rally",
-              "universe_addition_recommendation": "no",
-              "lesson": "thin"},
-             {"symbol": "GOOD", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "$180M · 2.1x",
-              "lesson": "x"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows_moj(
+        [
+            {
+                "date": "2026-04-18",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "NOISE",
+                            "miss_category": "noise_rally",
+                            "universe_addition_recommendation": "no",
+                            "lesson": "thin",
+                        },
+                        {
+                            "symbol": "GOOD",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "universe_addition_recommendation": "add",
+                            "universe_addition_reason": "$180M · 2.1x",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_watchlist_candidates(lookback_days=30)
     assert [c["symbol"] for c in out] == ["GOOD"]
 
@@ -1230,18 +1470,27 @@ def test_watchlist_candidates_ignores_no_recommendations():
 def test_watchlist_candidates_tolerates_malformed_json():
     """Corrupt row → skip, don't crash. Other rows still counted."""
     import json as _json
-    p = _pipeline_with_insights_rows_moj([
-        {"date": "2026-04-18",
-         "missed_opportunities_json": "{ not valid json"},
-        {"date": "2026-04-17",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "$180M · 2.1x",
-              "lesson": "x"},
-         ])},
-    ])
+
+    p = _pipeline_with_insights_rows_moj(
+        [
+            {"date": "2026-04-18", "missed_opportunities_json": "{ not valid json"},
+            {
+                "date": "2026-04-17",
+                "missed_opportunities_json": _json.dumps(
+                    [
+                        {
+                            "symbol": "VST",
+                            "miss_category": "theme_blindspot",
+                            "theme_if_any": "nuclear/power",
+                            "universe_addition_recommendation": "add",
+                            "universe_addition_reason": "$180M · 2.1x",
+                            "lesson": "x",
+                        },
+                    ]
+                ),
+            },
+        ]
+    )
     out = p._build_watchlist_candidates(lookback_days=30)
     assert len(out) == 1
     assert out[0]["symbol"] == "VST"
@@ -1250,6 +1499,7 @@ def test_watchlist_candidates_tolerates_malformed_json():
 # ---------------------------------------------------------------------------
 # Quarterly digest: watchlist_candidates section
 # ---------------------------------------------------------------------------
+
 
 def test_quarterly_digest_includes_watchlist_candidates():
     """build_quarterly_digest returns a watchlist_candidates section with the
@@ -1265,28 +1515,45 @@ def test_quarterly_digest_includes_watchlist_candidates():
     # period_end]); period_end=2026-03-31, lookback=90 → window starts
     # 2025-12-31, so these sit in mid-March.
     db.get_recent_insights.return_value = [
-        {"date": "2026-03-18",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "$180M · 2.1x · distributed",
-              "lesson": "x"},
-         ])},
-        {"date": "2026-03-17",
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "VST", "miss_category": "theme_blindspot",
-              "theme_if_any": "nuclear/power",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "$180M · 2.1x · distributed",
-              "lesson": "x"},
-         ])},
+        {
+            "date": "2026-03-18",
+            "missed_opportunities_json": _json.dumps(
+                [
+                    {
+                        "symbol": "VST",
+                        "miss_category": "theme_blindspot",
+                        "theme_if_any": "nuclear/power",
+                        "universe_addition_recommendation": "add",
+                        "universe_addition_reason": "$180M · 2.1x · distributed",
+                        "lesson": "x",
+                    },
+                ]
+            ),
+        },
+        {
+            "date": "2026-03-17",
+            "missed_opportunities_json": _json.dumps(
+                [
+                    {
+                        "symbol": "VST",
+                        "miss_category": "theme_blindspot",
+                        "theme_if_any": "nuclear/power",
+                        "universe_addition_recommendation": "add",
+                        "universe_addition_reason": "$180M · 2.1x · distributed",
+                        "lesson": "x",
+                    },
+                ]
+            ),
+        },
     ]
     db.get_recent_agent_outputs.return_value = []
     db.compute_trade_calibration.return_value = {"n": 0}
 
     digest = build_quarterly_digest(
-        db, market=None, period_end=_date(2026, 3, 31), lookback_days=90,
+        db,
+        market=None,
+        period_end=_date(2026, 3, 31),
+        lookback_days=90,
     )
     wlc = digest["watchlist_candidates"]
     assert wlc["window_days"] == 90
@@ -1308,19 +1575,29 @@ def test_quarterly_digest_watchlist_high_conviction_threshold():
     db = _MM()
     db.get_daily_pnl.return_value = []
     db.get_recent_insights.return_value = [
-        {"date": "2026-03-18",  # in-window for the Q1 (period_end 2026-03-31) digest
-         "missed_opportunities_json": _json.dumps([
-             {"symbol": "LONE", "miss_category": "theme_blindspot",
-              "theme_if_any": "ai-capex",
-              "universe_addition_recommendation": "add",
-              "universe_addition_reason": "single observation",
-              "lesson": "x"},
-         ])},
+        {
+            "date": "2026-03-18",  # in-window for the Q1 (period_end 2026-03-31) digest
+            "missed_opportunities_json": _json.dumps(
+                [
+                    {
+                        "symbol": "LONE",
+                        "miss_category": "theme_blindspot",
+                        "theme_if_any": "ai-capex",
+                        "universe_addition_recommendation": "add",
+                        "universe_addition_reason": "single observation",
+                        "lesson": "x",
+                    },
+                ]
+            ),
+        },
     ]
     db.get_recent_agent_outputs.return_value = []
     db.compute_trade_calibration.return_value = {"n": 0}
     digest = build_quarterly_digest(
-        db, market=None, period_end=_date(2026, 3, 31), lookback_days=90,
+        db,
+        market=None,
+        period_end=_date(2026, 3, 31),
+        lookback_days=90,
     )
     wlc = digest["watchlist_candidates"]
     assert wlc["total_candidates"] == 1
@@ -1331,10 +1608,12 @@ def test_quarterly_digest_watchlist_high_conviction_threshold():
 # Value-lens additions: valuation + value_entry_candidate + thesis_health
 # ---------------------------------------------------------------------------
 
+
 def test_valuation_signal_buckets_forward_pe_correctly():
     """_valuation_signal_from: < 12 cheap, 12-25 fair, >= 25 stretched,
     None/<=0/non-numeric → no_data."""
     from src.pipeline import _valuation_signal_from
+
     assert _valuation_signal_from(8.5) == "cheap"
     assert _valuation_signal_from(11.99) == "cheap"
     assert _valuation_signal_from(12.0) == "fair"
@@ -1343,9 +1622,9 @@ def test_valuation_signal_buckets_forward_pe_correctly():
     assert _valuation_signal_from(25.0) == "stretched"
     assert _valuation_signal_from(50.0) == "stretched"
     assert _valuation_signal_from(None) == "no_data"
-    assert _valuation_signal_from(0) == "no_data"       # loss-making
-    assert _valuation_signal_from(-3.0) == "no_data"    # negative PE
-    assert _valuation_signal_from("n/a") == "no_data"   # non-numeric
+    assert _valuation_signal_from(0) == "no_data"  # loss-making
+    assert _valuation_signal_from(-3.0) == "no_data"  # negative PE
+    assert _valuation_signal_from("n/a") == "no_data"  # non-numeric
 
 
 @patch("src.execution.broker._get_sector", return_value="Technology")
@@ -1361,27 +1640,38 @@ def test_digest_injects_valuation_and_flag_value_entry_on_down_move(_sec):
     )
     # Inject valuation via mock
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 10.5, "forward_pe": 9.0, "ps_ratio": 1.2,
+        "trailing_pe": 10.5,
+        "forward_pe": 9.0,
+        "ps_ratio": 1.2,
     }
     # Patch news signal to return something for VAL
     import json as _json
     from pathlib import Path as _Path
     import tempfile as _tmp
+
     with _tmp.TemporaryDirectory() as td:
         news_dir = _Path(td) / "news"
         news_dir.mkdir()
         from src.trading_calendar import et_today
+
         day_dir = news_dir / str(et_today())
         day_dir.mkdir()
-        (day_dir / "full_report.json").write_text(_json.dumps({
-            "state_changes": [{
-                "event": "Sector-wide overreaction to Fed presser",
-                "affected_symbols": ["VAL"],
-            }],
-        }))
+        (day_dir / "full_report.json").write_text(
+            _json.dumps(
+                {
+                    "state_changes": [
+                        {
+                            "event": "Sector-wide overreaction to Fed presser",
+                            "affected_symbols": ["VAL"],
+                        }
+                    ],
+                }
+            )
+        )
         p.news_store.data_dir = news_dir
         out = p._build_missed_opportunities_digest(
-            lookback_days=5, move_threshold_pct=8.0,
+            lookback_days=5,
+            move_threshold_pct=8.0,
         )
 
     assert len(out) == 1
@@ -1406,10 +1696,13 @@ def test_digest_value_entry_false_when_down_move_no_fundamentals(_sec):
         },
     )
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 22, "forward_pe": 18, "ps_ratio": 3,
+        "trailing_pe": 22,
+        "forward_pe": 18,
+        "ps_ratio": 3,
     }
     out = p._build_missed_opportunities_digest(
-        lookback_days=5, move_threshold_pct=8.0,
+        lookback_days=5,
+        move_threshold_pct=8.0,
     )
     assert len(out) == 1
     assert out[0].value_entry_candidate is False
@@ -1431,19 +1724,26 @@ def test_digest_value_entry_false_on_up_moves(_sec):
         },
     )
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 15, "forward_pe": 14, "ps_ratio": 2,
+        "trailing_pe": 15,
+        "forward_pe": 14,
+        "ps_ratio": 2,
     }
     with _tmp.TemporaryDirectory() as td:
         news_dir = _Path(td) / "news"
         news_dir.mkdir()
         day_dir = news_dir / str(et_today())
         day_dir.mkdir()
-        (day_dir / "full_report.json").write_text(_json.dumps({
-            "state_changes": [{"event": "Event", "affected_symbols": ["UP"]}],
-        }))
+        (day_dir / "full_report.json").write_text(
+            _json.dumps(
+                {
+                    "state_changes": [{"event": "Event", "affected_symbols": ["UP"]}],
+                }
+            )
+        )
         p.news_store.data_dir = news_dir
         out = p._build_missed_opportunities_digest(
-            lookback_days=5, move_threshold_pct=8.0,
+            lookback_days=5,
+            move_threshold_pct=8.0,
         )
     assert out[0].value_entry_candidate is False
 
@@ -1452,8 +1752,10 @@ def test_digest_value_entry_false_on_up_moves(_sec):
 # thesis_health_context
 # ---------------------------------------------------------------------------
 
+
 def test_build_thesis_health_context_empty_for_no_positions():
     from src.pipeline import TradingPipeline
+
     p = build_pipeline()
     out = p._build_thesis_health_context(positions=[], lookback_weeks=8)
     assert out == {}
@@ -1478,9 +1780,18 @@ def test_build_thesis_health_context_assembles_per_symbol(tmp_path):
         "INSERT INTO trades (symbol, action, qty, price, reasoning, "
         "run_id, fill_status, fill_qty, fill_price, timestamp) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("NVDA", "BUY", 10, 196.0,
-         "AI capex thesis: datacenter spend +20% YoY", "r1",
-         "filled", 10, 196.0, f"{entry_d.isoformat()} 09:35:00"),
+        (
+            "NVDA",
+            "BUY",
+            10,
+            196.0,
+            "AI capex thesis: datacenter spend +20% YoY",
+            "r1",
+            "filled",
+            10,
+            196.0,
+            f"{entry_d.isoformat()} 09:35:00",
+        ),
     )
     p.db.conn.commit()
     # Tech log with NVDA rating in window
@@ -1488,16 +1799,24 @@ def test_build_thesis_health_context_assembles_per_symbol(tmp_path):
         "INSERT INTO agent_logs (agent_name, run_id, timestamp, "
         "input_summary, output_summary, full_response, model, tokens_used) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("tech_analyst", "tr1",
-         (et_today() - timedelta(days=1)).isoformat() + " 09:35:00",
-         "", "", _json.dumps([{"symbol": "NVDA", "rating": "strong_buy"}]),
-         "m", 0),
+        (
+            "tech_analyst",
+            "tr1",
+            (et_today() - timedelta(days=1)).isoformat() + " 09:35:00",
+            "",
+            "",
+            _json.dumps([{"symbol": "NVDA", "rating": "strong_buy"}]),
+            "m",
+            0,
+        ),
     )
     p.db.conn.commit()
 
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
-        "trailing_pe": 72.0, "forward_pe": 38.5, "ps_ratio": 27.1,
+        "trailing_pe": 72.0,
+        "forward_pe": 38.5,
+        "ps_ratio": 27.1,
     }
     p.news_store = MagicMock()
     # Build a news report in window so _thesis_news_events_map picks it up
@@ -1505,13 +1824,19 @@ def test_build_thesis_health_context_assembles_per_symbol(tmp_path):
     news_root.mkdir()
     day_dir = news_root / str(et_today())
     day_dir.mkdir()
-    (day_dir / "full_report.json").write_text(_json.dumps({
-        "state_changes": [{
-            "event": "NVDA Q1 guide raised on AI capex",
-            "conviction": "high",
-            "affected_symbols": ["NVDA"],
-        }],
-    }))
+    (day_dir / "full_report.json").write_text(
+        _json.dumps(
+            {
+                "state_changes": [
+                    {
+                        "event": "NVDA Q1 guide raised on AI capex",
+                        "conviction": "high",
+                        "affected_symbols": ["NVDA"],
+                    }
+                ],
+            }
+        )
+    )
     p.news_store.data_dir = news_root
     p.earnings_provider = MagicMock()
     p.earnings_provider.manifest = {}
@@ -1521,8 +1846,13 @@ def test_build_thesis_health_context_assembles_per_symbol(tmp_path):
     }
 
     nvda = Position(
-        symbol="NVDA", qty=10, avg_entry=196.0, current_price=210.0,
-        market_value=2100, unrealized_pnl=140, sector="Technology",
+        symbol="NVDA",
+        qty=10,
+        avg_entry=196.0,
+        current_price=210.0,
+        market_value=2100,
+        unrealized_pnl=140,
+        sector="Technology",
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([nvda], lookback_weeks=8)
@@ -1559,8 +1889,13 @@ def test_build_thesis_health_context_tolerates_missing_data(tmp_path):
     p.macro_store.load_last_state.return_value = None
 
     pos = Position(
-        symbol="NEW", qty=1, avg_entry=10, current_price=11,
-        market_value=11, unrealized_pnl=1, sector="Technology",
+        symbol="NEW",
+        qty=1,
+        avg_entry=10,
+        current_price=11,
+        market_value=11,
+        unrealized_pnl=1,
+        sector="Technology",
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([pos], lookback_weeks=8)
@@ -1575,6 +1910,7 @@ def test_build_thesis_health_context_tolerates_missing_data(tmp_path):
 # ---------------------------------------------------------------------------
 # Evening prompt renders thesis_health + valuation + value_entry_candidate
 # ---------------------------------------------------------------------------
+
 
 def test_evening_prompt_renders_thesis_health_section():
     """Non-empty thesis_health_context → section with per-symbol block."""
@@ -1600,14 +1936,19 @@ def test_evening_prompt_renders_thesis_health_section():
             "recent_earnings_signal": "bullish conviction high — revenue +45%",
             "macro_sector_stance": "bullish",
             "valuation": {
-                "trailing_pe": 72.0, "forward_pe": 38.5,
-                "ps_ratio": 27.1, "signal": "stretched",
+                "trailing_pe": 72.0,
+                "forward_pe": 38.5,
+                "ps_ratio": 27.1,
+                "signal": "stretched",
             },
         },
     }
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context=ctx,
     )
     assert "Thesis Health Review" in msg
@@ -1628,8 +1969,11 @@ def test_evening_prompt_thesis_health_empty_note():
     with _patch("anthropic.Anthropic"):
         agent = EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         thesis_health_context={},
     )
     assert "Thesis Health Review" in msg
@@ -1647,18 +1991,27 @@ def test_evening_prompt_renders_value_entry_flag_and_valuation():
         agent = EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
 
     snap = MissedOpportunitySnapshot(
-        symbol="MU", move_pct=-18.2, window_days=5,
+        symbol="MU",
+        move_pct=-18.2,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=False, had_news_signal=True, had_earnings_signal=True,
+        had_ta_signal=False,
+        had_news_signal=True,
+        had_earnings_signal=True,
         source="universe",
         last_news_headline="Memory ASP panic drop",
-        trailing_pe=10.1, forward_pe=9.0, ps_ratio=1.5,
+        trailing_pe=10.1,
+        forward_pe=9.0,
+        ps_ratio=1.5,
         valuation_signal="cheap",
         value_entry_candidate=True,
     )
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         missed_ops_snapshots=[snap],
     )
     assert "VALUE_ENTRY_CANDIDATE" in msg
@@ -1678,17 +2031,24 @@ def test_evening_prompt_tags_low_quality_top_movers():
         agent = EveningAnalystAgent(api_key="k", model="claude-opus-4-6")
 
     snap = MissedOpportunitySnapshot(
-        symbol="THIN", move_pct=22.3, window_days=5,
+        symbol="THIN",
+        move_pct=22.3,
+        window_days=5,
         held_during_window=False,
-        had_ta_signal=False, had_news_signal=False, had_earnings_signal=False,
+        had_ta_signal=False,
+        had_news_signal=False,
+        had_earnings_signal=False,
         source="top_mover",
         avg_dollar_volume_20d_m=3.5,  # thin
         volume_confirmation_ratio=0.8,  # weak
         single_day_concentration_pct=85.0,  # gap
     )
     msg = agent.build_user_message(
-        positions=[], macro_summary={"vix": {"current": 18}},
-        total_value=100_000, daily_pnl=0, daily_return_pct=0.0,
+        positions=[],
+        macro_summary={"vix": {"current": 18}},
+        total_value=100_000,
+        daily_pnl=0,
+        daily_return_pct=0.0,
         missed_ops_snapshots=[snap],
     )
     assert "weak" in msg  # volume_confirmation_ratio < 1.5

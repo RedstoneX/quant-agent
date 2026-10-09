@@ -1,4 +1,5 @@
 """The readings, candidate shapes and two-year walk for the trend-alignment measurement."""
+
 from __future__ import annotations
 
 import statistics
@@ -23,11 +24,10 @@ FWD = ATR_PERIOD
 WARMUP = 60
 
 
-
 def readings(bars, i, run_start, is_short, ind_cache):
     """Every reading on close i, from bars[:i+1] only -- nothing from ahead."""
     if i not in ind_cache:
-        ind_cache[i] = compute_indicators("X", bars[max(0, i - 260): i + 1])
+        ind_cache[i] = compute_indicators("X", bars[max(0, i - 260) : i + 1])
     ind = ind_cache[i]
     atr = ind.atr_14
     close = bars[i].close
@@ -35,26 +35,24 @@ def readings(bars, i, run_start, is_short, ind_cache):
         return None
     window = bars[: i + 1]
     if i - 1 not in ind_cache and i > 0:
-        ind_cache[i - 1] = compute_indicators("X", bars[max(0, i - 261): i])
+        ind_cache[i - 1] = compute_indicators("X", bars[max(0, i - 261) : i])
     prev_ma20 = ind_cache[i - 1].ma_20 if i > 0 else None
     if is_short:
         pivot = _structural_pivot(_swing_highs(window), is_short=True)
         s_raw = pivot is not None and close >= pivot + BREAK_CONFIRMATION_ATR_MULTIPLE * atr
-        ext = min(b.low for b in bars[run_start: i + 1])
+        ext = min(b.low for b in bars[run_start : i + 1])
         v = close >= ext + CHANDELIER_ATR_MULTIPLE * atr
         m20 = ind.ma_20 is not None and close > ind.ma_20
         m50 = ind.ma_50 is not None and close > ind.ma_50
-        u = (ind.ma_20 is not None and prev_ma20 is not None
-             and close < ind.ma_20 and ind.ma_20 < prev_ma20)
+        u = ind.ma_20 is not None and prev_ma20 is not None and close < ind.ma_20 and ind.ma_20 < prev_ma20
     else:
         pivot = _structural_pivot(_swing_lows(window), is_short=False)
         s_raw = pivot is not None and close <= pivot - BREAK_CONFIRMATION_ATR_MULTIPLE * atr
-        ext = max(b.high for b in bars[run_start: i + 1])
+        ext = max(b.high for b in bars[run_start : i + 1])
         v = close <= ext - CHANDELIER_ATR_MULTIPLE * atr
         m20 = ind.ma_20 is not None and close < ind.ma_20
         m50 = ind.ma_50 is not None and close < ind.ma_50
-        u = (ind.ma_20 is not None and prev_ma20 is not None
-             and close > ind.ma_20 and ind.ma_20 > prev_ma20)
+        u = ind.ma_20 is not None and prev_ma20 is not None and close > ind.ma_20 and ind.ma_20 > prev_ma20
     return dict(s_raw=s_raw, v=v, m20=m20, m50=m50, u=u, atr=atr, pivot=pivot)
 
 
@@ -107,11 +105,11 @@ def measure_two_years(allbars):
             for k, f in SHAPES.items():
                 on = bool(f(r, s2))
                 if on and not active[k]:
-                    hi = max(closes[max(WARMUP, i - REF): i + 1])
+                    hi = max(closes[max(WARMUP, i - REF) : i + 1])
                     agg[k]["gb"].append((hi - closes[i]) / hi * 100)
-                    run_hi = max(closes[run_start: i + 1])
+                    run_hi = max(closes[run_start : i + 1])
                     agg[k]["gbr"].append((run_hi - closes[i]) / run_hi * 100)
-                    later = closes[i + 1: i + 1 + REF]
+                    later = closes[i + 1 : i + 1 + REF]
                     if later and max(later) > hi:
                         agg[k]["false"] += 1
                     if i + FWD < len(closes):

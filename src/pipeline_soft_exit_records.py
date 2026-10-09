@@ -22,6 +22,7 @@ only lazily, by name, so the graph stays acyclic. Not in
 `src.number_sources.SCOPED_PATHS`: the block carries no ledgered number site.
 This module must not import `src.pipeline` and never reaches the broker seam.
 """
+
 from __future__ import annotations
 
 from src.recording_accessors import pinned_evidence
@@ -41,7 +42,10 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
 
 
 def _target_increase_missing_falsifier(
-    target, *, positions=None, total_value: float = 0.0,
+    target,
+    *,
+    positions=None,
+    total_value: float = 0.0,
     existing_risk_pct=None,
 ) -> bool:
     """True iff this target is an open/increase still missing a real falsifier.
@@ -55,19 +59,21 @@ def _target_increase_missing_falsifier(
     risk is treated as an increase, the stricter gate. Never invents a
     string.
     """
-    held = {
-        str(getattr(p, "symbol", "")).upper(): p
-        for p in list(positions or [])
-        if getattr(p, "symbol", None)
-    }
+    held = {str(getattr(p, "symbol", "")).upper(): p for p in list(positions or []) if getattr(p, "symbol", None)}
     intent = PortfolioManagerAgent._target_intent(
-        target, held, total_value, existing_risk_pct=existing_risk_pct,
+        target,
+        held,
+        total_value,
+        existing_risk_pct=existing_risk_pct,
     )
     return open_target_missing_falsifier(target, intent=intent)
 
 
 def _targets_admitted_to_book(
-    targets, *, positions=None, total_value: float = 0.0,
+    targets,
+    *,
+    positions=None,
+    total_value: float = 0.0,
     existing_risk_pct=None,
 ) -> tuple[list, list[str]]:
     """Open/increase names still missing a real falsifier never reach the constructor.
@@ -94,7 +100,9 @@ def _targets_admitted_to_book(
     refused: list[str] = []
     for target in list(targets or []):
         if _target_increase_missing_falsifier(
-            target, positions=positions, total_value=total_value,
+            target,
+            positions=positions,
+            total_value=total_value,
             existing_risk_pct=existing_risk_pct,
         ):
             refused.append(str(target.symbol).upper())
@@ -174,30 +182,36 @@ def _record_soft_exit_heals(pipeline, ctx) -> None:
         record_stage(pipeline, "soft_exit_attach")
     for symbol, heal in heals.items():
         _record_pipeline_event(
-            pipeline, ctx, symbol, "soft_exit_heal",
-            str(heal.get("outcome") or "unknown"), SOFT_EXIT_HEAL_EVENT_REASON,
+            pipeline,
+            ctx,
+            symbol,
+            "soft_exit_heal",
+            str(heal.get("outcome") or "unknown"),
+            SOFT_EXIT_HEAL_EVENT_REASON,
             detail=str(heal.get("detail") or ""),
         )
 
 
 def _record_soft_exit_missing_after_retry(
-    pipeline, ctx, symbol: str, *, action: str | None = None,
+    pipeline,
+    ctx,
+    symbol: str,
+    *,
+    action: str | None = None,
 ) -> None:
     _record_pipeline_event(
-        pipeline, ctx, symbol, "deterministic_gate",
-        "blocked", SOFT_EXIT_MISSING_AFTER_RETRY,
+        pipeline,
+        ctx,
+        symbol,
+        "deterministic_gate",
+        "blocked",
+        SOFT_EXIT_MISSING_AFTER_RETRY,
         detail=(
             "thesis_invalid_if still empty or unknown; refusing this "
-            "name before the book. No falsifier was invented. "
-            + _soft_exit_heal_detail(ctx, symbol)
+            "name before the book. No falsifier was invented. " + _soft_exit_heal_detail(ctx, symbol)
         ),
         heal_outcome=str(
-            (
-                (getattr(ctx, "soft_exit_heals", None) or {}).get(
-                    str(symbol).strip().upper()
-                )
-                or {}
-            ).get("outcome")
+            ((getattr(ctx, "soft_exit_heals", None) or {}).get(str(symbol).strip().upper()) or {}).get("outcome")
             or "none_recorded"
         ),
         **({"action": action} if action else {}),
@@ -250,7 +264,8 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     if portfolio_decision is None:
         return []
     existing_risk_pct, _ = _book_risk_inputs(
-        ctx, getattr(ctx, "total_value", 0.0) or 0.0,
+        ctx,
+        getattr(ctx, "total_value", 0.0) or 0.0,
     )
     missing_symbols = {
         str(target.symbol).upper()
@@ -266,19 +281,17 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     kept = []
     for decision in list(getattr(portfolio_decision, "decisions", None) or []):
         symbol = str(decision.symbol).upper()
-        missing_here = (
-            symbol in missing_symbols
-            or (
-                decision.action in ("BUY", "SHORT")
-                and missing_stated_falsifier(
-                    getattr(decision, "thesis_invalid_if", None)
-                )
-            )
+        missing_here = symbol in missing_symbols or (
+            decision.action in ("BUY", "SHORT")
+            and missing_stated_falsifier(getattr(decision, "thesis_invalid_if", None))
         )
         if decision.action in ("BUY", "SHORT") and missing_here:
             isolated.append(symbol)
             _record_soft_exit_missing_after_retry(
-                pipeline, ctx, decision.symbol, action=decision.action,
+                pipeline,
+                ctx,
+                decision.symbol,
+                action=decision.action,
             )
             continue
         kept.append(decision)
@@ -287,7 +300,9 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     unique = list(dict.fromkeys(isolated))
     logger.warning(
         "Refusing %d BUY/SHORT name(s) %s: %s",
-        len(unique), SOFT_EXIT_MISSING_AFTER_RETRY, unique,
+        len(unique),
+        SOFT_EXIT_MISSING_AFTER_RETRY,
+        unique,
     )
     portfolio_decision.decisions = kept
     existing = list(getattr(portfolio_decision, "constructor_dropped", None) or [])

@@ -17,7 +17,8 @@ class ReviewCalibration:
     """Outlook calibration, the calibration note and the recent-performance figures; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         log_conviction_outcome_for_operator=None,
     ) -> None:
@@ -64,6 +65,7 @@ class ReviewCalibration:
         # the directional scorecard evening should actually weigh, so it stops
         # mis-learning a low next-day hit rate into "default neutral".
         import bisect
+
         _ordered = sorted(
             ((d, r) for d, r in pnl_by_date.items() if r is not None),
             key=lambda x: x[0],
@@ -77,12 +79,13 @@ class ReviewCalibration:
             prediction) is just a relabeled next-day return, not a trend, so we
             withhold it rather than feed a misleading number."""
             i = bisect.bisect_right(_ordered_dates, pred_date_str)
-            window = _ordered[i:i + n]
+            window = _ordered[i : i + n]
             if len(window) < n:
                 return None
             return sum(r for _, r in window)
 
         from datetime import date as _date, timedelta as _td
+
         samples: list[dict] = []
         for ins in insights:
             pred_date_str = ins.get("date")
@@ -125,19 +128,22 @@ class ReviewCalibration:
                 trend_matched = fwd5 < -TREND_BAND
             else:  # neutral
                 trend_matched = -TREND_BAND <= fwd5 <= TREND_BAND
-            samples.append({
-                "date": pred_date_str,
-                "predicted_bias": bias,
-                "predicted_conviction": conv,
-                "actual_return_pct": round(actual, 2),
-                "matched": bool(matched),
-                "fwd5_return_pct": round(fwd5, 2) if fwd5 is not None else None,
-                "trend_matched": (None if trend_matched is None else bool(trend_matched)),
-            })
+            samples.append(
+                {
+                    "date": pred_date_str,
+                    "predicted_bias": bias,
+                    "predicted_conviction": conv,
+                    "actual_return_pct": round(actual, 2),
+                    "matched": bool(matched),
+                    "fwd5_return_pct": round(fwd5, 2) if fwd5 is not None else None,
+                    "trend_matched": (None if trend_matched is None else bool(trend_matched)),
+                }
+            )
             if len(samples) >= lookback:
                 break
 
         n = len(samples)
+
         def _rate(filter_fn):
             eligible = [s for s in samples if filter_fn(s)]
             if not eligible:
@@ -166,6 +172,7 @@ class ReviewCalibration:
             "bullish_trend_hit_rate_pct": _trend_rate(lambda s: s["predicted_bias"] == "bullish"),
             "bearish_trend_hit_rate_pct": _trend_rate(lambda s: s["predicted_bias"] == "bearish"),
         }
+
     def _build_calibration_note(self, lookback_days: int = 45) -> str:
         """Render PM's own hit rate + avg return on closed BUYs in the window.
 
@@ -223,7 +230,8 @@ class ReviewCalibration:
         ):
             grouping = stats.get(grouping_key) or {}
             qualifying = [
-                (label, s) for label, s in grouping.items()
+                (label, s)
+                for label, s in grouping.items()
                 if s and not s.get("insufficient_data", True) and s.get("n", 0) > 0
             ]
             if not qualifying:
@@ -235,6 +243,7 @@ class ReviewCalibration:
                     f"avg {s['avg_return_pct']:+.2f}%, hold {s['avg_hold_days']:.1f}d"
                 )
         return "\n".join(lines)
+
     def _compute_recent_performance(self, current_equity: float) -> dict:
         """Rolling 5-day and 20-day returns from db.daily_pnl, plus the
         §11.2 peak-to-trough drawdown that drives the de-levering ladder.
@@ -261,7 +270,8 @@ class ReviewCalibration:
             return {}
         if not rows:
             return {
-                "rolling_5d_pct": None, "rolling_20d_pct": None,
+                "rolling_5d_pct": None,
+                "rolling_20d_pct": None,
                 "trailing_days": 0,
                 "peak_to_trough_pct": None,
             }
@@ -289,11 +299,13 @@ class ReviewCalibration:
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Failed to read the long daily_pnl window for the §11.2 "
-                "high-water mark; falling back to the short one: %s", e,
+                "high-water mark; falling back to the short one: %s",
+                e,
             )
             hwm_rows = rows
         peak_to_trough = peak_to_trough_pct(
-            [r.get("total_value") for r in (hwm_rows or [])], current_equity,
+            [r.get("total_value") for r in (hwm_rows or [])],
+            current_equity,
         )
 
         return {

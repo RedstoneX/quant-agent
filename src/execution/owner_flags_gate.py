@@ -18,6 +18,7 @@ out, never an exemption from management.
 `install` REFUSES TO LOAD if a write-capable method has no entry in `_REFUSALS`,
 so a new broker verb cannot silently bypass the flag.
 """
+
 from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
@@ -28,7 +29,13 @@ logger = logging.getLogger(__name__)
 
 _db_path = None
 WRITE_PREFIXES = (
-    "submit_", "place_", "replace_", "cancel_", "close_", "shift_", "liquidate_",
+    "submit_",
+    "place_",
+    "replace_",
+    "cancel_",
+    "close_",
+    "shift_",
+    "liquidate_",
 )
 PAUSE_BLOCKS = frozenset({"submit_order", "replace_entry_limit", "close_position"})
 UNKNOWN_BLOCKS = frozenset({"submit_order", "replace_entry_limit"})
@@ -103,13 +110,15 @@ def _wrap(name, orig):
             logger.warning("owner flag refused %s: %s", name, why)
             return _REFUSALS[name](why)
         return orig(self, *args, **kwargs)
+
     gated._owner_flag_gated = True
     return gated
 
 
 def write_methods(cls) -> list:
-    return sorted(n for n, v in vars(cls).items()
-                  if callable(v) and not n.startswith("_") and n.startswith(WRITE_PREFIXES))
+    return sorted(
+        n for n, v in vars(cls).items() if callable(v) and not n.startswith("_") and n.startswith(WRITE_PREFIXES)
+    )
 
 
 def install(cls) -> None:

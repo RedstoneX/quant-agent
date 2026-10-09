@@ -117,9 +117,7 @@ def _module_constants(tree: ast.Module) -> dict[str, float]:
     return out
 
 
-def _bound_name_values(
-    target: ast.AST, value: ast.AST
-) -> list[tuple[ast.Name, ast.AST]]:
+def _bound_name_values(target: ast.AST, value: ast.AST) -> list[tuple[ast.Name, ast.AST]]:
     """Names bound directly to numeric-shaped values by one assignment.
 
     Python permits constants to be destructured in one statement, for example
@@ -130,9 +128,7 @@ def _bound_name_values(
     """
     if isinstance(target, ast.Name):
         return [(target, value)]
-    if isinstance(target, (ast.Tuple, ast.List)) and isinstance(
-        value, (ast.Tuple, ast.List)
-    ):
+    if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
         if len(target.elts) != len(value.elts):
             return []
         pairs: list[tuple[ast.Name, ast.AST]] = []
@@ -306,12 +302,8 @@ def _scan_extended_shapes(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             args = node.args
             positional = list(args.posonlyargs) + list(args.args)
-            pairs = list(zip(positional[len(positional) - len(args.defaults):], args.defaults))
-            pairs += [
-                (arg, default)
-                for arg, default in zip(args.kwonlyargs, args.kw_defaults)
-                if default is not None
-            ]
+            pairs = list(zip(positional[len(positional) - len(args.defaults) :], args.defaults))
+            pairs += [(arg, default) for arg, default in zip(args.kwonlyargs, args.kw_defaults) if default is not None]
             for arg, default in pairs:
                 base = f"{module}.{qual}({arg.arg})"
                 for site_id, value, lineno in _leaves(default, base, names, local):
@@ -322,9 +314,7 @@ def _scan_extended_shapes(
             ordinal = 0
             found: list[tuple[int, int, float]] = []
             for inner in _own_nodes(node):
-                if not isinstance(inner, ast.BinOp) or not isinstance(
-                    inner.op, (ast.Mult, ast.Div)
-                ):
+                if not isinstance(inner, ast.BinOp) or not isinstance(inner.op, (ast.Mult, ast.Div)):
                     continue
                 for side, other in ((inner.left, inner.right), (inner.right, inner.left)):
                     if _numeric(other) is not None:
@@ -340,9 +330,7 @@ def _scan_extended_shapes(
                         if low <= abs(value) < high:
                             found.append((operand.lineno, operand.col_offset, value))
             for lineno, _col, value in sorted(found):
-                sites.append(
-                    NumberSite(f"{module}.{qual}:factor[{ordinal}]", rel, lineno, value)
-                )
+                sites.append(NumberSite(f"{module}.{qual}:factor[{ordinal}]", rel, lineno, value))
                 ordinal += 1
 
         # (d) numeric attributes on any class. A `*Config` class's annotated
@@ -367,7 +355,5 @@ def _scan_extended_shapes(
                     base = f"{module}.{qual}.{target.id}"
                     for site_id, value, lineno in _leaves(default, base, names, local):
                         if value not in NEUTRAL_VALUES:
-                            sites.append(
-                                NumberSite(site_id, rel, lineno or body_node.lineno, value)
-                            )
+                            sites.append(NumberSite(site_id, rel, lineno or body_node.lineno, value))
     return sites

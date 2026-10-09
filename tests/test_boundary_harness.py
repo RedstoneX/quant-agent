@@ -1,4 +1,5 @@
 """Self-proof and ratchet for the boundary harness (conversion step 2)."""
+
 import ast, sys
 from pathlib import Path
 
@@ -43,7 +44,13 @@ MIXINS = _composed_mixin_modules()
 def _shim_only(module):
     """True when every method of every mixin class in the module is a thin shim (docstring + one return): all bodies lifted."""
     tree = ast.parse((ROOT / (module.replace(".", "/") + ".py")).read_text())
-    return all(len(f.body) <= 2 and isinstance(f.body[-1], ast.Return) for c in tree.body if isinstance(c, ast.ClassDef) and c.name.endswith("Mixin") for f in c.body if isinstance(f, ast.FunctionDef))
+    return all(
+        len(f.body) <= 2 and isinstance(f.body[-1], ast.Return)
+        for c in tree.body
+        if isinstance(c, ast.ClassDef) and c.name.endswith("Mixin")
+        for f in c.body
+        if isinstance(f, ast.FunctionDef)
+    )
 
 
 def test_harness_passes_pipeline_sizing():
@@ -83,10 +90,12 @@ def test_swapping_one_mixin_for_another_is_caught(tmp_path):
 
 def test_clause_2_catches_foreign_self_reads(tmp_path, monkeypatch):
     import boundary_harness as h
+
     (tmp_path / "src").mkdir()
     (tmp_path / "src/m.py").write_text(
         "class M:\n    def __init__(self, a):\n        self.a = a\n"
-        "    def go(self):\n        return self.a + self.other()\n")
+        "    def go(self):\n        return self.a + self.other()\n"
+    )
     monkeypatch.setattr(h, "ROOT", tmp_path)
     v = h.check_boundary("src.m", tests_dir=tmp_path)
     assert 2 in v.failures and 1 not in v.failures
@@ -131,11 +140,13 @@ def test_pipeline_holds_the_review_part_and_inherits_no_review_mixin():
     from src.pipeline import TradingPipeline
     from src.pipeline_prompt_facts_review import DELEGATED, HOST_COLLABORATORS, review_of
     from src.prompt_facts.review.held import COLLABORATORS, PromptFactsReview
+
     assert not hasattr(shim_module, "PromptFactsReviewMixin") and not hasattr(shim_module, "HOLDER_ATTR")
     assert not any("Review" in c.__name__ for c in TradingPipeline.__mro__)
     assert PromptFactsReview not in TradingPipeline.__mro__
     assert tuple(HOST_COLLABORATORS.values()) == COLLABORATORS  # every seat name maps onto a part keyword
     from src.pipeline_prompt_facts import PromptFactsMixin
+
     pipe = object.__new__(PromptFactsMixin)  # the seat that holds the part; no pipeline is built
     first, second = review_of(pipe), review_of(pipe)
     assert isinstance(first, PromptFactsReview) and first is not second  # rebuilt per call, never cached

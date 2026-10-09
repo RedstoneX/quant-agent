@@ -1,4 +1,5 @@
 """Trunk-red check runs on every main push; main pushes never share a slot."""
+
 import re
 import sys
 from pathlib import Path
@@ -24,8 +25,9 @@ def _group(event, ref, sha):
         if "==" in e:
             l, r = e.split("==")
             return ev(l) == ev(r)
-        return {"github.workflow": "tests", "github.ref": ref,
-                "github.sha": sha, "github.event_name": event}.get(e, e.strip("'"))
+        return {"github.workflow": "tests", "github.ref": ref, "github.sha": sha, "github.event_name": event}.get(
+            e, e.strip("'")
+        )
 
     sub = lambda m: str(ev(m.group(1)))
     return re.sub(r"\$\{\{(.*?)\}\}", sub, expr), bool(ev(cancel.strip()[3:-2]))

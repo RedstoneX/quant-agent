@@ -1,4 +1,5 @@
 """Live session-context step (moved verbatim from TradingPipeline)."""
+
 from __future__ import annotations
 
 import logging
@@ -74,14 +75,18 @@ class LiveSessionContextSession:
                 "symbol(s) (no price: %s; no today print: %s) — labelled STALE "
                 "in the Tech prompt, not replaced by the last close and never "
                 "by a quote mid",
-                len(missing) + len(stale), len(symbols),
-                missing[:10], stale[:10],
+                len(missing) + len(stale),
+                len(symbols),
+                missing[:10],
+                stale[:10],
             )
         if rescued:
             logger.info(
                 "live session context: %d/%d symbol(s) had no today last-trade "
                 "print but a today bar on the same venue, priced from it "
                 "rather than losing the seat (item 120): %s",
-                len(rescued), len(symbols), sorted(rescued.items())[:10],
+                len(rescued),
+                len(symbols),
+                sorted(rescued.items())[:10],
             )
         return out

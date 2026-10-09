@@ -20,7 +20,8 @@ class DeleverForced:
     """The forced de-lever against a margin deficit; standalone, built from explicit collaborators."""
 
     def __init__(
-        self, *,
+        self,
+        *,
         alert_owner_force_delever_incomplete=None,
         compute_deployable_cash=None,
         finalize_pending_protections=None,
@@ -92,13 +93,15 @@ class DeleverForced:
         if risk_cfg is None or bool(getattr(risk_cfg, "allow_margin", False)):
             return []
         from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
+
         if ctx.cash >= -MARGIN_DEFICIT_FLOOR_USD:
             return []
 
         deficit = -ctx.cash
         logger.warning(
-            "FORCE DE-LEVER: cash=$%.2f, deficit=$%.2f — auto-selling to restore "
-            "cash ≥ 0 (allow_margin=False)", ctx.cash, deficit,
+            "FORCE DE-LEVER: cash=$%.2f, deficit=$%.2f — auto-selling to restore cash ≥ 0 (allow_margin=False)",
+            ctx.cash,
+            deficit,
         )
         # A resting entry BUY would deepen the very deficit this sweep exists
         # to clear the moment it fills — cancel entries before selling.
@@ -112,13 +115,16 @@ class DeleverForced:
             logger.error(
                 "FORCE DE-LEVER: cash=$%.2f deficit=$%.2f but no long positions "
                 "to sell — account stuck on margin until cash arrives externally",
-                ctx.cash, deficit,
+                ctx.cash,
+                deficit,
             )
             # Loud, not silent: no long to sell IS a residual miss (the sibling
             # of the gross-ceiling path's incompleteness alert) — the account
             # stays on margin, so page the owner rather than only logging.
             self._alert_owner_force_delever_incomplete(
-                deficit=deficit, projected_proceeds=0.0, failed_symbols=[],
+                deficit=deficit,
+                projected_proceeds=0.0,
+                failed_symbols=[],
             )
             return []
 
@@ -149,12 +155,15 @@ class DeleverForced:
         #   - then larger market_value (clear deficit in fewer orders)
         #   - then symbol alphabetical (deterministic across runs)
         from src.risk.rules import _effective_multiplier
+
         sweeper = self._sweeper()
         sweep_symbol = sweeper.symbol if sweeper is not None else None
+
         def _tier(p):
             if sweep_symbol is not None and p.symbol == sweep_symbol:
                 return -1
             return 0 if _effective_multiplier(p.symbol) > 0 else 1
+
         targets = sorted(
             sellable,
             key=lambda p: (_tier(p), p.unrealized_pnl, -p.market_value, p.symbol),
@@ -196,9 +205,7 @@ class DeleverForced:
             # removing, and 3% is a stop-limit through-buffer picked
             # (`status: arbitrary`) for a different job. Borrowing a constant
             # at the wrong tightness for a new job is not sourcing it.
-            sizing_price = sell_limit if (
-                sell_limit is not None and sell_limit > 0
-            ) else None
+            sizing_price = sell_limit if (sell_limit is not None and sell_limit > 0) else None
             if is_sweep and sizing_price is not None:
                 # audit round 2: only unpark what the deficit needs —
                 # full-liquidating an $80k T-bill balance for a $200 deficit
@@ -229,9 +236,11 @@ class DeleverForced:
                 # residual deficit this loop will not see. That gap predates
                 # this change and is reported, not fixed, here.
                 import math as _math
+
                 remaining = deficit - projected_proceeds
                 qty = min(
-                    float(_math.ceil(remaining / sizing_price)), p.qty,
+                    float(_math.ceil(remaining / sizing_price)),
+                    p.qty,
                 )
                 if qty >= p.qty:
                     qty = self._full_sell_qty(p.qty)
@@ -246,8 +255,11 @@ class DeleverForced:
             # into evening sell-grading and calibration as if it were a
             # trading decision.
             sale = self._submit_protected_sell(
-                symbol=p.symbol, qty=qty, limit_price=sell_limit,
-                reference_price=exec_ref, position_qty_before_sell=p.qty,
+                symbol=p.symbol,
+                qty=qty,
+                limit_price=sell_limit,
+                reference_price=exec_ref,
+                position_qty_before_sell=p.qty,
                 label="SWEEP_SELL" if is_sweep else "FORCE_DELEVER",
                 escalate_to_market_on_reject=True,
             )
@@ -296,10 +308,12 @@ class DeleverForced:
                     projected_proceeds += p.market_value * 0.97
                 orders.append(order)
                 logger.info(
-                    "FORCE DE-LEVER SELL %s qty=%s @ limit=%s "
-                    "(unrealized_pnl=$%.2f, mkt_value=$%.2f)",
-                    p.symbol, self._format_qty(qty), limit_str,
-                    p.unrealized_pnl, p.market_value,
+                    "FORCE DE-LEVER SELL %s qty=%s @ limit=%s (unrealized_pnl=$%.2f, mkt_value=$%.2f)",
+                    p.symbol,
+                    self._format_qty(qty),
+                    limit_str,
+                    p.unrealized_pnl,
+                    p.market_value,
                 )
                 self.db.insert_trade(
                     symbol=p.symbol,
@@ -319,7 +333,9 @@ class DeleverForced:
                 logger.error(
                     "FORCE DE-LEVER SELL %s failed: %s — the order may still be "
                     "live at the broker; its proceeds are already counted so the "
-                    "sweep will not over-liquidate", p.symbol, e,
+                    "sweep will not over-liquidate",
+                    p.symbol,
+                    e,
                 )
             # Rebuild THIS symbol's stop coverage on its actual fill before
             # the loop cancels the next symbol's stops (docs/WORK.md item
@@ -329,7 +345,8 @@ class DeleverForced:
             # sold, and how much, is unchanged: `projected_proceeds` above is
             # booked at submit time, never from the fill.
             self._finalize_pending_protections(
-                [prot], context="FORCE DE-LEVER",
+                [prot],
+                context="FORCE DE-LEVER",
             )
 
         # Refresh ctx so downstream stages see post-sell truth.
@@ -341,9 +358,10 @@ class DeleverForced:
             ctx.total_value = account["portfolio_value"]
             ctx.last_equity = account.get("last_equity", ctx.total_value)
             logger.info(
-                "FORCE DE-LEVER complete: %d orders, post-refresh cash=$%.2f, "
-                "positions=%d",
-                len(orders), ctx.cash, len(ctx.positions),
+                "FORCE DE-LEVER complete: %d orders, post-refresh cash=$%.2f, positions=%d",
+                len(orders),
+                ctx.cash,
+                len(ctx.positions),
             )
         except Exception as e:
             logger.error("FORCE DE-LEVER: broker refresh failed: %s", e)
@@ -355,7 +373,8 @@ class DeleverForced:
         # the owner must hear it — never a silent skip.
         if failed_symbols or projected_proceeds < deficit:
             self._alert_owner_force_delever_incomplete(
-                deficit=deficit, projected_proceeds=projected_proceeds,
+                deficit=deficit,
+                projected_proceeds=projected_proceeds,
                 failed_symbols=failed_symbols,
             )
 

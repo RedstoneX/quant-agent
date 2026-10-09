@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 def _muted_symbols(detail: str | None) -> list[str]:
     """The symbols the mute recorded alongside a dropped message."""
 
-    raw = (detail or "")
+    raw = detail or ""
     marker = "symbols:"
     if marker not in raw:
         return []

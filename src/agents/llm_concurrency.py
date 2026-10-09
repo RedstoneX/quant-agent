@@ -2,6 +2,7 @@
 
 Moved VERBATIM out of src/agents/base.py; base.py re-exports every name.
 """
+
 import os
 import threading
 from src.token_rate import TokenRateGovernor
@@ -103,20 +104,29 @@ _GOVERNOR_CHARS_PER_TOKEN = 1.5
 
 _TOKEN_GOVERNORS = {
     "openrouter": TokenRateGovernor(
-        "OpenRouter", _OPENROUTER_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+        "OpenRouter",
+        _OPENROUTER_TOKENS_PER_MIN,
+        max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
     "openai": TokenRateGovernor(
-        "OpenAI", _OPENAI_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+        "OpenAI",
+        _OPENAI_TOKENS_PER_MIN,
+        max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
     "anthropic": TokenRateGovernor(
-        "Anthropic", _ANTHROPIC_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+        "Anthropic",
+        _ANTHROPIC_TOKENS_PER_MIN,
+        max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
     "deepseek": TokenRateGovernor(
-        "DeepSeek", _int_env("QUANT_AGENT_DEEPSEEK_TPM", 150_000),
+        "DeepSeek",
+        _int_env("QUANT_AGENT_DEEPSEEK_TPM", 150_000),
         max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
     "google": TokenRateGovernor(
-        "Google", _GOOGLE_TOKENS_PER_MIN, max_wait_s=_GOVERNOR_MAX_WAIT_S,
+        "Google",
+        _GOOGLE_TOKENS_PER_MIN,
+        max_wait_s=_GOVERNOR_MAX_WAIT_S,
     ),
 }
 

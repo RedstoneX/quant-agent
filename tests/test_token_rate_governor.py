@@ -38,9 +38,7 @@ class _Clock:
 
 def _governor(limit=1000, max_wait_s=120.0):
     clock = _Clock()
-    return TokenRateGovernor(
-        "test", limit, max_wait_s=max_wait_s, sleep=clock.sleep, clock=clock
-    ), clock
+    return TokenRateGovernor("test", limit, max_wait_s=max_wait_s, sleep=clock.sleep, clock=clock), clock
 
 
 # ------------------------------------------------------------- the ceiling
@@ -172,7 +170,11 @@ def test_every_provider_domain_has_a_governor():
     from src.agents.base import _TOKEN_GOVERNORS
 
     assert set(_TOKEN_GOVERNORS) == {
-        "openrouter", "openai", "anthropic", "deepseek", "google",
+        "openrouter",
+        "openai",
+        "anthropic",
+        "deepseek",
+        "google",
     }
     for governor in _TOKEN_GOVERNORS.values():
         assert governor.tokens_per_minute > 0
@@ -208,7 +210,9 @@ def test_a_failover_is_charged_to_the_configured_fallback_providers_governor():
     from src.agents.base import _governor_domain_for
 
     openrouter_agent = type(
-        "A", (), {"_provider": "openrouter", "_fallback_provider": "google"},
+        "A",
+        (),
+        {"_provider": "openrouter", "_fallback_provider": "google"},
     )()
     # Primary success (is_failover=False, the default): charged to the
     # agent's own configured provider.
@@ -216,9 +220,14 @@ def test_a_failover_is_charged_to_the_configured_fallback_providers_governor():
     # A failover attempt: charged to the FALLBACK provider, even though nothing
     # about the model string ("claude-opus-4-7", the old hardcoded fallback)
     # says so any more.
-    assert _governor_domain_for(
-        "claude-opus-4-7", openrouter_agent, is_failover=True,
-    ) == "google"
+    assert (
+        _governor_domain_for(
+            "claude-opus-4-7",
+            openrouter_agent,
+            is_failover=True,
+        )
+        == "google"
+    )
 
 
 def test_governor_domain_falls_back_safely_for_an_unrecognized_provider():

@@ -76,19 +76,21 @@ def _parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--db-path", type=Path, required=True,
-        help="SQLite database to backfill. For review/testing this MUST "
-             "be a COPY, never the live production database.",
+        "--db-path",
+        type=Path,
+        required=True,
+        help="SQLite database to backfill. For review/testing this MUST be a COPY, never the live production database.",
     )
     p.add_argument(
-        "--apply", action="store_true",
-        help="Actually write the resolved values. Without this flag the "
-             "script only computes and PRINTS counts.",
+        "--apply",
+        action="store_true",
+        help="Actually write the resolved values. Without this flag the script only computes and PRINTS counts.",
     )
     p.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Skip the interactive confirmation prompt when --apply is "
-             "set. Only use once you've already reviewed a dry run.",
+        "set. Only use once you've already reviewed a dry run.",
     )
     return p.parse_args(argv)
 
@@ -106,10 +108,7 @@ def main(argv=None) -> int:
     print()
 
     if args.apply and not args.yes:
-        resp = input(
-            f"About to WRITE conviction-ledger values into {db_path}. "
-            f"Type 'yes' to continue: "
-        )
+        resp = input(f"About to WRITE conviction-ledger values into {db_path}. Type 'yes' to continue: ")
         if resp.strip().lower() != "yes":
             print("Aborted — no changes made.")
             return 1
@@ -134,8 +133,7 @@ def main(argv=None) -> int:
     print(f"Entry rows considered (BUY/SHORT with decision_id): {result['entry_rows_considered']}")
     print(f"{label}: {result['entry_recovered']}")
     print(f"Unrecoverable — no matching agent_logs row:  {result['entry_unrecoverable_no_agent_log']}")
-    print(f"Unrecoverable — no matching target in PM response: "
-          f"{result['entry_unrecoverable_no_matching_target']}")
+    print(f"Unrecoverable — no matching target in PM response: {result['entry_unrecoverable_no_matching_target']}")
     print()
     print(
         "allocated_risk_pct recoverable by this backfill: "

@@ -5,6 +5,7 @@ Drives `_pm_public_day_grade` with hand-built `PortfolioDecision` objects and
 checks the fixture itself against `fixture_policy` and against a drift guard
 on the live PM builder (`src/pipeline_stages.py::decide()` call site).
 """
+
 from __future__ import annotations
 
 import importlib
@@ -35,15 +36,19 @@ def _chain(**overrides) -> ReasoningChain:
 
 def _decision(*targets: TargetPosition, chain: ReasoningChain | None = None) -> PortfolioDecision:
     return PortfolioDecision(
-        reasoning_chain=chain or _chain(), targets=list(targets),
+        reasoning_chain=chain or _chain(),
+        targets=list(targets),
         portfolio_view="Test book.",
     )
 
 
 def _target(symbol: str, *, risk: float = 1.0) -> TargetPosition:
     return TargetPosition(
-        symbol=symbol, direction="long", risk_allocation_pct=risk,
-        conviction="medium", thesis=f"{symbol} thesis for the grader.",
+        symbol=symbol,
+        direction="long",
+        risk_allocation_pct=risk,
+        conviction="medium",
+        thesis=f"{symbol} thesis for the grader.",
         thesis_invalid_if="Closes through the level.",
     )
 
@@ -61,10 +66,9 @@ def _by_name(checks) -> dict:
 # The fixture: policy-admissible, no desk data, and matches the doc'd shape
 # --------------------------------------------------------------------------
 
+
 def test_fixture_is_admissible_under_fixture_policy():
-    verdict = fixture_policy.check_fixture(
-        fixture_policy.FIXTURES_DIR / scenarios._PM_PUBLIC_DAY_FIXTURE
-    )
+    verdict = fixture_policy.check_fixture(fixture_policy.FIXTURES_DIR / scenarios._PM_PUBLIC_DAY_FIXTURE)
     assert verdict.admissible, verdict.problems
 
 
@@ -96,19 +100,37 @@ def test_eligible_set_matches_the_live_candidate_eligibility_gate():
     _, analyses, *_ = scenarios._pm_public_day_inputs()
     eligible = scenarios._pm_public_day_eligible_set(analyses)
     evidence_registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=analyses, positions=[], news_intel=None,
-        earnings_analyses=[], macro_analysis=None, smart_money_findings=[],
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=None,
+        smart_money_findings=[],
     )
     replay = PortfolioManagerAgent.candidate_eligibility(
-        analyses=analyses, evidence_registry=evidence_registry,
+        analyses=analyses,
+        evidence_registry=evidence_registry,
         allowed_buy_symbols={a.symbol.upper() for a in analyses},
         active_state_changes="",
     )
     assert eligible == replay
     admitted = {s for s, why in eligible.items() if not why}
     assert admitted == {
-        "AAPL", "AGX", "BRK-B", "COP", "CVX", "EQNR", "JPM", "MU",
-        "NEE", "NET", "OKLO", "ONDS", "OXY", "TSM", "ZS",
+        "AAPL",
+        "AGX",
+        "BRK-B",
+        "COP",
+        "CVX",
+        "EQNR",
+        "JPM",
+        "MU",
+        "NEE",
+        "NET",
+        "OKLO",
+        "ONDS",
+        "OXY",
+        "TSM",
+        "ZS",
     }
     assert eligible["UNH"] and eligible["AMZN"]  # neutral, refused
 
@@ -127,8 +149,7 @@ def test_fixture_scale_matches_live_derived_values():
     from src.data.earnings import EarningsDataProvider
 
     settings = yaml.safe_load(
-        (fixture_policy.FIXTURES_DIR / ".." / ".." / ".." / "config" / "settings.yaml")
-        .resolve().read_text()
+        (fixture_policy.FIXTURES_DIR / ".." / ".." / ".." / "config" / "settings.yaml").resolve().read_text()
     )
     universe = settings["trading"]["universe"]
     assert len(universe) == 101
@@ -145,15 +166,14 @@ def test_fixture_scale_matches_live_derived_values():
     assert earnings_manifest["_exam"]["lookback_days"] == EarningsDataProvider().lookback_days
     assert earnings_manifest["_exam"]["universe_size"] == len(universe)
 
-    form4_manifest = json.loads(
-        (fixture_policy.FIXTURES_DIR / "sec_form4_pm_public_day_2026-09-14.json").read_text()
-    )
+    form4_manifest = json.loads((fixture_policy.FIXTURES_DIR / "sec_form4_pm_public_day_2026-09-14.json").read_text())
     assert form4_manifest["_exam"]["configured_lookback_days"] == settings["smart_money"]["lookback_days"]
 
 
 # --------------------------------------------------------------------------
 # The grader discriminates
 # --------------------------------------------------------------------------
+
 
 def test_none_decision_scores_zero():
     checks = scenarios._pm_public_day_grade(None)
@@ -193,6 +213,7 @@ def test_empty_book_still_passes_eligibility_and_schema():
 # Drift guard against the live PM input builder
 # --------------------------------------------------------------------------
 
+
 def test_decide_signature_still_accepts_every_argument_this_scenario_passes():
     """`_pm_public_day_invoke` calls a fixed subset of
     `PortfolioManagerAgent.decide()`'s keyword arguments. If a future change
@@ -205,9 +226,18 @@ def test_decide_signature_still_accepts_every_argument_this_scenario_passes():
 
     params = set(inspect.signature(PortfolioManagerAgent.decide).parameters)
     used = {
-        "analyses", "positions", "macro_analysis", "cash_balance",
-        "reserve_balance", "total_value", "news_intel", "earnings_analyses",
-        "smart_money_findings", "allow_margin", "session_type",
-        "allowed_buy_symbols", "transient_admitted_symbols",
+        "analyses",
+        "positions",
+        "macro_analysis",
+        "cash_balance",
+        "reserve_balance",
+        "total_value",
+        "news_intel",
+        "earnings_analyses",
+        "smart_money_findings",
+        "allow_margin",
+        "session_type",
+        "allowed_buy_symbols",
+        "transient_admitted_symbols",
     }
     assert used <= params, used - params

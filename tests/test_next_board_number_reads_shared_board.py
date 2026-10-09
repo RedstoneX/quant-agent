@@ -12,6 +12,7 @@ rather than backward at numbers that have already landed.
 
 The board is shared state, so its authoritative copy is the shared ref.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -30,8 +31,7 @@ def _board(*live: int) -> str:
 
 
 def _git(repo, *args):
-    subprocess.run(["git", "-C", str(repo), *args], check=True,
-                   capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
 
 
 @pytest.fixture()
@@ -61,13 +61,11 @@ def stale_checkout(tmp_path):
 
 
 def _run(work_md, monkeypatch, claims, *extra):
-    monkeypatch.setattr(next_board_number, "read_open_pr_claims",
-                        lambda *_a, **_k: claims)
+    monkeypatch.setattr(next_board_number, "read_open_pr_claims", lambda *_a, **_k: claims)
     return next_board_number.main(["--work-md", str(work_md), *extra])
 
 
-def test_it_refuses_a_number_the_shared_board_has_already_used(
-        stale_checkout, monkeypatch, capsys):
+def test_it_refuses_a_number_the_shared_board_has_already_used(stale_checkout, monkeypatch, capsys):
     """The 2026-10-01 collision, reproduced: 222 is taken on the ref."""
     work_md = stale_checkout / "docs" / "WORK.md"
     assert "222" not in work_md.read_text()  # the stale tree cannot see it
@@ -78,8 +76,7 @@ def test_it_refuses_a_number_the_shared_board_has_already_used(
     assert "origin/main" in out
 
 
-def test_it_says_which_source_the_board_came_from(
-        stale_checkout, monkeypatch, capsys):
+def test_it_says_which_source_the_board_came_from(stale_checkout, monkeypatch, capsys):
     work_md = stale_checkout / "docs" / "WORK.md"
     _run(work_md, monkeypatch, OpenPrClaims(by_pr={}))
     out = capsys.readouterr().out
@@ -87,8 +84,7 @@ def test_it_says_which_source_the_board_came_from(
     assert "WORKING TREE ONLY" not in out
 
 
-def test_a_local_item_not_yet_pushed_still_counts(
-        stale_checkout, monkeypatch, capsys):
+def test_a_local_item_not_yet_pushed_still_counts(stale_checkout, monkeypatch, capsys):
     """Falling back on the ref must not lose the agent's own local item."""
     work_md = stale_checkout / "docs" / "WORK.md"
     work_md.write_text(_board(7, 400))
@@ -96,8 +92,7 @@ def test_a_local_item_not_yet_pushed_still_counts(
     assert "Next free board item number: 401" in capsys.readouterr().out
 
 
-def test_no_origin_falls_back_soft_and_states_why(tmp_path, monkeypatch,
-                                                   capsys):
+def test_no_origin_falls_back_soft_and_states_why(tmp_path, monkeypatch, capsys):
     """An agent must never be BLOCKED here — it could not file at all."""
     work_md = tmp_path / "WORK.md"
     work_md.write_text(_board(7))
@@ -107,11 +102,9 @@ def test_no_origin_falls_back_soft_and_states_why(tmp_path, monkeypatch,
     assert "WORKING TREE ONLY" in out
 
 
-def test_an_unfetched_ref_falls_back_soft_and_states_why(
-        stale_checkout, monkeypatch, capsys):
+def test_an_unfetched_ref_falls_back_soft_and_states_why(stale_checkout, monkeypatch, capsys):
     work_md = stale_checkout / "docs" / "WORK.md"
-    assert _run(work_md, monkeypatch, OpenPrClaims(by_pr={}),
-                "--board-ref", "origin/never-fetched") == 0
+    assert _run(work_md, monkeypatch, OpenPrClaims(by_pr={}), "--board-ref", "origin/never-fetched") == 0
     out = capsys.readouterr().out
     assert "WORKING TREE ONLY" in out
     assert "origin/never-fetched" in out
@@ -133,14 +126,11 @@ def test_the_ref_read_never_fetches(stale_checkout):
     assert set(subcommands) <= {"rev-parse", "show"}, subcommands
 
 
-def test_the_dangerous_override_is_still_refused_as_unchecked(
-        stale_checkout, monkeypatch, capsys):
+def test_the_dangerous_override_is_still_refused_as_unchecked(stale_checkout, monkeypatch, capsys):
     """`--accept-unchecked-number` keeps its label and its warning."""
     work_md = stale_checkout / "docs" / "WORK.md"
-    monkeypatch.setattr(next_board_number, "read_open_pr_claims",
-                        lambda *_a, **_k: pytest.fail("must not be read"))
-    assert next_board_number.main(
-        ["--work-md", str(work_md), "--accept-unchecked-number"]) == 0
+    monkeypatch.setattr(next_board_number, "read_open_pr_claims", lambda *_a, **_k: pytest.fail("must not be read"))
+    assert next_board_number.main(["--work-md", str(work_md), "--accept-unchecked-number"]) == 0
     out = capsys.readouterr().out
     assert "(UNCHECKED)" in out
     assert "open pull requests were NOT read" in out

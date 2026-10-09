@@ -1,4 +1,5 @@
 """Projected post-sale book, cash and entry cost for rotation (lifted VERBATIM from pipeline_rotation_exec)."""
+
 from __future__ import annotations
 
 
@@ -50,8 +51,8 @@ def _projected_sale_qty(decision, position) -> float:
         return min(qty, held_qty)
     return held_qty
 
-def _projected_post_sale_book(positions, total_value: float,
-                              sell_decisions: list, cover_decisions: list):
+
+def _projected_post_sale_book(positions, total_value: float, sell_decisions: list, cover_decisions: list):
     """The held book and the equity as they will be once THIS SESSION'S
     exits have gone through — the state the downstream gates will actually
     read, projected before any of them has been submitted.
@@ -143,6 +144,7 @@ def _projected_post_sale_book(positions, total_value: float,
 
     return projected, max(0.0, float(total_value) - concession)
 
+
 def _scaled_position(position, remaining_fraction: float):
     """A copy of `position` holding `remaining_fraction` of what it holds.
 
@@ -162,9 +164,9 @@ def _scaled_position(position, remaining_fraction: float):
     class looks like.
     """
     import copy
+
     clone = copy.copy(position)
-    for field_name in ("qty", "market_value", "unrealized_intraday_pnl",
-                       "unrealized_pnl", "cost_basis"):
+    for field_name in ("qty", "market_value", "unrealized_intraday_pnl", "unrealized_pnl", "cost_basis"):
         value = getattr(clone, field_name, None)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
@@ -178,8 +180,8 @@ def _scaled_position(position, remaining_fraction: float):
             continue
     return clone
 
-def _projected_post_sale_cash(cash: float, positions, sell_decisions,
-                              cover_decisions) -> float:
+
+def _projected_post_sale_cash(cash: float, positions, sell_decisions, cover_decisions) -> float:
     """Settled cash once this session's exits have gone through — a LOWER
     bound, deliberately.
 
@@ -227,8 +229,8 @@ def _projected_post_sale_cash(cash: float, positions, sell_decisions,
         cash += (-1.0 if covering else 1.0) * limit * abs(sold)
     return cash
 
-def _projected_entry_cost(decision, equity: float, *,
-                          budget_is_gross: bool) -> float:
+
+def _projected_entry_cost(decision, equity: float, *, budget_is_gross: bool) -> float:
     """What an entry earlier in the same session will take out of the
     deployment pool before the rotation's own buy reaches it.
 
@@ -247,8 +249,7 @@ def _projected_entry_cost(decision, equity: float, *,
     the broker accepts). Over-charging shrinks the pool, which refuses a
     rotation that would have worked — the side to be wrong on.
     """
-    if (str(getattr(decision, "action", "") or "").upper() == "SHORT"
-            and not budget_is_gross):
+    if str(getattr(decision, "action", "") or "").upper() == "SHORT" and not budget_is_gross:
         return 0.0
     try:
         allocation_pct = float(getattr(decision, "allocation_pct", 0.0) or 0.0)

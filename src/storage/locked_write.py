@@ -42,8 +42,10 @@ def locked_write(lock: threading.Lock, do, *, label: str = "write"):
             last_exc = exc
             logger.warning(
                 "DB %s contended (attempt %d/5): %s — retrying",
-                label, attempt + 1, exc,
+                label,
+                attempt + 1,
+                exc,
             )
-            _time.sleep(0.05 * (2 ** attempt))  # 0.05,0.1,0.2,0.4,0.8s
+            _time.sleep(0.05 * (2**attempt))  # 0.05,0.1,0.2,0.4,0.8s
     logger.error("DB %s still locked after retries — giving up: %s", label, last_exc)
     raise last_exc

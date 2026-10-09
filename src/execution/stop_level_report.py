@@ -5,6 +5,7 @@ Neither piece touches the broker or the database: the dataclass is a value
 and the report only logs and pages. Both can be exercised with hand-built
 mismatches, which is the boundary test for a split.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,11 +38,11 @@ def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
     for item in mismatches:
         logger.error(
             "STOP RECORD MISMATCH: %s — %s (short=%s)",
-            item.symbol, item.reason, item.is_short,
+            item.symbol,
+            item.reason,
+            item.is_short,
         )
-    lines = "\n".join(
-        f"  {item.symbol}: {item.reason}" for item in mismatches
-    )
+    lines = "\n".join(f"  {item.symbol}: {item.reason}" for item in mismatches)
     body = (
         "STOP RECORD DOES NOT MATCH THE BROKER\n"
         "The desk's own opening-row stop_loss is not the live protective "
@@ -56,8 +57,10 @@ def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
     )
     try:
         from src import notifier as _notifier
+
         _notifier.send_owner_alert(
-            body, symbols=[item.symbol for item in mismatches],
+            body,
+            symbols=[item.symbol for item in mismatches],
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("stop-record mismatch owner alert failed: %s", exc)

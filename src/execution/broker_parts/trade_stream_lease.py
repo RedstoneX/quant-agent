@@ -5,6 +5,7 @@ catch-all now records a full traceback plus a counted row through
 ``record_guarded_pass`` (rows need the broker the lease was built for; with
 none lent, the traceback is still logged and the row is skipped).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,10 +19,8 @@ logger = logging.getLogger(__name__)
 _W = "trade_stream.lease"
 
 
-
 def _swallowed(owner, name: str, exc: BaseException, effect: str) -> None:
-    record_guarded_pass(owner, f"{_W}.{name}", exc, log=logger,
-                        context={"effect": effect})
+    record_guarded_pass(owner, f"{_W}.{name}", exc, log=logger, context={"effect": effect})
 
 
 class _TradeUpdatesLease:

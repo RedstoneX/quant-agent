@@ -7,6 +7,7 @@ caller writes `if phase(...) is SKIP: continue`, so control flow is
 unchanged. `MiddayLoop` carries the values that are the same for every
 symbol of one pass, so no phase takes more than four arguments.
 """
+
 from dataclasses import dataclass
 
 

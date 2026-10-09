@@ -7,6 +7,7 @@ import ``scale_in`` while ``scale_in`` imports them back. Nothing here knows
 about the add sequence, the WAL, or the broker class; ``scale_in`` re-exports
 every name so call sites and patch targets there keep working.
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,7 +34,6 @@ def held_signed_qty(positions: list | None, symbol: str) -> float:
     return 0.0
 
 
-
 def broker_position_qty(broker: Any, symbol: str) -> float | None:
     """Signed broker qty for `symbol`. 0 if flat. None if the broker could not be asked."""
     try:
@@ -49,7 +49,11 @@ def broker_position_qty(broker: Any, symbol: str) -> float | None:
 
 
 def cover_qty_for_rearm(
-    broker: Any, *, symbol: str, filled_qty: float, held_qty_before: float,
+    broker: Any,
+    *,
+    symbol: str,
+    filled_qty: float,
+    held_qty_before: float,
 ) -> float:
     """Quantity the post-fill protective stop must cover (magnitude).
 
@@ -78,8 +82,10 @@ def cover_qty_for_rearm(
     except (TypeError, ValueError):
         held = 0.0
     logger.warning(
-        "scale-in: broker qty unreadable for %s — covering |filled| (%.4f) "
-        "+ |held-before| (%.4f)", symbol, abs(filled), abs(held),
+        "scale-in: broker qty unreadable for %s — covering |filled| (%.4f) + |held-before| (%.4f)",
+        symbol,
+        abs(filled),
+        abs(held),
     )
     return abs(filled) + abs(held)
 
@@ -114,4 +120,3 @@ def trading_session_lock_held() -> bool:
         return _SESSION_LOCK_DIR.is_dir()
     except OSError:
         return False
-

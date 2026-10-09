@@ -8,7 +8,10 @@ import re
 from dataclasses import dataclass
 from src.risk.exit_guard_deltas import _finite
 from src.risk.exit_guard_thesis_macro import (
-    _clean_number, _macro_threshold_in_series_unit, _MACRO_SERIES_RE, _MACRO_SERIES_UNITS,
+    _clean_number,
+    _macro_threshold_in_series_unit,
+    _MACRO_SERIES_RE,
+    _MACRO_SERIES_UNITS,
 )
 
 
@@ -98,13 +101,13 @@ _LEVEL_WORD_PRICE_RE = re.compile(
 #: A decimal number close after a direction word ("below 85.50", "above the
 #: 108.69"). Decimal required for the same false-positive reason as above.
 _DIRECTION_PRICE_RE = re.compile(
-    r"\b(?:above|below|over|under)\b\D{0,12}?([\d,]+\.\d+)", re.IGNORECASE,
+    r"\b(?:above|below|over|under)\b\D{0,12}?([\d,]+\.\d+)",
+    re.IGNORECASE,
 )
 
 #: MA periods this checker will compare against — must match what
 #: `src/data/technical.py::compute_indicators` actually computes.
 _SUPPORTED_MA_PERIODS = (20, 50, 200)
-
 
 
 @dataclass(frozen=True)
@@ -187,7 +190,8 @@ def check_thesis_invalid_if(
     up = bool(_UP_WORDS_RE.search(text))
     if down == up:  # neither found, or both found (ambiguous/contradictory)
         return ThesisInvalidationCheck(
-            "UNPARSEABLE", "no unambiguous direction (above/below) found",
+            "UNPARSEABLE",
+            "no unambiguous direction (above/below) found",
         )
     direction: Literal["down", "up"] = "down" if down else "up"
 
@@ -206,15 +210,13 @@ def check_thesis_invalid_if(
         if cur is None or ma_value is None:
             return ThesisInvalidationCheck(
                 "UNPARSEABLE",
-                f"MA{period} condition recognised but current_price or "
-                f"ma_{period} was not supplied",
+                f"MA{period} condition recognised but current_price or ma_{period} was not supplied",
             )
         fired = cur < ma_value if direction == "down" else cur > ma_value
         status = "TRIGGERED" if fired else "NOT_TRIGGERED"
         return ThesisInvalidationCheck(
             status,
-            f"price {cur} vs MA{period} {ma_value}, condition was "
-            f"'{direction}'",
+            f"price {cur} vs MA{period} {ma_value}, condition was '{direction}'",
         )
 
     for key, pattern in _MACRO_SERIES_RE:
@@ -225,39 +227,36 @@ def check_thesis_invalid_if(
         if level is None:
             return ThesisInvalidationCheck(
                 "UNPARSEABLE",
-                f"'{key}' condition recognised but the caller supplied no "
-                f"current {key} level",
+                f"'{key}' condition recognised but the caller supplied no current {key} level",
             )
         series_unit = _MACRO_SERIES_UNITS[key]
         macro_threshold, why = _macro_threshold_in_series_unit(
-            text, series_unit, series_match.span(),
+            text,
+            series_unit,
+            series_match.span(),
         )
         if macro_threshold is None:
             return ThesisInvalidationCheck("UNPARSEABLE", why)
-        fired = (
-            level < macro_threshold if direction == "down"
-            else level > macro_threshold
-        )
+        fired = level < macro_threshold if direction == "down" else level > macro_threshold
         return ThesisInvalidationCheck(
             "TRIGGERED" if fired else "NOT_TRIGGERED",
-            f"{key} {level} vs level {macro_threshold} ({series_unit}), "
-            f"condition was '{direction}'",
+            f"{key} {level} vs level {macro_threshold} ({series_unit}), condition was '{direction}'",
         )
 
     threshold = _extract_price_threshold(text)
     if threshold is None:
         return ThesisInvalidationCheck(
             "UNPARSEABLE",
-            "no MA reference, named macro series or numeric price level "
-            "found in text",
+            "no MA reference, named macro series or numeric price level found in text",
         )
     if cur is None:
         return ThesisInvalidationCheck(
-            "UNPARSEABLE", "price level condition recognised but current_price "
-            "was not supplied",
+            "UNPARSEABLE",
+            "price level condition recognised but current_price was not supplied",
         )
     fired = cur < threshold if direction == "down" else cur > threshold
     status = "TRIGGERED" if fired else "NOT_TRIGGERED"
     return ThesisInvalidationCheck(
-        status, f"price {cur} vs level {threshold}, condition was '{direction}'",
+        status,
+        f"price {cur} vs level {threshold}, condition was '{direction}'",
     )

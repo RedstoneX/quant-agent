@@ -29,7 +29,10 @@ from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
 from src.models import (
-    NewsIntelligenceReport, Position, PositionAction, PositionReview,
+    NewsIntelligenceReport,
+    Position,
+    PositionAction,
+    PositionReview,
 )
 from src.agents.prompt_limits import render_prompt_limits
 from src.risk.metrics import (
@@ -50,6 +53,7 @@ def _fmt_or_na(value, suffix: str = "") -> str:
     fire — prompts were literally rendering 'VIX: None' / 'Nonebps'
     (audit round 2 #34)."""
     return "N/A" if value is None else f"{value}{suffix}"
+
 
 _SESSION_LABEL = {
     "midday": "Midday (13:00 ET) — afternoon still open",
@@ -153,9 +157,7 @@ class PositionReviewerAgent(BaseAgent):
         trade_grade_summary: dict = kwargs.get("trade_grade_summary") or {}
         yesterday_insights: dict | None = kwargs.get("yesterday_insights")
         recent_performance: dict = kwargs.get("recent_performance") or {}
-        already_trimmed_today: set[str] = set(
-            kwargs.get("already_trimmed_today") or set()
-        )
+        already_trimmed_today: set[str] = set(kwargs.get("already_trimmed_today") or set())
         # Board item 74 — pre-formatted by `src.risk.spent_trigger`, which is
         # the same module the executor enforces with. Empty when nothing is
         # spent or the record could not be read.
@@ -165,12 +167,7 @@ class PositionReviewerAgent(BaseAgent):
         trade_context: dict[str, dict] = {}
         for t in morning_trades:
             sym = t.get("symbol", "")
-            if (
-                t.get("action") == "BUY"
-                and sym
-                and sym not in trade_context
-                and self._trade_executed(t)
-            ):
+            if t.get("action") == "BUY" and sym and sym not in trade_context and self._trade_executed(t):
                 trade_context[sym] = t
 
         # Non-LLM system actions taken earlier in this session: a
@@ -275,13 +272,9 @@ class PositionReviewerAgent(BaseAgent):
                 lines.append(f"  Hard stop (broker): ${sl:.2f}")
             if tp:
                 lines.append(
-                    f"  Reference target: ${tp:.2f} (a recorded "
-                    f"expectation — nothing exits, caps or trails on it)"
+                    f"  Reference target: ${tp:.2f} (a recorded expectation — nothing exits, caps or trails on it)"
                 )
-            entry_reasoning = (
-                (ctx.get("reasoning") or "").strip()
-                or (entry_row.get("reasoning") or "").strip()
-            )
+            entry_reasoning = (ctx.get("reasoning") or "").strip() or (entry_row.get("reasoning") or "").strip()
             if entry_reasoning:
                 lines.append(f"  Entry thesis: {entry_reasoning[:220]}")
             else:
@@ -337,9 +330,7 @@ class PositionReviewerAgent(BaseAgent):
                         "infer one; judge this position on thesis and structure)"
                     )
             if pf.get("expected_horizon_sessions") is not None:
-                metric_bits.append(
-                    f"horizon={pf['expected_horizon_sessions']}sessions (pinned at entry)"
-                )
+                metric_bits.append(f"horizon={pf['expected_horizon_sessions']}sessions (pinned at entry)")
             if pf.get("setup_type"):
                 metric_bits.append(f"setup={pf['setup_type']}")
             if pf.get("distance_to_stop_pct") is not None:
@@ -367,10 +358,7 @@ class PositionReviewerAgent(BaseAgent):
             if pf.get("drift_flag"):
                 # Rendered, not typed: the same pair the flag is computed
                 # from (`src.risk.metrics`), board item 107.
-                flag_bits.append(
-                    f"⚠️ DRIFT (weight > {DRIFT_WEIGHT_PCT:g}% + "
-                    f"PnL > {DRIFT_PNL_PCT:g}%)"
-                )
+                flag_bits.append(f"⚠️ DRIFT (weight > {DRIFT_WEIGHT_PCT:g}% + PnL > {DRIFT_PNL_PCT:g}%)")
             if pf.get("target_breach_flag"):
                 flag_bits.append("⚠️ TARGET_BREACH (>150% of reference_target)")
             if flag_bits:
@@ -389,9 +377,7 @@ class PositionReviewerAgent(BaseAgent):
             confidence = macro_analysis.get("confidence", "N/A")
             # No macro invested target: owner mandate 2026-09-17, the desk
             # stays fully invested and macro informs direction only.
-            macro_regime_line = (
-                f"Regime: **{regime}** | Outlook: **{outlook}** ({confidence})"
-            )
+            macro_regime_line = f"Regime: **{regime}** | Outlook: **{outlook}** ({confidence})"
         else:
             macro_regime_line = "Regime: (no macro analysis this session)"
 
@@ -411,9 +397,7 @@ class PositionReviewerAgent(BaseAgent):
                 if sym not in held_syms:
                     continue
                 for a in sorted(alerts, key=lambda x: conv_order.get(x.conviction, 9))[:2]:
-                    stock_lines.append(
-                        f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}"
-                    )
+                    stock_lines.append(f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}")
             stock_text = "\n".join(stock_lines) or "No per-position news alerts."
             lost_text = news_intel.format_dropped_symbols_block()
             news_section = (
@@ -442,18 +426,13 @@ class PositionReviewerAgent(BaseAgent):
             sentiment = impl.get("sentiment", "?")
             conv = impl.get("conviction", "?")
             key_thesis = (impl.get("key_thesis") or "").strip()[:180]
-            earnings_lines.append(
-                f"- {sym} [{sentiment} / {conv}]: {key_thesis}"
-            )
+            earnings_lines.append(f"- {sym} [{sentiment} / {conv}]: {key_thesis}")
         earnings_parts: list[str] = []
         if earnings_lines:
-            earnings_parts.append(
-                "### Earnings Analyses (held positions)\n" + "\n".join(earnings_lines)
-            )
+            earnings_parts.append("### Earnings Analyses (held positions)\n" + "\n".join(earnings_lines))
         if queued:
             earnings_parts.append(
-                f"### Just-filed (analysis queued — treat as elevated event risk): "
-                f"{', '.join(queued)}"
+                f"### Just-filed (analysis queued — treat as elevated event risk): {', '.join(queued)}"
             )
         earnings_section = "\n\n".join(earnings_parts) if earnings_parts else ""
 
@@ -464,9 +443,7 @@ class PositionReviewerAgent(BaseAgent):
 
         narrative_section = _opt_section("Portfolio Narrative (last 7 evenings)", weekly_narrative)
         trajectory_section = _opt_section("Macro Regime Trajectory (7 days)", macro_trajectory)
-        active_changes_section = _opt_section(
-            "Active HIGH-conviction State Changes (14 days)", active_state_changes
-        )
+        active_changes_section = _opt_section("Active HIGH-conviction State Changes (14 days)", active_state_changes)
         calibration_section = _opt_section("Trade Calibration (45-day realized)", calibration_note)
         decisions_section = _opt_section(
             "Your Recent Decisions (don't flip-flop without a named trigger)",
@@ -506,8 +483,7 @@ class PositionReviewerAgent(BaseAgent):
         # whole section, hiding BUY-grade calibration ("wrong" = thesis
         # broken) that is material to hold-vs-sell judgment.
         if trade_grade_summary and (
-            trade_grade_summary.get("n_sells", 0) > 0
-            or trade_grade_summary.get("n_buys", 0) > 0
+            trade_grade_summary.get("n_sells", 0) > 0 or trade_grade_summary.get("n_buys", 0) > 0
         ):
             sc = trade_grade_summary.get("sell_counts") or {}
             bc = trade_grade_summary.get("buy_counts") or {}
@@ -526,8 +502,7 @@ class PositionReviewerAgent(BaseAgent):
                 )
             elif miss_rate >= 33:
                 tilt_note = (
-                    "SELL miss rate elevated — raise the bar on today's SELL "
-                    "triggers; no price-action-only exits."
+                    "SELL miss rate elevated — raise the bar on today's SELL triggers; no price-action-only exits."
                 )
             repeat_premature = trade_grade_summary.get("repeat_premature_symbols") or []
             repeat_wrong = trade_grade_summary.get("repeat_wrong_symbols") or []
@@ -561,8 +536,7 @@ class PositionReviewerAgent(BaseAgent):
         reality = trade_grade_summary.get("post_exit_reality") if trade_grade_summary else None
         if reality and reality.get("n"):
             worst_lines = "; ".join(
-                f"{w['symbol']} exited {w['date']} → {w['move_pct']:+.1f}% since"
-                for w in (reality.get("worst") or [])
+                f"{w['symbol']} exited {w['date']} → {w['move_pct']:+.1f}% since" for w in (reality.get("worst") or [])
             )
             frac = reality["n_higher_5pct"] / reality["n"]
             reality_note = ""
@@ -593,10 +567,7 @@ class PositionReviewerAgent(BaseAgent):
 
             r5 = _pct(recent_performance.get("rolling_5d_pct"))
             r20 = _pct(recent_performance.get("rolling_20d_pct"))
-            perf_section = (
-                f"### Recent System Performance\n"
-                f"- 5d: {r5} | 20d: {r20}\n"
-            )
+            perf_section = f"### Recent System Performance\n- 5d: {r5} | 20d: {r20}\n"
         else:
             perf_section = ""
 
@@ -605,7 +576,8 @@ class PositionReviewerAgent(BaseAgent):
         reserve_line = (
             f"\n  (a further ${reserve_balance:,.2f} is sweep-parked; it "
             f"is NOT sold to fund a BUY and is NOT part of the Cash above)"
-            if reserve_balance > 0 else ""
+            if reserve_balance > 0
+            else ""
         )
 
         # Substantiation re-ask (2026-09-18). Non-empty only on the ONE
@@ -614,14 +586,12 @@ class PositionReviewerAgent(BaseAgent):
         # unsubstantiated. Empty string on every first call, so the prompt
         # this seat sees normally is byte-for-byte unchanged.
         substantiation_challenge: str = kwargs.get("substantiation_challenge") or ""
-        substantiation_section = (
-            f"### ⚠️ {substantiation_challenge}\n"
-            if substantiation_challenge else ""
-        )
+        substantiation_section = f"### ⚠️ {substantiation_challenge}\n" if substantiation_challenge else ""
 
         # Margin mandate (carried over from v2 — sub-dollar threshold).
         allow_margin: bool = bool(kwargs.get("allow_margin", True))
         from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
+
         if not allow_margin and cash_balance < -MARGIN_DEFICIT_FLOOR_USD:
             deficit = -cash_balance
             margin_section = (
@@ -651,11 +621,7 @@ class PositionReviewerAgent(BaseAgent):
             ladder_multiple = kwargs.get("margin_ladder_multiple")
             ladder_rung = kwargs.get("margin_ladder_rung")
             ladder_backed = bool(kwargs.get("margin_ladder_backed", False))
-            if (
-                ladder_backed
-                and isinstance(headroom_usd, (int, float))
-                and isinstance(ladder_multiple, (int, float))
-            ):
+            if ladder_backed and isinstance(headroom_usd, (int, float)) and isinstance(ladder_multiple, (int, float)):
                 margin_section = (
                     "### Margin Capacity (margin is ENABLED)\n"
                     f"This account may run gross exposure up to "
@@ -683,8 +649,7 @@ class PositionReviewerAgent(BaseAgent):
                 "broker's own protective stop firing (STOP_OUT — the market closed the "
                 "position, not a decision anyone made), and bypassed LLM review — the "
                 "listed symbols are already closed out of the book. Context-only; do "
-                "not try to re-open, re-stop, or second-guess:\n"
-                + "\n".join(system_action_lines) + "\n"
+                "not try to re-open, re-stop, or second-guess:\n" + "\n".join(system_action_lines) + "\n"
             )
         else:
             system_actions_section = ""
@@ -696,14 +661,14 @@ class PositionReviewerAgent(BaseAgent):
         # belt so the LLM isn't fighting an invisible filter.
         if already_trimmed_today or spent_triggers_block:
             trimmed_line = (
-                f"Symbols sold earlier today: "
-                f"{', '.join(sorted(already_trimmed_today))}\n"
-                if already_trimmed_today else ""
+                f"Symbols sold earlier today: {', '.join(sorted(already_trimmed_today))}\n"
+                if already_trimmed_today
+                else ""
             )
             already_trimmed_section = (
                 "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
-                + trimmed_line +
-                "These positions ALREADY received a sell-side action this session day "
+                + trimmed_line
+                + "These positions ALREADY received a sell-side action this session day "
                 "(a midday REDUCE, or a deterministic de-lever).\n"
                 "**HOLD them at this session unless a HARD trigger fires that the "
                 "desk has NOT already acted on today:**\n"
@@ -711,9 +676,7 @@ class PositionReviewerAgent(BaseAgent):
                 "cited level, fundamental signal flipped, etc.)\n"
                 "  - HIGH-conviction bearish stock-specific state_change reversal landed today\n"
                 "  - Bearish earnings filing analysis posted today for this symbol\n"
-                "\n"
-                + spent_triggers_block +
-                "\n"
+                "\n" + spent_triggers_block + "\n"
                 "`TARGET_BREACH`, slowing pace, geopolitical noise, valuation stretch, "
                 "concentration drift — these are NOT hard triggers. The earlier action "
                 "already harvested them. Trimming a second time on the same flag is the "
@@ -734,13 +697,8 @@ class PositionReviewerAgent(BaseAgent):
         # because it is the direct antidote to the failure it exists for:
         # calling a position stalled when its own numbers improved.
         if metric_deltas:
-            delta_lines = [
-                deltas.render() for _, deltas in sorted(metric_deltas.items())
-            ]
-            contradicted = sorted(
-                symbol for symbol, deltas in metric_deltas.items()
-                if deltas.net_improved
-            )
+            delta_lines = [deltas.render() for _, deltas in sorted(metric_deltas.items())]
+            contradicted = sorted(symbol for symbol, deltas in metric_deltas.items() if deltas.net_improved)
             warn = ""
             if contradicted:
                 warn = (
@@ -758,10 +716,7 @@ class PositionReviewerAgent(BaseAgent):
                 "### Your Own Previous Review (metric deltas)\n"
                 "These are the numbers YOU recorded last session and how they "
                 "have moved. Read them before judging whether anything is "
-                "actually deteriorating.\n"
-                + "\n".join(delta_lines)
-                + warn
-                + "\n"
+                "actually deteriorating.\n" + "\n".join(delta_lines) + warn + "\n"
             )
         else:
             deltas_section = (
@@ -777,7 +732,8 @@ class PositionReviewerAgent(BaseAgent):
         # limit when margin is enabled, so the label must not claim the
         # account has none. See Margin Capacity / Margin Policy above.
         cash_status = (
-            "deployable this session, no margin" if not allow_margin
+            "deployable this session, no margin"
+            if not allow_margin
             else "raw cash — see Margin Capacity above for what may still be spent"
         )
         return f"""## Position Review — {session_label}
@@ -798,9 +754,9 @@ class PositionReviewerAgent(BaseAgent):
 
 ### Macro
 {macro_regime_line}
-- VIX: {_fmt_or_na(vix.get('current'))} (trend: {_fmt_or_na(vix.get('trend'))})
-- HY OAS: {_fmt_or_na(hy.get('current_bps'), 'bps')} (30d Δ: {_fmt_or_na(hy.get('change_30d_bps'), 'bps')})
-- Core CPI YoY: {_fmt_or_na(infl.get('core_cpi_yoy'), '%')}
+- VIX: {_fmt_or_na(vix.get("current"))} (trend: {_fmt_or_na(vix.get("trend"))})
+- HY OAS: {_fmt_or_na(hy.get("current_bps"), "bps")} (30d Δ: {_fmt_or_na(hy.get("change_30d_bps"), "bps")})
+- Core CPI YoY: {_fmt_or_na(infl.get("core_cpi_yoy"), "%")}
 
 {trajectory_section}
 {active_changes_section}
@@ -820,44 +776,48 @@ any action. Remember: intraday price is noise; thesis is signal; good
 stocks are meant to be held. Respond as JSON matching the PositionReview
 schema."""
 
-    def review(self, positions: list[Position], macro_summary: dict,
-               cash_balance: float, total_value: float,
-               reserve_balance: float = 0.0,
-               session_type: str = "midday",
-               position_facts: dict | None = None,
-               metric_deltas: dict | None = None,
-               morning_trades: list[dict] | None = None,
-               # Board item 89 defect 3 — {symbol: entry trade row} for
-               # every held position, from the date-unrestricted lookup.
-               # See `TradingPipeline.run_position_review`.
-               entry_context: dict[str, dict] | None = None,
-               news_intel: NewsIntelligenceReport | None = None,
-               earnings_analyses: list[dict] | None = None,
-               macro_analysis: dict | None = None,
-               weekly_narrative: str = "",
-               macro_trajectory: str = "",
-               active_state_changes: str = "",
-               calibration_note: str = "",
-               own_recent_decisions: str = "",
-               trade_grade_summary: dict | None = None,
-               yesterday_insights: dict | None = None,
-               recent_performance: dict | None = None,
-               already_trimmed_today: set[str] | None = None,
-               # Board item 74 — the triggers this seat has already spent
-               # today, rendered by `src.risk.spent_trigger` so the prompt
-               # and the executor's refusal read the same record.
-               spent_triggers_block: str = "",
-               allow_margin: bool = True,
-               substantiation_challenge: str = "",
-               # §11.2 ladder headroom, threaded from the SAME computation
-               # execution's submit loop uses (`_entry_deployment_budget` /
-               # `_session_gross_ceiling` in `src/pipeline_stages.py`) so
-               # the Margin Capacity section never derives its own number.
-               margin_headroom_usd: float | None = None,
-               margin_ladder_backed: bool = False,
-               margin_ladder_multiple: float | None = None,
-               margin_ladder_rung: str | None = None,
-               ) -> tuple[PositionReview | None, "AgentResult"]:
+    def review(
+        self,
+        positions: list[Position],
+        macro_summary: dict,
+        cash_balance: float,
+        total_value: float,
+        reserve_balance: float = 0.0,
+        session_type: str = "midday",
+        position_facts: dict | None = None,
+        metric_deltas: dict | None = None,
+        morning_trades: list[dict] | None = None,
+        # Board item 89 defect 3 — {symbol: entry trade row} for
+        # every held position, from the date-unrestricted lookup.
+        # See `TradingPipeline.run_position_review`.
+        entry_context: dict[str, dict] | None = None,
+        news_intel: NewsIntelligenceReport | None = None,
+        earnings_analyses: list[dict] | None = None,
+        macro_analysis: dict | None = None,
+        weekly_narrative: str = "",
+        macro_trajectory: str = "",
+        active_state_changes: str = "",
+        calibration_note: str = "",
+        own_recent_decisions: str = "",
+        trade_grade_summary: dict | None = None,
+        yesterday_insights: dict | None = None,
+        recent_performance: dict | None = None,
+        already_trimmed_today: set[str] | None = None,
+        # Board item 74 — the triggers this seat has already spent
+        # today, rendered by `src.risk.spent_trigger` so the prompt
+        # and the executor's refusal read the same record.
+        spent_triggers_block: str = "",
+        allow_margin: bool = True,
+        substantiation_challenge: str = "",
+        # §11.2 ladder headroom, threaded from the SAME computation
+        # execution's submit loop uses (`_entry_deployment_budget` /
+        # `_session_gross_ceiling` in `src/pipeline_stages.py`) so
+        # the Margin Capacity section never derives its own number.
+        margin_headroom_usd: float | None = None,
+        margin_ladder_backed: bool = False,
+        margin_ladder_multiple: float | None = None,
+        margin_ladder_rung: str | None = None,
+    ) -> tuple[PositionReview | None, "AgentResult"]:
         result = self.run(
             positions=positions,
             macro_summary=macro_summary,
@@ -941,8 +901,9 @@ schema."""
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 logger.warning(
-                    "Position reviewer: dropping non-dict actions entry at "
-                    "index %d: %r", i, item,
+                    "Position reviewer: dropping non-dict actions entry at index %d: %r",
+                    i,
+                    item,
                 )
                 continue
             try:
@@ -951,7 +912,8 @@ schema."""
                 sym = item.get("symbol") or f"<idx {i}>"
                 logger.warning(
                     "Position reviewer: dropping malformed action for %s: %s",
-                    sym, e,
+                    sym,
+                    e,
                 )
                 continue
             valid.append(item)

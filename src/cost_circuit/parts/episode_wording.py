@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_wording.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import sqlite3
 from typing import Any, Callable, TypeVar
@@ -24,12 +25,12 @@ class EpisodeWording:
         PAGING the owner is the same quantity read from the same config
         field. Change one and both move together, which is the point.
         """
-        return float(
-            getattr(self.config, "transient_latch_cooldown_minutes", 15.0)
-        )
+        return float(getattr(self.config, "transient_latch_cooldown_minutes", 15.0))
 
     def _suspension_still_inside_self_clear_window_locked(
-        self, conn: sqlite3.Connection, state: dict[str, Any],
+        self,
+        conn: sqlite3.Connection,
+        state: dict[str, Any],
     ) -> bool:
         """True while this latch could still retire itself without a human.
 
@@ -54,8 +55,11 @@ class EpisodeWording:
         return 0.0 <= float(elapsed) < self._self_clear_window_minutes()
 
     def _episode_already_paged_locked(
-        self, conn: sqlite3.Connection, state: dict[str, Any],
-        *, before: str | None = None,
+        self,
+        conn: sqlite3.Connection,
+        state: dict[str, Any],
+        *,
+        before: str | None = None,
     ) -> bool:
         """True when the owner has ALREADY been paged for this episode.
 
@@ -98,8 +102,11 @@ class EpisodeWording:
         return row is not None
 
     def _record_suspension_deferral_locked(
-        self, conn: sqlite3.Connection, state: dict[str, Any],
-        *, episode_paged: bool = False,
+        self,
+        conn: sqlite3.Connection,
+        state: dict[str, Any],
+        *,
+        episode_paged: bool = False,
     ) -> None:
         """Write the deferral down once per latch, so it is never invisible.
 
@@ -114,8 +121,8 @@ class EpisodeWording:
             "this ET budget day and that episode is not yet resolved; "
             "a re-latch of one unresolved fault is not a second "
             "incident. Suspension is in force and recorded either way"
-            if episode_paged else
-            f"owner alert held: latch is inside its own {window:.0f}-minute "
+            if episode_paged
+            else f"owner alert held: latch is inside its own {window:.0f}-minute "
             "self-clear window and may expire without a human; it pages "
             "if it is still suspended after that. Suspension is in force "
             "and recorded either way"
@@ -140,7 +147,8 @@ class EpisodeWording:
             (
                 state.get("trigger_code"),
                 detail,
-                state.get("run_id"), state.get("mode"),
+                state.get("run_id"),
+                state.get("mode"),
                 int(state.get("session_attempts") or 0),
                 float(state.get("session_cost_usd") or 0.0),
                 float(state.get("daily_cost_usd") or 0.0),
@@ -148,7 +156,9 @@ class EpisodeWording:
         )
 
     def _episode_facts_locked(
-        self, conn: sqlite3.Connection, state: dict[str, Any],
+        self,
+        conn: sqlite3.Connection,
+        state: dict[str, Any],
     ) -> dict[str, Any]:
         """How long this fault has been running today and how often it flapped.
 
@@ -179,10 +189,7 @@ class EpisodeWording:
             "episode_first_at": str(row["first_at"]),
             "episode_self_clears": int(row["clears"] or 0),
             "episode_events": int(row["events"] or 0),
-            "episode_minutes": (
-                float(elapsed["minutes"]) if elapsed and elapsed["minutes"] is not None
-                else None
-            ),
+            "episode_minutes": (float(elapsed["minutes"]) if elapsed and elapsed["minutes"] is not None else None),
             "episode_window_minutes": self._self_clear_window_minutes(),
         }
 
@@ -194,9 +201,7 @@ class EpisodeWording:
         minutes = facts.get("episode_minutes")
         clears = int(facts.get("episode_self_clears") or 0)
         window = float(facts.get("episode_window_minutes") or 0.0)
-        duration = (
-            f"{float(minutes):.0f} min" if minutes is not None else "unknown"
-        )
+        duration = f"{float(minutes):.0f} min" if minutes is not None else "unknown"
         return (
             f"episode: running {duration} since {facts['episode_first_at']} UTC, "
             f"{clears} self-clear{'s' if clears != 1 else ''} inside it today; "
@@ -212,9 +217,7 @@ class EpisodeWording:
             return ""
         minutes = facts.get("episode_minutes")
         clears = int(facts.get("episode_self_clears") or 0)
-        duration = (
-            f"{float(minutes):.0f} min" if minutes is not None else "an unknown time"
-        )
+        duration = f"{float(minutes):.0f} min" if minutes is not None else "an unknown time"
         return (
             f"episode: this fault ran {duration} from "
             f"{facts['episode_first_at']} UTC and self-cleared {clears} "

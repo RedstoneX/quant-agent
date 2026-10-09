@@ -1,4 +1,5 @@
 """Exit-reason categorisation, decision-id linking and PM-target extraction, lifted VERBATIM from ledger.py."""
+
 from __future__ import annotations
 
 import json
@@ -25,39 +26,69 @@ from src.storage.trades.position_chain import (
 #: `reasoning`, same tolerance-for-LLM-prose rationale as
 #: `_reason_cites_hard_trigger` in src/pipeline.py.
 _EXIT_TRIGGER_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("thesis_invalidated", (
-        "thesis_invalid", "thesis invalid", "invalidation triggered",
-        "broken thesis", "thesis broken",
-    )),
-    ("adverse_news_or_state_change", (
-        "high bearish", "high-conviction bearish", "high conviction bearish",
-        "adverse news", "material news", "sector shock",
-    )),
-    ("earnings_or_filing", (
-        "bearish earnings", "bearish filing", "earnings missed",
-        "earnings miss", "guidance cut",
-    )),
-    ("macro_regime_shift", (
-        "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
-    )),
-    ("risk_management_hard_stop", (
-        "daily loss", "daily-loss", "circuit breaker",
-        # The two correlation phrases stay HERE deliberately, even though
-        # they were removed from the live exit gate 2026-09-13 (WORK.md item
-        # 44). This function is descriptive, not a gate: it categorises rows
-        # that already exist, and dropping the phrases would silently
-        # re-label historical exits as "uncategorised". No NEW exit can carry
-        # them — `pipeline._HARD_TRIGGER_KEYWORDS` rejects the reason before
-        # a trades row is ever written.
-        "correlation breach", "correlation cluster breach",
-    )),
+    (
+        "thesis_invalidated",
+        (
+            "thesis_invalid",
+            "thesis invalid",
+            "invalidation triggered",
+            "broken thesis",
+            "thesis broken",
+        ),
+    ),
+    (
+        "adverse_news_or_state_change",
+        (
+            "high bearish",
+            "high-conviction bearish",
+            "high conviction bearish",
+            "adverse news",
+            "material news",
+            "sector shock",
+        ),
+    ),
+    (
+        "earnings_or_filing",
+        (
+            "bearish earnings",
+            "bearish filing",
+            "earnings missed",
+            "earnings miss",
+            "guidance cut",
+        ),
+    ),
+    (
+        "macro_regime_shift",
+        (
+            "regime shift",
+            "regime flip",
+            "regime flipped",
+            "risk-off",
+            "risk off",
+        ),
+    ),
+    (
+        "risk_management_hard_stop",
+        (
+            "daily loss",
+            "daily-loss",
+            "circuit breaker",
+            # The two correlation phrases stay HERE deliberately, even though
+            # they were removed from the live exit gate 2026-09-13 (WORK.md item
+            # 44). This function is descriptive, not a gate: it categorises rows
+            # that already exist, and dropping the phrases would silently
+            # re-label historical exits as "uncategorised". No NEW exit can carry
+            # them — `pipeline._HARD_TRIGGER_KEYWORDS` rejects the reason before
+            # a trades row is ever written.
+            "correlation breach",
+            "correlation cluster breach",
+        ),
+    ),
     ("broker_stop_fill", ("stop hit", "stopped out")),
     # Constructor-stamped funding-trim. Descriptive only — not a midday
     # hard-trigger. Do NOT add this phrase to pipeline._HARD_TRIGGER_KEYWORDS
     # (correlation-breach lesson: wording with no verifier).
-    ("mechanical_size_down", (
-        "mechanical size-down vs live book",
-    )),
+    ("mechanical_size_down", ("mechanical size-down vs live book",)),
 )
 
 #: Explicit fallback — never silently fold an exit-family row with no
@@ -66,7 +97,10 @@ _UNCATEGORISED_EXIT = "uncategorised"
 
 
 def _categorize_exit_reason(
-    action: str | None, reasoning: str | None, fill_status, fill_qty,
+    action: str | None,
+    reasoning: str | None,
+    fill_status,
+    fill_qty,
 ) -> str | None:
     """Deterministic exit_reason_category for one trades row, or None when
     the row isn't an exit at all (BUY, HOLD, SWEEP_*).
@@ -101,10 +135,7 @@ def _categorize_exit_reason(
         row = {"fill_status": fill_status, "fill_qty": fill_qty}
         return "broker_stop_fill" if _is_filled_trail_stop(row, act) else None
     if act == "TAKE_PROFIT":
-        return (
-            "take_profit_target"
-            if _row_counts_as_executed(act, fill_status, fill_qty) else None
-        )
+        return "take_profit_target" if _row_counts_as_executed(act, fill_status, fill_qty) else None
     if not _is_position_exit_action(act):
         return None
     reason_l = (reasoning or "").lower()
@@ -138,9 +169,15 @@ def _categorize_exit_reason(
 # anything outside both lists: this predicate labels every non-entry,
 # non-HOLD, non-sweep row, so a future exit action is labelled 'linked' from
 # the day it exists rather than silently returning None.
-_NON_POSITIONAL_ACTIONS: frozenset[str] = frozenset({
-    "BUY", "SHORT", "HOLD", "SWEEP_BUY", "SWEEP_SELL",
-})
+_NON_POSITIONAL_ACTIONS: frozenset[str] = frozenset(
+    {
+        "BUY",
+        "SHORT",
+        "HOLD",
+        "SWEEP_BUY",
+        "SWEEP_SELL",
+    }
+)
 
 
 def _is_exit_family_for_decision_linking(action: str | None) -> bool:
@@ -152,8 +189,6 @@ def _resolve_decision_id_status(action: str | None, decision_id: str | None) -> 
     if not _is_exit_family_for_decision_linking(action):
         return None
     return "linked" if decision_id else "no_originating_decision"
-
-
 
 
 def _extract_pm_targets(full_response: str | None) -> list[dict]:
@@ -171,6 +206,7 @@ def _extract_pm_targets(full_response: str | None) -> list[dict]:
         return []
     import json
     import re
+
     m = re.search(r"```json\s*(.*?)```", full_response, re.S)
     body = m.group(1) if m else full_response
     try:

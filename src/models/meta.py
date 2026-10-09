@@ -57,6 +57,7 @@ class MetaReasoningChain(LLMOutputModel):
     The old `missed_theme_diagnosis` step was folded into
     `portrait_gap_diagnosis` — theme coverage IS one of the gap axes.
     """
+
     performance_vs_benchmark: str = Field(min_length=1)
     """Step 1/FACT. Where did this quarter's return land vs SPY? Alpha
     positive or negative? Drawdown profile? Be specific about numbers
@@ -129,6 +130,7 @@ class ThemeCoverage(LLMOutputModel):
     every theme has to appear in every bucket — a theme can be both
     "caught late" and "fully exited", those nuances are in the audit text.
     """
+
     themes_caught_early: list[str] = []
     """Themes we bought before the move was obvious (entry < 30% of the
     quarter's total move for that theme). The system's genuine alpha."""
@@ -159,6 +161,7 @@ class LossPattern(LLMOutputModel):
     """One row of loss_pattern_report.top_patterns — cause + attribution +
     proposed guard. Agent attribution drives which prompt gets the
     `proposed_guard` as a candidate learning."""
+
     root_cause: MetaLossRootCause
     occurrences: int = Field(ge=1)
     total_loss_pct: float
@@ -168,9 +171,14 @@ class LossPattern(LLMOutputModel):
     """Concrete trades "SYMBOL YYYY-MM-DD -X%" so the prompt edit
     justification has anchors, not abstractions."""
     attributable_agent: Literal[
-        "tech_analyst", "news_analyst", "macro_analyst",
-        "earnings_analyst", "portfolio_manager", "evening_analyst",
-        "execution", "no_agent",
+        "tech_analyst",
+        "news_analyst",
+        "macro_analyst",
+        "earnings_analyst",
+        "portfolio_manager",
+        "evening_analyst",
+        "execution",
+        "no_agent",
     ]
     """`no_agent` when the failure is pure discipline (PM / evening's
     discipline — nothing any individual agent's prompt could have
@@ -186,6 +194,7 @@ class LossPattern(LLMOutputModel):
 class LossPatternReport(LLMOutputModel):
     """Quarterly loss autopsy. Parallel structure to ThemeCoverage so the
     meta-reflector's ups/downs analysis stays symmetric."""
+
     top_patterns: list[LossPattern] = Field(default_factory=list, max_length=5)
     systemic_vs_alpha_split: str = Field(default="")
     """Prose one-liner decomposing losses: "72% alpha-destruction (we
@@ -209,6 +218,7 @@ class PromptLearning(LLMOutputModel):
     quarters to remove a learning THIS system previously added if the
     subsequent data showed it didn't help.
     """
+
     agent_name: MetaReflectionAgentName
     operation: Literal["append", "retract"]
     learning_text: str = Field(min_length=20, max_length=200)
@@ -249,6 +259,7 @@ class PromptLearning(LLMOutputModel):
 class QuarterlyMetaReflection(LLMOutputModel):
     """Top-level meta-reflector output. Persisted to
     data/evolution/{period}/reflection.json alongside the digest."""
+
     period: str
     """e.g. '2026-Q1' — matches the digest's period label."""
     meta_reasoning_chain: MetaReasoningChain
@@ -263,7 +274,8 @@ class QuarterlyMetaReflection(LLMOutputModel):
     theme_coverage_report: ThemeCoverage
     loss_pattern_report: LossPatternReport
     proposed_learnings: list[PromptLearning] = Field(
-        default_factory=list, max_length=3,
+        default_factory=list,
+        max_length=3,
     )
     """System enforces max 3 agents edited per quarter AFTER schema
     validation — see PR 4's prompt_editor for the enforcement layer.

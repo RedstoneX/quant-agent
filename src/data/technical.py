@@ -54,15 +54,24 @@ def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
     """
     if len(bars) < period:
         return np.empty(0, dtype=float)
-    frame = pd.DataFrame({
-        "high": [float(b.high) for b in bars],
-        "low": [float(b.low) for b in bars],
-        "close": [float(b.close) for b in bars],
-    })
-    values = ta.volatility.AverageTrueRange(
-        frame["high"], frame["low"], frame["close"], window=period,
-    ).average_true_range().to_numpy(dtype=float)
-    return values[period - 1:]
+    frame = pd.DataFrame(
+        {
+            "high": [float(b.high) for b in bars],
+            "low": [float(b.low) for b in bars],
+            "close": [float(b.close) for b in bars],
+        }
+    )
+    values = (
+        ta.volatility.AverageTrueRange(
+            frame["high"],
+            frame["low"],
+            frame["close"],
+            window=period,
+        )
+        .average_true_range()
+        .to_numpy(dtype=float)
+    )
+    return values[period - 1 :]
 
 
 #: The longest window any indicator in `compute_indicators` needs — the
@@ -131,7 +140,10 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
     # than shipped as a spurious 0.0.
     if len(df) >= 2 * ADX_PERIOD:
         adx_ind = ta.trend.ADXIndicator(
-            df["high"], df["low"], df["close"], window=ADX_PERIOD,
+            df["high"],
+            df["low"],
+            df["close"],
+            window=ADX_PERIOD,
         )
         adx_val = adx_ind.adx().iloc[-1]
         di_plus_val = adx_ind.adx_pos().iloc[-1]
@@ -189,6 +201,7 @@ def atr_for_symbol(market, symbol: str) -> float | None:
         if len(bars) < 15:
             return None
         from src.data.technical import compute_indicators
+
         atr = compute_indicators(symbol, bars).atr_14
         return float(atr) if atr and atr > 0 else None
     except Exception as e:  # noqa: BLE001

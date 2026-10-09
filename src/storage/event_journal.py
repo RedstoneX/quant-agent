@@ -7,6 +7,7 @@ two names remain in ``pipeline_stages`` as thin shims over this class for the
 steps. Rows written through either route are byte-identical (pinned by
 ``tests/test_event_journal_port.py``).
 """
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,14 @@ PIPELINE_EVENT_KIND = "pipeline_event"
 
 
 def pipeline_event_fields(
-    *, run_id: str, decision_id: str | None, symbol: str | None, stage: str,
-    outcome: str, reason: str, details: dict,
+    *,
+    run_id: str,
+    decision_id: str | None,
+    symbol: str | None,
+    stage: str,
+    outcome: str,
+    reason: str,
+    details: dict,
 ) -> dict:
     """The exact ``persist_evidence`` keyword arguments one pipeline event becomes.
 
@@ -52,8 +59,14 @@ class DatabaseEventJournal(EventJournal):
         self._db = db
 
     def persist_evidence(
-        self, *, run_id: str, agent_name: str, kind: str, scope: str,
-        evidence_json: str, symbol: str | None = None,
+        self,
+        *,
+        run_id: str,
+        agent_name: str,
+        kind: str,
+        scope: str,
+        evidence_json: str,
+        symbol: str | None = None,
         decision_id: str | None = None,
     ) -> None:
         """Best-effort Stage 4 structured-evidence write — NEVER raises.
@@ -67,22 +80,44 @@ class DatabaseEventJournal(EventJournal):
         """
         try:
             self._db.insert_specialist_evidence(
-                run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
-                evidence_json=evidence_json, symbol=symbol,
+                run_id=run_id,
+                agent_name=agent_name,
+                kind=kind,
+                scope=scope,
+                evidence_json=evidence_json,
+                symbol=symbol,
                 decision_id=decision_id,
             )
         except Exception as e:
             logger.warning(
-                "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
-                "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
+                "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s scope=%s symbol=%s): %s",
+                agent_name,
+                kind,
+                scope,
+                symbol,
+                e,
             )
 
     def record_pipeline_event(
-        self, *, run_id: str, decision_id: str | None, symbol: str | None,
-        stage: str, outcome: str, reason: str = "", **details,
+        self,
+        *,
+        run_id: str,
+        decision_id: str | None,
+        symbol: str | None,
+        stage: str,
+        outcome: str,
+        reason: str = "",
+        **details,
     ) -> None:
         """Append one typed lifecycle fact to the existing evidence stream."""
-        self.persist_evidence(**pipeline_event_fields(
-            run_id=run_id, decision_id=decision_id, symbol=symbol, stage=stage,
-            outcome=outcome, reason=reason, details=details,
-        ))
+        self.persist_evidence(
+            **pipeline_event_fields(
+                run_id=run_id,
+                decision_id=decision_id,
+                symbol=symbol,
+                stage=stage,
+                outcome=outcome,
+                reason=reason,
+                details=details,
+            )
+        )

@@ -22,8 +22,10 @@ from collections.abc import Mapping
 
 def delegate(holder_attr: str, name: str, bodies_module: str):
     """A classmethod that forwards `name` to the part held under `holder_attr`."""
+
     def shim(cls, *args, **kwargs):
         return getattr(getattr(cls, holder_attr), name)(*args, **kwargs)
+
     shim.__name__ = name
     shim.__qualname__ = f"hold.<locals>.{name}"
     shim.__doc__ = f"Thin delegate: body lives in {bodies_module}."
@@ -39,11 +41,13 @@ def is_delegate(cls, name: str) -> bool:
 
 def live_body(agent_cls, holder_attr: str, name: str):
     """Collaborator handed in LIVE: read `name` off `agent_cls` at each call."""
+
     def collaborator(*args, **kwargs):
         if is_delegate(agent_cls, name):
             part = getattr(agent_cls, holder_attr)
             return getattr(type(part), name)(part, *args, **kwargs)
         return getattr(agent_cls, name)(*args, **kwargs)
+
     collaborator.__name__ = name
     collaborator.__doc__ = f"Live read of `{name}` off the agent class (never snapshotted)."
     return collaborator

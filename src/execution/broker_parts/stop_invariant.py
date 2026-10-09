@@ -23,6 +23,7 @@ Every failure path ends covered or loudly not: act, retry once, then protect;
 the one branch that cannot prove coverage (`unknown`) says when the next
 re-read happens, which is the existing pass cadence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,15 +68,29 @@ def book_shape(specs: list[dict], held: float) -> dict:
     whole, frac = _split_protective_qty(held)
     gtc = [s for s in specs if _split_protective_qty(_qty(s))[1] == 0.0]
     day = [s for s in specs if s not in gtc]
-    return {"held": abs(float(held)), "whole": whole, "frac": frac, "gtc": gtc,
-            "day": day, "g": _r(sum(map(_qty, gtc))), "d": _r(sum(map(_qty, day)))}
+    return {
+        "held": abs(float(held)),
+        "whole": whole,
+        "frac": frac,
+        "gtc": gtc,
+        "day": day,
+        "g": _r(sum(map(_qty, gtc))),
+        "d": _r(sum(map(_qty, day))),
+    }
 
 
 def specs_after_amend(legs: list[dict]) -> list[dict]:
     """The resting book as the price amend left it, one spec per live leg."""
-    return [{"id": str(leg["new_id"]), "qty": float(leg.get("new_qty") or leg["qty"]),
-             "stop_price": leg["new_stop"], "limit_price": leg.get("new_limit")}
-            for leg in legs if leg.get("outcome") == "amended" and leg.get("new_id")]
+    return [
+        {
+            "id": str(leg["new_id"]),
+            "qty": float(leg.get("new_qty") or leg["qty"]),
+            "stop_price": leg["new_stop"],
+            "limit_price": leg.get("new_limit"),
+        }
+        for leg in legs
+        if leg.get("outcome") == "amended" and leg.get("new_id")
+    ]
 
 
 def enforce_stop_quantity_invariant(placer, symbol: str, amended, *, side: str, fresh: list):
@@ -165,7 +180,8 @@ class _Invariant:
             self.alert(
                 f"{self.symbol}: the GTC stop leg's quantity amend got NO broker answer after "
                 f"{len(cancelled)} sliver(s) were cancelled; nothing restored (a restore could "
-                f"exceed the position if the amend landed); {NEXT_REREAD}")
+                f"exceed the position if the amend landed); {NEXT_REREAD}"
+            )
             return self.result("unknown", next_reread=NEXT_REREAD)
         return self.restore_or_expose(cancelled, "refused", "restored")
 
@@ -192,13 +208,18 @@ class _Invariant:
 
     def amend_qty(self, spec: dict, new_qty: float) -> str:
         qty = int(round(new_qty))
-        leg = self.p._amend_one_stop_price(symbol=self.symbol, spec=spec, new_price=self.price,
-                                           new_qty=qty)
-        self.note("amend_qty", order=spec["id"], old_qty=spec["qty"], new_qty=qty,
-                  outcome=leg["outcome"], new_id=leg.get("new_id"), detail=leg.get("detail"))
+        leg = self.p._amend_one_stop_price(symbol=self.symbol, spec=spec, new_price=self.price, new_qty=qty)
+        self.note(
+            "amend_qty",
+            order=spec["id"],
+            old_qty=spec["qty"],
+            new_qty=qty,
+            outcome=leg["outcome"],
+            new_id=leg.get("new_id"),
+            detail=leg.get("detail"),
+        )
         if leg["outcome"] == "amended":
-            self.specs = [{**s, "id": str(leg["new_id"]), "qty": float(qty)} if s is spec else s
-                          for s in self.specs]
+            self.specs = [{**s, "id": str(leg["new_id"]), "qty": float(qty)} if s is spec else s for s in self.specs]
         return leg["outcome"]
 
     def submit(self, qty: float, kind: str) -> bool:
@@ -207,21 +228,25 @@ class _Invariant:
         refused, exactly like a broker refusal."""
         where = f"{PATH}.submit_{kind.lower()}"
         try:
-            order = self.p._submit_stop_limit_order(symbol=self.symbol, qty=qty,
-                                                    stop_price=self.price, side=self.side)
+            order = self.p._submit_stop_limit_order(symbol=self.symbol, qty=qty, stop_price=self.price, side=self.side)
             record_guarded_pass(self.p, where, context={"symbol": self.symbol, "qty": qty})
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.p, where, exc, log=logger,
-                                context={"symbol": self.symbol, "qty": qty, "effect": "leg not placed"})
+            record_guarded_pass(
+                self.p, where, exc, log=logger, context={"symbol": self.symbol, "qty": qty, "effect": "leg not placed"}
+            )
             self.note("submit", kind=kind, qty=qty, outcome="refused", detail=str(exc))
             return False
         oid = order.get("id") if isinstance(order, dict) else None
         if not oid:
-            self.note("submit", kind=kind, qty=qty, outcome="refused",
-                      detail=str((order or {}).get("status") if isinstance(order, dict) else order))
+            self.note(
+                "submit",
+                kind=kind,
+                qty=qty,
+                outcome="refused",
+                detail=str((order or {}).get("status") if isinstance(order, dict) else order),
+            )
             return False
-        self.specs.append({"id": str(oid), "qty": float(qty), "stop_price": self.price,
-                           "limit_price": None})
+        self.specs.append({"id": str(oid), "qty": float(qty), "stop_price": self.price, "limit_price": None})
         self.note("submit", kind=kind, qty=qty, outcome="placed", order=str(oid))
         return True
 
@@ -230,19 +255,31 @@ class _Invariant:
         (confirmed / filled / unconfirmed); an unconfirmed answer is asked once
         more. The window opens on the first cancel and records `exposed`."""
         if self.window is None:
-            self.window = UnprotectedWindow(self.symbol, "fractional_quantity_change",
-                                            self.p._window_log, path=PATH,
-                                            exposed_qty=_r(max(0.0, exposed)), leg_kind=kind)
+            self.window = UnprotectedWindow(
+                self.symbol,
+                "fractional_quantity_change",
+                self.p._window_log,
+                path=PATH,
+                exposed_qty=_r(max(0.0, exposed)),
+                leg_kind=kind,
+            )
         cancelled: list[dict] = []
         for spec in legs:
             try:
                 self.p.client.cancel_order_by_id(spec["id"])
-                record_guarded_pass(self.p, f"{PATH}.cancel",
-                                    context={"symbol": self.symbol, "order": spec["id"]})
+                record_guarded_pass(self.p, f"{PATH}.cancel", context={"symbol": self.symbol, "order": spec["id"]})
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(self.p, f"{PATH}.cancel", exc, log=logger,
-                                    context={"symbol": self.symbol, "order": spec["id"],
-                                             "effect": "already-cancelled legs are restored"})
+                record_guarded_pass(
+                    self.p,
+                    f"{PATH}.cancel",
+                    exc,
+                    log=logger,
+                    context={
+                        "symbol": self.symbol,
+                        "order": spec["id"],
+                        "effect": "already-cancelled legs are restored",
+                    },
+                )
                 self.note("cancel", order=spec["id"], qty=spec["qty"], outcome="refused")
                 return "refused", cancelled
             cancelled.append(spec)
@@ -260,14 +297,22 @@ class _Invariant:
         if status == "refused":
             return self.restore_or_expose(cancelled, "cancel_refused", "cancel_failed_restored")
         if status == "filled":
-            logger.warning("%s: a protective stop of %s FILLED during its cancel; the position "
-                           "is exiting, nothing is amended or restored", PATH, self.symbol)
+            logger.warning(
+                "%s: a protective stop of %s FILLED during its cancel; the position "
+                "is exiting, nothing is amended or restored",
+                PATH,
+                self.symbol,
+            )
             self.close_window("stop_filled")
             return self.result("filled")
         logger.error(
             "%s: %s's sliver cancel is still PENDING (%d leg(s)); the GTC leg is NOT "
             "amended and nothing is resubmitted while the hold stands; %s",
-            PATH, self.symbol, len(cancelled), NEXT_REREAD)
+            PATH,
+            self.symbol,
+            len(cancelled),
+            NEXT_REREAD,
+        )
         self.close_window(CANCEL_PENDING)
         return self.result(CANCEL_PENDING, next_reread=NEXT_REREAD)
 
@@ -287,32 +332,51 @@ class _Invariant:
             self.alert(
                 f"{self.symbol}: {exposed} share(s) are WITHOUT a protective stop — the "
                 f"sliver restore was refused twice after a refused quantity change "
-                f"({status}); the position is recorded as exposed; {NEXT_REREAD}")
+                f"({status}); the position is recorded as exposed; {NEXT_REREAD}"
+            )
             return self.result(EXPOSED, exposed_qty=exposed)
         self.specs.extend(cancelled)
         self.close_window(closed_as)
-        logger.warning("%s: %s's quantity change was refused (%s); %d leg(s) restored, "
-                       "coverage is as it was", PATH, self.symbol, status, restored)
+        logger.warning(
+            "%s: %s's quantity change was refused (%s); %d leg(s) restored, coverage is as it was",
+            PATH,
+            self.symbol,
+            status,
+            restored,
+        )
         return self.result(status)
 
     def halt(self, outcome: str, step: str) -> dict:
         if outcome == "unknown":
-            self.alert(f"{self.symbol}: the {step} of its GTC stop leg got NO broker answer; "
-                       f"nothing cancelled, nothing written back; {NEXT_REREAD}")
+            self.alert(
+                f"{self.symbol}: the {step} of its GTC stop leg got NO broker answer; "
+                f"nothing cancelled, nothing written back; {NEXT_REREAD}"
+            )
             return self.result("unknown", next_reread=NEXT_REREAD)
-        logger.warning("%s: the broker refused the %s of %s's GTC stop leg; the resting legs "
-                       "are unchanged and nothing was cancelled", PATH, step, self.symbol)
+        logger.warning(
+            "%s: the broker refused the %s of %s's GTC stop leg; the resting legs "
+            "are unchanged and nothing was cancelled",
+            PATH,
+            step,
+            self.symbol,
+        )
         return self.result("refused")
 
     def alert(self, text: str) -> None:
         logger.error(text)
         try:
             from src.notifier import send_owner_alert
+
             send_owner_alert(text, symbols=[self.symbol])
             record_guarded_pass(self.p, f"{PATH}.owner_alert", context={"symbol": self.symbol})
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.p, f"{PATH}.owner_alert", exc, log=logger,
-                                context={"symbol": self.symbol, "effect": "owner not told"})
+            record_guarded_pass(
+                self.p,
+                f"{PATH}.owner_alert",
+                exc,
+                log=logger,
+                context={"symbol": self.symbol, "effect": "owner not told"},
+            )
 
     def close_window(self, outcome: str) -> None:
         if self.window is not None:
@@ -324,9 +388,16 @@ class _Invariant:
         shape = self.shape()
         head = shape["gtc"] or shape["day"]
         out = dict(self.base)
-        out.update({"id": head[0]["id"] if head and status == "accepted" else None,
-                    "amend_status": status, "symbol": self.symbol, "quantity_work": self.work,
-                    "book": {"held": shape["held"], "gtc": shape["g"], "day": shape["d"]}, **extra})
+        out.update(
+            {
+                "id": head[0]["id"] if head and status == "accepted" else None,
+                "amend_status": status,
+                "symbol": self.symbol,
+                "quantity_work": self.work,
+                "book": {"held": shape["held"], "gtc": shape["g"], "day": shape["d"]},
+                **extra,
+            }
+        )
         if status != "accepted":
             out["status"] = status
         return out

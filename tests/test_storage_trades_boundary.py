@@ -7,6 +7,7 @@ per-call shim on Database can never hand the new object a function that
 calls back into it. Also proves the shim still reaches a collaborator
 swapped in after construction.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -24,10 +25,14 @@ def _bare_ledger(conn: sqlite3.Connection) -> TradeLedger:
     def locked_write(do, *, label="write"):
         return do()
 
-    return TradeLedger(conn=conn, lock=threading.Lock(), locked_write=locked_write,
-                       executed_trade_predicate=Database._executed_trade_predicate,
-                       sqlite_utc_timestamp=Database._sqlite_utc_timestamp,
-                       et_day_utc_bounds=Database._et_day_utc_bounds)
+    return TradeLedger(
+        conn=conn,
+        lock=threading.Lock(),
+        locked_write=locked_write,
+        executed_trade_predicate=Database._executed_trade_predicate,
+        sqlite_utc_timestamp=Database._sqlite_utc_timestamp,
+        et_day_utc_bounds=Database._et_day_utc_bounds,
+    )
 
 
 def test_constructor_takes_only_keyword_collaborators():
@@ -39,7 +44,8 @@ def test_constructor_takes_only_keyword_collaborators():
 def test_no_collaborator_is_a_lifted_method():
     lifted = {n for n, _ in inspect.getmembers(TradeLedger, inspect.isfunction) if n != "__init__"}
     assert not lifted & set(inspect.signature(TradeLedger).parameters), (
-        "a collaborator that is also a lifted method makes the shim loop forever")
+        "a collaborator that is also a lifted method makes the shim loop forever"
+    )
 
 
 def test_module_passes_the_boundary_harness():

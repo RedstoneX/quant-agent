@@ -8,12 +8,13 @@ between these four) is reached through `broker.<name>`, so a class-level patch
 on `AlpacaBroker` still bites. `time.sleep` is the shared `time` module's, so
 patching `src.execution.broker.time.sleep` still reaches the retry backoff.
 """
+
 from __future__ import annotations
 
 import logging
 import time
 
-from src.stop_cancel_outcome import (StopCancelOutcome, StopCoverageLost, settle_cancel)
+from src.stop_cancel_outcome import StopCancelOutcome, StopCoverageLost, settle_cancel
 from src.execution.broker_parts.stop_place import _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S
 from src.sentinel.guarded import record_guarded_pass
 
@@ -23,7 +24,10 @@ logger = logging.getLogger("src.execution.broker")
 
 
 def snapshot_protective_stops(
-    broker, symbol: str, *, side: str = "sell",
+    broker,
+    symbol: str,
+    *,
+    side: str = "sell",
 ) -> tuple[bool, list[dict]]:
     """List + snapshot open protective stop orders WITHOUT cancelling them.
 
@@ -89,20 +93,23 @@ def snapshot_protective_stops(
     for attempt in range(_STOP_PLACEMENT_MAX_ATTEMPTS):
         errors = []
         stops = broker._list_open_protective_stop_orders(
-            symbol, side=side, errors=errors,
+            symbol,
+            side=side,
+            errors=errors,
         )
         if not errors:
             break
         if attempt + 1 < _STOP_PLACEMENT_MAX_ATTEMPTS:
-            delay = _STOP_PLACEMENT_BACKOFF_S[
-                min(attempt, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
-            ]
+            delay = _STOP_PLACEMENT_BACKOFF_S[min(attempt, len(_STOP_PLACEMENT_BACKOFF_S) - 1)]
             logger.warning(
                 "snapshot_protective_stops: listing %s's protective "
                 "stops failed (%s) — retrying in %.1fs (attempt %d of "
                 "%d).",
-                symbol, "; ".join(errors), delay,
-                attempt + 2, _STOP_PLACEMENT_MAX_ATTEMPTS,
+                symbol,
+                "; ".join(errors),
+                delay,
+                attempt + 2,
+                _STOP_PLACEMENT_MAX_ATTEMPTS,
             )
             time.sleep(delay)
     if errors:
@@ -110,7 +117,9 @@ def snapshot_protective_stops(
             "snapshot_protective_stops: could not READ %s's protective "
             "stops after %d attempts (%s) — reporting UNKNOWN, not "
             "'no stop'.",
-            symbol, _STOP_PLACEMENT_MAX_ATTEMPTS, "; ".join(errors),
+            symbol,
+            _STOP_PLACEMENT_MAX_ATTEMPTS,
+            "; ".join(errors),
         )
         return False, []
     if not stops:
@@ -124,7 +133,9 @@ def snapshot_protective_stops(
 
 
 def cancel_snapshotted_stops(
-    broker, symbol: str, specs: list[dict],
+    broker,
+    symbol: str,
+    specs: list[dict],
 ) -> StopCancelOutcome:
     """Cancel pre-snapshotted protective stops by id.
 
@@ -154,12 +165,22 @@ def cancel_snapshotted_stops(
             cancelled.append(spec)
             record_guarded_pass(broker, "cancel_snapshotted_stops.cancel", context={"symbol": symbol, "order": sid})
         except Exception as exc:
-            record_guarded_pass(broker, "cancel_snapshotted_stops.cancel", exc, log=logger,
-                       context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"})
+            record_guarded_pass(
+                broker,
+                "cancel_snapshotted_stops.cancel",
+                exc,
+                log=logger,
+                context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"},
+            )
             cancel_failed.append(spec)
     return settle_cancel(
-        symbol, specs, cancelled, untouched, cancel_failed,
-        broker._restore_stop_orders, logger,
+        symbol,
+        specs,
+        cancelled,
+        untouched,
+        cancel_failed,
+        broker._restore_stop_orders,
+        logger,
     )
 
 
@@ -219,7 +240,10 @@ def cancel_protective_stops(broker, symbol: str) -> tuple[bool, list[dict]]:
 
 
 def cancel_stray_protective_stops(
-    broker, symbol: str, *, side: str = "sell",
+    broker,
+    symbol: str,
+    *,
+    side: str = "sell",
 ) -> int:
     """Cancel every protective stop still resting on a symbol that is
     now FLAT. Returns the count cancelled.
@@ -248,8 +272,17 @@ def cancel_stray_protective_stops(
         ok, specs = broker.snapshot_protective_stops(symbol, side=side)
         record_guarded_pass(broker, "cancel_stray_protective_stops.list", context={"symbol": symbol, "side": side})
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass(broker, "cancel_stray_protective_stops.list", exc, log=logger,
-                   context={"symbol": symbol, "side": side, "effect": "a stray stop may still rest; the operator should confirm it is gone"})
+        record_guarded_pass(
+            broker,
+            "cancel_stray_protective_stops.list",
+            exc,
+            log=logger,
+            context={
+                "symbol": symbol,
+                "side": side,
+                "effect": "a stray stop may still rest; the operator should confirm it is gone",
+            },
+        )
         return 0
     if not ok or not specs:
         return 0
@@ -261,14 +294,29 @@ def cancel_stray_protective_stops(
         try:
             broker.client.cancel_order_by_id(sid)
             cancelled += 1
-            record_guarded_pass(broker, "cancel_stray_protective_stops.cancel", context={"symbol": symbol, "order": sid, "side": side})
+            record_guarded_pass(
+                broker, "cancel_stray_protective_stops.cancel", context={"symbol": symbol, "order": sid, "side": side}
+            )
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(broker, "cancel_stray_protective_stops.cancel", exc, log=logger,
-                       context={"symbol": symbol, "order": sid, "side": side, "effect": "a stop may still rest on a flat position; clear it by hand"})
+            record_guarded_pass(
+                broker,
+                "cancel_stray_protective_stops.cancel",
+                exc,
+                log=logger,
+                context={
+                    "symbol": symbol,
+                    "order": sid,
+                    "side": side,
+                    "effect": "a stop may still rest on a flat position; clear it by hand",
+                },
+            )
     if cancelled:
         logger.info(
             "Cancelled %d stray protective %s-stop(s) on now-flat %s "
             "(item 127(b): a repair re-added protection inside the "
-            "cancel-then-sell window)", cancelled, side, symbol,
+            "cancel-then-sell window)",
+            cancelled,
+            side,
+            symbol,
         )
     return cancelled

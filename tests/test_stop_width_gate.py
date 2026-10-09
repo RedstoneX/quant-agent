@@ -119,11 +119,11 @@ from src.portfolio_constructor import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _bars(prices: list[float], *, spread: float) -> list[OHLCV]:
     start = date(2024, 1, 1)
     return [
-        OHLCV(date=start + timedelta(days=i), open=c, high=c + spread,
-              low=c - spread, close=c, volume=1_000_000)
+        OHLCV(date=start + timedelta(days=i), open=c, high=c + spread, low=c - spread, close=c, volume=1_000_000)
         for i, c in enumerate(prices)
     ]
 
@@ -139,25 +139,48 @@ def _oscillation(low: float, high: float, cycles: int, period: int = 12) -> list
 
 def _rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x", support_resistance="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
+        support_resistance="x",
     )
 
 
-def _analysis(symbol, *, entry, stop, levels, rating="buy", setup="range",
-              target=None, atr=2.0, horizon=20, bars=None,
-              bar_low=None, bar_high=None) -> TechAnalysisResult:
+def _analysis(
+    symbol,
+    *,
+    entry,
+    stop,
+    levels,
+    rating="buy",
+    setup="range",
+    target=None,
+    atr=2.0,
+    horizon=20,
+    bars=None,
+    bar_low=None,
+    bar_high=None,
+) -> TechAnalysisResult:
     """`computed_levels` is exactly `levels` — the desk's own scan output,
     attached in Python. `bars_available`, `signal_bar_low/high` are the
     other Python-set fields item 54 added; None means "not recorded"."""
     if target is None:
         target = round(entry * (0.9 if rating in ("sell", "strong_sell") else 1.1), 2)
     a = TechAnalysisResult(
-        symbol=symbol, rating=rating, entry_price=entry, stop_loss=stop,
-        reference_target=target, reasoning="test",
-        support_levels=[stop], resistance_levels=[target] if target else [],
+        symbol=symbol,
+        rating=rating,
+        entry_price=entry,
+        stop_loss=stop,
+        reference_target=target,
+        reasoning="test",
+        support_levels=[stop],
+        resistance_levels=[target] if target else [],
         computed_levels=list(levels),
         computed_level_touches={p: 5 for p in levels},
-        setup_type=setup, expected_horizon_sessions=horizon, atr_14=atr,
+        setup_type=setup,
+        expected_horizon_sessions=horizon,
+        atr_14=atr,
         reasoning_chain=_rc(),
         thesis_invalid_if="closes below support",
     )
@@ -170,19 +193,27 @@ def _analysis(symbol, *, entry, stop, levels, rating="buy", setup="range",
 def _target(symbol, direction="long", risk_pct=None) -> TargetPosition:
     if risk_pct is not None:
         return TargetPosition(
-            symbol=symbol, direction=direction, risk_allocation_pct=risk_pct,
-            conviction="high", thesis="t",
+            symbol=symbol,
+            direction=direction,
+            risk_allocation_pct=risk_pct,
+            conviction="high",
+            thesis="t",
         )
     return TargetPosition(
-        symbol=symbol, direction=direction, target_weight_pct=5.0,
-        conviction="high", thesis="t",
+        symbol=symbol,
+        direction=direction,
+        target_weight_pct=5.0,
+        conviction="high",
+        thesis="t",
     )
 
 
 def _orders(constructor, analysis, direction="long", risk_pct=None, price=None):
     return constructor.construct_orders(
-        targets=[_target(analysis.symbol, direction, risk_pct)], positions=[],
-        analyses=[analysis], total_value=100_000,
+        targets=[_target(analysis.symbol, direction, risk_pct)],
+        positions=[],
+        analyses=[analysis],
+        total_value=100_000,
         price_map={analysis.symbol: price or analysis.entry_price},
     )
 
@@ -190,6 +221,7 @@ def _orders(constructor, analysis, direction="long", risk_pct=None, price=None):
 # ---------------------------------------------------------------------------
 # 1. The relevance window is read from the instrument (kept from #330)
 # ---------------------------------------------------------------------------
+
 
 class TestRelevanceWindowIsReadFromTheInstrument:
     def test_a_volatile_name_sees_a_shelf_a_quiet_name_cannot_reach(self):
@@ -203,11 +235,15 @@ class TestRelevanceWindowIsReadFromTheInstrument:
         atr = 2.35
         window = horizon_reach(atr, MAX_HORIZON_SESSIONS)
         derivation = derive_structural_target(
-            entry_price=100.0, direction="long", levels=[90.0, 105.0],
-            atr=atr, horizon_sessions=MAX_HORIZON_SESSIONS, setup_type="range",
+            entry_price=100.0,
+            direction="long",
+            levels=[90.0, 105.0],
+            atr=atr,
+            horizon_sessions=MAX_HORIZON_SESSIONS,
+            setup_type="range",
         )
         assert derivation.horizon_reach == round(window, 4)
-        assert window == atr * (MAX_HORIZON_SESSIONS ** 0.5) * MAX_REACH_ATR_MULTIPLE
+        assert window == atr * (MAX_HORIZON_SESSIONS**0.5) * MAX_REACH_ATR_MULTIPLE
 
     def test_the_window_is_bounded_by_the_horizon_cap_not_by_the_caller(self):
         assert horizon_reach(1.0, 100_000) == horizon_reach(1.0, MAX_HORIZON_SESSIONS)
@@ -221,6 +257,7 @@ class TestRelevanceWindowIsReadFromTheInstrument:
 # ---------------------------------------------------------------------------
 # 2. Nothing refuses for absent structure; the gap branch is gone
 # ---------------------------------------------------------------------------
+
 
 class TestNoFloorIsNotARefusal:
     def test_a_long_with_levels_only_overhead_ships_on_an_instrument_read_stop(self):
@@ -238,7 +275,11 @@ class TestNoFloorIsNotARefusal:
     def test_a_short_with_levels_only_beneath_ships_the_same_way(self):
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            "TSLA", entry=100.0, stop=102.0, levels=[90.0, 80.0], rating="sell",
+            "TSLA",
+            entry=100.0,
+            stop=102.0,
+            levels=[90.0, 80.0],
+            rating="sell",
         )
         decisions = _orders(constructor, analysis, direction="short")
         assert [d.action for d in decisions] == ["SHORT"]
@@ -251,7 +292,11 @@ class TestNoFloorIsNotARefusal:
         at its highs with no floor the scan can name — is not refused."""
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            "OKLO", entry=100.0, stop=97.0, levels=[], setup="breakout",
+            "OKLO",
+            entry=100.0,
+            stop=97.0,
+            levels=[],
+            setup="breakout",
             bars=LONGEST_INDICATOR_WINDOW,
         )
         # No levels at all is still `_derive_target`'s refusal (PR #326's
@@ -293,33 +338,35 @@ class TestNoFloorIsNotARefusal:
         atr = float(atr_series(day_one)[-1])
         horizon = 20
         reach = horizon_reach(atr, horizon)
-        assert 80.0 - shelf > reach, (
-            "the numbers must still be the width case the old gate refused"
-        )
+        assert 80.0 - shelf > reach, "the numbers must still be the width case the old gate refused"
 
         constructor = PortfolioConstructor()
         analysis = _analysis(
-            "GAPD", entry=80.0, stop=shelf, levels=[lv.price for lv in supports],
-            atr=atr, horizon=horizon, setup="breakout",
+            "GAPD",
+            entry=80.0,
+            stop=shelf,
+            levels=[lv.price for lv in supports],
+            atr=atr,
+            horizon=horizon,
+            setup="breakout",
             bars=LONGEST_INDICATOR_WINDOW,  # old enough: this is the width case
         )
         decisions = _orders(constructor, analysis, risk_pct=1.0)
         assert [d.action for d in decisions] == ["BUY"]
         assert STOP_REFUSAL_WIDER_THAN_REACH not in json.dumps(
-            constructor.last_refusals, default=str,
+            constructor.last_refusals,
+            default=str,
         )
         # The wide stop is paid for in shares: risked dollars, not the
         # position, are what the desk holds constant.
-        risked = (
-            decisions[0].allocation_pct / 100 * 100_000
-            * (80.0 - decisions[0].stop_loss) / 80.0
-        )
+        risked = decisions[0].allocation_pct / 100 * 100_000 * (80.0 - decisions[0].stop_loss) / 80.0
         assert risked == pytest.approx(1_000, rel=0.1)
 
 
 # ---------------------------------------------------------------------------
 # 3. The stop is always derivable
 # ---------------------------------------------------------------------------
+
 
 class TestTheStopIsAlwaysDerivable:
     def test_nothing_typed_means_the_band_not_a_refusal(self):
@@ -337,16 +384,24 @@ class TestTheStopIsAlwaysDerivable:
         constructor = PortfolioConstructor()
         probe = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0])
         band_edge = 100.0 - constructor._stop_atr_multiple(probe, None) * 2.0
-        wide_bar = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0],
-                             bar_low=band_edge - 3.0)
+        wide_bar = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0], bar_low=band_edge - 3.0)
         placed = constructor._widen_stop_past_noise(
-            "BAR", wide_bar, 100.0, 98.0, direction="long", target_price=110.0,
+            "BAR",
+            wide_bar,
+            100.0,
+            98.0,
+            direction="long",
+            target_price=110.0,
         )
         assert placed == pytest.approx(band_edge - 3.0)
-        narrow_bar = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0],
-                               bar_low=band_edge + 1.0)
+        narrow_bar = _analysis("BAR", entry=100.0, stop=98.0, levels=[110.0], bar_low=band_edge + 1.0)
         placed = constructor._widen_stop_past_noise(
-            "BAR", narrow_bar, 100.0, 98.0, direction="long", target_price=110.0,
+            "BAR",
+            narrow_bar,
+            100.0,
+            98.0,
+            direction="long",
+            target_price=110.0,
         )
         assert placed == pytest.approx(band_edge)
 
@@ -356,7 +411,12 @@ class TestTheStopIsAlwaysDerivable:
         band_edge = 100.0 + constructor._stop_atr_multiple(a, None) * 2.0
         a.signal_bar_high = band_edge + 2.0
         placed = constructor._widen_stop_past_noise(
-            "SHRT", a, 100.0, 102.0, direction="short", target_price=90.0,
+            "SHRT",
+            a,
+            100.0,
+            102.0,
+            direction="short",
+            target_price=90.0,
         )
         assert placed == pytest.approx(band_edge + 2.0)
 
@@ -366,15 +426,24 @@ class TestTheStopIsAlwaysDerivable:
         percentage."""
         constructor = PortfolioConstructor()
         a = _analysis("NOVOL", entry=100.0, stop=95.0, levels=[110.0], atr=None)
-        assert constructor._widen_stop_past_noise(
-            "NOVOL", a, 100.0, None, direction="long", target_price=110.0,
-        ) is None
+        assert (
+            constructor._widen_stop_past_noise(
+                "NOVOL",
+                a,
+                100.0,
+                None,
+                direction="long",
+                target_price=110.0,
+            )
+            is None
+        )
 
 
 # ---------------------------------------------------------------------------
 # 4. The width gate is DELETED (board item 56, route (c), 2026-09-26) and
 #    cannot come back silently
 # ---------------------------------------------------------------------------
+
 
 class TestTheWidthGateIsDeletedAndCannotComeBack:
     def test_a_stop_past_the_instruments_reach_now_ships(self):
@@ -403,9 +472,7 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
         near = _analysis("NEAR", entry=100.0, stop=94.0, levels=[94.0, 140.0])
         far = _analysis("FAR", entry=100.0, stop=88.0, levels=[88.0, 140.0])
         past = _analysis("PAST", entry=100.0, stop=80.0, levels=[80.0, 140.0])
-        assert 12.0 < horizon_reach(2.0, 20) < 20.0, (
-            "FAR must be inside the old cap and PAST outside it"
-        )
+        assert 12.0 < horizon_reach(2.0, 20) < 20.0, "FAR must be inside the old cap and PAST outside it"
         got = {}
         for a in (near, far, past):
             d = _orders(constructor, a, risk_pct=1.0)
@@ -417,7 +484,8 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
             assert risked == pytest.approx(1_000, abs=20), sym
         # Twice the distance, half the position — the whole mechanism.
         assert got["FAR"].allocation_pct == pytest.approx(
-            got["NEAR"].allocation_pct / 2, abs=0.05,
+            got["NEAR"].allocation_pct / 2,
+            abs=0.05,
         )
         assert constructor.last_refusals == {}
 
@@ -427,10 +495,8 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
         # 218) for the same reason as the long case above: $20 of risk
         # against $10 of reward now fails the parity rule, and this test is
         # about the deleted WIDTH gate, not about geometry.
-        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 70.0],
-                      rating="sell")
-        assert [d.action for d in _orders(constructor, a, direction="short",
-                                          risk_pct=1.0)] == ["SHORT"]
+        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 70.0], rating="sell")
+        assert [d.action for d in _orders(constructor, a, direction="short", risk_pct=1.0)] == ["SHORT"]
         assert constructor.last_refusals == {}
 
     def test_the_eligibility_preview_refuses_nothing_on_width(self):
@@ -442,10 +508,14 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
     def test_the_band_itself_still_ships_at_every_horizon(self):
         constructor = PortfolioConstructor()
         for horizon in (1, 2, 4, 10, 20, MAX_HORIZON_SESSIONS):
-            a = _analysis("BAND", entry=100.0, stop=99.0, levels=[110.0],
-                          horizon=horizon, setup="breakout")
+            a = _analysis("BAND", entry=100.0, stop=99.0, levels=[110.0], horizon=horizon, setup="breakout")
             placed = constructor._widen_stop_past_noise(
-                "BAND", a, 100.0, 99.0, regime="risk-off", direction="long",
+                "BAND",
+                a,
+                100.0,
+                99.0,
+                regime="risk-off",
+                direction="long",
                 target_price=110.0,
             )
             assert placed is not None, horizon
@@ -470,16 +540,13 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
             if "STOP_REFUSAL_WIDER_THAN_REACH" not in source:
                 continue
             tree = ast.parse(source)
-            assigned = {
-                id(t)
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Assign)
-                for t in node.targets
-            }
+            assigned = {id(t) for node in ast.walk(tree) if isinstance(node, ast.Assign) for t in node.targets}
             for node in ast.walk(tree):
-                if (isinstance(node, ast.Name)
-                        and node.id == "STOP_REFUSAL_WIDER_THAN_REACH"
-                        and id(node) not in assigned):
+                if (
+                    isinstance(node, ast.Name)
+                    and node.id == "STOP_REFUSAL_WIDER_THAN_REACH"
+                    and id(node) not in assigned
+                ):
                     offenders.append(f"{path.name}:{node.lineno}")
         assert not offenders, (
             "the deleted stop-width refusal is being emitted again; see "
@@ -514,10 +581,12 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
             RiskConfig(**{**risk, "max_stop_width_reach_atr_multiple": 1.5})
         assert "removed 2026-09-26" in str(excinfo.value)
 
+
 # ---------------------------------------------------------------------------
 # 5. Young listings — judged on stop readability, never on a bar count
 #    (board item 180, owner ruling 2026-09-25: the count gate was DROPPED)
 # ---------------------------------------------------------------------------
+
 
 class TestYoungListingJudgedOnStopReadability:
     def test_a_short_history_name_with_a_readable_stop_is_admitted(self):
@@ -544,8 +613,7 @@ class TestYoungListingJudgedOnStopReadability:
         measurement DATA FAULT (`volatility_reading_missing`), NOT on a bar
         count -- nothing here counts sessions against a 200-bar floor."""
         constructor = PortfolioConstructor()
-        a = _analysis("IPOD", entry=100.0, stop=95.0, levels=[110.0],
-                      atr=None, bars=0, bar_low=None)
+        a = _analysis("IPOD", entry=100.0, stop=95.0, levels=[110.0], atr=None, bars=0, bar_low=None)
         assert _orders(constructor, a) == []
         assert "IPOD" not in constructor.last_refusals
         fault = constructor.last_data_faults["IPOD"]
@@ -559,18 +627,19 @@ class TestYoungListingJudgedOnStopReadability:
         `no_structural_stop_and_no_volatility_reading` -- on what the trade
         needs, never on a bar count."""
         constructor = PortfolioConstructor()
-        a = _analysis("NOSTOP", entry=100.0, stop=95.0, levels=[110.0],
-                      atr=None, bars=0, bar_low=None)
+        a = _analysis("NOSTOP", entry=100.0, stop=95.0, levels=[110.0], atr=None, bars=0, bar_low=None)
         # `computed_levels` here holds only an overhead level (110), none on the
         # protective side of a long, and no signal-bar low.
         result = constructor._widen_stop_past_noise(
-            "NOSTOP", a, 100.0, 95.0, direction="long", target_price=110.0,
+            "NOSTOP",
+            a,
+            100.0,
+            95.0,
+            direction="long",
+            target_price=110.0,
         )
         assert result is None
-        assert (
-            constructor.last_refusals["NOSTOP"]["refusal"]
-            == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
-        )
+        assert constructor.last_refusals["NOSTOP"]["refusal"] == STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY
 
     def test_the_count_gate_is_gone(self):
         """The removed refusal code and its method no longer exist."""
@@ -591,6 +660,7 @@ class TestYoungListingJudgedOnStopReadability:
 # 6. Recorded as data, read by the PM gate and the census
 # ---------------------------------------------------------------------------
 
+
 class TestRecordedAsData:
     def test_decision_stage_files_the_code_beside_the_reason(self, monkeypatch):
         from src import pipeline_stages
@@ -598,8 +668,7 @@ class TestRecordedAsData:
         events: list[dict] = []
 
         def _capture(pipeline, ctx, symbol, stage, outcome, reason="", **details):
-            events.append({"symbol": symbol, "stage": stage, "outcome": outcome,
-                           "reason": reason, **details})
+            events.append({"symbol": symbol, "stage": stage, "outcome": outcome, "reason": reason, **details})
 
         monkeypatch.setattr(pipeline_stages, "_record_pipeline_event", _capture)
         constructor = PortfolioConstructor()
@@ -610,16 +679,28 @@ class TestRecordedAsData:
         for sym in dropped:
             r = refusals.get(sym)
             pipeline_stages._record_pipeline_event(
-                None, None, sym, "deterministic_gate", "blocked",
-                CONSTRUCTOR_REFUSED_EVENT_REASON, refusal=r["refusal"],
-                detail=r["detail"], targeted=True,
+                None,
+                None,
+                sym,
+                "deterministic_gate",
+                "blocked",
+                CONSTRUCTOR_REFUSED_EVENT_REASON,
+                refusal=r["refusal"],
+                detail=r["detail"],
+                targeted=True,
             )
         for sym, r in refusals.items():
             if sym not in dropped:
                 pipeline_stages._record_pipeline_event(
-                    None, None, sym, "deterministic_gate", "blocked",
-                    CONSTRUCTOR_REFUSED_EVENT_REASON, refusal=r["refusal"],
-                    detail=r["detail"], targeted=False,
+                    None,
+                    None,
+                    sym,
+                    "deterministic_gate",
+                    "blocked",
+                    CONSTRUCTOR_REFUSED_EVENT_REASON,
+                    refusal=r["refusal"],
+                    detail=r["detail"],
+                    targeted=False,
                 )
         by_symbol = {e["symbol"]: e for e in events}
         assert by_symbol["WIDE"]["refusal"] == STOP_REFUSAL_WIDER_THAN_REACH
@@ -630,34 +711,55 @@ class TestRecordedAsData:
 
     def test_the_census_attributes_each_code_to_its_own_bucket(self, tmp_path):
         from scripts.blocked_proposals_census import (
-            _connect, _load_fills, _load_pairs, _load_recorded_reasons,
-            _load_skips, _load_verdicts, classify,
+            _connect,
+            _load_fills,
+            _load_pairs,
+            _load_recorded_reasons,
+            _load_skips,
+            _load_verdicts,
+            classify,
         )
         from src.storage.db import Database
 
         db = Database(str(tmp_path / "census.db"))
         db.initialize()
         db.insert_specialist_evidence(
-            run_id="r1", decision_id="d1", agent_name="portfolio_manager",
-            kind="target", scope="symbol", symbol="WIDE",
+            run_id="r1",
+            decision_id="d1",
+            agent_name="portfolio_manager",
+            kind="target",
+            scope="symbol",
+            symbol="WIDE",
             evidence_json=json.dumps({"symbol": "WIDE", "risk_allocation_pct": 1.0}),
         )
         db.insert_specialist_evidence(
-            run_id="r1", decision_id="d1", agent_name="pipeline",
-            kind="pipeline_event", scope="symbol", symbol="WIDE",
-            evidence_json=json.dumps({
-                "stage": "deterministic_gate", "outcome": "blocked",
-                "reason": "constructor_refused",
-                "refusal": STOP_REFUSAL_WIDER_THAN_REACH, "detail": "too wide",
-            }),
+            run_id="r1",
+            decision_id="d1",
+            agent_name="pipeline",
+            kind="pipeline_event",
+            scope="symbol",
+            symbol="WIDE",
+            evidence_json=json.dumps(
+                {
+                    "stage": "deterministic_gate",
+                    "outcome": "blocked",
+                    "reason": "constructor_refused",
+                    "refusal": STOP_REFUSAL_WIDER_THAN_REACH,
+                    "detail": "too wide",
+                }
+            ),
         )
         db.conn.commit()
         con = _connect(tmp_path / "census.db")
         try:
             reason = classify(
-                "d1", "WIDE", ordered=_load_pairs(con, "proposed_order"),
-                verdicts=_load_verdicts(con), skips=_load_skips(con),
-                fills=_load_fills(con), recorded_reasons=_load_recorded_reasons(con),
+                "d1",
+                "WIDE",
+                ordered=_load_pairs(con, "proposed_order"),
+                verdicts=_load_verdicts(con),
+                skips=_load_skips(con),
+                fills=_load_fills(con),
+                recorded_reasons=_load_recorded_reasons(con),
             )
         finally:
             con.close()
@@ -669,8 +771,7 @@ class TestRecordedAsData:
         blocked when the constructor did not refuse it."""
         from src.agents.portfolio_manager import PortfolioManagerAgent
 
-        no_floor = _analysis("NVDA", entry=100.0, stop=96.0, levels=[110.0, 120.0],
-                             setup="breakout")
+        no_floor = _analysis("NVDA", entry=100.0, stop=96.0, levels=[110.0, 120.0], setup="breakout")
         # The width refusal was deleted (item 56, 2026-09-26). Recorded
         # consequence, stated rather than hidden: `real_reward_risk_preview`
         # now records NO refusal at all for any input — the width gate was
@@ -680,15 +781,14 @@ class TestRecordedAsData:
         # still reads whatever snapshot it is handed; the ENFORCING check
         # was always one stage later, in construction. So this pins the
         # wiring against a synthetic snapshot and pins the new emptiness.
-        unreadable = _analysis("DRAM", entry=100.0, stop=95.0, levels=[110.0],
-                               setup="breakout", atr=None, bars=0,
-                               bar_low=None)
+        unreadable = _analysis(
+            "DRAM", entry=100.0, stop=95.0, levels=[110.0], setup="breakout", atr=None, bars=0, bar_low=None
+        )
         constructor = PortfolioConstructor()
         for a in (no_floor, unreadable):
             constructor.real_reward_risk_preview(a, "long")
         assert constructor.last_refusals == {}, (
-            "no preview-time refusal exists any more; if one is added, "
-            "wire this test back onto the live preview"
+            "no preview-time refusal exists any more; if one is added, wire this test back onto the live preview"
         )
         snapshot = {
             "DRAM": {
@@ -699,20 +799,22 @@ class TestRecordedAsData:
         }
         registry = {s: {"technical": "bullish", "news": "bullish"} for s in ("NVDA", "DRAM")}
         verdicts = PortfolioManagerAgent.candidate_eligibility(
-            analyses=[no_floor, unreadable], evidence_registry=registry,
-            active_state_changes="", allowed_buy_symbols={"NVDA", "DRAM"},
+            analyses=[no_floor, unreadable],
+            evidence_registry=registry,
+            active_state_changes="",
+            allowed_buy_symbols={"NVDA", "DRAM"},
             constructor_refusals_by_symbol=snapshot,
         )
         assert not any(r.startswith("R6") for r in verdicts["NVDA"]), verdicts
         assert any(
-            r.startswith("R6")
-            and STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY in r
-            for r in verdicts["DRAM"]
+            r.startswith("R6") and STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY in r for r in verdicts["DRAM"]
         ), verdicts
         # Without the snapshot R6 says nothing at all — no chart-shape rule.
         verdicts = PortfolioManagerAgent.candidate_eligibility(
-            analyses=[no_floor, unreadable], evidence_registry=registry,
-            active_state_changes="", allowed_buy_symbols={"NVDA", "DRAM"},
+            analyses=[no_floor, unreadable],
+            evidence_registry=registry,
+            active_state_changes="",
+            allowed_buy_symbols={"NVDA", "DRAM"},
         )
         assert not any(r.startswith("R6") for v in verdicts.values() for r in v)
 
@@ -721,6 +823,7 @@ class TestRecordedAsData:
 # docs/WORK.md item 56, 2026-09-13 — the target number and the refusal number
 # are now two numbers, and a stop's width has a published reading.
 # ---------------------------------------------------------------------------
+
 
 class TestStopWidthReadingAndSeparation:
     """Item 56: one constant was estimating targets AND refusing trades.
@@ -823,5 +926,7 @@ class TestStopWidthReadingAndSeparation:
                     p_stop = touch_probability(stop_w, horizon)
                     p_target = touch_probability(target_w, horizon)
                     assert (p_stop < p_target) == (stop_w > target_w), (
-                        horizon, stop_w, target_w,
+                        horizon,
+                        stop_w,
+                        target_w,
                     )

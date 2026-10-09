@@ -111,6 +111,7 @@ CODE_AI_RISK_OBJECTION = "ai_risk_objection_advisory"
 # price.
 CODE_TRAIL_CLAMPED_TO_WIDEST = "trail_stop_clamped_to_widest_placeable"
 
+
 def classify_trigger_reason(
     reason: object,
     *,
@@ -176,8 +177,11 @@ def classify_trigger_reason(
     try:
         if trigger is not None:
             from src.risk.exit_trigger import (
-                ExitTrigger, _evidence_is_substantiation, normalize_trigger,
+                ExitTrigger,
+                _evidence_is_substantiation,
+                normalize_trigger,
             )
+
             named = normalize_trigger(trigger)
             if (
                 named is not None
@@ -238,8 +242,8 @@ def record_exit_refusal(
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(
-            "exit refusal: durable record failed for %s %s (%s) — the "
-            "drop/proceed decision is unchanged",
-            action, symbol_u, e,
+            "exit refusal: durable record failed for %s %s (%s) — the drop/proceed decision is unchanged",
+            action,
+            symbol_u,
+            e,
         )
-

@@ -1,4 +1,5 @@
 """Item 219: an old record with no examined count must not read as an empty book."""
+
 from src.rotation import pruning_pass_lines
 from src.rotation_unrecorded import examined_count_of
 

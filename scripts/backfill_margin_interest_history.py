@@ -49,30 +49,37 @@ def _parse_args(argv=None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--db-path", type=Path, required=True,
-        help="SQLite database to backfill. For review/testing this MUST "
-             "be a COPY, never the live production database.",
+        "--db-path",
+        type=Path,
+        required=True,
+        help="SQLite database to backfill. For review/testing this MUST be a COPY, never the live production database.",
     )
     p.add_argument(
-        "--since", type=str, default=None,
+        "--since",
+        type=str,
+        default=None,
         help="First trading day (YYYY-MM-DD) to backfill. Default: the "
-             "earliest date on the account's own activity ledger.",
+        "earliest date on the account's own activity ledger.",
     )
     p.add_argument(
-        "--until", type=str, default=None,
+        "--until",
+        type=str,
+        default=None,
         help="Last trading day (YYYY-MM-DD) to backfill, INCLUSIVE. "
-             "Default: yesterday (ET) — today is left for the live "
-             "morning tracker to write for itself, not guessed here.",
+        "Default: yesterday (ET) — today is left for the live "
+        "morning tracker to write for itself, not guessed here.",
     )
     p.add_argument(
-        "--apply", action="store_true",
+        "--apply",
+        action="store_true",
         help="Actually write the reconstructed rows. Without this flag "
-             "the script only computes and PRINTS what it would write.",
+        "the script only computes and PRINTS what it would write.",
     )
     p.add_argument(
-        "--yes", action="store_true",
+        "--yes",
+        action="store_true",
         help="Skip the interactive confirmation prompt when --apply is "
-             "set. Only use once you've already reviewed a dry run.",
+        "set. Only use once you've already reviewed a dry run.",
     )
     return p.parse_args(argv)
 
@@ -103,16 +110,14 @@ def main(argv=None) -> int:
     print(f"  {len(activities)} activity records fetched")
     if not activities:
         print(
-            "ERROR: broker returned no activity records at all — cannot "
-            "reconstruct anything. Nothing written.", file=sys.stderr,
+            "ERROR: broker returned no activity records at all — cannot reconstruct anything. Nothing written.",
+            file=sys.stderr,
         )
         return 3
 
     from src.margin_interest import activity_effective_date
 
-    dated = sorted(
-        d for a in activities if (d := activity_effective_date(a)) is not None
-    )
+    dated = sorted(d for a in activities if (d := activity_effective_date(a)) is not None)
     earliest_activity = dated[0] if dated else None
     since = _date.fromisoformat(args.since) if args.since else earliest_activity
     until = _date.fromisoformat(args.until) if args.until else (et_today() - timedelta(days=1))
@@ -133,7 +138,10 @@ def main(argv=None) -> int:
     print(f"  {len(trading_days)} trading days")
 
     rows = backfill_daily_estimates(
-        trading_days, activities, rate_pct, broker.is_trading_day,
+        trading_days,
+        activities,
+        rate_pct,
+        broker.is_trading_day,
     )
     nonzero = [r for r in rows if r.period_usd > 0]
     total_period_usd = sum(r.period_usd for r in rows)
@@ -164,8 +172,7 @@ def main(argv=None) -> int:
 
         if not args.yes and preview["inserted"] > 0:
             resp = input(
-                f"About to WRITE {preview['inserted']} backfilled row(s) "
-                f"into {db_path}. Type 'yes' to continue: "
+                f"About to WRITE {preview['inserted']} backfilled row(s) into {db_path}. Type 'yes' to continue: "
             )
             if resp.strip().lower() != "yes":
                 print("Aborted — no changes made.")

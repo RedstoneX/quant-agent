@@ -28,9 +28,7 @@ from src.execution.scale_in import WAL_SCALE_IN_SENTINEL
 def _ids(db_path):
     con = sqlite3.connect(str(db_path))
     try:
-        return list(con.execute(
-            "SELECT id, sell_order_id FROM pending_protection_restores ORDER BY id"
-        ))
+        return list(con.execute("SELECT id, sell_order_id FROM pending_protection_restores ORDER BY id"))
     finally:
         con.close()
 
@@ -44,13 +42,19 @@ def test_wal_row_ids_are_shared_so_max_id_is_not_a_scale_in_count(tmp_path):
 
     # The ordinary protective-sell restore path writes the same table.
     first = db.insert_pending_protection_restore(
-        symbol="AAA", sell_order_id="sell-order-1",
-        position_qty_before_sell=10.0, specs_json="[]", side="sell",
+        symbol="AAA",
+        sell_order_id="sell-order-1",
+        position_qty_before_sell=10.0,
+        specs_json="[]",
+        side="sell",
     )
     # A scale-in allocation: identifiable by the sentinel, not by its id.
     scale_in_one = db.insert_pending_protection_restore(
-        symbol="AAA", sell_order_id=WAL_SCALE_IN_SENTINEL,
-        position_qty_before_sell=10.0, specs_json="[]", side="sell",
+        symbol="AAA",
+        sell_order_id=WAL_SCALE_IN_SENTINEL,
+        position_qty_before_sell=10.0,
+        specs_json="[]",
+        side="sell",
     )
     assert scale_in_one > first, "both writers draw from one id sequence"
 
@@ -60,18 +64,23 @@ def test_wal_row_ids_are_shared_so_max_id_is_not_a_scale_in_count(tmp_path):
     db.delete_pending_protection_restore(first)
     db.delete_pending_protection_restore(scale_in_one)
     non_scale_in = db.insert_pending_protection_restore(
-        symbol="BBB", sell_order_id="sell-order-2",
-        position_qty_before_sell=5.0, specs_json="[]", side="sell",
+        symbol="BBB",
+        sell_order_id="sell-order-2",
+        position_qty_before_sell=5.0,
+        specs_json="[]",
+        side="sell",
     )
     scale_in_two = db.insert_pending_protection_restore(
-        symbol="BBB", sell_order_id=WAL_SCALE_IN_SENTINEL,
-        position_qty_before_sell=5.0, specs_json="[]", side="sell",
+        symbol="BBB",
+        sell_order_id=WAL_SCALE_IN_SENTINEL,
+        position_qty_before_sell=5.0,
+        specs_json="[]",
+        side="sell",
     )
     assert non_scale_in > scale_in_one
     assert scale_in_two > non_scale_in
     assert scale_in_two - scale_in_one > 1, (
-        "the highest row id counts every writer of the table, so it may never "
-        "be read as the number of scale-ins"
+        "the highest row id counts every writer of the table, so it may never be read as the number of scale-ins"
     )
 
     # The census that IS correct: filter on the sentinel.

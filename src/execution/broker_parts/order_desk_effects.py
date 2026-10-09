@@ -1,4 +1,5 @@
 """Guarded-failure recording for the order desk, with what each failure means for the caller."""
+
 import logging
 
 from src.sentinel.guarded import record_guarded_pass
@@ -7,34 +8,18 @@ from src.sentinel.guarded import record_guarded_pass
 _LOG = logging.getLogger("src.execution.broker")
 
 EFFECT: dict[str, str] = {
-    "cancel_all_open_orders": (
-        "the caller is told zero orders were cancelled when the truth is unknown"
-    ),
-    "cancel_open_entry_orders": (
-        "the caller is told zero entry orders were cancelled when the truth is unknown"
-    ),
-    "list_open_entry_orders_checked": (
-        "reported as a FAILED read, not as an empty book"
-    ),
-    "open_buy_notional": (
-        "None returned; the caller cannot size against open buy notional"
-    ),
-    "list_recent_orders": (
-        "None returned so the caller retries rather than misjudging the order absent"
-    ),
+    "cancel_all_open_orders": ("the caller is told zero orders were cancelled when the truth is unknown"),
+    "cancel_open_entry_orders": ("the caller is told zero entry orders were cancelled when the truth is unknown"),
+    "list_open_entry_orders_checked": ("reported as a FAILED read, not as an empty book"),
+    "open_buy_notional": ("None returned; the caller cannot size against open buy notional"),
+    "list_recent_orders": ("None returned so the caller retries rather than misjudging the order absent"),
     "list_filled_sell_orders": (
         "None returned so the caller retries rather than concluding there was no fill; a missed stop-out is "
         "a money-relevant accounting gap"
     ),
-    "get_order_fill_info": (
-        "None returned; no fill information for reconciliation"
-    ),
-    "read_order_status": (
-        "None returned; the order status is unknown to the caller"
-    ),
-    "poll_order_status": (
-        "polling stops and the last known status is returned"
-    ),
+    "get_order_fill_info": ("None returned; no fill information for reconciliation"),
+    "read_order_status": ("None returned; the order status is unknown to the caller"),
+    "poll_order_status": ("polling stops and the last known status is returned"),
     "cancel_entry_order": (
         "if this raced a partial fill the position may end up larger than intended; the next coverage "
         "reconcile must be checked"
@@ -45,15 +30,9 @@ EFFECT: dict[str, str] = {
     "replace_entry_limit": (
         "the order most likely reached a terminal state first; the ORIGINAL id remains authoritative"
     ),
-    "submit_order_rejected": (
-        "the broker refused the order; a rejected result is returned and no order exists"
-    ),
-    "replace_confirmation_wait": (
-        "the replacement is treated as UNCONFIRMED"
-    ),
-    "replace_confirmation_chain_reread": (
-        "the replacement is treated as UNCONFIRMED"
-    ),
+    "submit_order_rejected": ("the broker refused the order; a rejected result is returned and no order exists"),
+    "replace_confirmation_wait": ("the replacement is treated as UNCONFIRMED"),
+    "replace_confirmation_chain_reread": ("the replacement is treated as UNCONFIRMED"),
 }
 
 

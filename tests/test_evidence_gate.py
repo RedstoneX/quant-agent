@@ -20,11 +20,11 @@ from src.pipeline import TradingPipeline
 from tests.pipeline_factory import build_pipeline
 
 
-
 REPO = Path(__file__).resolve().parents[1]
 
 
 # ---------- the classifier ----------
+
 
 def test_a_lost_answer_refuses_the_decision():
     v = evidence_gate.evaluate({"macro": "ok", "tech": "parse_error"})
@@ -33,8 +33,7 @@ def test_a_lost_answer_refuses_the_decision():
     assert "tech=parse_error" in v.reason
 
 
-@pytest.mark.parametrize("status", ["failed", "parse_error", "provider_error",
-                                    "truncated", "content_missing"])
+@pytest.mark.parametrize("status", ["failed", "parse_error", "provider_error", "truncated", "content_missing"])
 def test_every_lost_status_refuses(status):
     """Every LOST word still refuses — when it is the BLOCKING seat's."""
     assert evidence_gate.evaluate({"tech": status}).skip is True
@@ -42,9 +41,19 @@ def test_every_lost_status_refuses(status):
 
 # ---------- the blocking set is declared, not accidental ----------
 
-@pytest.mark.parametrize("status", ["failed", "parse_error", "provider_error",
-                                    "truncated", "content_missing",
-                                    "carry_forward_empty", "carry_forward_failed"])
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "failed",
+        "parse_error",
+        "provider_error",
+        "truncated",
+        "content_missing",
+        "carry_forward_empty",
+        "carry_forward_failed",
+    ],
+)
 def test_the_technical_seat_blocks_on_every_lost_status(status):
     """Owner mandate 2026-09-18: "Only technical analysis can stop the desk."."""
     v = evidence_gate.evaluate({"tech": status, "macro": "ok"})
@@ -52,11 +61,19 @@ def test_the_technical_seat_blocks_on_every_lost_status(status):
     assert v.blocking_lost == ["tech"]
 
 
-@pytest.mark.parametrize("seat", ["macro", "news", "earnings", "smart_money",
-                                  "sector"])
-@pytest.mark.parametrize("status", ["failed", "parse_error", "provider_error",
-                                    "truncated", "content_missing",
-                                    "carry_forward_empty", "carry_forward_failed"])
+@pytest.mark.parametrize("seat", ["macro", "news", "earnings", "smart_money", "sector"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "failed",
+        "parse_error",
+        "provider_error",
+        "truncated",
+        "content_missing",
+        "carry_forward_empty",
+        "carry_forward_failed",
+    ],
+)
 def test_no_other_seat_blocks_on_any_lost_status(seat, status):
     """Each advisory seat, individually, loses its answer and the desk still
     decides. The loss is still recorded and still named."""
@@ -84,9 +101,7 @@ def test_a_new_status_word_cannot_widen_the_blocking_set():
     patched = dict(evidence_gate.STATUS_CATEGORY)
     patched["brand_new_failure_word"] = evidence_gate.CATEGORY_LOST
     with patch.dict(evidence_gate.STATUS_CATEGORY, patched, clear=True):
-        v = evidence_gate.evaluate(
-            {"news": "brand_new_failure_word", "tech": "ok"}
-        )
+        v = evidence_gate.evaluate({"news": "brand_new_failure_word", "tech": "ok"})
     assert v.skip is False
     assert v.lost == ["news"]
 
@@ -138,9 +153,7 @@ def test_empty_or_failed_carry_forward_refuses(status):
     this morning's seat never produced a usable today-dated answer, or
     the lookup itself failed. That is a lost answer. Deciding on it is
     fabricating the missing seat."""
-    v = evidence_gate.evaluate(
-        {"tech": status, "macro": status, "earnings": "not_run_intraday"}
-    )
+    v = evidence_gate.evaluate({"tech": status, "macro": status, "earnings": "not_run_intraday"})
     assert v.skip is True
     assert v.lost == ["macro", "tech"]
     assert v.blocking_lost == ["tech"]
@@ -172,12 +185,23 @@ def test_reuse_and_intentional_skip_are_not_degraded(status):
     assert evidence_gate.counts_as_degraded(status) is False
 
 
-@pytest.mark.parametrize("status", [
-    "failed", "parse_error", "provider_error", "truncated", "content_missing",
-    "carry_forward_empty", "carry_forward_failed",
-    "partial", "low_confidence", "degraded", "symbol_dropped",
-    "figures_contradicted",
-])
+@pytest.mark.parametrize(
+    "status",
+    [
+        "failed",
+        "parse_error",
+        "provider_error",
+        "truncated",
+        "content_missing",
+        "carry_forward_empty",
+        "carry_forward_failed",
+        "partial",
+        "low_confidence",
+        "degraded",
+        "symbol_dropped",
+        "figures_contradicted",
+    ],
+)
 def test_real_failures_and_thin_reads_still_count_as_degraded(status):
     """The 2+ advisory must still fire on actual upstream problems.
     Thin-but-present reads (partial / low_confidence / …) stay degraded;
@@ -201,10 +225,10 @@ def test_intra_reuse_package_is_not_two_plus_degraded():
     assert evidence_gate.evaluate(status).skip is False
 
 
-@pytest.mark.parametrize("status", ["ok", "partial", "low_confidence",
-                                    "symbol_dropped", "degraded",
-                                    "figures_contradicted",
-                                    "carried_from_morning"])
+@pytest.mark.parametrize(
+    "status",
+    ["ok", "partial", "low_confidence", "symbol_dropped", "degraded", "figures_contradicted", "carried_from_morning"],
+)
 def test_a_reported_answer_does_not_refuse(status):
     """Thin, mixed, self-doubting and even provably-wrong answers all ARE
     answers. Judging how much partial is too much is the counting question
@@ -230,11 +254,12 @@ def test_no_threshold_number_lives_in_this_module():
     is that it needs no coverage count — so no bare integer/float literal
     may appear in its executable code."""
     import ast
+
     tree = ast.parse((REPO / "src" / "evidence_gate.py").read_text())
     numbers = [
-        node.value for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
-        and not isinstance(node.value, bool)
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
     ]
     assert numbers == [], f"numeric literal(s) in the gate: {numbers}"
 
@@ -246,9 +271,7 @@ def test_every_status_the_codebase_writes_is_classified():
     silently treats it as a reported answer forever."""
     written: set[str] = set()
     pattern = re.compile(r"""data_status\[[^\]]+\]\s*=\s*\(?\s*["']([a-z_]+)["']""")
-    ternary = re.compile(
-        r"""data_status\[[^\]]+\]\s*=\s*["']([a-z_]+)["']\s+if\s+.*?\s+else\s+["']([a-z_]+)["']"""
-    )
+    ternary = re.compile(r"""data_status\[[^\]]+\]\s*=\s*["']([a-z_]+)["']\s+if\s+.*?\s+else\s+["']([a-z_]+)["']""")
     for path in (REPO / "src").rglob("*.py"):
         if path.name == "evidence_gate.py":
             continue
@@ -260,11 +283,16 @@ def test_every_status_the_codebase_writes_is_classified():
     # Two writers do not use subscript assignment and are scanned directly:
     # the intraday dict is a literal, and the earnings status is whatever
     # `_classify_earnings_status` returns.
-    written.update({
-        "carried_from_morning", "not_run_intraday",
-        "carry_forward_empty", "carry_forward_failed",
-    })
+    written.update(
+        {
+            "carried_from_morning",
+            "not_run_intraday",
+            "carry_forward_empty",
+            "carry_forward_failed",
+        }
+    )
     import ast
+
     # The classifier moves whenever pipeline_stages is split further, so find
     # it by name across src/ instead of naming the module that holds it today.
     classifier_found = False
@@ -273,12 +301,13 @@ def test_every_status_the_codebase_writes_is_classified():
         if "def _classify_earnings_status" not in text:
             continue
         for node in ast.walk(ast.parse(text)):
-            if (isinstance(node, ast.FunctionDef)
-                    and node.name == "_classify_earnings_status"):
+            if isinstance(node, ast.FunctionDef) and node.name == "_classify_earnings_status":
                 classifier_found = True
                 written.update(
-                    r.value.value for r in ast.walk(node)
-                    if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant)
+                    r.value.value
+                    for r in ast.walk(node)
+                    if isinstance(r, ast.Return)
+                    and isinstance(r.value, ast.Constant)
                     and isinstance(r.value.value, str)
                 )
     assert classifier_found, "_classify_earnings_status not found anywhere in src/"
@@ -307,13 +336,15 @@ def test_one_fresh_seat_plus_a_carried_book_is_disclosed_as_such():
     """THE failure mode the mandate change opens. Every seat here reports a
     status the desk calls integrity-clean, so nothing else in the codebase
     would say that four fifths of this decision was not read on this tick."""
-    v = evidence_gate.evaluate({
-        "tech": "ok",
-        "macro": "remembered",
-        "news": "carried_from_morning",
-        "earnings": "chose_not_to_refetch",
-        "smart_money": "not_run_intraday",
-    })
+    v = evidence_gate.evaluate(
+        {
+            "tech": "ok",
+            "macro": "remembered",
+            "news": "carried_from_morning",
+            "earnings": "chose_not_to_refetch",
+            "smart_money": "not_run_intraday",
+        }
+    )
     assert v.skip is False
     for status in v.data_status.values():
         assert status in evidence_gate.INTEGRITY_CLEAN_STATUSES
@@ -327,19 +358,11 @@ def test_one_fresh_seat_plus_a_carried_book_is_disclosed_as_such():
     assert record["carried_seats"] == ["earnings", "macro", "news", "smart_money"]
 
 
-
-
-
-
-
-
-
-
-
 def test_a_lost_advisory_seat_still_reaches_the_unsilenceable_alert():
     """It no longer halts the desk, so the one alert a mode's noise policy
     cannot suppress must still be able to see it."""
     from src.notifier import maybe_alert_data_quality
+
     p = _pipeline({"tech": "ok", "news": "failed"})
     result, _, _ = _run(p)
     assert result["status"] != "evidence_gate_skip"
@@ -351,16 +374,18 @@ def test_a_lost_advisory_seat_still_reaches_the_unsilenceable_alert():
 # ---------- item 154: the proceed-anyway decision is marked short-handed ----------
 
 
-
-
-
-
-
-
 # ---------- the wiring ----------
 
+
 def _pipeline(data_status: dict):
-    p = build_pipeline(_is_trading_day=lambda: True, db=MagicMock(), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), decision_stage=MagicMock())
+    p = build_pipeline(
+        _is_trading_day=lambda: True,
+        db=MagicMock(),
+        broker=MagicMock(),
+        risk_engine=MagicMock(),
+        morning_research_stage=MagicMock(),
+        decision_stage=MagicMock(),
+    )
     # A clean run drains nothing and reconciles no broker stop-out (item 101):
     # return the real "nothing to surface" values so _surface_reconcile_outcomes
     # correctly stays silent, rather than a bare MagicMock (which coerces to a
@@ -372,7 +397,9 @@ def _pipeline(data_status: dict):
     p._reconcile_fills = MagicMock()
     p._force_delever = MagicMock(return_value=[])
     p.broker.get_account.return_value = {
-        "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
+        "cash": 50_000.0,
+        "portfolio_value": 100_000.0,
+        "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
 
@@ -390,11 +417,14 @@ def _pipeline(data_status: dict):
 
 def _run(p):
     from src import decision_checkpoint as dc
-    with patch.object(dc, "load", return_value=None), \
-         patch.object(dc, "write", return_value=None), \
-         patch.object(dc, "write_status") as ws, \
-         patch.object(dc, "mark_consumed"), \
-         patch("src.notifier.send_owner_alert", return_value=True) as alert:
+
+    with (
+        patch.object(dc, "load", return_value=None),
+        patch.object(dc, "write", return_value=None),
+        patch.object(dc, "write_status") as ws,
+        patch.object(dc, "mark_consumed"),
+        patch("src.notifier.send_owner_alert", return_value=True) as alert,
+    ):
         return p.run_morning(), ws, alert
 
 
@@ -417,6 +447,7 @@ def test_the_skip_carries_data_status_so_the_standalone_alert_fires():
     """Loudness path 2: main.py's finally block pages off `data_status` in
     the result, independent of the session message's noise policy."""
     from src.notifier import maybe_alert_data_quality
+
     p = _pipeline({"macro": "failed", "tech": "failed"})
     result, _, _ = _run(p)
     with patch("src.notifier.send_owner_alert", return_value=True) as alert:
@@ -427,6 +458,7 @@ def test_the_skip_carries_data_status_so_the_standalone_alert_fires():
 def test_the_skip_is_not_the_white_nothing_happened_bucket():
     """Loudness path 3. Retired item 11 was a silent zero-proposal day."""
     from src.notifier import _status_emoji
+
     assert _status_emoji("evidence_gate_skip") == _status_emoji("hard_risk_block")
     assert _status_emoji("evidence_gate_skip") != _status_emoji("no_data")
 
@@ -434,8 +466,9 @@ def test_the_skip_is_not_the_white_nothing_happened_bucket():
 def test_the_skip_records_a_durable_machine_readable_reason_per_symbol():
     p = _pipeline({"tech": "parse_error"})
     _run(p)
-    rows = [c.kwargs for c in p.db.insert_specialist_evidence.call_args_list
-            if c.kwargs.get("kind") == "pipeline_event"]
+    rows = [
+        c.kwargs for c in p.db.insert_specialist_evidence.call_args_list if c.kwargs.get("kind") == "pipeline_event"
+    ]
     per_symbol = [r for r in rows if r.get("symbol") == "NVDA"]
     assert per_symbol, "no per-symbol row explaining why NVDA was not decided"
     assert "evidence_gate" in per_symbol[-1]["evidence_json"]
@@ -455,8 +488,7 @@ def test_the_skip_emits_no_target_at_all():
 
 
 def test_a_clean_run_is_untouched():
-    p = _pipeline({"macro": "ok", "news": "low_confidence",
-                   "tech": "partial", "smart_money": "empty"})
+    p = _pipeline({"macro": "ok", "news": "low_confidence", "tech": "partial", "smart_money": "empty"})
     result, _, alert = _run(p)
     assert result["status"] != "evidence_gate_skip"
     p._decision_stage.assert_called_once()
@@ -488,8 +520,7 @@ def _skip_alert(session: str, data_status: dict):
     ctx = MagicMock()
     ctx.data_status = dict(data_status)
     ctx.analyses = []
-    with patch.object(dc, "write_status"), \
-         patch("src.notifier.send_owner_alert", return_value=True) as alert:
+    with patch.object(dc, "write_status"), patch("src.notifier.send_owner_alert", return_value=True) as alert:
         p._evidence_gate_skip(ctx, "intra_check-cfb08f1c", session=session)
     if not alert.call_args_list:
         return None
@@ -513,8 +544,7 @@ def test_the_owner_alert_carries_no_machine_text():
     """Defects 2 and 3: a source-file reference, an internal seat key, a
     raw state token, "N seat(s)" and a run identifier all reached him."""
     text = _skip_alert("morning", {"smart_money": "failed", "tech": "failed"})
-    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
-                   "=failed", "intra_check-cfb08f1c", "run "):
+    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)", "=failed", "intra_check-cfb08f1c", "run "):
         assert banned not in text, f"owner alert still contains {banned!r}"
     # congress_enabled is on (src/config.py default since the 2026-09-20
     # owner ruling), so this must say "insider-and-congressional", not the
@@ -525,8 +555,7 @@ def test_the_owner_alert_carries_no_machine_text():
 def test_the_owner_alert_is_bullets_not_a_paragraph():
     """Defect 4: his approved format is a bold conclusion line then short
     bullets, one idea each."""
-    lines = [ln for ln in _skip_alert(
-        "morning", {"smart_money": "failed", "tech": "failed"}).split("\n") if ln.strip()]
+    lines = [ln for ln in _skip_alert("morning", {"smart_money": "failed", "tech": "failed"}).split("\n") if ln.strip()]
     assert lines[0].startswith("<b>") and lines[0].endswith("</b>")
     assert all(ln.strip().startswith("•") for ln in lines[1:])
 
@@ -557,13 +586,9 @@ def test_every_lost_status_has_plain_owner_wording():
     none of its statuses may fall through to the raw-token description."""
     from src.notifier import _DATA_STATUS_WORDS
 
-    lost = sorted(
-        s for s, cat in evidence_gate.STATUS_CATEGORY.items()
-        if cat == evidence_gate.CATEGORY_LOST
-    )
+    lost = sorted(s for s, cat in evidence_gate.STATUS_CATEGORY.items() if cat == evidence_gate.CATEGORY_LOST)
     missing = [s for s in lost if s not in _DATA_STATUS_WORDS]
     assert not missing, f"no plain wording for lost status(es): {missing}"
-
 
 
 def test_stay_and_entry_both_see_a_lost_technical_row_as_a_missing_seat():
@@ -590,7 +615,6 @@ def test_stay_and_entry_both_see_a_lost_technical_row_as_a_missing_seat():
     assert own_bar_opposition_reason(no_tech, direction="bullish") is None
 
 
-
 def test_the_production_2026_09_18_skip_shape_no_longer_halts_the_desk():
     """The exact `data_status` of the 11 half-hourly `evidence_gate_skip`
     runs recorded on 2026-09-18 [measured 2026-10-01, production
@@ -603,13 +627,15 @@ def test_the_production_2026_09_18_skip_shape_no_longer_halts_the_desk():
     Pinned because item 187 (the FRED fetch) was the standing suspect for
     these skips and is NOT the cause: the macro seat was covered in all 17.
     """
-    p = _pipeline({
-        "tech": "ok",
-        "macro": "carried_from_morning",
-        "news": "ok",
-        "earnings": "carried_from_morning",
-        "smart_money": "expired",
-    })
+    p = _pipeline(
+        {
+            "tech": "ok",
+            "macro": "carried_from_morning",
+            "news": "ok",
+            "earnings": "carried_from_morning",
+            "smart_money": "expired",
+        }
+    )
     result, _, _ = _run(p)
     assert result["status"] != "evidence_gate_skip"
     verdict = evidence_gate.evaluate(p._last_decision_data_status)

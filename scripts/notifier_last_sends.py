@@ -27,6 +27,7 @@ kind, regardless of status — a `failed` or `suppressed` row still shows
 when it didn't arrive. Use `--status sent` to see only sends that actually
 went out.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,7 +51,9 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _fetch_latest(
-    con: sqlite3.Connection, kind: str | None, status: str | None,
+    con: sqlite3.Connection,
+    kind: str | None,
+    status: str | None,
 ) -> list[sqlite3.Row]:
     where = []
     args: list[str] = []
@@ -83,8 +86,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="Path to quant_agent.db")
     parser.add_argument("--kind", default=None, help="Show only this kind (e.g. morning, owner_alert)")
-    parser.add_argument("--status", default=None, choices=["sent", "failed", "suppressed"],
-                         help="Show only rows with this status")
+    parser.add_argument(
+        "--status", default=None, choices=["sent", "failed", "suppressed"], help="Show only rows with this status"
+    )
     parser.add_argument("--full", action="store_true", help="Print the full message body, not a preview")
     args = parser.parse_args()
 
@@ -97,8 +101,9 @@ def main() -> int:
         try:
             rows = _fetch_latest(con, args.kind, args.status)
         except sqlite3.OperationalError as exc:
-            print(f"notifier_sends not readable ({exc}) — has any message been sent since this shipped?",
-                  file=sys.stderr)
+            print(
+                f"notifier_sends not readable ({exc}) — has any message been sent since this shipped?", file=sys.stderr
+            )
             return 1
     finally:
         con.close()
@@ -111,8 +116,10 @@ def main() -> int:
         body = row["text"] or ""
         if not args.full and len(body) > _PREVIEW_CHARS:
             body = body[:_PREVIEW_CHARS] + " …[clipped, use --full]"
-        print(f"=== {row['kind']} — {_status_marker(row['status'])} — {row['timestamp']} "
-              f"(run_id={row['run_id'] or '-'}) ===")
+        print(
+            f"=== {row['kind']} — {_status_marker(row['status'])} — {row['timestamp']} "
+            f"(run_id={row['run_id'] or '-'}) ==="
+        )
         if row["detail"]:
             print(f"[detail: {row['detail']}]")
         print(body)

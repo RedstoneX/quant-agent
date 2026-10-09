@@ -5,7 +5,9 @@ from src.models import TargetPosition
 
 def _target(thesis: str, risk_pct: float) -> TargetPosition:
     return TargetPosition(
-        symbol="NVDA", risk_allocation_pct=risk_pct, conviction="high",
+        symbol="NVDA",
+        risk_allocation_pct=risk_pct,
+        conviction="high",
         thesis=thesis,
     )
 

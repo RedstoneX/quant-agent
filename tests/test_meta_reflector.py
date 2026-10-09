@@ -22,6 +22,7 @@ from tests.pipeline_factory import build_pipeline
 # Fixture builders
 # ---------------------------------------------------------------------------
 
+
 def _min_digest(period: str = "2026-Q1") -> dict:
     """Minimal digest with every expected section present but mostly empty —
     exercises the "first quarter, not much data" path through the prompt
@@ -45,30 +46,43 @@ def _min_digest(period: str = "2026-Q1") -> dict:
         "calibration_by_size": {"n": 0},
         "missed_themes": {"by_theme": {}, "by_category": {}, "total_real_misses": 0},
         "loss_patterns": {
-            "by_cause": {}, "total_wrong_buys": 0,
+            "by_cause": {},
+            "total_wrong_buys": 0,
             "alpha_destruction_pct": None,
         },
         "agent_signal_activity": {
-            "tech_analyst": {"n_buy": 0, "n_strong_buy": 0, "n_hold": 0,
-                              "n_sell": 0, "n_strong_sell": 0,
-                              "distinct_symbols_with_buy_call": 0},
-            "news_analyst": {"n_sessions": 0,
-                              "n_high_conviction_state_changes": 0,
-                              "n_state_changes_total": 0,
-                              "n_bullish_sessions": 0,
-                              "n_bearish_sessions": 0,
-                              "n_neutral_sessions": 0},
-            "macro_analyst": {"n_sessions": 0, "n_regime_shifts": 0,
-                               "regime_distribution": {},
-                               "outlook_distribution": {}},
-            "earnings_analyst": {"n_filings_analyzed": 0, "n_bullish": 0,
-                                  "n_bearish": 0, "n_mixed": 0, "n_neutral": 0},
-            "portfolio_manager": {"n_sessions": 0, "n_targets_total": 0,
-                                   "n_decisions_total": 0, "n_buy_decisions": 0},
-            "risk_manager": {"n_verdicts": 0, "n_approved": 0,
-                              "n_rejected": 0, "n_scale_down": 0,
-                              "n_modifications": 0,
-                              "reason_category_distribution": {}},
+            "tech_analyst": {
+                "n_buy": 0,
+                "n_strong_buy": 0,
+                "n_hold": 0,
+                "n_sell": 0,
+                "n_strong_sell": 0,
+                "distinct_symbols_with_buy_call": 0,
+            },
+            "news_analyst": {
+                "n_sessions": 0,
+                "n_high_conviction_state_changes": 0,
+                "n_state_changes_total": 0,
+                "n_bullish_sessions": 0,
+                "n_bearish_sessions": 0,
+                "n_neutral_sessions": 0,
+            },
+            "macro_analyst": {
+                "n_sessions": 0,
+                "n_regime_shifts": 0,
+                "regime_distribution": {},
+                "outlook_distribution": {},
+            },
+            "earnings_analyst": {"n_filings_analyzed": 0, "n_bullish": 0, "n_bearish": 0, "n_mixed": 0, "n_neutral": 0},
+            "portfolio_manager": {"n_sessions": 0, "n_targets_total": 0, "n_decisions_total": 0, "n_buy_decisions": 0},
+            "risk_manager": {
+                "n_verdicts": 0,
+                "n_approved": 0,
+                "n_rejected": 0,
+                "n_scale_down": 0,
+                "n_modifications": 0,
+                "reason_category_distribution": {},
+            },
         },
     }
 
@@ -132,83 +146,87 @@ def _rich_digest(period: str = "2026-Q1") -> dict:
 def _valid_reflection_json() -> str:
     """Sample JSON the LLM might emit — satisfies every validator, including
     the 'justification must cite numbers' rule."""
-    return json.dumps({
-        "period": "2026-Q1",
-        "meta_reasoning_chain": {
-            "performance_vs_benchmark": "Alpha -3.6% over 60 days, DD -5.2%",
-            "secular_theme_audit": "nuclear/power ran 4x in missed_themes; we held 0",
-            "loss_autopsy_audit": "greed_top_chasing 3x -32% alpha leak",
-            "self_portrait_synthesis": (
-                "conviction_calibration: HIGH 38% vs LOW 62% inverted. "
-                "theme_breadth: tech-only, 4 of 6 misses in energy/materials. "
-                "loss_discipline: 3 wrongs rode thesis-break trigger. "
-                "execution_style: 7d avg hold vs medium-long mandate. "
-                "agent_balance: news_analyst 0 HIGH state_changes on energy."
-            ),
-            "portrait_gap_diagnosis": (
-                "Top 2 gaps: (1) theme_breadth owned by news_analyst "
-                "(4 missed themes, 0 HIGH state_changes). (2) "
-                "conviction_calibration owned by PM (24 pp HIGH vs LOW inversion)."
-            ),
-            "existing_prompt_audit": (
-                "Gap 1: news_analyst.md has no energy/materials coverage rule; "
-                "Learnings section empty → append room. Gap 2: "
-                "portfolio_manager.md Step 5 has sizing scale but no "
-                "calibration feedback; Learnings has 1 entry on rr (different "
-                "axis) → distinct append ok."
-            ),
-            "prompt_edit_reasoning": (
-                "greed_top_chasing worsened 2->3; news gap is 0 HIGH hits in 46 sessions"
-            ),
-        },
-        "style_self_portrait": (
-            "We are trend-followers more than trend-identifiers. Strong in "
-            "tech / AI themes but blind to energy + materials sectors. "
-            "Losses concentrate in greed-driven entries."
-        ),
-        "persistent_blindspots": ["nuclear/power sector"],
-        "root_cause_hypotheses": ["news prompt skews tech"],
-        "theme_coverage_report": {
-            "themes_caught_early": [],
-            "themes_caught_late": [],
-            "themes_missed_entirely": ["nuclear/power", "rare-earth"],
-            "emerging_themes_to_watch": [],
-            "mispricing_patterns": [],
-        },
-        "loss_pattern_report": {
-            "top_patterns": [{
-                "root_cause": "greed_top_chasing",
-                "occurrences": 3,
-                "total_loss_pct": -36.0,
-                "example_trades": ["MU 2026-01 -15%"],
-                "attributable_agent": "tech_analyst",
-                "proposed_guard": (
-                    "Flag entries within 2% of 20-day high without a "
-                    "confirming fundamental driver."
+    return json.dumps(
+        {
+            "period": "2026-Q1",
+            "meta_reasoning_chain": {
+                "performance_vs_benchmark": "Alpha -3.6% over 60 days, DD -5.2%",
+                "secular_theme_audit": "nuclear/power ran 4x in missed_themes; we held 0",
+                "loss_autopsy_audit": "greed_top_chasing 3x -32% alpha leak",
+                "self_portrait_synthesis": (
+                    "conviction_calibration: HIGH 38% vs LOW 62% inverted. "
+                    "theme_breadth: tech-only, 4 of 6 misses in energy/materials. "
+                    "loss_discipline: 3 wrongs rode thesis-break trigger. "
+                    "execution_style: 7d avg hold vs medium-long mandate. "
+                    "agent_balance: news_analyst 0 HIGH state_changes on energy."
                 ),
-            }],
-            "systemic_vs_alpha_split": "72% alpha, 28% systemic",
-            "worst_single_trade": "MU -15% 2026-01",
-            "corrigibility_score": "degrading",
-        },
-        "proposed_learnings": [{
-            "agent_name": "tech_analyst",
-            "operation": "append",
-            "learning_text": (
-                "Flag entries within 2% of 20-day high unless a confirming "
-                "fundamental driver is in reasoning_chain."
+                "portrait_gap_diagnosis": (
+                    "Top 2 gaps: (1) theme_breadth owned by news_analyst "
+                    "(4 missed themes, 0 HIGH state_changes). (2) "
+                    "conviction_calibration owned by PM (24 pp HIGH vs LOW inversion)."
+                ),
+                "existing_prompt_audit": (
+                    "Gap 1: news_analyst.md has no energy/materials coverage rule; "
+                    "Learnings section empty → append room. Gap 2: "
+                    "portfolio_manager.md Step 5 has sizing scale but no "
+                    "calibration feedback; Learnings has 1 entry on rr (different "
+                    "axis) → distinct append ok."
+                ),
+                "prompt_edit_reasoning": ("greed_top_chasing worsened 2->3; news gap is 0 HIGH hits in 46 sessions"),
+            },
+            "style_self_portrait": (
+                "We are trend-followers more than trend-identifiers. Strong in "
+                "tech / AI themes but blind to energy + materials sectors. "
+                "Losses concentrate in greed-driven entries."
             ),
-            "justification": (
-                "Q1 2026 saw 3 of 5 wrongs in greed_top_chasing for -32% "
-                "alpha leak; all entered within 2% of 20-day high."
-            ),
-        }],
-        "confidence": "medium",
-    })
+            "persistent_blindspots": ["nuclear/power sector"],
+            "root_cause_hypotheses": ["news prompt skews tech"],
+            "theme_coverage_report": {
+                "themes_caught_early": [],
+                "themes_caught_late": [],
+                "themes_missed_entirely": ["nuclear/power", "rare-earth"],
+                "emerging_themes_to_watch": [],
+                "mispricing_patterns": [],
+            },
+            "loss_pattern_report": {
+                "top_patterns": [
+                    {
+                        "root_cause": "greed_top_chasing",
+                        "occurrences": 3,
+                        "total_loss_pct": -36.0,
+                        "example_trades": ["MU 2026-01 -15%"],
+                        "attributable_agent": "tech_analyst",
+                        "proposed_guard": (
+                            "Flag entries within 2% of 20-day high without a confirming fundamental driver."
+                        ),
+                    }
+                ],
+                "systemic_vs_alpha_split": "72% alpha, 28% systemic",
+                "worst_single_trade": "MU -15% 2026-01",
+                "corrigibility_score": "degrading",
+            },
+            "proposed_learnings": [
+                {
+                    "agent_name": "tech_analyst",
+                    "operation": "append",
+                    "learning_text": (
+                        "Flag entries within 2% of 20-day high unless a confirming "
+                        "fundamental driver is in reasoning_chain."
+                    ),
+                    "justification": (
+                        "Q1 2026 saw 3 of 5 wrongs in greed_top_chasing for -32% "
+                        "alpha leak; all entered within 2% of 20-day high."
+                    ),
+                }
+            ],
+            "confidence": "medium",
+        }
+    )
 
 
 def _make_agent():
     from src.agents.meta_reflector import MetaReflectorAgent
+
     with patch("anthropic.Anthropic"):
         return MetaReflectorAgent(api_key="k", model="gpt-5.4")
 
@@ -216,6 +234,7 @@ def _make_agent():
 # ---------------------------------------------------------------------------
 # Prompt rendering
 # ---------------------------------------------------------------------------
+
 
 def test_prompt_renders_every_core_section_from_digest():
     """All six digest sections must show up in the prompt so the LLM can
@@ -253,10 +272,12 @@ def test_prompt_includes_prior_reflection_context_when_provided():
         "period": "2025-Q4",
         "style_self_portrait": "We were trend-chasers last quarter.",
         "persistent_blindspots": ["energy"],
-        "proposed_learnings": [{
-            "agent_name": "news_analyst",
-            "learning_text": "Look at energy sector coverage.",
-        }],
+        "proposed_learnings": [
+            {
+                "agent_name": "news_analyst",
+                "learning_text": "Look at energy sector coverage.",
+            }
+        ],
     }
     msg = agent.build_user_message(digest=_rich_digest(), prev_reflection=prev)
     assert "Prior period: 2025-Q4" in msg
@@ -273,6 +294,7 @@ def test_prompt_without_prior_reflection_states_first_run():
 # ---------------------------------------------------------------------------
 # analyze() — parse + validate
 # ---------------------------------------------------------------------------
+
 
 @patch("anthropic.Anthropic")
 def test_analyze_returns_valid_reflection_on_good_llm_response(mock_anthropic):
@@ -385,15 +407,14 @@ def test_analyze_returns_none_on_top_level_schema_violation(mock_anthropic):
 # persist_reflection + load_previous_reflection
 # ---------------------------------------------------------------------------
 
+
 def test_persist_reflection_writes_alongside_digest(tmp_path):
     """reflection.json must land next to digest.json for the same period,
     so PR 4's editor can co-locate its read."""
     from src.agents.meta_reflector import persist_reflection
     from src.models import QuarterlyMetaReflection
 
-    reflection = QuarterlyMetaReflection.model_validate(
-        json.loads(_valid_reflection_json())
-    )
+    reflection = QuarterlyMetaReflection.model_validate(json.loads(_valid_reflection_json()))
     out = persist_reflection(reflection, root_dir=tmp_path)
     assert out == tmp_path / "2026-Q1" / "reflection.json"
     assert out.exists()
@@ -405,13 +426,19 @@ def test_persist_reflection_writes_alongside_digest(tmp_path):
 def test_load_previous_reflection_finds_prior_quarter(tmp_path):
     prev_dir = tmp_path / "2025-Q4"
     prev_dir.mkdir()
-    (prev_dir / "reflection.json").write_text(json.dumps({
-        "period": "2025-Q4",
-        "style_self_portrait": "previous",
-    }))
+    (prev_dir / "reflection.json").write_text(
+        json.dumps(
+            {
+                "period": "2025-Q4",
+                "style_self_portrait": "previous",
+            }
+        )
+    )
     from src.agents.meta_reflector import load_previous_reflection
+
     loaded = load_previous_reflection(
-        current_period_end=date(2026, 3, 31), root_dir=tmp_path,
+        current_period_end=date(2026, 3, 31),
+        root_dir=tmp_path,
     )
     assert loaded is not None
     assert loaded["period"] == "2025-Q4"
@@ -419,9 +446,14 @@ def test_load_previous_reflection_finds_prior_quarter(tmp_path):
 
 def test_load_previous_reflection_none_when_missing(tmp_path):
     from src.agents.meta_reflector import load_previous_reflection
-    assert load_previous_reflection(
-        current_period_end=date(2026, 3, 31), root_dir=tmp_path,
-    ) is None
+
+    assert (
+        load_previous_reflection(
+            current_period_end=date(2026, 3, 31),
+            root_dir=tmp_path,
+        )
+        is None
+    )
 
 
 def test_load_previous_reflection_corrupt_returns_none(tmp_path):
@@ -429,14 +461,20 @@ def test_load_previous_reflection_corrupt_returns_none(tmp_path):
     prev_dir.mkdir()
     (prev_dir / "reflection.json").write_text("{ nope")
     from src.agents.meta_reflector import load_previous_reflection
-    assert load_previous_reflection(
-        current_period_end=date(2026, 3, 31), root_dir=tmp_path,
-    ) is None
+
+    assert (
+        load_previous_reflection(
+            current_period_end=date(2026, 3, 31),
+            root_dir=tmp_path,
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
 # TradingPipeline.run_quarterly_meta_reflection — cadence + wiring
 # ---------------------------------------------------------------------------
+
 
 def _pipeline_for_meta(tmp_path):
     """Skeleton TradingPipeline with just the attributes meta-reflection
@@ -463,7 +501,8 @@ def test_run_quarterly_meta_skips_when_not_last_day(tmp_path):
     p.broker.is_last_trading_day_of_quarter.return_value = False
 
     result = p.run_quarterly_meta_reflection(
-        period_end=date(2026, 2, 15), evolution_root=str(tmp_path),
+        period_end=date(2026, 2, 15),
+        evolution_root=str(tmp_path),
     )
     assert result["status"] == "skipped"
     assert result["reason"] == "not_quarter_end"
@@ -474,21 +513,25 @@ def test_run_quarterly_meta_force_bypasses_cadence_check(tmp_path):
     """--force CLI flag / tests → run regardless of calendar, but still
     persist and log."""
     from src.models import QuarterlyMetaReflection
+
     p = _pipeline_for_meta(tmp_path)
     p.broker.is_last_trading_day_of_quarter.return_value = False  # not Q-end
 
-    reflection = QuarterlyMetaReflection.model_validate(
-        json.loads(_valid_reflection_json())
-    )
+    reflection = QuarterlyMetaReflection.model_validate(json.loads(_valid_reflection_json()))
     # AgentResult is a real dataclass — wire minimal required attrs.
     from src.agents.base import AgentResult
+
     ag_result = AgentResult(
-        raw_text="{}", tokens_used=100, model="gpt-5.4", user_message="x",
+        raw_text="{}",
+        tokens_used=100,
+        model="gpt-5.4",
+        user_message="x",
     )
     p.meta_reflector.analyze.return_value = (reflection, ag_result)
 
     result = p.run_quarterly_meta_reflection(
-        force=True, period_end=date(2026, 2, 15),
+        force=True,
+        period_end=date(2026, 2, 15),
         evolution_root=str(tmp_path),
     )
     assert result["status"] == "reflected"
@@ -506,13 +549,18 @@ def test_run_quarterly_meta_returns_digest_only_when_llm_fails(tmp_path):
     p.broker.is_last_trading_day_of_quarter.return_value = True
 
     from src.agents.base import AgentResult
+
     ag_result = AgentResult(
-        raw_text="garbage", tokens_used=50, model="gpt-5.4", user_message="x",
+        raw_text="garbage",
+        tokens_used=50,
+        model="gpt-5.4",
+        user_message="x",
     )
     p.meta_reflector.analyze.return_value = (None, ag_result)
 
     result = p.run_quarterly_meta_reflection(
-        period_end=date(2026, 3, 31), evolution_root=str(tmp_path),
+        period_end=date(2026, 3, 31),
+        evolution_root=str(tmp_path),
     )
     assert result["status"] == "digest_only"
     assert Path(result["digest_path"]).exists()
@@ -529,7 +577,8 @@ def test_run_quarterly_meta_returns_digest_only_when_analyze_raises(tmp_path):
     p.meta_reflector.analyze.side_effect = RuntimeError("provider 503 after 3 retries")
 
     result = p.run_quarterly_meta_reflection(
-        period_end=date(2026, 3, 31), evolution_root=str(tmp_path),
+        period_end=date(2026, 3, 31),
+        evolution_root=str(tmp_path),
     )
     assert result["status"] == "digest_only"
     assert Path(result["digest_path"]).exists()
@@ -545,24 +594,37 @@ def test_run_quarterly_meta_loads_prior_digest_for_corrigibility(tmp_path):
     # Write a prev-quarter digest
     prev_dir = Path(tmp_path) / "2025-Q4"
     prev_dir.mkdir()
-    (prev_dir / "digest.json").write_text(json.dumps({
-        "period": "2025-Q4",
-        "loss_patterns": {"by_cause": {
-            "greed_top_chasing": {"count": 5},
-        }},
-        "missed_themes": {"by_theme": {
-            "nuclear/power": {"occurrences": 3},
-        }},
-    }))
+    (prev_dir / "digest.json").write_text(
+        json.dumps(
+            {
+                "period": "2025-Q4",
+                "loss_patterns": {
+                    "by_cause": {
+                        "greed_top_chasing": {"count": 5},
+                    }
+                },
+                "missed_themes": {
+                    "by_theme": {
+                        "nuclear/power": {"occurrences": 3},
+                    }
+                },
+            }
+        )
+    )
 
     from src.agents.base import AgentResult
+
     ag_result = AgentResult(
-        raw_text="{}", tokens_used=50, model="gpt-5.4", user_message="x",
+        raw_text="{}",
+        tokens_used=50,
+        model="gpt-5.4",
+        user_message="x",
     )
     p.meta_reflector.analyze.return_value = (None, ag_result)
 
     result = p.run_quarterly_meta_reflection(
-        period_end=date(2026, 3, 31), evolution_root=str(tmp_path),
+        period_end=date(2026, 3, 31),
+        evolution_root=str(tmp_path),
     )
     assert result["status"] in ("reflected", "digest_only")
     # The persisted digest for 2026-Q1 should include corrigibility
@@ -575,6 +637,7 @@ def test_run_quarterly_meta_loads_prior_digest_for_corrigibility(tmp_path):
 # (audit follow-up to PR #73 — quarterly cadence makes this especially
 # expensive: losing the report throws away 90 days of accumulated data)
 # ---------------------------------------------------------------------------
+
 
 def _valid_meta_json() -> dict:
     """Reuse the canonical sample so we don't drift from the real schema."""
@@ -598,8 +661,7 @@ def _valid_prompt_learning(agent: str = "portfolio_manager") -> dict:
         "operation": "append",
         "learning_text": "When chasing within 5% of ATH, halve position size.",
         "justification": (
-            "Greed_top_chasing fired 3 times in Q1 with -7.2% alpha leak; all "
-            "entered within 2% of 20-day high."
+            "Greed_top_chasing fired 3 times in Q1 with -7.2% alpha leak; all entered within 2% of 20-day high."
         ),
     }
 
@@ -693,6 +755,7 @@ def test_drop_invalid_meta_lists_handles_non_list_proposed_learnings():
 # auto-fired)
 # ---------------------------------------------------------------------------
 
+
 def test_maybe_run_quarterly_meta_skips_on_normal_day(tmp_path):
     """Mid-quarter evening run — _maybe_run_quarterly_meta returns None
     so the evening result's `auto_meta` field stays None and
@@ -716,9 +779,7 @@ def test_maybe_run_quarterly_meta_fires_on_quarter_end(tmp_path):
     evolution loop is this evening piggyback."""
     p = _pipeline_for_meta(tmp_path)
     p.broker.is_last_trading_day_of_quarter.return_value = True
-    p.run_quarterly_meta_reflection = MagicMock(
-        return_value={"status": "reflected", "period": "2026-Q1"}
-    )
+    p.run_quarterly_meta_reflection = MagicMock(return_value={"status": "reflected", "period": "2026-Q1"})
 
     result = p._maybe_run_quarterly_meta()
 

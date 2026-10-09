@@ -235,12 +235,8 @@ def resolve_live_price(snapshot, when: datetime | None = None) -> ResolvedPrice:
 
     # Point-in-time candidates: date-equal AND at or after today's open.
     point_in_time = (
-        (SOURCE_LAST_TRADE,
-         _positive(snapshot.get("last_price")),
-         snapshot.get("last_trade_at")),
-        (SOURCE_MINUTE_BAR,
-         _positive(snapshot.get("minute_close")),
-         snapshot.get("minute_bar_at")),
+        (SOURCE_LAST_TRADE, _positive(snapshot.get("last_price")), snapshot.get("last_trade_at")),
+        (SOURCE_MINUTE_BAR, _positive(snapshot.get("minute_close")), snapshot.get("minute_bar_at")),
     )
 
     saw_any_price = session_price is not None
@@ -260,8 +256,7 @@ def resolve_live_price(snapshot, when: datetime | None = None) -> ResolvedPrice:
         return ResolvedPrice(price, source, stamp, None, session_bar_is_today)
 
     if session_price is not None and session_bar_is_today:
-        return ResolvedPrice(session_price, session_source, session_bar_at,
-                             None, session_bar_is_today)
+        return ResolvedPrice(session_price, session_source, session_bar_at, None, session_bar_is_today)
 
     # Distinguish "the feed had nothing" from "the feed had only a prior
     # session". A thin name and a broken feed are different problems and the

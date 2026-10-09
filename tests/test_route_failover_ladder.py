@@ -84,6 +84,7 @@ def _err(status=None, message="boom", headers=None, cls=RuntimeError):
 # 1. Error-aware backoff — one behaviour per documented error class.
 # ===========================================================================
 
+
 @pytest.mark.parametrize("status", sorted(_FATAL_STATUS_CODES))
 def test_fatal_statuses_are_never_retried(status):
     """400/401/403/404 are request-validation, auth and not-found
@@ -96,9 +97,7 @@ def test_fatal_statuses_are_never_retried(status):
     """
     exc = _err(status)
     assert classify_backoff(exc) == (BACKOFF_FATAL, None)
-    assert error_aware_backoff_seconds(0, exc) is None, (
-        f"HTTP {status} must not be retried at all"
-    )
+    assert error_aware_backoff_seconds(0, exc) is None, f"HTTP {status} must not be retried at all"
 
 
 def test_fatal_class_is_not_retried_even_when_a_retry_after_is_present():
@@ -129,6 +128,7 @@ def test_a_hostile_retry_after_is_capped():
     """A buggy or hostile hint must not park a seat past the session
     window — `_RETRY_AFTER_CAP_S`."""
     from src.agents.base import _RETRY_AFTER_CAP_S
+
     exc = _err(429, headers={"retry-after": "99999"})
     assert error_aware_backoff_seconds(0, exc) == _RETRY_AFTER_CAP_S
 
@@ -143,7 +143,7 @@ def test_capacity_statuses_get_full_jitter_not_a_fixed_wait(status):
     assert classify_backoff(exc) == (BACKOFF_JITTER, None)
     waits = {error_aware_backoff_seconds(3, exc) for _ in range(80)}
     assert len(waits) > 30, "a fixed backoff is not jitter"
-    bound = min(_BACKOFF_CAP_S, float(2 ** 3))
+    bound = min(_BACKOFF_CAP_S, float(2**3))
     assert all(_MIN_CAPACITY_BACKOFF_S <= w <= bound for w in waits)
 
 
@@ -170,10 +170,8 @@ def test_capacity_backoff_honours_googles_documented_one_second_floor():
 
     # ...and NOT to a transport-class failure with no status.
     blip = _err(None, cls=ConnectionError)
-    assert any(error_aware_backoff_seconds(0, blip) < _MIN_CAPACITY_BACKOFF_S
-               for _ in range(200)), (
-        "a floor with no published source must not be applied to classes the "
-        "source does not cover"
+    assert any(error_aware_backoff_seconds(0, blip) < _MIN_CAPACITY_BACKOFF_S for _ in range(200)), (
+        "a floor with no published source must not be applied to classes the source does not cover"
     )
 
 
@@ -192,6 +190,7 @@ def test_google_429_has_no_retry_after_so_it_falls_to_jitter():
 # 2. The half-open breaker — backups are temporary.
 # ===========================================================================
 
+
 def test_breaker_starts_closed_and_demotes_on_failure():
     b = RouteBreaker("google")
     assert b.primary_available() is True
@@ -208,7 +207,7 @@ def test_exactly_one_caller_probes_after_the_cooldown(monkeypatch):
     a provider that is very likely still saturated."""
     b = RouteBreaker("google")
     b.record_failure()
-    monkeypatch.setattr("time.monotonic", lambda: 10 ** 9)  # far past cooldown
+    monkeypatch.setattr("time.monotonic", lambda: 10**9)  # far past cooldown
     grants = [b.primary_available() for _ in range(5)]
     assert grants.count(True) == 1, f"exactly one probe, got {grants}"
     assert b.is_probing() is True
@@ -236,7 +235,7 @@ def test_a_failed_probe_doubles_the_cooldown_up_to_the_ceiling(monkeypatch):
     assert b.record_failure() == _ROUTE_COOLDOWN_S
     expected = _ROUTE_COOLDOWN_S
     for _ in range(12):
-        now[0] += 10 ** 6  # let the cooldown lapse
+        now[0] += 10**6  # let the cooldown lapse
         assert b.primary_available() is True  # win the probe
         expected = min(expected * 2, _ROUTE_COOLDOWN_MAX_S)
         assert b.record_failure() == expected
@@ -249,7 +248,7 @@ def test_a_failed_probe_releases_the_probe_right(monkeypatch):
     never-comes-back defect this class was written to remove."""
     b = RouteBreaker("google")
     b.record_failure()
-    monkeypatch.setattr("time.monotonic", lambda: 10 ** 9)
+    monkeypatch.setattr("time.monotonic", lambda: 10**9)
     assert b.primary_available() is True
     b.record_failure()
     assert b.is_probing() is False
@@ -311,11 +310,15 @@ def test_cooldowns_are_derived_from_their_bases_and_have_not_drifted():
 # 3. Route 3 — a genuinely DIFFERENT model, on a road that exists.
 # ===========================================================================
 
+
 def test_tertiary_default_is_a_different_model_from_both_other_routes():
     from src.agents.base import (
-        _DEFAULT_FALLBACK_MODEL, _DEFAULT_FALLBACK_PROVIDER,
-        _DEFAULT_TERTIARY_MODEL, _DEFAULT_TERTIARY_PROVIDER,
+        _DEFAULT_FALLBACK_MODEL,
+        _DEFAULT_FALLBACK_PROVIDER,
+        _DEFAULT_TERTIARY_MODEL,
+        _DEFAULT_TERTIARY_PROVIDER,
     )
+
     assert _DEFAULT_TERTIARY_MODEL != _DEFAULT_FALLBACK_MODEL, (
         "route 3 must change the MODEL; changing only the road is what routes "
         "1 and 2 already do, and it is what failed together on 2026-09-22"
@@ -334,6 +337,7 @@ def test_the_tertiary_model_is_priceable_offline():
     latches paid analysis — the failure this route exists to prevent."""
     from src.agents.base import _DEFAULT_TERTIARY_MODEL
     from src.cost_table import PRICING
+
     row = PRICING.get(_DEFAULT_TERTIARY_MODEL)
     assert row and row.get("input") is not None and row.get("output") is not None
 
@@ -344,23 +348,25 @@ def test_tertiary_is_unreachable_without_a_key_or_when_it_duplicates_a_route():
     guaranteed 401 dressed up as a rescue."""
     _reset_route_breakers_for_tests()
     with patch("openai.OpenAI"):
-        no_key = _Agent(api_key="k", model="gemini-3.5-flash-lite",
-                        provider="google", fallback_api_key="fk",
-                        tertiary_api_key="")
+        no_key = _Agent(
+            api_key="k", model="gemini-3.5-flash-lite", provider="google", fallback_api_key="fk", tertiary_api_key=""
+        )
         assert no_key._tertiary_reachable is False
 
-        dupe = _Agent(api_key="k", model="gemini-3.5-flash-lite",
-                      provider="google", fallback_api_key="fk",
-                      tertiary_api_key="tk",
-                      tertiary_provider="openrouter",
-                      tertiary_model="google/gemini-3.5-flash-lite")
-        assert dupe._tertiary_reachable is False, (
-            "route 3 duplicating route 2 is not a third route"
+        dupe = _Agent(
+            api_key="k",
+            model="gemini-3.5-flash-lite",
+            provider="google",
+            fallback_api_key="fk",
+            tertiary_api_key="tk",
+            tertiary_provider="openrouter",
+            tertiary_model="google/gemini-3.5-flash-lite",
         )
+        assert dupe._tertiary_reachable is False, "route 3 duplicating route 2 is not a third route"
 
-        real = _Agent(api_key="k", model="gemini-3.5-flash-lite",
-                      provider="google", fallback_api_key="fk",
-                      tertiary_api_key="tk")
+        real = _Agent(
+            api_key="k", model="gemini-3.5-flash-lite", provider="google", fallback_api_key="fk", tertiary_api_key="tk"
+        )
         assert real._tertiary_reachable is True
 
 
@@ -374,15 +380,16 @@ def test_attempt_budget_grows_with_route_3_or_the_circuit_stops_the_session():
     """
     base = provider_attempt_budget(failover_available=False)
     assert provider_attempt_budget(failover_available=True) == base + 1
-    assert provider_attempt_budget(
-        failover_available=True, tertiary_available=True) == base + 2
+    assert provider_attempt_budget(failover_available=True, tertiary_available=True) == base + 2
 
 
 def test_config_default_ceiling_covers_the_whole_ladder():
     from src.config import LLMCostCircuitConfig
+
     cfg = LLMCostCircuitConfig()
     assert cfg.max_provider_attempts_per_call >= provider_attempt_budget(
-        failover_available=True, tertiary_available=True,
+        failover_available=True,
+        tertiary_available=True,
     )
 
 
@@ -393,6 +400,7 @@ def test_config_default_ceiling_covers_the_whole_ladder():
 # `fail_call` computes `ambiguous = attempted and not
 # _all_attempts_provably_free(...)` and hard-latches on ONE ambiguous
 # attempt. Every attempt this change adds is another draw from that urn.
+
 
 def test_skipping_a_demoted_primary_records_no_attempt_error():
     """The single most dangerous thing this change could have done.
@@ -426,19 +434,28 @@ def test_a_fully_skipped_call_cannot_latch_the_cost_circuit(tmp_path):
     db = Database(path)
     db.initialize()
     db.conn.close()
-    circuit = LLMCostCircuitBreaker(path, SimpleNamespace(
-        enabled=True, session_cost_limit_usd=10.0, daily_cost_limit_usd=20.0,
-        max_calls_per_session=1000, max_provider_attempts_per_call=4,
-        input_chars_per_token=3.5,
-    ), _Notifier())
+    circuit = LLMCostCircuitBreaker(
+        path,
+        SimpleNamespace(
+            enabled=True,
+            session_cost_limit_usd=10.0,
+            daily_cost_limit_usd=20.0,
+            max_calls_per_session=1000,
+            max_provider_attempts_per_call=4,
+            input_chars_per_token=3.5,
+        ),
+        _Notifier(),
+    )
     circuit.activate_session("run-skip", "morning")
-    res = circuit.begin_call(agent_name="tech_analyst",
-                             model="gemini-3.5-flash-lite",
-                             system_prompt="s", user_message="u",
-                             max_output_tokens=100)
+    res = circuit.begin_call(
+        agent_name="tech_analyst",
+        model="gemini-3.5-flash-lite",
+        system_prompt="s",
+        user_message="u",
+        max_output_tokens=100,
+    )
     assert res.attempt_count == 0
-    circuit.fail_call(res, RuntimeError("primary demoted, no backup reachable"),
-                      attempt_errors=[])
+    circuit.fail_call(res, RuntimeError("primary demoted, no backup reachable"), attempt_errors=[])
     assert circuit.status().get("suspended") is not True, (
         "a call that never reached the network must not latch the desk"
     )
@@ -484,24 +501,33 @@ def test_a_rescued_call_never_reaches_fail_call_at_all(tmp_path):
     db = Database(path)
     db.initialize()
     db.conn.close()
-    circuit = LLMCostCircuitBreaker(path, SimpleNamespace(
-        enabled=True, session_cost_limit_usd=10.0, daily_cost_limit_usd=20.0,
-        max_calls_per_session=1000, max_provider_attempts_per_call=4,
-        input_chars_per_token=3.5,
-    ), _Notifier())
+    circuit = LLMCostCircuitBreaker(
+        path,
+        SimpleNamespace(
+            enabled=True,
+            session_cost_limit_usd=10.0,
+            daily_cost_limit_usd=20.0,
+            max_calls_per_session=1000,
+            max_provider_attempts_per_call=4,
+            input_chars_per_token=3.5,
+        ),
+        _Notifier(),
+    )
     circuit.activate_session("run-rescue", "morning")
-    res = circuit.begin_call(agent_name="tech_analyst",
-                             model="gemini-3.5-flash-lite",
-                             system_prompt="s", user_message="u",
-                             max_output_tokens=100)
+    res = circuit.begin_call(
+        agent_name="tech_analyst",
+        model="gemini-3.5-flash-lite",
+        system_prompt="s",
+        user_message="u",
+        max_output_tokens=100,
+    )
     # Two ambiguous failures on routes 1 and 2 ...
     for _ in range(3):
         circuit.before_provider_attempt(res, model=res.model)
     # ... then route 3 answers, with a real cost.
     circuit.complete_call(res, 0.004)
     assert circuit.status().get("suspended") is not True, (
-        "prior ambiguous ATTEMPTS on a call that ultimately SUCCEEDED must "
-        "not latch: the call's real cost is known"
+        "prior ambiguous ATTEMPTS on a call that ultimately SUCCEEDED must not latch: the call's real cost is known"
     )
 
 
@@ -520,13 +546,13 @@ def test_ambiguity_is_contagious_so_route_3_adds_one_draw_not_a_multiplier():
     ambiguous = free + [_err(500)]
     assert _all_attempts_provably_free(ambiguous[0], ambiguous) is False
     # ...and one more free attempt does not rescue it.
-    assert _all_attempts_provably_free(
-        ambiguous[0], ambiguous + [_err(429)]) is False
+    assert _all_attempts_provably_free(ambiguous[0], ambiguous + [_err(429)]) is False
 
 
 # ===========================================================================
 # 5. Observability — the owner must be able to ask what each route cost.
 # ===========================================================================
+
 
 def _rows(monkeypatch, tmp_path):
     return llm_route_journal.read_events()
@@ -535,16 +561,23 @@ def _rows(monkeypatch, tmp_path):
 def test_route_events_are_recorded_durably(tmp_path, monkeypatch):
     monkeypatch.setenv("QUANT_AGENT_DB_PATH", str(tmp_path / "j.db"))
     llm_route_journal._reset_schema_cache_for_tests()
-    assert llm_route_journal.record(
-        "route_switch", agent_name="tech_analyst", run_id="r1",
-        route="openrouter/anthropic/claude-haiku-4.5", from_route="google/x",
-        tier=3, input_usd_per_mtok=1.0, output_usd_per_mtok=5.0,
-    ) is True
+    assert (
+        llm_route_journal.record(
+            "route_switch",
+            agent_name="tech_analyst",
+            run_id="r1",
+            route="openrouter/anthropic/claude-haiku-4.5",
+            from_route="google/x",
+            tier=3,
+            input_usd_per_mtok=1.0,
+            output_usd_per_mtok=5.0,
+        )
+        is True
+    )
     assert llm_route_journal.record("route_demoted", agent_name="a", wait_s=300.0)
     assert llm_route_journal.record("retry_after", wait_s=37.0)
     rows = llm_route_journal.read_events()
-    assert {r["event_type"] for r in rows} == {
-        "route_switch", "route_demoted", "retry_after"}
+    assert {r["event_type"] for r in rows} == {"route_switch", "route_demoted", "retry_after"}
     switch = next(r for r in rows if r["event_type"] == "route_switch")
     assert switch["tier"] == 3
     assert switch["output_usd_per_mtok"] == 5.0
@@ -560,7 +593,7 @@ def test_an_unknown_event_type_is_refused_not_silently_stored():
 
 
 def test_a_failed_journal_write_is_counted_not_silently_swallowed(monkeypatch, tmp_path):
-    """"Best-effort, never raises" is right — a journal must not be able to
+    """ "Best-effort, never raises" is right — a journal must not be able to
     fail a trading session. But a swallowed failure nobody can see is a check
     that does not exist: an empty table then looks identical to "no route
     switches happened". The counter is what makes the difference visible."""
@@ -574,6 +607,7 @@ def test_a_failed_journal_write_is_counted_not_silently_swallowed(monkeypatch, t
 def test_journal_never_raises_into_the_caller(monkeypatch):
     def boom(*a, **k):
         raise sqlite3.OperationalError("disk is on fire")
+
     monkeypatch.setattr(llm_route_journal, "_connect", boom)
     assert llm_route_journal.record("route_switch") is False
     assert llm_route_journal.read_events() == []
@@ -600,9 +634,12 @@ _FB = ("openrouter", "google/gemini-3.5-flash-lite")
 def test_a_single_road_ladder_is_moved_onto_the_second_road():
     """The measured case: every rung on OpenRouter becomes two roads."""
     from src.agents.base import select_tertiary_route
+
     chosen = select_tertiary_route(
         primary=("openrouter", "openai/gpt-5.5"),
-        fallback=_FB, tertiary=_TERT, alt=_ALT,
+        fallback=_FB,
+        tertiary=_TERT,
+        alt=_ALT,
     )
     assert chosen == _ALT
     assert chosen[0] != "openrouter"
@@ -613,54 +650,80 @@ def test_a_two_road_ladder_keeps_its_different_model_tertiary():
     route 1 is already Google, so a Google route 3 would retry the road that
     just failed twice. Model diversity is the right answer there."""
     from src.agents.base import select_tertiary_route
+
     chosen = select_tertiary_route(
         primary=("google", "gemini-3.5-flash-lite"),
-        fallback=_FB, tertiary=_TERT, alt=_ALT,
+        fallback=_FB,
+        tertiary=_TERT,
+        alt=_ALT,
     )
     assert chosen == _TERT
 
 
 def test_the_substitute_is_refused_when_it_would_not_change_the_road():
     from src.agents.base import select_tertiary_route
-    assert select_tertiary_route(
-        primary=("openrouter", "openai/gpt-5.5"), fallback=_FB,
-        tertiary=_TERT, alt=("openrouter", "mistralai/mistral-medium"),
-    ) == _TERT
+
+    assert (
+        select_tertiary_route(
+            primary=("openrouter", "openai/gpt-5.5"),
+            fallback=_FB,
+            tertiary=_TERT,
+            alt=("openrouter", "mistralai/mistral-medium"),
+        )
+        == _TERT
+    )
 
 
 def test_the_substitute_is_off_when_unconfigured_or_uncredentialed():
     from src.agents.base import select_tertiary_route
-    assert select_tertiary_route(
-        primary=("openrouter", "openai/gpt-5.5"), fallback=_FB,
-        tertiary=_TERT, alt=None,
-    ) == _TERT
+
+    assert (
+        select_tertiary_route(
+            primary=("openrouter", "openai/gpt-5.5"),
+            fallback=_FB,
+            tertiary=_TERT,
+            alt=None,
+        )
+        == _TERT
+    )
 
 
 def test_an_unreachable_route_2_does_not_count_as_a_second_road():
     """`fallback=None` means route 2 cannot fire for this seat, so the ladder
     is route 1 + route 3 only and must not be credited with route 2's road."""
     from src.agents.base import select_tertiary_route
-    assert select_tertiary_route(
-        primary=("openrouter", "openai/gpt-5.5"), fallback=None,
-        tertiary=_TERT, alt=_ALT,
-    ) == _ALT
+
+    assert (
+        select_tertiary_route(
+            primary=("openrouter", "openai/gpt-5.5"),
+            fallback=None,
+            tertiary=_TERT,
+            alt=_ALT,
+        )
+        == _ALT
+    )
 
 
 def test_the_substitute_model_is_priceable_offline():
     """Same latch risk as the tertiary's own pricing test above."""
     from src.agents.base import _DEFAULT_TERTIARY_ALT_MODEL
     from src.cost_table import PRICING
+
     row = PRICING.get(_DEFAULT_TERTIARY_ALT_MODEL)
     assert row and row.get("input") is not None and row.get("output") is not None
 
 
 def test_the_substitute_default_is_not_on_the_default_tertiary_road():
     from src.agents.base import (
-        _DEFAULT_FALLBACK_PROVIDER, _DEFAULT_TERTIARY_ALT_MODEL,
-        _DEFAULT_TERTIARY_ALT_PROVIDER, _DEFAULT_TERTIARY_PROVIDER,
+        _DEFAULT_FALLBACK_PROVIDER,
+        _DEFAULT_TERTIARY_ALT_MODEL,
+        _DEFAULT_TERTIARY_ALT_PROVIDER,
+        _DEFAULT_TERTIARY_PROVIDER,
     )
+
     assert _DEFAULT_TERTIARY_ALT_PROVIDER not in {
-        _DEFAULT_TERTIARY_PROVIDER, _DEFAULT_FALLBACK_PROVIDER,
+        _DEFAULT_TERTIARY_PROVIDER,
+        _DEFAULT_FALLBACK_PROVIDER,
     }
     # Only a road this deployment has actually completed a call on. See
     # docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md.
@@ -674,13 +737,18 @@ def test_an_openrouter_primary_seat_ends_up_on_two_roads_end_to_end():
     matching credential and the matching breaker."""
     _reset_route_breakers_for_tests()
     with patch("openai.OpenAI"):
-        pm = _Agent(api_key="k", model="openai/gpt-5.5", provider="openrouter",
-                    fallback_api_key="fk", tertiary_api_key="tk",
-                    tertiary_provider="openrouter",
-                    tertiary_model="anthropic/claude-haiku-4.5",
-                    tertiary_alt_api_key="gk",
-                    tertiary_alt_provider="google",
-                    tertiary_alt_model="gemini-3.5-flash-lite")
+        pm = _Agent(
+            api_key="k",
+            model="openai/gpt-5.5",
+            provider="openrouter",
+            fallback_api_key="fk",
+            tertiary_api_key="tk",
+            tertiary_provider="openrouter",
+            tertiary_model="anthropic/claude-haiku-4.5",
+            tertiary_alt_api_key="gk",
+            tertiary_alt_provider="google",
+            tertiary_alt_model="gemini-3.5-flash-lite",
+        )
         assert pm._tertiary_provider == "google"
         assert pm._tertiary_model == "gemini-3.5-flash-lite"
         assert pm._tertiary_api_key == "gk"
@@ -690,14 +758,16 @@ def test_an_openrouter_primary_seat_ends_up_on_two_roads_end_to_end():
             "route 3 sharing route 2's breaker means one account, one "
             "failure domain — the whole point is that it is now two"
         )
-        assert {pm._provider, pm._fallback_provider, pm._tertiary_provider} == {
-            "openrouter", "google"
-        }
+        assert {pm._provider, pm._fallback_provider, pm._tertiary_provider} == {"openrouter", "google"}
 
-        specialist = _Agent(api_key="k", model="gemini-3.5-flash-lite",
-                            provider="google", fallback_api_key="fk",
-                            tertiary_api_key="tk",
-                            tertiary_alt_api_key="gk")
+        specialist = _Agent(
+            api_key="k",
+            model="gemini-3.5-flash-lite",
+            provider="google",
+            fallback_api_key="fk",
+            tertiary_api_key="tk",
+            tertiary_alt_api_key="gk",
+        )
         assert specialist._tertiary_provider == "openrouter"
         assert specialist._tertiary_on_alt_road is False
 
@@ -706,12 +776,22 @@ def test_the_substitution_adds_no_rung_to_the_attempt_budget():
     """It swaps route 3's destination; it must never make a fourth attempt."""
     _reset_route_breakers_for_tests()
     with patch("openai.OpenAI"):
-        swapped = _Agent(api_key="k", model="openai/gpt-5.5",
-                         provider="openrouter", fallback_api_key="fk",
-                         tertiary_api_key="tk", tertiary_alt_api_key="gk")
-        plain = _Agent(api_key="k", model="openai/gpt-5.5",
-                       provider="openrouter", fallback_api_key="fk",
-                       tertiary_api_key="tk", tertiary_alt_api_key="")
+        swapped = _Agent(
+            api_key="k",
+            model="openai/gpt-5.5",
+            provider="openrouter",
+            fallback_api_key="fk",
+            tertiary_api_key="tk",
+            tertiary_alt_api_key="gk",
+        )
+        plain = _Agent(
+            api_key="k",
+            model="openai/gpt-5.5",
+            provider="openrouter",
+            fallback_api_key="fk",
+            tertiary_api_key="tk",
+            tertiary_alt_api_key="",
+        )
     assert provider_attempt_budget(
         failover_available=swapped._failover_reachable,
         tertiary_available=swapped._tertiary_reachable,
@@ -732,9 +812,16 @@ def test_the_shipped_config_leaves_no_seat_on_a_single_road():
     from src.agents.base import resolve_provider, select_tertiary_route
     from src.config import AGENT_NAMES, load_config
 
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
-                "OPENROUTER_API_KEY", "GOOGLE_API_KEY", "FRED_API_KEY",
-                "ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GOOGLE_API_KEY",
+        "FRED_API_KEY",
+        "ALPACA_API_KEY",
+        "ALPACA_SECRET_KEY",
+    ):
         os.environ.setdefault(key, "placeholder-for-config-load")
     settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
     cfg = load_config(str(settings))
@@ -743,10 +830,7 @@ def test_the_shipped_config_leaves_no_seat_on_a_single_road():
     tertiary = (llm.tertiary_provider, llm.tertiary_model)
     alt = (llm.tertiary_alt_provider, llm.tertiary_alt_model)
 
-    primaries = {
-        resolve_provider(getattr(llm, f"{a}_model"), llm.get_provider(a))
-        for a in AGENT_NAMES
-    }
+    primaries = {resolve_provider(getattr(llm, f"{a}_model"), llm.get_provider(a)) for a in AGENT_NAMES}
     assert llm.tertiary_alt_provider in primaries, (
         "the substitute must sit on a provider some seat already uses as its "
         "PRIMARY, so its credential is already mandatory at config load — "
@@ -758,8 +842,10 @@ def test_the_shipped_config_leaves_no_seat_on_a_single_road():
         primary = (resolve_provider(model, llm.get_provider(agent_name)), model)
         reachable_fallback = None if fallback == primary else fallback
         route3 = select_tertiary_route(
-            primary=primary, fallback=reachable_fallback,
-            tertiary=tertiary, alt=alt,
+            primary=primary,
+            fallback=reachable_fallback,
+            tertiary=tertiary,
+            alt=alt,
         )
         roads = {primary[0], route3[0]}
         if reachable_fallback is not None:

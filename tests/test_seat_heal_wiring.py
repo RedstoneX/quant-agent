@@ -19,6 +19,7 @@ it. Every test here therefore goes through `_heal_lost_research_seats`, and
 `test_every_status_that_can_carry_a_heal_input_is_healable` fails outright if
 a future re-categorisation orphans the path the same way again.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -33,22 +34,30 @@ from src.pipeline_context import RunContext
 
 # ── harness ──────────────────────────────────────────────────────────────
 
+
 def _stored_report() -> dict:
     from src.models import MacroNarrative, NewsIntelligenceReport
 
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-17", era_themes=["AI capex"],
+            last_updated="2026-09-17",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
         state_changes=[],
-        stock_news={"AAPL": [{
-            "headline": "Apple beats",
-            "sentiment": "bullish",
-            "conviction": "high",
-            "impact_summary": "beat",
-        }]},
-        pm_briefing="ok", market_sentiment="bullish", confidence="medium",
+        stock_news={
+            "AAPL": [
+                {
+                    "headline": "Apple beats",
+                    "sentiment": "bullish",
+                    "conviction": "high",
+                    "impact_summary": "beat",
+                }
+            ]
+        },
+        pm_briefing="ok",
+        market_sentiment="bullish",
+        confidence="medium",
     ).model_dump()
 
 
@@ -158,9 +167,7 @@ class _DayLedger:
         newest-first there.
         """
         for row in reversed(self.evidence):
-            if (row.get("kind") == "analysis"
-                    and row.get("agent_name") == "news_analyst"
-                    and row.get("scope") == "run"):
+            if row.get("kind") == "analysis" and row.get("agent_name") == "news_analyst" and row.get("scope") == "run":
                 return row.get("evidence_json")
         return None
 
@@ -240,6 +247,7 @@ def _expired_news_tick(**kw):
 
 # ── the defect itself ────────────────────────────────────────────────────
 
+
 def test_the_dispatcher_reaches_an_expired_news_seat_and_heals_it():
     """THE regression test. Fails on origin/main as of 2026-09-23."""
     analyst = _Analyst()
@@ -253,6 +261,7 @@ def test_the_dispatcher_reaches_an_expired_news_seat_and_heals_it():
     assert ctx.news_intel is not None
     # A success is a durable log row, never an owner page.
     from src.seat_heal import HEAL_PAID_RETRY
+
     assert [alert for _r, alert in obj.recorded] == [False]
     assert obj.recorded[0][0].outcome == HEAL_PAID_RETRY
     assert obj.recorded[0][0].usable is True
@@ -273,15 +282,14 @@ def test_every_status_that_can_carry_a_heal_input_is_healable():
     carried = obj._carry_forward_news(ctx)
 
     assert ctx.heal_news_text, "fixture did not reach the heal-feed branch"
-    assert evidence_gate.STATUS_CATEGORY[carried.status] in (
-        evidence_gate.HEALABLE_CATEGORIES
-    ), (
+    assert evidence_gate.STATUS_CATEGORY[carried.status] in (evidence_gate.HEALABLE_CATEGORIES), (
         f"status {carried.status!r} feeds ctx.heal_news_text but its category "
         f"is not in HEALABLE_CATEGORIES — the heal path is orphaned again"
     )
 
 
 # ── the class of defect: every branch of the heal ────────────────────────
+
 
 def test_a_failed_re_ask_leaves_the_seat_expired_and_pages_honestly():
     analyst = _Analyst(outcome="raise")
@@ -384,6 +392,7 @@ def test_an_empty_store_is_still_the_evidence_gates_page_not_a_second_one():
 
 # ── cost containment ─────────────────────────────────────────────────────
 
+
 def test_an_expired_seat_cannot_be_healed_twice_in_one_session():
     analyst = _Analyst()
     obj, ctx = _expired_news_tick(analyst=analyst)
@@ -409,7 +418,8 @@ def test_the_day_cap_stops_a_fresh_context_buying_the_seat_again():
     """
     analyst = _Analyst()
     obj, ctx = _expired_news_tick(
-        analyst=analyst, db=_DayLedger({"news": 1}),
+        analyst=analyst,
+        db=_DayLedger({"news": 1}),
     )
     assert ctx.heal_paid_retries in (None, {}), "fresh tick, fresh counter"
 
@@ -455,7 +465,10 @@ def test_the_day_cap_counts_the_rows_the_heal_path_actually_writes():
     from pathlib import Path
     from src.storage.db import Database
     from src.seat_heal import (
-        HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_PAID_RETRY,
+        HealResult,
+        HEAL_CAP_BLOCKED,
+        HEAL_FAILED,
+        HEAL_PAID_RETRY,
     )
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -465,32 +478,54 @@ def test_the_day_cap_counts_the_rows_the_heal_path_actually_writes():
 
         def _write(result):
             db.insert_specialist_evidence(
-                run_id="r1", agent_name="seat_heal", kind="seat_heal",
+                run_id="r1",
+                agent_name="seat_heal",
+                kind="seat_heal",
                 scope="run",
                 evidence_json=json.dumps(result.to_evidence(), sort_keys=True),
             )
 
         # A spend that happened.
-        _write(HealResult(
-            seat="news", outcome=HEAL_PAID_RETRY, reason="refreshed",
-            paid_retry=True, usable=True,
-        ))
+        _write(
+            HealResult(
+                seat="news",
+                outcome=HEAL_PAID_RETRY,
+                reason="refreshed",
+                paid_retry=True,
+                usable=True,
+            )
+        )
         assert db.count_paid_seat_heals_today("news") == 1
         # A spend that happened and failed still counts — money left.
-        _write(HealResult(
-            seat="news", outcome=HEAL_FAILED, reason="raised", paid_retry=True,
-        ))
+        _write(
+            HealResult(
+                seat="news",
+                outcome=HEAL_FAILED,
+                reason="raised",
+                paid_retry=True,
+            )
+        )
         assert db.count_paid_seat_heals_today("news") == 2
         # A block is not a spend.
-        _write(HealResult(
-            seat="news", outcome=HEAL_CAP_BLOCKED, reason="cap", paid_retry=False,
-        ))
+        _write(
+            HealResult(
+                seat="news",
+                outcome=HEAL_CAP_BLOCKED,
+                reason="cap",
+                paid_retry=False,
+            )
+        )
         assert db.count_paid_seat_heals_today("news") == 2
         # Seats are counted separately.
         assert db.count_paid_seat_heals_today("macro") == 0
-        _write(HealResult(
-            seat="macro", outcome=HEAL_PAID_RETRY, reason="ok", paid_retry=True,
-        ))
+        _write(
+            HealResult(
+                seat="macro",
+                outcome=HEAL_PAID_RETRY,
+                reason="ok",
+                paid_retry=True,
+            )
+        )
         assert db.count_paid_seat_heals_today("macro") == 1
         assert db.count_paid_seat_heals_today("news") == 2
 
@@ -503,6 +538,7 @@ def test_the_day_cap_counts_the_rows_the_heal_path_actually_writes():
 def test_a_day_cap_refusal_leaves_a_durable_row_not_only_a_log_line():
     """Declining to spend is a decision about money, so it is recorded."""
     from src.seat_heal import HEAL_DAY_CAP
+
     analyst = _Analyst()
     obj, ctx = _expired_news_tick(analyst=analyst, db=_DayLedger({"news": 1}))
 
@@ -523,13 +559,14 @@ def test_the_spend_cap_alert_does_not_call_an_expired_seat_lost_or_empty():
     from src.seat_heal import HealResult, HEAL_CAP_BLOCKED, heal_failure_alert_text
 
     expired = HealResult(
-        seat="news", outcome=HEAL_CAP_BLOCKED, reason="session cap bound",
+        seat="news",
+        outcome=HEAL_CAP_BLOCKED,
+        reason="session cap bound",
         # The heal path writes both of these; the wording keys on the FACT
         # in details, not on whether someone set the sentence.
         details={"was_expired": True},
         owner_consequence=(
-            "The desk still holds this seat's earlier answer and will decide "
-            "on it. No trade was withheld for this."
+            "The desk still holds this seat's earlier answer and will decide on it. No trade was withheld for this."
         ),
     )
     body = heal_failure_alert_text(expired, cap_blocked=True)
@@ -569,6 +606,7 @@ def test_the_re_ask_is_not_handed_morning_guidance_on_an_afternoon_tick():
     # `intra_check` entry would have left the prompt exactly as wrong as
     # before while the assertion above passed.
     from src.agents.news_analyst import NewsAnalystAgent
+
     guidance = NewsAnalystAgent._SESSION_GUIDANCE
     assert "intra_check" in guidance, (
         "intra_check has no session guidance, so it silently falls back to "
@@ -587,11 +625,13 @@ def test_an_unreadable_day_ledger_is_not_the_same_as_nothing_spent():
     and leaves the spend to the cost circuit, but it must not silently
     record that as a clean zero.
     """
+
     class _Unreadable:
         def count_paid_seat_heals_today(self, seat, **kw):
             return None
 
     from src.seat_heal import HEAL_DAY_CAP
+
     analyst = _Analyst()
     obj, ctx = _expired_news_tick(analyst=analyst, db=_Unreadable())
 
@@ -605,6 +645,7 @@ def test_a_day_cap_row_is_only_written_when_the_cap_is_what_stopped_the_spend():
     """The row is the evidence that could settle whether one-a-day is right,
     so a tick that would have refused anyway must not be recorded as capped."""
     from src.seat_heal import HEAL_DAY_CAP
+
     analyst = _Analyst()
     obj, ctx = _expired_news_tick(analyst=analyst, db=_DayLedger({"news": 1}))
     # No wire text: this tick had nothing to re-ask with, cap or no cap.
@@ -632,22 +673,39 @@ def test_the_day_boundary_the_cap_uses_is_the_et_trading_day():
         db = Database(str(Path(tmp) / "t.db"))
         db.initialize()
         db.insert_specialist_evidence(
-            run_id="r1", agent_name="seat_heal", kind="seat_heal", scope="run",
-            evidence_json=json.dumps(HealResult(
-                seat="news", outcome=HEAL_PAID_RETRY, reason="r",
-                paid_retry=True,
-            ).to_evidence(), sort_keys=True),
+            run_id="r1",
+            agent_name="seat_heal",
+            kind="seat_heal",
+            scope="run",
+            evidence_json=json.dumps(
+                HealResult(
+                    seat="news",
+                    outcome=HEAL_PAID_RETRY,
+                    reason="r",
+                    paid_retry=True,
+                ).to_evidence(),
+                sort_keys=True,
+            ),
         )
         from src.storage.db import et_today
+
         today = et_today()
         assert db.count_paid_seat_heals_today("news", trading_day=today) == 1
         # Yesterday's allowance is a different allowance.
-        assert db.count_paid_seat_heals_today(
-            "news", trading_day=today - timedelta(days=1),
-        ) == 0
-        assert db.count_paid_seat_heals_today(
-            "news", trading_day=today + timedelta(days=1),
-        ) == 0
+        assert (
+            db.count_paid_seat_heals_today(
+                "news",
+                trading_day=today - timedelta(days=1),
+            )
+            == 0
+        )
+        assert (
+            db.count_paid_seat_heals_today(
+                "news",
+                trading_day=today + timedelta(days=1),
+            )
+            == 0
+        )
 
 
 def test_every_session_the_news_analyst_can_be_asked_for_has_its_own_guidance():
@@ -673,16 +731,16 @@ def test_every_session_the_news_analyst_can_be_asked_for_has_its_own_guidance():
     assert neutral != guidance["morning"]
     for session in missing:
         # Documented as deliberately unguided, not silently morning-shaped.
-        assert session in {"earnings_preprocess"}, (
-            f"{session!r} reaches the news analyst with no guidance entry"
-        )
+        assert session in {"earnings_preprocess"}, f"{session!r} reaches the news analyst with no guidance entry"
 
 
 def test_an_unknown_session_does_not_get_the_morning_fresh_book_instruction():
     from src.agents.news_analyst import NewsAnalystAgent
+
     agent = NewsAnalystAgent.__new__(NewsAnalystAgent)
     message = agent.build_user_message(
-        news_text="- something crossed the wire", session="not_a_session",
+        news_text="- something crossed the wire",
+        session="not_a_session",
     )
     assert "fresh book" not in message.lower()
     assert "MORNING mode" not in message
@@ -701,6 +759,7 @@ def test_a_suspended_cost_circuit_blocks_the_heal_and_pages_the_owner():
     assert analyst.calls == 0, "the heal spent money past a bound cost cap"
     assert ctx.data_status["news"] == "expired"
     from src.seat_heal import HEAL_CAP_BLOCKED
+
     outcomes = [r.outcome for r, _alert in obj.recorded]
     assert HEAL_CAP_BLOCKED in outcomes
     assert any(alert for _r, alert in obj.recorded)
@@ -709,6 +768,7 @@ def test_a_suspended_cost_circuit_blocks_the_heal_and_pages_the_owner():
 
 
 # ── the category split the fix must NOT undo ─────────────────────────────
+
 
 def test_expired_is_still_its_own_category_and_still_not_lost():
     assert evidence_gate.STATUS_CATEGORY["expired"] == evidence_gate.CATEGORY_EXPIRED
@@ -727,23 +787,26 @@ def test_expired_is_still_carried_not_fresh_in_the_disclosure():
     assert evidence_gate.STATUS_FRESHNESS["expired"] == evidence_gate.FRESHNESS_CARRIED
 
 
-@pytest.mark.parametrize("status,category", [
-    ("ok", evidence_gate.CATEGORY_REPORTED),
-    ("carried_from_morning", evidence_gate.CATEGORY_REPORTED),
-    ("remembered", evidence_gate.CATEGORY_REPORTED),
-    ("empty", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
-    ("release_overdue", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
-    ("chose_not_to_refetch", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
-    ("not_run_intraday", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
-    ("failed", evidence_gate.CATEGORY_LOST),
-    ("parse_error", evidence_gate.CATEGORY_LOST),
-    ("provider_error", evidence_gate.CATEGORY_LOST),
-    ("truncated", evidence_gate.CATEGORY_LOST),
-    ("content_missing", evidence_gate.CATEGORY_LOST),
-    ("carry_forward_empty", evidence_gate.CATEGORY_LOST),
-    ("carry_forward_failed", evidence_gate.CATEGORY_LOST),
-    ("expired", evidence_gate.CATEGORY_EXPIRED),
-])
+@pytest.mark.parametrize(
+    "status,category",
+    [
+        ("ok", evidence_gate.CATEGORY_REPORTED),
+        ("carried_from_morning", evidence_gate.CATEGORY_REPORTED),
+        ("remembered", evidence_gate.CATEGORY_REPORTED),
+        ("empty", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
+        ("release_overdue", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
+        ("chose_not_to_refetch", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
+        ("not_run_intraday", evidence_gate.CATEGORY_NOTHING_TO_REPORT),
+        ("failed", evidence_gate.CATEGORY_LOST),
+        ("parse_error", evidence_gate.CATEGORY_LOST),
+        ("provider_error", evidence_gate.CATEGORY_LOST),
+        ("truncated", evidence_gate.CATEGORY_LOST),
+        ("content_missing", evidence_gate.CATEGORY_LOST),
+        ("carry_forward_empty", evidence_gate.CATEGORY_LOST),
+        ("carry_forward_failed", evidence_gate.CATEGORY_LOST),
+        ("expired", evidence_gate.CATEGORY_EXPIRED),
+    ],
+)
 def test_no_status_changed_category(status, category):
     assert evidence_gate.STATUS_CATEGORY[status] == category
 
@@ -757,6 +820,7 @@ def test_healable_categories_is_only_read_by_the_heal_path():
     """
     import inspect
     from src import evidence_gate as gate
+
     source = inspect.getsource(gate)
     # The whole module, not just the text after the definition — a read
     # placed ABOVE the definition line would otherwise pass.
@@ -774,6 +838,7 @@ def test_healable_categories_is_only_read_by_the_heal_path():
     # statement consulting it outside the heal dispatcher is the defect.
     import ast as _ast
     from pathlib import Path
+
     root = Path(gate.__file__).resolve().parent.parent
     code_readers = set()
     scanned = 0
@@ -819,8 +884,7 @@ def test_healable_categories_is_only_read_by_the_heal_path():
     )
     test_readers = {r for r in code_readers if r.startswith("tests/")}
     assert test_readers, (
-        "no test reads HEALABLE_CATEGORIES at all — this test itself should "
-        "have been found; the scan is broken"
+        "no test reads HEALABLE_CATEGORIES at all — this test itself should have been found; the scan is broken"
     )
 
 
@@ -834,6 +898,7 @@ def test_healable_categories_is_only_read_by_the_heal_path():
 # `agent_logs` holds ZERO `news_analyst%` rows for the whole of 2026-09-18,
 # so the owner's per-session cost line (which sums `agent_logs.cost_usd` by
 # `run_id`) reported those eight paid calls as free.
+
 
 def test_a_paid_heal_records_its_cost_the_way_an_ordinary_paid_call_does():
     """THE regression test for the thrown-away spend."""
@@ -908,6 +973,7 @@ def test_a_failed_heal_bills_nothing_because_there_is_nothing_to_bill():
 def test_a_broken_forensic_store_never_undoes_a_heal_that_worked():
     """A log write is bookkeeping. Losing it must not cost the desk the
     fresher research it already paid for."""
+
     class _Exploding(_DayLedger):
         def insert_agent_log(self, **kw):
             raise RuntimeError("disk full")
@@ -938,15 +1004,21 @@ def test_a_broken_forensic_store_never_undoes_a_heal_that_worked():
 # heals, 15:19 to 19:46 UTC, roughly one per tick, every one thrown away
 # [measured 2026-09-23 over a read-only copy of the production DB].
 
+
 def _report_with(stock_news: dict) -> dict:
     from src.models import MacroNarrative, NewsIntelligenceReport
+
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-23", era_themes=["AI capex"],
+            last_updated="2026-09-23",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
-        state_changes=[], stock_news=stock_news,
-        pm_briefing="re-asked", market_sentiment="bullish", confidence="medium",
+        state_changes=[],
+        stock_news=stock_news,
+        pm_briefing="re-asked",
+        market_sentiment="bullish",
+        confidence="medium",
     ).model_dump()
 
 
@@ -956,13 +1028,23 @@ class _RealAnalyst(_Analyst):
     def __init__(self, stock_news=None, **kw):
         super().__init__(**kw)
         self._payload = _report_with(
-            stock_news if stock_news is not None
-            else {"AAPL": [{"headline": "Apple guidance cut", "sentiment": "bearish",
-                            "conviction": "high", "impact_summary": "cut"}]},
+            stock_news
+            if stock_news is not None
+            else {
+                "AAPL": [
+                    {
+                        "headline": "Apple guidance cut",
+                        "sentiment": "bearish",
+                        "conviction": "high",
+                        "impact_summary": "cut",
+                    }
+                ]
+            },
         )
 
     def analyze(self, payload, *args, **kwargs):
         import json as _json
+
         self.calls += 1
         self.seen = payload
         return (
@@ -1005,9 +1087,7 @@ def test_the_next_tick_finds_the_research_the_desk_just_paid_for():
 
     ctx2, carried = _next_tick(obj)
 
-    assert carried.status != "expired", (
-        "the paid answer was discarded; the seat expired again on the next tick"
-    )
+    assert carried.status != "expired", "the paid answer was discarded; the seat expired again on the next tick"
     assert carried.status == "carried_from_morning"
     assert ctx2.news_intel is not None
     assert analyst.calls == 1, "the second tick must not re-ask a seat already bought"
@@ -1029,8 +1109,8 @@ def test_the_seat_is_not_bought_twice_and_is_not_left_degraded_either():
 
     assert analyst.calls == 1, "the desk paid for the same research twice"
     from src import evidence_gate
-    assert evidence_gate.STATUS_CATEGORY[carried.status] == \
-        evidence_gate.CATEGORY_REPORTED
+
+    assert evidence_gate.STATUS_CATEGORY[carried.status] == evidence_gate.CATEGORY_REPORTED
     assert not evidence_gate.counts_as_degraded(carried.status)
 
 
@@ -1062,7 +1142,8 @@ def test_a_headline_the_model_never_saw_can_still_expire_the_seat():
     from src.seat_heal import wire_titles_shown_to_model
 
     shown = wire_titles_shown_to_model(
-        ["- seen one", "never in the prompt"], "- seen one\n",
+        ["- seen one", "never in the prompt"],
+        "- seen one\n",
     )
 
     assert shown == ["- seen one"]
@@ -1081,9 +1162,7 @@ def test_a_thin_heal_does_not_lose_the_mornings_per_symbol_coverage():
     _ctx2, carried = _next_tick(obj)
 
     assert carried.payload is not None
-    assert "AAPL" in carried.payload.stock_news, (
-        "the morning's only covered symbol was dropped by a thinner re-ask"
-    )
+    assert "AAPL" in carried.payload.stock_news, "the morning's only covered symbol was dropped by a thinner re-ask"
 
 
 def test_a_heal_never_rewrites_the_file_the_cross_day_scans_walk():
@@ -1094,19 +1173,21 @@ def test_a_heal_never_rewrites_the_file_the_cross_day_scans_walk():
     within-day; the file is not."""
     obj, _c1, _a = _healed_desk()
 
-    assert obj.news_store.saved == [], (
-        "a within-day refresh was written to a file read across days"
-    )
+    assert obj.news_store.saved == [], "a within-day refresh was written to a file read across days"
 
 
 def test_a_stored_answer_that_will_not_parse_never_costs_the_desk_the_file():
     """Demoting an `expired` seat to a LOST one is strictly worse. A row
     that cannot be read must fall back to the day's report, not to nothing."""
     ledger = _DayLedger()
-    ledger.evidence.append({
-        "agent_name": "news_analyst", "kind": "analysis", "scope": "run",
-        "evidence_json": '{"pm_briefing": "half a report"}',
-    })
+    ledger.evidence.append(
+        {
+            "agent_name": "news_analyst",
+            "kind": "analysis",
+            "scope": "run",
+            "evidence_json": '{"pm_briefing": "half a report"}',
+        }
+    )
     obj = _pipeline(_MOVED_WIRE, db=ledger)
     ctx = _ctx()
 
@@ -1134,6 +1215,7 @@ def test_recording_the_wire_appends_and_is_idempotent(tmp_path):
     would wipe the morning's titles and re-arm the very compare this is
     quieting; repeating must not grow the file either."""
     from src.data.news_store import NewsStore
+
     store = NewsStore(data_dir=str(tmp_path))
     store.save_raw_headlines([{"title": "Apple beats"}])
 
@@ -1142,7 +1224,8 @@ def test_recording_the_wire_appends_and_is_idempotent(tmp_path):
 
     assert (first, second) == (1, 0)
     assert [i["title"] for i in store.load_raw_headlines()] == [
-        "Apple beats", "new one",
+        "Apple beats",
+        "new one",
     ]
 
 
@@ -1193,7 +1276,9 @@ class _MacroStore:
 def _macro_pipeline(*, analyst=None, db=None, macro_store=None, require=None):
     obj = SimpleNamespace(
         macro_analyst=analyst if analyst is not None else _Analyst(),
-        macro_store=macro_store if macro_store is not None else _MacroStore(
+        macro_store=macro_store
+        if macro_store is not None
+        else _MacroStore(
             {"date": "2026-09-24", "regime": "risk-off"},
         ),
         db=db if db is not None else _DayLedger(),
@@ -1253,9 +1338,12 @@ def test_a_macro_store_write_failure_never_undoes_a_paid_heal():
             raise RuntimeError("disk full")
 
     analyst = _Analyst()
-    obj = _macro_pipeline(analyst=analyst, macro_store=_BrokenStore(
-        {"date": "2026-09-24", "regime": "risk-off"},
-    ))
+    obj = _macro_pipeline(
+        analyst=analyst,
+        macro_store=_BrokenStore(
+            {"date": "2026-09-24", "regime": "risk-off"},
+        ),
+    )
     ctx = _macro_ctx()
 
     healed = obj._try_one_paid_research_retry(ctx, "macro")

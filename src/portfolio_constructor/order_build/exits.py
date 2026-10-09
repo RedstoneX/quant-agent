@@ -51,15 +51,20 @@ class ExitOrderBuilders:
         # has the symmetric guard on the SELL pre-sum path; this is the
         # same fix in the constructor path. R4 audit finding.
         import math as _math
+
         if not _math.isfinite(current_pct) or current_pct <= 0:
             logger.warning(
-                "Constructor: SELL %s skipped — current_pct=%s "
-                "(market_value=%s likely NaN/zero from broker glitch)",
-                target.symbol, current_pct, position.market_value,
+                "Constructor: SELL %s skipped — current_pct=%s (market_value=%s likely NaN/zero from broker glitch)",
+                target.symbol,
+                current_pct,
+                position.market_value,
             )
             return None
         named = _named_reduction_trigger(
-            target, current_pct, target_pct, long_side=True,
+            target,
+            current_pct,
+            target_pct,
+            long_side=True,
             current_risk_pct=current_risk_pct,
         )
         if named is None:
@@ -108,15 +113,20 @@ class ExitOrderBuilders:
         if position is None or position.qty >= 0:
             return None
         import math as _math
+
         if not _math.isfinite(current_pct) or current_pct >= 0:
             logger.warning(
-                "Constructor: COVER %s skipped — current_pct=%s "
-                "(market_value=%s likely NaN/zero from broker glitch)",
-                target.symbol, current_pct, position.market_value,
+                "Constructor: COVER %s skipped — current_pct=%s (market_value=%s likely NaN/zero from broker glitch)",
+                target.symbol,
+                current_pct,
+                position.market_value,
             )
             return None
         named = _named_reduction_trigger(
-            target, current_pct, target_pct, long_side=False,
+            target,
+            current_pct,
+            target_pct,
+            long_side=False,
             current_risk_pct=current_risk_pct,
         )
         if named is None:

@@ -4,6 +4,7 @@ The settlement-fill guard's supplier check, pointed at `run_id`, must find
 no three-argument getattr in production code, and a loud read must raise on
 a missing attribute while tolerating an absent source object.
 """
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,7 +23,8 @@ def _silent_getattr_sites():
         if not _is_subject(rel) or rel.startswith((".venv/", "src/storage/")):
             continue
         found += [
-            s for s in offending_sites(path.read_text(encoding="utf-8"), rel, {"run_id"})
+            s
+            for s in offending_sites(path.read_text(encoding="utf-8"), rel, {"run_id"})
             if s[3] == "silent_default_getattr"
         ]
     return found

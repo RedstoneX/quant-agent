@@ -178,6 +178,7 @@ as if it covered more:
   * The `arbitrary` entries themselves. The gate holds the boundary; it does
     not retroactively source anything.
 """
+
 from __future__ import annotations
 
 import ast
@@ -321,9 +322,7 @@ from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
 #: block existed the schema could not tell state 3 from the defect, so the
 #: classification could only be produced by hand-reading 135 rows -- and
 #: anything that relies on remembering to re-read them slips.
-SETTLEMENT_ROUTE_KINDS: frozenset[str] = frozenset(
-    {"recording", "ratified-bound", "measurement"}
-)
+SETTLEMENT_ROUTE_KINDS: frozenset[str] = frozenset({"recording", "ratified-bound", "measurement"})
 
 #: `built` = the recording exists and is accumulating now. `specified` = it is
 #: written down in enough detail to build, and `where` points at that writing.
@@ -345,8 +344,6 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 MIN_ROUTE_PROSE_CHARS = 40
 
 
-
-
 #: The `(table, column)` pairs real code WRITES, resolved from source at
 #: check time by `src.storage_write_index`. A settlement route in state
 #: `built` has to name where its evidence lands, and this is what makes the
@@ -355,6 +352,7 @@ MIN_ROUTE_PROSE_CHARS = 40
 #: ever names, refused a genuine write living elsewhere, and never compared
 #: the table at all. See that module for the identity it resolves and for the
 #: one dynamic shape it accepts as a deliberate, strict proxy.
+
 
 def settlement_route_problem(entry: dict[str, Any]) -> str | None:
     """Why this entry's `settles_by` is not a route, or None if it is one."""
@@ -367,15 +365,9 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
     if missing:
         return f"`settles_by` is missing {', '.join(missing)}"
     if route["kind"] not in SETTLEMENT_ROUTE_KINDS:
-        return (
-            f"`settles_by.kind` is {route['kind']!r}; "
-            f"expected one of {sorted(SETTLEMENT_ROUTE_KINDS)}"
-        )
+        return f"`settles_by.kind` is {route['kind']!r}; expected one of {sorted(SETTLEMENT_ROUTE_KINDS)}"
     if route["state"] not in SETTLEMENT_ROUTE_STATES:
-        return (
-            f"`settles_by.state` is {route['state']!r}; "
-            f"expected one of {sorted(SETTLEMENT_ROUTE_STATES)}"
-        )
+        return f"`settles_by.state` is {route['state']!r}; expected one of {sorted(SETTLEMENT_ROUTE_STATES)}"
     for field in ("records", "closes_when"):
         if len(str(route[field]).strip()) < MIN_ROUTE_PROSE_CHARS:
             return (
@@ -394,17 +386,13 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
         written = written_columns()
         for target in writes:
             if not isinstance(target, str) or "." not in target:
-                return (
-                    f"`settles_by.writes` entry {target!r} is not a "
-                    f"`<table>.<column>` name"
-                )
+                return f"`settles_by.writes` entry {target!r} is not a `<table>.<column>` name"
             table, field = (part.strip() for part in target.rsplit(".", 1))
             if (table.lower(), field) in written:
                 continue
             elsewhere = sorted({t for t, c in written if c == field})
             hint = (
-                f" The column name is written, but to {', '.join(elsewhere)}"
-                f" -- not to {table!r}."
+                f" The column name is written, but to {', '.join(elsewhere)} -- not to {table!r}."
                 if elsewhere
                 else " No INSERT or UPDATE anywhere names that column."
             )
@@ -446,11 +434,7 @@ def classification(
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
             out[key].append(site_id)
         elif status == "arbitrary":
-            key = (
-                "unclassified"
-                if settlement_route_problem(entry)
-                else "recording_named"
-            )
+            key = "unclassified" if settlement_route_problem(entry) else "recording_named"
             out[key].append(site_id)
     return out
 
@@ -488,7 +472,9 @@ def _scan_module(
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     module = rel[: -len(".py")].replace("/", ".")
     if module.endswith(".__init__") or (config_classes and module.startswith("src.config.")):
-        module = "src.config" if config_classes else module[: -len(".__init__")]  # the package IS the module; src/config/* sections are re-exported by it
+        module = (
+            "src.config" if config_classes else module[: -len(".__init__")]
+        )  # the package IS the module; src/config/* sections are re-exported by it
     sites: list[NumberSite] = []
 
     local = _module_constants(tree)
@@ -514,9 +500,7 @@ def _scan_module(
                 name = name_node.id
                 if not (name.isupper() or (name.startswith("_") and name.lstrip("_").isupper())):
                     continue
-                for site_id, value, lineno in _leaves(
-                    value_node, f"{module}.{name}", names, local
-                ):
+                for site_id, value, lineno in _leaves(value_node, f"{module}.{name}", names, local):
                     if value not in NEUTRAL_VALUES:
                         sites.append(NumberSite(site_id, rel, lineno, value))
 
@@ -540,9 +524,7 @@ def _scan_module(
             base = f"{module}.{node.name}.{body_node.target.id}"
             for site_id, value, lineno in _leaves(default, base, names, local):
                 if value not in NEUTRAL_VALUES:
-                    sites.append(
-                        NumberSite(site_id, rel, lineno or body_node.lineno, value)
-                    )
+                    sites.append(NumberSite(site_id, rel, lineno or body_node.lineno, value))
 
     if config_classes is None:
         sites.extend(_scan_extended_shapes(tree, module, rel, names, local))
@@ -575,9 +557,7 @@ def collect_sites(repo_root: Path | None = None) -> list[NumberSite]:
     for file_path in _scoped_files(root):
         if file_path.name == "__init__.py" and file_path.stat().st_size == 0:
             continue
-        sites.extend(
-            _scan_module(file_path, str(file_path.relative_to(root)), None, root)
-        )
+        sites.extend(_scan_module(file_path, str(file_path.relative_to(root)), None, root))
 
     for config_module in config_modules(root):  # src/config/__init__.py or src/config/*
         rel = str(config_module.relative_to(root))
@@ -642,19 +622,13 @@ from src.number_deployed_values import (  # noqa: E402,F401 -- lifted verbatim
 def _is_falsifiable_source(text: str) -> bool:
     if re.search(r"https?://\S+", text):
         return True
-    return bool(
-        re.search(
-            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)(?:::[A-Za-z_]|@`)", text
-        )
-    )
+    return bool(re.search(r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)(?:::[A-Za-z_]|@`)", text))
 
 
 from src.ledger_citations import broken_citations  # noqa: E402,F401  (rule 7)
 
 
-def audit(
-    repo_root: Path | None = None, ledger_path: Path | None = None
-) -> list[LedgerProblem]:
+def audit(repo_root: Path | None = None, ledger_path: Path | None = None) -> list[LedgerProblem]:
     """Every reason the build should fail. Empty means the boundary holds."""
     root = repo_root or REPO_ROOT
     sites = collect_sites(root)
@@ -752,8 +726,7 @@ def audit(
                     LedgerProblem(
                         "no-source",
                         site_id,
-                        f"status {status!r} requires a `source:` saying where "
-                        f"the number was read from.",
+                        f"status {status!r} requires a `source:` saying where the number was read from.",
                     )
                 )
             elif not _is_falsifiable_source(source):
@@ -803,8 +776,7 @@ def audit(
                     LedgerProblem(
                         "no-ruling-record",
                         site_id,
-                        "status 'owner-ruled' requires `ruling_record:` saying "
-                        "where the ruling is written down.",
+                        "status 'owner-ruled' requires `ruling_record:` saying where the ruling is written down.",
                     )
                 )
         if status == "arbitrary":
@@ -832,8 +804,7 @@ def audit(
                     LedgerProblem(
                         "no-base",
                         site_id,
-                        "status 'derived' requires `derived_from:` naming the "
-                        "ledger entry this was computed from.",
+                        "status 'derived' requires `derived_from:` naming the ledger entry this was computed from.",
                     )
                 )
                 continue
@@ -954,8 +925,7 @@ def main() -> int:  # pragma: no cover - CLI convenience
         sites = collect_sites()
         unscoped = collect_unscoped_sites()
         print(
-            f"number ledger: {len(sites)} sites in scope, all accounted for; "
-            f"{len(unscoped)} unscoped constants watched"
+            f"number ledger: {len(sites)} sites in scope, all accounted for; {len(unscoped)} unscoped constants watched"
         )
         return 0
     for problem in problems:

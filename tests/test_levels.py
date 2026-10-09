@@ -84,16 +84,19 @@ class TestBadData:
         # Corrupt one bar the way a bad feed does.
         i = len(bars) // 2
         bars[i] = OHLCV(
-            date=bars[i].date, open=bars[i].open, high=1000.0,
-            low=bars[i].low, close=bars[i].close, volume=bars[i].volume,
+            date=bars[i].date,
+            open=bars[i].open,
+            high=1000.0,
+            low=bars[i].low,
+            close=bars[i].close,
+            volume=bars[i].volume,
         )
         supports, resistances = find_structural_levels(bars, atr=1_000.0)
         assert not any(lv.price > 500 for lv in supports + resistances)
 
     def test_impossible_bars_are_discarded(self):
         bars = _bars(_oscillation(100.0, 110.0, cycles=6))
-        bars[10] = OHLCV(date=bars[10].date, open=0.0, high=0.0, low=0.0,
-                         close=0.0, volume=0)
+        bars[10] = OHLCV(date=bars[10].date, open=0.0, high=0.0, low=0.0, close=0.0, volume=0)
         # Must not raise, and must still find the real structure.
         supports, resistances = find_structural_levels(bars)
         assert supports or resistances
@@ -106,8 +109,8 @@ class TestBadData:
         levels at all. Outlier detection must be local to each bar's
         neighbourhood, so a trend survives and only print errors are removed.
         """
-        ramp = [10.0 + i * 0.5 for i in range(200)]          # 10 -> 110
-        settle = _oscillation(104.0, 110.0, cycles=6)         # consolidates high
+        ramp = [10.0 + i * 0.5 for i in range(200)]  # 10 -> 110
+        settle = _oscillation(104.0, 110.0, cycles=6)  # consolidates high
         supports, resistances = find_structural_levels(_bars(ramp + settle))
         assert supports or resistances, "trending stock produced no levels"
         assert all(lv.price > 50 for lv in supports + resistances), (
@@ -118,9 +121,9 @@ class TestBadData:
 class TestRelevanceFiltering:
     def test_distant_history_is_excluded(self):
         """A long-dead price zone is trivia, not actionable structure."""
-        old = _oscillation(10.0, 11.0, cycles=8)      # ancient $10 era
+        old = _oscillation(10.0, 11.0, cycles=8)  # ancient $10 era
         ramp = [10.0 + i * 0.4 for i in range(100)]
-        now = _oscillation(48.0, 52.0, cycles=8)      # current range
+        now = _oscillation(48.0, 52.0, cycles=8)  # current range
         supports, resistances = find_structural_levels(_bars(old + ramp + now))
         assert not any(lv.price < 20 for lv in supports + resistances)
 
@@ -143,21 +146,18 @@ class TestRelevanceFiltering:
         is why it kept passing under both the old formula and the new one
         and never actually caught anything.
         """
-        ancient = _oscillation(70.0, 72.0, cycles=15)            # 15 touches, old
-        buffer = [72.0 + i * (18.0 / 120) for i in range(120)]   # monotonic: no pivots
+        ancient = _oscillation(70.0, 72.0, cycles=15)  # 15 touches, old
+        buffer = [72.0 + i * (18.0 / 120) for i in range(120)]  # monotonic: no pivots
         recent = (
-            _oscillation(94.0, 96.0, cycles=3)                   # 3 touches, fresh
-            + [96.5, 97.0, 97.5, 98.0, 98.5, 99.0]                # clears edge-of-series
+            _oscillation(94.0, 96.0, cycles=3)  # 3 touches, fresh
+            + [96.5, 97.0, 97.5, 98.0, 98.5, 99.0]  # clears edge-of-series
         )
-        supports, _ = find_structural_levels(
-            _bars(ancient + buffer + recent), atr=25.0
-        )
+        supports, _ = find_structural_levels(_bars(ancient + buffer + recent), atr=25.0)
         assert supports, "expected support levels"
         newest = min(supports, key=lambda lv: lv.last_touch_sessions_ago)
         strongest = max(supports, key=lambda lv: lv.strength)
         assert strongest.touches > newest.touches, (
-            "the strongest level here must be the one with more touches, "
-            "not the one most recently touched"
+            "the strongest level here must be the one with more touches, not the one most recently touched"
         )
 
     def test_strength_does_not_depend_on_when_the_touches_happened(self):
@@ -174,16 +174,10 @@ class TestRelevanceFiltering:
         old_tail = [90.0 + i * (20.0 / 199) for i in range(200)]
         recent_tail = [90.0 + i * (20.0 / 6) for i in range(7)]
 
-        old_supports, _ = find_structural_levels(
-            _bars(osc + old_tail), atr=25.0
-        )
-        recent_supports, _ = find_structural_levels(
-            _bars(osc + recent_tail), atr=25.0
-        )
+        old_supports, _ = find_structural_levels(_bars(osc + old_tail), atr=25.0)
+        recent_supports, _ = find_structural_levels(_bars(osc + recent_tail), atr=25.0)
         assert old_supports and recent_supports
-        assert [lv.strength for lv in old_supports] == [
-            lv.strength for lv in recent_supports
-        ]
+        assert [lv.strength for lv in old_supports] == [lv.strength for lv in recent_supports]
         # The match above is only meaningful if touches agreed (so strength
         # had no OTHER reason to match) and recency genuinely differed (so
         # there was something for a lingering age term to react to).
@@ -203,13 +197,8 @@ class TestRelevanceFiltering:
         """
         far = _oscillation(58.0, 60.0, cycles=4)
         ramp = [60.0 + i * (33.0 / 120) for i in range(120)]
-        near = (
-            _oscillation(93.0, 95.0, cycles=4)
-            + [95.5, 96.0, 96.5, 97.0, 97.5, 98.0]
-        )
-        supports, _ = find_structural_levels(
-            _bars(far + ramp + near), atr=25.0
-        )
+        near = _oscillation(93.0, 95.0, cycles=4) + [95.5, 96.0, 96.5, 97.0, 97.5, 98.0]
+        supports, _ = find_structural_levels(_bars(far + ramp + near), atr=25.0)
         near_levels = [lv for lv in supports if lv.price > 90.0]
         far_levels = [lv for lv in supports if lv.price < 65.0]
         assert near_levels and far_levels
@@ -281,7 +270,11 @@ def test_cluster_tolerance_fallback_is_unreachable_on_cleaned_bars():
     def _bar(i, high, low):
         return _OHLCV(
             date=_dt.date(2025, 1, 1) + _dt.timedelta(days=i),
-            open=100.0, high=high, low=low, close=100.0, volume=1000,
+            open=100.0,
+            high=high,
+            low=low,
+            close=100.0,
+            volume=1000,
         )
 
     corrupt = {
@@ -294,12 +287,7 @@ def test_cluster_tolerance_fallback_is_unreachable_on_cleaned_bars():
     for name, (high, low) in corrupt.items():
         bars = [_bar(i, 101.0, 99.0) for i in range(260)]
         bars[130] = _bar(130, high, low)
-        pivots = _levels._find_pivots(
-            _levels._clean_bars(bars), _levels.PIVOT_WINDOW
-        )
+        pivots = _levels._find_pivots(_levels._clean_bars(bars), _levels.PIVOT_WINDOW)
         assert pivots, name
-        unmeasurable = [
-            p for p in pivots
-            if not (_math.isfinite(p[3]) and _math.isfinite(p[4]) and p[3] <= p[4])
-        ]
+        unmeasurable = [p for p in pivots if not (_math.isfinite(p[3]) and _math.isfinite(p[4]) and p[3] <= p[4])]
         assert unmeasurable == [], name

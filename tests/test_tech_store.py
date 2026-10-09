@@ -8,12 +8,15 @@ from src.data.tech_store import TechStore
 from src.util.time import et_today
 
 
-def _analysis(symbol, rating="buy", conviction="high",
-              entry_price=500.0, stop_loss=490.0, reference_target=525.0):
+def _analysis(symbol, rating="buy", conviction="high", entry_price=500.0, stop_loss=490.0, reference_target=525.0):
     """Minimal TechAnalysisResult-shaped stub (only attributes the store reads)."""
     return SimpleNamespace(
-        symbol=symbol, rating=rating, conviction=conviction,
-        entry_price=entry_price, stop_loss=stop_loss, reference_target=reference_target,
+        symbol=symbol,
+        rating=rating,
+        conviction=conviction,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        reference_target=reference_target,
     )
 
 
@@ -35,11 +38,17 @@ def test_update_keeps_first_seen_when_rating_unchanged(tmp_path):
     store = TechStore(data_dir=str(tmp_path / "tech"))
     # Seed with an older first_seen manually
     older = (et_today() - timedelta(days=5)).isoformat()
-    seed = {"NVDA": {
-        "rating": "buy", "conviction": "high",
-        "first_seen_date": older, "last_rating_date": older,
-        "entry_price": 190, "stop_loss": 184, "reference_target": 210,
-    }}
+    seed = {
+        "NVDA": {
+            "rating": "buy",
+            "conviction": "high",
+            "first_seen_date": older,
+            "last_rating_date": older,
+            "entry_price": 190,
+            "stop_loss": 184,
+            "reference_target": 210,
+        }
+    }
     store.save(seed)
 
     # Today emits same rating — first_seen must NOT move
@@ -52,16 +61,21 @@ def test_update_keeps_first_seen_when_rating_unchanged(tmp_path):
 def test_update_resets_first_seen_when_rating_flips(tmp_path):
     store = TechStore(data_dir=str(tmp_path / "tech"))
     older = (et_today() - timedelta(days=5)).isoformat()
-    seed = {"NVDA": {
-        "rating": "buy", "conviction": "high",
-        "first_seen_date": older, "last_rating_date": older,
-        "entry_price": 190, "stop_loss": 184, "reference_target": 210,
-    }}
+    seed = {
+        "NVDA": {
+            "rating": "buy",
+            "conviction": "high",
+            "first_seen_date": older,
+            "last_rating_date": older,
+            "entry_price": 190,
+            "stop_loss": 184,
+            "reference_target": 210,
+        }
+    }
     store.save(seed)
 
     # Today flips to sell — first_seen must reset to today
-    store.update([_analysis("NVDA", rating="sell",
-                            entry_price=210, stop_loss=220, reference_target=190)])
+    store.update([_analysis("NVDA", rating="sell", entry_price=210, stop_loss=220, reference_target=190)])
     state = store.load()
     assert state["NVDA"]["first_seen_date"] == str(et_today())
     assert state["NVDA"]["rating"] == "sell"
@@ -71,11 +85,19 @@ def test_update_leaves_absent_symbols_untouched(tmp_path):
     """A symbol that's NOT in today's batch should remain in the cache."""
     store = TechStore(data_dir=str(tmp_path / "tech"))
     older = (et_today() - timedelta(days=3)).isoformat()
-    store.save({"OLD_SYMBOL": {
-        "rating": "buy", "conviction": "medium",
-        "first_seen_date": older, "last_rating_date": older,
-        "entry_price": 100, "stop_loss": 95, "reference_target": 110,
-    }})
+    store.save(
+        {
+            "OLD_SYMBOL": {
+                "rating": "buy",
+                "conviction": "medium",
+                "first_seen_date": older,
+                "last_rating_date": older,
+                "entry_price": 100,
+                "stop_loss": 95,
+                "reference_target": 110,
+            }
+        }
+    )
 
     store.update([_analysis("NEW_SYMBOL", rating="buy")])
     state = store.load()
@@ -86,11 +108,19 @@ def test_update_leaves_absent_symbols_untouched(tmp_path):
 def test_compute_ages_returns_days_since_first_seen(tmp_path):
     store = TechStore(data_dir=str(tmp_path / "tech"))
     four_days_ago = (et_today() - timedelta(days=4)).isoformat()
-    store.save({"NVDA": {
-        "rating": "buy", "conviction": "high",
-        "first_seen_date": four_days_ago, "last_rating_date": str(et_today()),
-        "entry_price": 190, "stop_loss": 184, "reference_target": 210,
-    }})
+    store.save(
+        {
+            "NVDA": {
+                "rating": "buy",
+                "conviction": "high",
+                "first_seen_date": four_days_ago,
+                "last_rating_date": str(et_today()),
+                "entry_price": 190,
+                "stop_loss": 184,
+                "reference_target": 210,
+            }
+        }
+    )
     ages = store.compute_ages(["NVDA", "UNKNOWN"])
     assert ages["NVDA"] == 4
     assert "UNKNOWN" not in ages  # cached data absent → no key
@@ -117,18 +147,26 @@ def test_get_history_returns_recent_N_days(tmp_path):
     """history keeps up to 14 days; get_history(days=7) returns the last 7."""
     store = TechStore(data_dir=str(tmp_path / "tech"))
     # Seed a cache directly with 10 days of history
-    seed = {"NVDA": {
-        "rating": "buy",
-        "conviction": "medium",
-        "first_seen_date": str(et_today()),
-        "last_rating_date": str(et_today()),
-        "entry_price": 190, "stop_loss": 184, "reference_target": 210,
-        "history": [
-            {"date": (et_today() - timedelta(days=d)).isoformat(),
-             "rating": "buy", "conviction": "medium", "risk_reward": 2.0}
-            for d in range(9, -1, -1)
-        ],
-    }}
+    seed = {
+        "NVDA": {
+            "rating": "buy",
+            "conviction": "medium",
+            "first_seen_date": str(et_today()),
+            "last_rating_date": str(et_today()),
+            "entry_price": 190,
+            "stop_loss": 184,
+            "reference_target": 210,
+            "history": [
+                {
+                    "date": (et_today() - timedelta(days=d)).isoformat(),
+                    "rating": "buy",
+                    "conviction": "medium",
+                    "risk_reward": 2.0,
+                }
+                for d in range(9, -1, -1)
+            ],
+        }
+    }
     store.save(seed)
     seven = store.get_history("NVDA", days=7)
     assert len(seven) == 7

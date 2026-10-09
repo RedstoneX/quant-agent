@@ -38,7 +38,10 @@ from __future__ import annotations
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    PortfolioDecision, TargetPosition, TechAnalysisResult, TechReasoningChain,
+    PortfolioDecision,
+    TargetPosition,
+    TechAnalysisResult,
+    TechReasoningChain,
     TradeDecision,
 )
 from src.pipeline_stages import _execution_payoff_skip_reason
@@ -47,32 +50,45 @@ from src.risk.constants import STARTER_POSITION_RISK_PCT
 
 EQUITY = 100_000.0
 ENTRY = 100.0
-STOP = 95.0                     # a real, computed support level
-ATR = (ENTRY - STOP) / 3.5      # keeps the stop outside the noise band
-THIN_LEVEL = 102.0              # reward $2 against risk $5 -> R/R 0.40
-FAT_LEVEL = 115.0               # reward $15 against risk $5 -> R/R 3.00
+STOP = 95.0  # a real, computed support level
+ATR = (ENTRY - STOP) / 3.5  # keeps the stop outside the noise band
+THIN_LEVEL = 102.0  # reward $2 against risk $5 -> R/R 0.40
+FAT_LEVEL = 115.0  # reward $15 against risk $5 -> R/R 3.00
 
 
 def _rc() -> TechReasoningChain:
     return TechReasoningChain(
-        trend="x", momentum="x", volatility="x", volume="x",
+        trend="x",
+        momentum="x",
+        volatility="x",
+        volume="x",
         support_resistance="x",
     )
 
 
 def _analysis(
-    symbol: str, *, setup_type: str, upper_level: float = THIN_LEVEL,
+    symbol: str,
+    *,
+    setup_type: str,
+    upper_level: float = THIN_LEVEL,
 ) -> TechAnalysisResult:
     """One long candidate. Every price here is a level the system computed,
     so nothing is ever refused for missing structure — the only thing that
     varies between the fixtures below is the setup type and how far the
     ceiling is."""
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", conviction="medium", entry_price=ENTRY,
-        stop_loss=STOP, reference_target=upper_level,
-        support_levels=[STOP], resistance_levels=[upper_level],
-        computed_levels=[STOP, upper_level], atr_14=ATR,
-        setup_type=setup_type, expected_horizon_sessions=60,
+        symbol=symbol,
+        rating="buy",
+        conviction="medium",
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        reference_target=upper_level,
+        support_levels=[STOP],
+        resistance_levels=[upper_level],
+        computed_levels=[STOP, upper_level],
+        atr_14=ATR,
+        setup_type=setup_type,
+        expected_horizon_sessions=60,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_rc(),
         thesis_invalid_if="closes below support",
@@ -81,41 +97,57 @@ def _analysis(
 
 def _target(symbol: str, *, risk: float = 3.0) -> TargetPosition:
     return TargetPosition(
-        symbol=symbol, conviction="medium", direction="long",
-        thesis=f"{symbol} setup", risk_allocation_pct=risk,
+        symbol=symbol,
+        conviction="medium",
+        direction="long",
+        thesis=f"{symbol} setup",
+        risk_allocation_pct=risk,
     )
 
 
 def _decision(targets: list[dict]) -> PortfolioDecision:
-    return PortfolioDecision.model_validate({
-        "reasoning_chain": {
-            "macro_filter": "Macro checked.", "news_check": "News checked.",
-            "earnings_check": "Earnings checked.",
-            "signal_conflicts": "None material.",
-            "sizing_logic": "Sizing checked.",
-            "portfolio_balance": "Book checked.",
-            "cash_target": "Cash checked.",
-        },
-        "targets": targets, "portfolio_view": "Test decision.",
-    })
+    return PortfolioDecision.model_validate(
+        {
+            "reasoning_chain": {
+                "macro_filter": "Macro checked.",
+                "news_check": "News checked.",
+                "earnings_check": "Earnings checked.",
+                "signal_conflicts": "None material.",
+                "sizing_logic": "Sizing checked.",
+                "portfolio_balance": "Book checked.",
+                "cash_target": "Cash checked.",
+            },
+            "targets": targets,
+            "portfolio_view": "Test decision.",
+        }
+    )
 
 
 def _raw_target(symbol: str, *, risk: float = 3.0) -> dict:
     return {
-        "symbol": symbol, "conviction": "medium", "direction": "long",
-        "thesis": f"{symbol} setup.", "catalyst": "",
+        "symbol": symbol,
+        "conviction": "medium",
+        "direction": "long",
+        "thesis": f"{symbol} setup.",
+        "catalyst": "",
         "risk_allocation_pct": risk,
-        "provenance": [{
-            "source": "technical", "observed_stance": "buy",
-            "relationship": "supports", "evidence": "current-run rating",
-        }],
+        "provenance": [
+            {
+                "source": "technical",
+                "observed_stance": "buy",
+                "relationship": "supports",
+                "evidence": "current-run rating",
+            }
+        ],
     }
 
 
 def _build(analysis: TechAnalysisResult, *, risk: float = 3.0):
     return PortfolioConstructor().construct_orders(
-        targets=[_target(analysis.symbol, risk=risk)], analyses=[analysis],
-        positions=[], total_value=EQUITY,
+        targets=[_target(analysis.symbol, risk=risk)],
+        analyses=[analysis],
+        positions=[],
+        total_value=EQUITY,
         price_map={analysis.symbol: ENTRY},
     )
 
@@ -123,6 +155,7 @@ def _build(analysis: TechAnalysisResult, *, risk: float = 3.0):
 # ==========================================================================
 # Type B / trend — no reward:risk computation may block or size it
 # ==========================================================================
+
 
 def test_a_breakout_with_an_awful_traditional_ratio_is_now_refused():
     """AMENDED 2026-10-01 — owner ruling, board item 218. This test used to
@@ -158,9 +191,7 @@ def test_a_breakout_is_never_resized_by_any_reward_risk_computation():
     thin = _build(_analysis("AAA", setup_type="breakout", upper_level=THIN_LEVEL))
     assert thin == [], "sub-parity geometry is refused outright, not shrunk"
     fat = _build(_analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL))
-    fatter = _build(
-        _analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL + 20.0)
-    )
+    fatter = _build(_analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL + 20.0))
     assert len(fat) == len(fatter) == 1
     assert fat[0].allocation_pct == fatter[0].allocation_pct
     assert fat[0].stop_loss == fatter[0].stop_loss == STOP
@@ -172,9 +203,13 @@ def test_a_breakout_is_exempt_from_the_pm_subfloor_gate_entirely():
     ceiling to measure one against."""
     analysis = _analysis("AAA", setup_type="breakout")
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
-        _decision([_raw_target("AAA", risk=3.0)]), analyses=[analysis],
-        positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=1.5, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        _decision([_raw_target("AAA", risk=3.0)]),
+        analyses=[analysis],
+        positions=[],
+        total_value=EQUITY,
+        active_state_changes="",
+        rr_floor=1.5,
+        starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"AAA": 0.4},
     )
     assert [t.symbol for t in result.targets] == ["AAA"]
@@ -189,9 +224,13 @@ def test_a_range_trade_on_the_same_numbers_is_not_size_capped_either():
     drop; this ratio is real."""
     analysis = _analysis("AAA", setup_type="range")
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
-        _decision([_raw_target("AAA", risk=3.0)]), analyses=[analysis],
-        positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=1.5, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        _decision([_raw_target("AAA", risk=3.0)]),
+        analyses=[analysis],
+        positions=[],
+        total_value=EQUITY,
+        active_state_changes="",
+        rr_floor=1.5,
+        starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"AAA": 0.4},
     )
     assert [t.symbol for t in result.targets] == ["AAA"]
@@ -215,51 +254,95 @@ def test_the_built_breakout_order_carries_its_setup_type_to_execution():
 def test_execution_does_not_skip_a_breakout_on_the_reward_side():
     """A computed (or unmeasurable) ratio must not block a trend trade."""
     breakout = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
-        stop_loss=STOP, take_profit=THIN_LEVEL, reasoning="t",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=THIN_LEVEL,
+        reasoning="t",
         setup_type="breakout",
     )
-    assert _execution_payoff_skip_reason(
-        breakout, sizing_price=ENTRY + 1, stop_price=STOP,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            breakout,
+            sizing_price=ENTRY + 1,
+            stop_price=STOP,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_execution_does_not_skip_a_thin_but_measurable_range_ratio():
     """The retired 1.2 belt asked whether execution degraded geometry.
     A computed ratio, however thin, is not a skip."""
     thin = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
-        stop_loss=STOP, take_profit=THIN_LEVEL, reasoning="t",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=THIN_LEVEL,
+        reasoning="t",
         setup_type="range",
     )
     assert thin.reward_risk is not None and thin.reward_risk < 1.2
-    assert _execution_payoff_skip_reason(
-        thin, sizing_price=ENTRY + 1, stop_price=STOP,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            thin,
+            sizing_price=ENTRY + 1,
+            stop_price=STOP,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
     fat = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
-        stop_loss=STOP, take_profit=FAT_LEVEL, reasoning="t",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=FAT_LEVEL,
+        reasoning="t",
         setup_type="range",
     )
-    assert _execution_payoff_skip_reason(
-        fat, sizing_price=ENTRY + 1, stop_price=STOP,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            fat,
+            sizing_price=ENTRY + 1,
+            stop_price=STOP,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_execution_does_not_skip_when_range_payoff_cannot_be_computed():
     range_order = TradeDecision(
-        action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
-        stop_loss=STOP, take_profit=FAT_LEVEL, reasoning="t",
+        action="BUY",
+        symbol="AAA",
+        allocation_pct=5.0,
+        entry_price=ENTRY,
+        stop_loss=STOP,
+        take_profit=FAT_LEVEL,
+        reasoning="t",
         setup_type="range",
     )
-    assert _execution_payoff_skip_reason(
-        range_order, sizing_price=ENTRY, stop_price=ENTRY,
-        geometry_changed=True, is_short=False,
-    ) is None
+    assert (
+        _execution_payoff_skip_reason(
+            range_order,
+            sizing_price=ENTRY,
+            stop_price=ENTRY,
+            geometry_changed=True,
+            is_short=False,
+        )
+        is None
+    )
 
 
 def test_a_breakout_with_no_measurable_reward_is_still_not_blocked_on_it():
@@ -268,27 +351,43 @@ def test_a_breakout_with_no_measurable_reward_is_still_not_blocked_on_it():
     blocks a ticket."""
     constructor = PortfolioConstructor()
     for setup in ("breakout", "range"):
-        assert constructor._widen_stop_past_noise(
-            "AAA", _analysis("AAA", setup_type=setup), ENTRY, STOP,
-            direction="long", target_price=float("nan"),
-        ) == STOP, setup
+        assert (
+            constructor._widen_stop_past_noise(
+                "AAA",
+                _analysis("AAA", setup_type=setup),
+                ENTRY,
+                STOP,
+                direction="long",
+                target_price=float("nan"),
+            )
+            == STOP
+        ), setup
 
 
 # ==========================================================================
 # Type A / range — a real ratio, used as a signal rather than a cutoff
 # ==========================================================================
 
+
 def test_a_range_trades_ratio_is_computed_from_its_own_real_levels():
     """Both sides measured, neither guessed: risk is entry to the computed
     support the stop sits on, reward is entry to the computed resistance
     `_derive_target` picks. 15 / 5 = 3.00 and 2 / 5 = 0.40."""
     constructor = PortfolioConstructor()
-    assert constructor.real_reward_risk_preview(
-        _analysis("AAA", setup_type="range", upper_level=FAT_LEVEL), "long",
-    ) == 3.0
-    assert constructor.real_reward_risk_preview(
-        _analysis("AAA", setup_type="range", upper_level=THIN_LEVEL), "long",
-    ) == 0.4
+    assert (
+        constructor.real_reward_risk_preview(
+            _analysis("AAA", setup_type="range", upper_level=FAT_LEVEL),
+            "long",
+        )
+        == 3.0
+    )
+    assert (
+        constructor.real_reward_risk_preview(
+            _analysis("AAA", setup_type="range", upper_level=THIN_LEVEL),
+            "long",
+        )
+        == 0.4
+    )
 
 
 def test_a_weak_range_ratio_is_not_rejected_and_ranks_below_a_strong_one():
@@ -301,27 +400,29 @@ def test_a_weak_range_ratio_is_not_rejected_and_ranks_below_a_strong_one():
     weak = _analysis("WEAK", setup_type="range", upper_level=THIN_LEVEL)
     analyses = [weak, strong]
     constructor = PortfolioConstructor()
-    real_map = {
-        a.symbol: constructor.real_reward_risk_preview(a, "long")
-        for a in analyses
-    }
+    real_map = {a.symbol: constructor.real_reward_risk_preview(a, "long") for a in analyses}
     assert real_map == {"STRG": 3.0, "WEAK": 0.4}
 
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=analyses, positions=[], news_intel=None,
-        earnings_analyses=[], macro_analysis=None, smart_money_findings=[],
+        analyses=analyses,
+        positions=[],
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=None,
+        smart_money_findings=[],
         symbol_sectors={},
     )
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=analyses, evidence_registry=registry,
-        allowed_buy_symbols={"STRG", "WEAK"}, active_state_changes="",
+        analyses=analyses,
+        evidence_registry=registry,
+        allowed_buy_symbols={"STRG", "WEAK"},
+        active_state_changes="",
         real_reward_risk_by_symbol=real_map,
     )
     assert blocked == {}, "a thin-but-real payoff is not a refusal any more"
     assert [c.symbol for c in ranked] == ["STRG", "WEAK"]
     assert ranked[0].score == ranked[1].score, (
-        "they must genuinely tie on the composite, or this is not testing "
-        "the reward:risk signal at all"
+        "they must genuinely tie on the composite, or this is not testing the reward:risk signal at all"
     )
     assert ranked[0].components["risk_reward_tiebreak"] == 3.0
     assert ranked[1].components["risk_reward_tiebreak"] == 0.4
@@ -334,6 +435,7 @@ def test_the_weak_range_trade_is_now_refused_not_resized():
     distinction the old test drew — refuse versus shrink — still holds, and
     the answer flipped to "refuse": nothing here is resized."""
     orders = _build(
-        _analysis("AAA", setup_type="range"), risk=3.0,
+        _analysis("AAA", setup_type="range"),
+        risk=3.0,
     )
     assert orders == []

@@ -14,6 +14,7 @@ import math
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
 
+
 def _price_is_through_stop(price: float, stop_price: float, *, is_short: bool) -> bool:
     """Has the tape passed a protective stop's trigger?
 
@@ -41,6 +42,7 @@ def _price_is_through_stop(price: float, stop_price: float, *, is_short: bool) -
     if px <= 0 or stop <= 0:
         return False
     return (px > stop) if is_short else (px < stop)
+
 
 def _position_notional(position, qty: float) -> float:
     """Dollar value of `qty` shares of `position`, or 0.0 if unknowable.
@@ -78,7 +80,11 @@ class CoverageElection:
         pass
 
     def _elected_unfilled_stop_row(
-        self, position, specs, *, is_short: bool,
+        self,
+        position,
+        specs,
+        *,
+        is_short: bool,
     ) -> dict | None:
         """One row per position whose protective stop has FIRED and has not
         FILLED, or None when nothing is in that state. Never raises.
@@ -125,7 +131,8 @@ class CoverageElection:
         # highest elected stop, for a short the lowest. Derived from the
         # orders themselves, not chosen.
         worst = (min if is_short else max)(
-            through, key=lambda r: r["stop_price"],
+            through,
+            key=lambda r: r["stop_price"],
         )
         stop_price = float(worst["stop_price"])
         distance = (price - stop_price) if is_short else (stop_price - price)
@@ -137,8 +144,12 @@ class CoverageElection:
             "fill, so the coverage sweep counts those shares as protected "
             "while nothing is standing watch. Detected only; nothing was "
             "sold, cancelled or replaced.",
-            "short" if is_short else "long", symbol, price, distance,
-            stop_price, stranded,
+            "short" if is_short else "long",
+            symbol,
+            price,
+            distance,
+            stop_price,
+            stranded,
         )
         return {
             "symbol": symbol,

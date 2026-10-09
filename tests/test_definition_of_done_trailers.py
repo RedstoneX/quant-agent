@@ -92,10 +92,7 @@ def test_prose_after_a_non_gate_colon_line_is_left_alone():
     sentence under it, the normaliser would be silently rewriting prose it has
     no business touching — so only the gate's own keys pull a continuation.
     """
-    text = (
-        "Note: this paragraph explains the change\n"
-        "and continues on a second line that must not be joined.\n"
-    )
+    text = "Note: this paragraph explains the change\nand continues on a second line that must not be joined.\n"
     assert dod.unwrap_trailers(text) == text
 
 
@@ -112,4 +109,3 @@ def test_a_blank_line_ends_a_continuation():
     assert len(objections) == 1
     assert "wraps onto this line" in objections[0][1]
     assert "unrelated paragraph" not in objections[0][1]
-

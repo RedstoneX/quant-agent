@@ -39,6 +39,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
 from src.nomination_evidence import persist_nomination_summary
 from src.stage_risk import _persist_dropped_reasons  # noqa: F401  moved with RiskStage
 from src.sentinel.morning_guarded import record_morning_fault
+
 if TYPE_CHECKING:
     from src.agents.earnings_analyst import EarningsAnalystAgent
     from src.agents.macro_analyst import MacroAnalystAgent
@@ -49,7 +50,8 @@ if TYPE_CHECKING:
     from src.config import AppConfig
     from src.data.earnings import EarningsDataProvider
     from src.data.event_calendar import (
-        FOMCCalendarProvider, MacroEventCalendarProvider,
+        FOMCCalendarProvider,
+        MacroEventCalendarProvider,
     )
     from src.data.macro import MacroDataProvider
     from src.data.macro_store import MacroStore
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
     from src.data.tech_store import TechStore
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
+
 
 class MorningResearchStage:
     """Parallel data + LLM fan-out at morning open.
@@ -193,8 +196,8 @@ class MorningResearchStage:
         smart_money_provider_error = None
         if smart_config and smart_config.enabled and self.smart_money_provider:
             try:
-                smart_money_observations, smart_money_provider_error = (
-                    self.smart_money_provider.fetch(self.config.trading.universe)
+                smart_money_observations, smart_money_provider_error = self.smart_money_provider.fetch(
+                    self.config.trading.universe
                 )
             except Exception as exc:
                 record_morning_fault(self, "smart_money_fetch", exc)
@@ -205,9 +208,7 @@ class MorningResearchStage:
                 admitted, admissions = self._admit_smart_money_candidates(
                     smart_money_observations,
                 )
-                ctx.admitted_symbols = {
-                    str(symbol).strip().upper() for symbol in admitted if str(symbol).strip()
-                }
+                ctx.admitted_symbols = {str(symbol).strip().upper() for symbol in admitted if str(symbol).strip()}
                 ctx.smart_money_admissions = dict(admissions or {})
             except Exception as exc:
                 # Admission uncertainty fails closed; the observations can
@@ -230,16 +231,13 @@ class MorningResearchStage:
                 ctx.admitted_symbols.add(symbol)
                 ctx.smart_money_admissions[symbol] = screened_details.get(symbol, {})
         configured_symbols = [
-            str(symbol).strip().upper()
-            for symbol in self.config.trading.universe if str(symbol).strip()
+            str(symbol).strip().upper() for symbol in self.config.trading.universe if str(symbol).strip()
         ]
         # Fresh run-scoped SEC admissions are the reason this session has an
         # expanded research surface.  Put them first so a large configured
         # universe cannot strand the transient opportunity in the final Tech
         # chunk after earlier chunks consume the bounded recovery budget.
-        effective_symbols = list(dict.fromkeys(
-            sorted(ctx.admitted_symbols) + configured_symbols
-        ))
+        effective_symbols = list(dict.fromkeys(sorted(ctx.admitted_symbols) + configured_symbols))
 
         # FULL-BOOK SEARCH THROTTLE (src/research_throttle.py, owner ask
         # 2026-09-30). Hunting for new trades costs paid model and paid
@@ -253,6 +251,7 @@ class MorningResearchStage:
         ctx.search_throttled_reason = None
         try:
             from src.research_throttle import full_book_reason, narrow_to_held
+
             positions = getattr(ctx, "positions", None) or []
             equity = float(getattr(ctx, "total_value", 0.0) or 0.0)
             held, deployed_usd, gross_usd = [], 0.0, 0.0
@@ -279,22 +278,24 @@ class MorningResearchStage:
                     deployable_cash=getattr(ctx, "deployable_cash", None),
                     deployed_pct=deployed_usd / equity * 100,
                     gross_pct=gross_usd / equity * 100,
-                    max_total_position_pct=getattr(
-                        risk_cfg, "max_total_position_pct", None),
-                    max_gross_exposure_x=getattr(
-                        risk_cfg, "max_gross_exposure_x", None),
+                    max_total_position_pct=getattr(risk_cfg, "max_total_position_pct", None),
+                    max_gross_exposure_x=getattr(risk_cfg, "max_gross_exposure_x", None),
                 )
             if reason:
                 before = len(effective_symbols)
                 effective_symbols = narrow_to_held(
-                    effective_symbols, held, getattr(ctx, "admitted_symbols", None),
+                    effective_symbols,
+                    held,
+                    getattr(ctx, "admitted_symbols", None),
                 )
                 ctx.search_throttled_reason = reason
                 logger.info(
                     "Full-book search throttle: %s — research surface %d -> %d "
                     "symbols (held + free admissions only); holdings review "
                     "unchanged.",
-                    reason, before, len(effective_symbols),
+                    reason,
+                    before,
+                    len(effective_symbols),
                 )
         except Exception as exc:  # noqa: BLE001 - never block research
             record_morning_fault(self, "search_throttle", exc)
@@ -314,11 +315,15 @@ class MorningResearchStage:
                     pass
         for symbol, admission in ctx.smart_money_admissions.items():
             import json as _json
+
             screened = admission.get("reason") == "universe_screen_admission"
             _persist_evidence(
-                self.db, run_id=ctx.run_id,
+                self.db,
+                run_id=ctx.run_id,
                 agent_name="universe_screen" if screened else "smart_money_analyst",
-                kind="admission", scope="symbol", symbol=symbol,
+                kind="admission",
+                scope="symbol",
+                symbol=symbol,
                 evidence_json=_json.dumps(admission, sort_keys=True),
             )
             # The deterministic admission record has its own ``reason``
@@ -330,7 +335,11 @@ class MorningResearchStage:
             admission_details = dict(admission)
             admission_reason = admission_details.pop("reason", None)
             _record_pipeline_event(
-                self, ctx, symbol, "opportunity", "admitted",
+                self,
+                ctx,
+                symbol,
+                "opportunity",
+                "admitted",
                 "universe_screen_admission" if screened else "smart_money_form4_admission",
                 admission_reason=admission_reason,
                 **admission_details,
@@ -411,13 +420,17 @@ class MorningResearchStage:
                         logger.warning(
                             "Macro verdict formed on an incomplete set — "
                             "regime=%s confidence=%s stamped coverage_state=%s (%s)",
-                            analysis.regime, analysis.confidence, state, note,
+                            analysis.regime,
+                            analysis.confidence,
+                            state,
+                            note,
                         )
                 except Exception as e:  # noqa: BLE001 — a stamp must never lose the verdict
                     record_morning_fault(self, "macro_coverage_stamp", e)
             if analysis:
                 try:
                     from src.data.macro_store import series_prints_from_summary
+
                     self.macro_store.save_last_state(
                         analysis.model_dump(),
                         series_prints=series_prints_from_summary(
@@ -428,8 +441,14 @@ class MorningResearchStage:
                 except Exception as e:
                     record_morning_fault(self, "macro_last_state", e)
             return (
-                macro_summary, analysis, result, macro_coverage,
-                macro_events, event_coverage, fomc_meetings, fomc_coverage,
+                macro_summary,
+                analysis,
+                result,
+                macro_coverage,
+                macro_events,
+                event_coverage,
+                fomc_meetings,
+                fomc_coverage,
             )
 
         # Filled by `_run_news` below (same thread-pool fan-out), read after
@@ -447,10 +466,7 @@ class MorningResearchStage:
             # broker snapshot's own order, admitted_symbols is sorted()
             # rather than iterated as a raw set — so the selection is
             # reproducible in the offline rehearsal rig.
-            held = [
-                str(getattr(p, "symbol", "")).strip().upper()
-                for p in ctx.positions if getattr(p, "qty", 0)
-            ]
+            held = [str(getattr(p, "symbol", "")).strip().upper() for p in ctx.positions if getattr(p, "qty", 0)]
             held = [s for s in held if s]
             candidates = sorted(ctx.admitted_symbols)
             # Board item 152: remember WHICH names this seat was asked about,
@@ -460,8 +476,11 @@ class MorningResearchStage:
             news_symbols_asked.update(candidates)
             try:
                 return self._run_news_update(
-                    ctx.run_id, session="morning", universe=effective_symbols,
-                    held_symbols=held, candidate_symbols=candidates,
+                    ctx.run_id,
+                    session="morning",
+                    universe=effective_symbols,
+                    held_symbols=held,
+                    candidate_symbols=candidates,
                 )
             except TypeError as exc:
                 # Test doubles (and any future caller) may inject a
@@ -506,23 +525,32 @@ class MorningResearchStage:
             # open; price-vs-level judgement needs the live price (2026-09-14).
             live_context = self._live_context([s["symbol"] for s in all_symbols_data])
             symbols_data = [
-                s for s in all_symbols_data
+                s
+                for s in all_symbols_data
                 if (
                     s["symbol"] in ctx.admitted_symbols
                     or self._has_actionable_signal(
-                        s["indicators"], s["symbol"], s["bars"], ctx.positions,
+                        s["indicators"],
+                        s["symbol"],
+                        s["bars"],
+                        ctx.positions,
                         **self._live_price_kwarg(live_context, s["symbol"]),
                     )
                 )
             ]
             logger.info(
                 "Tech pre-filter: %d/%d symbols have actionable signals",
-                len(symbols_data), len(all_symbols_data),
+                len(symbols_data),
+                len(all_symbols_data),
             )
             for candidate in symbols_data:
                 _record_pipeline_event(
-                    self, ctx, candidate["symbol"], "opportunity",
-                    "discovered", "actionable_technical_prefilter",
+                    self,
+                    ctx,
+                    candidate["symbol"],
+                    "opportunity",
+                    "discovered",
+                    "actionable_technical_prefilter",
                 )
             if not symbols_data:
                 return {}, None
@@ -551,19 +579,12 @@ class MorningResearchStage:
                 prior_macro_regime=prior_macro_state.get("regime"),
                 prior_macro_outlook=prior_macro_state.get("equity_outlook"),
                 intraday_context={
-                    s["symbol"]: live_context[s["symbol"]]
-                    for s in symbols_data if s["symbol"] in live_context
+                    s["symbol"]: live_context[s["symbol"]] for s in symbols_data if s["symbol"] in live_context
                 },
             )
-            ctx.tech_unreadable = dict(
-                getattr(self.tech_analyst, "last_unreadable", None) or {}
-            )
-            ctx.tech_unanswered = set(
-                getattr(self.tech_analyst, "last_unanswered", None) or set()
-            )
-            ctx.tech_unanswered = set(
-                getattr(self.tech_analyst, "last_unanswered", None) or set()
-            )
+            ctx.tech_unreadable = dict(getattr(self.tech_analyst, "last_unreadable", None) or {})
+            ctx.tech_unanswered = set(getattr(self.tech_analyst, "last_unanswered", None) or set())
+            ctx.tech_unanswered = set(getattr(self.tech_analyst, "last_unanswered", None) or set())
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
                 try:
@@ -579,17 +600,27 @@ class MorningResearchStage:
         def _load_earnings():
             try:
                 return self._load_earnings_analyses(
-                    ctx.run_id, session="morning", ctx=ctx, universe=effective_symbols,
+                    ctx.run_id,
+                    session="morning",
+                    ctx=ctx,
+                    universe=effective_symbols,
                 )
             except TypeError as exc:
                 if "unexpected keyword argument 'universe'" not in str(exc):
                     raise
                 return self._load_earnings_analyses(
-                    ctx.run_id, session="morning", ctx=ctx,
+                    ctx.run_id,
+                    session="morning",
+                    ctx=ctx,
                 )
 
         def _run_smart_money():
-            if not smart_config or not smart_config.enabled or not self.smart_money_provider or not self.smart_money_analyst:
+            if (
+                not smart_config
+                or not smart_config.enabled
+                or not self.smart_money_provider
+                or not self.smart_money_analyst
+            ):
                 return [], None, smart_money_provider_error, None
             if not smart_money_observations:
                 return [], None, smart_money_provider_error, None
@@ -658,19 +689,16 @@ class MorningResearchStage:
         # that condition is TRUE on any ordinary residue and reports
         # `partial`, which is why the 2026-09-18 discovery regression sat
         # green for five sessions while external insider coverage was zero.
-        sm_market_wide_blind = isinstance(sm_coverage, dict) and bool(
-            sm_coverage.get("market_wide_blind")
-        )
+        sm_market_wide_blind = isinstance(sm_coverage, dict) and bool(sm_coverage.get("market_wide_blind"))
         sm_coverage_incomplete = isinstance(sm_coverage, dict) and (
-            not sm_coverage.get("known")
-            or bool(sm_coverage.get("unread"))
-            or sm_edgar_unverified
+            not sm_coverage.get("known") or bool(sm_coverage.get("unread")) or sm_edgar_unverified
         )
         try:
             findings, sm_result, provider_error, analysis_error = smart_money_future.result()
             ctx.smart_money_findings = findings
             ctx.smart_money_provider_error = provider_error or analysis_error
             import json as _sm_json
+
             # Board item 63. The sale side of the insider signal, recorded
             # because nothing else records it: the fetch truncation puts
             # admission-eligible buys first and admission requires a buy,
@@ -681,37 +709,48 @@ class MorningResearchStage:
             _sale_census = _probe_sale_census(self.smart_money_provider)
             if _sale_census:
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id,
+                    self.db,
+                    run_id=ctx.run_id,
                     agent_name="smart_money_analyst",
-                    kind="insider_sale_census", scope="run",
+                    kind="insider_sale_census",
+                    scope="run",
                     evidence_json=_sm_json.dumps(_sale_census),
                 )
             _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
-                kind="scan_summary", scope="run",
-                evidence_json=_sm_json.dumps({
-                    "source": "SEC Form 4",
-                    "observations": len(smart_money_observations),
-                    "findings": len(findings),
-                    "temporary_admissions": sorted(ctx.admitted_symbols),
-                    "state": (
-                        "degraded" if provider_error or analysis_error else
-                        "material" if findings else "quiet"
-                    ),
-                    # Watched-name read-through as of the pre-market pass:
-                    # {known, as_of, watched, read_through, unread[symbols]}.
-                    "coverage": sm_coverage,
-                    # Congressional disclosures lag the trade by weeks
-                    # (median 60 days measured 2026-09-19); this is how old the
-                    # newest one is, so nothing reads it as current news.
-                    "congressional": sm_congressional,
-                }, sort_keys=True, default=str),
+                self.db,
+                run_id=ctx.run_id,
+                agent_name="smart_money_analyst",
+                kind="scan_summary",
+                scope="run",
+                evidence_json=_sm_json.dumps(
+                    {
+                        "source": "SEC Form 4",
+                        "observations": len(smart_money_observations),
+                        "findings": len(findings),
+                        "temporary_admissions": sorted(ctx.admitted_symbols),
+                        "state": (
+                            "degraded" if provider_error or analysis_error else "material" if findings else "quiet"
+                        ),
+                        # Watched-name read-through as of the pre-market pass:
+                        # {known, as_of, watched, read_through, unread[symbols]}.
+                        "coverage": sm_coverage,
+                        # Congressional disclosures lag the trade by weeks
+                        # (median 60 days measured 2026-09-19); this is how old the
+                        # newest one is, so nothing reads it as current news.
+                        "congressional": sm_congressional,
+                    },
+                    sort_keys=True,
+                    default=str,
+                ),
             )
             if provider_error:
                 data_status["smart_money"] = "degraded" if findings else "provider_error"
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
-                    kind="provider_error", scope="run",
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    kind="provider_error",
+                    scope="run",
                     evidence_json=__import__("json").dumps({"error": provider_error}),
                 )
             if sm_result is not None:
@@ -720,22 +759,30 @@ class MorningResearchStage:
                     sm_log_kwargs["status"] = "agent_failure"
                 self.db.insert_agent_log(
                     **seat_acceptance_kwargs("agent_failure" if analysis_error else None),
-                    agent_name="smart_money_analyst", run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    run_id=ctx.run_id,
                     input_summary=f"{len(findings)} material findings",
                     input_message=sm_result.user_message,
                     output_summary=(
-                        f"agent_failure:{analysis_error}" if analysis_error else
-                        (", ".join(f"{f.symbol}:{f.stance}" for f in findings) or "no material findings")
+                        f"agent_failure:{analysis_error}"
+                        if analysis_error
+                        else (", ".join(f"{f.symbol}:{f.stance}" for f in findings) or "no material findings")
                     ),
-                    full_response=sm_result.raw_text, model=sm_result.model,
-                    tokens_used=sm_result.tokens_used, input_tokens=sm_result.input_tokens,
-                    output_tokens=sm_result.output_tokens, cost_usd=sm_result.cost_usd,
+                    full_response=sm_result.raw_text,
+                    model=sm_result.model,
+                    tokens_used=sm_result.tokens_used,
+                    input_tokens=sm_result.input_tokens,
+                    output_tokens=sm_result.output_tokens,
+                    cost_usd=sm_result.cost_usd,
                     **sm_log_kwargs,
                 )
                 if analysis_error:
                     _persist_evidence(
-                        self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
-                        kind="agent_failure", scope="run",
+                        self.db,
+                        run_id=ctx.run_id,
+                        agent_name="smart_money_analyst",
+                        kind="agent_failure",
+                        scope="run",
                         evidence_json=__import__("json").dumps({"error": analysis_error}),
                     )
                     data_status["smart_money"] = "degraded"
@@ -746,15 +793,16 @@ class MorningResearchStage:
                 is_candidate = (
                     symbol in set(configured_symbols)
                     or symbol in ctx.admitted_symbols
-                    or any(
-                        str(getattr(position, "symbol", "") or "").upper() == symbol
-                        for position in ctx.positions
-                    )
+                    or any(str(getattr(position, "symbol", "") or "").upper() == symbol for position in ctx.positions)
                 )
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
-                    kind="finding", scope="symbol" if is_candidate else "research",
-                    symbol=symbol, evidence_json=finding.model_dump_json(),
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    kind="finding",
+                    scope="symbol" if is_candidate else "research",
+                    symbol=symbol,
+                    evidence_json=finding.model_dump_json(),
                 )
             if sm_result is None and not provider_error:
                 data_status["smart_money"] = "ok" if findings else "empty"
@@ -770,22 +818,20 @@ class MorningResearchStage:
             # but it cannot speak for watched names whose filings are not
             # all read. `partial` is REPORTED + fresh + counted as degraded
             # (src/evidence_gate.py) — honest on all three.
-            if (
-                sm_coverage_incomplete
-                and data_status.get("smart_money") in ("ok", "empty")
-            ):
+            if sm_coverage_incomplete and data_status.get("smart_money") in ("ok", "empty"):
                 data_status["smart_money"] = "partial"
                 logger.warning(
                     "Smart-money seat is partial: %s of %s watched names read "
                     "through (unread: %s); EDGAR coverage verified=%s "
                     "ratio=%s reasons=%s",
-                    sm_coverage.get("read_through"), sm_coverage.get("watched"),
+                    sm_coverage.get("read_through"),
+                    sm_coverage.get("watched"),
                     ", ".join(sm_coverage.get("unread") or []) or "coverage never recorded",
                     bool(isinstance(sm_edgar, dict) and sm_edgar.get("verified")),
                     (sm_edgar or {}).get("ratio") if isinstance(sm_edgar, dict) else None,
-                    ", ".join(
-                        str(r) for r in ((sm_edgar or {}).get("reasons") or [])
-                    ) if isinstance(sm_edgar, dict) else "no record",
+                    ", ".join(str(r) for r in ((sm_edgar or {}).get("reasons") or []))
+                    if isinstance(sm_edgar, dict)
+                    else "no record",
                 )
             # The market-wide pass read nothing at all. Wins over `partial`
             # and over `ok`/`empty`, and is deliberately a DISTINCT word:
@@ -798,10 +844,7 @@ class MorningResearchStage:
             # exactly as any other degraded seat does — no new channel.
             # It does not override a LOST state (`provider_error`,
             # `truncated`, `degraded`): those are worse and already page.
-            if (
-                sm_market_wide_blind
-                and data_status.get("smart_money") in ("ok", "empty", "partial")
-            ):
+            if sm_market_wide_blind and data_status.get("smart_money") in ("ok", "empty", "partial"):
                 data_status["smart_money"] = "market_wide_blind"
                 logger.error(
                     "Smart-money seat read ZERO market-wide Form 4 filings "
@@ -831,8 +874,14 @@ class MorningResearchStage:
         macro_coverage: "MacroCoverage | None" = None
         try:
             (
-                macro_summary, macro_analysis, ma_result, macro_coverage,
-                macro_events, event_coverage, fomc_meetings, fomc_coverage,
+                macro_summary,
+                macro_analysis,
+                ma_result,
+                macro_coverage,
+                macro_events,
+                event_coverage,
+                fomc_meetings,
+                fomc_coverage,
             ) = macro_future.result()
             # A test double / older caller may hand back something other
             # than a real MacroCoverage (e.g. a bare MagicMock attribute
@@ -863,8 +912,8 @@ class MorningResearchStage:
             # closes on observed rows rather than on someone reading logs.
             try:
                 from src.data.fetch_coverage_record import build_row
-                self.db.insert_fred_fetch_coverage_run(
-                    build_row(ctx.run_id, macro_coverage, event_coverage))
+
+                self.db.insert_fred_fetch_coverage_run(build_row(ctx.run_id, macro_coverage, event_coverage))
             except Exception as e:  # noqa: BLE001 — telemetry never costs the run
                 record_morning_fault(self, "fred_coverage_row", e)
             # Same test-double guard, same reason: anything that is not the
@@ -886,7 +935,8 @@ class MorningResearchStage:
                 # can actually be acted on; the operator gets this log line.
                 logger.warning(
                     "Macro event calendar %s this run: %s",
-                    event_coverage.status.upper(), event_coverage.describe(),
+                    event_coverage.status.upper(),
+                    event_coverage.describe(),
                 )
             if fomc_coverage is not None and not fomc_coverage.measured:
                 # Same reasoning as the line above — the seats are told in
@@ -895,29 +945,35 @@ class MorningResearchStage:
                 # threshold as a side effect.
                 logger.warning(
                     "FOMC calendar %s this run: %s",
-                    fomc_coverage.status.upper(), fomc_coverage.describe(),
+                    fomc_coverage.status.upper(),
+                    fomc_coverage.describe(),
                 )
             if macro_coverage is not None:
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="macro_provider",
-                    kind="coverage", scope="run",
-                    evidence_json=__import__("json").dumps({
-                        "configured": macro_coverage.configured,
-                        "succeeded": macro_coverage.succeeded,
-                        "failed": [
-                            {"series_id": f.series_id, "reason": f.reason}
-                            for f in macro_coverage.failed
-                        ],
-                        "status": macro_coverage.status,
-                    }, sort_keys=True),
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="macro_provider",
+                    kind="coverage",
+                    scope="run",
+                    evidence_json=__import__("json").dumps(
+                        {
+                            "configured": macro_coverage.configured,
+                            "succeeded": macro_coverage.succeeded,
+                            "failed": [{"series_id": f.series_id, "reason": f.reason} for f in macro_coverage.failed],
+                            "status": macro_coverage.status,
+                        },
+                        sort_keys=True,
+                    ),
                 )
             self.db.insert_agent_log(
-                agent_name="macro_analyst", run_id=ctx.run_id,
+                agent_name="macro_analyst",
+                run_id=ctx.run_id,
                 input_summary=f"VIX={macro_summary.get('vix', {}).get('current')}",
                 input_message=ma_result.user_message,
                 output_summary=(
                     f"regime={macro_analysis.regime}, outlook={macro_analysis.equity_outlook}"
-                    if macro_analysis else "parse_error"
+                    if macro_analysis
+                    else "parse_error"
                 ),
                 full_response=ma_result.raw_text,
                 model=ma_result.model,
@@ -932,12 +988,16 @@ class MorningResearchStage:
             if macro_analysis:
                 logger.info(
                     "Macro analysis: regime=%s, outlook=%s, confidence=%s",
-                    macro_analysis.regime, macro_analysis.equity_outlook,
+                    macro_analysis.regime,
+                    macro_analysis.equity_outlook,
                     macro_analysis.confidence,
                 )
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="macro_analyst",
-                    kind="analysis", scope="run",
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="macro_analyst",
+                    kind="analysis",
+                    scope="run",
                     evidence_json=macro_analysis.model_dump_json(),
                 )
             # Coverage is authoritative over parse success: total FRED
@@ -951,14 +1011,16 @@ class MorningResearchStage:
             elif macro_coverage.status == "failed":
                 data_status["macro"] = "failed"
                 logger.error(
-                    "Macro coverage FAILED this run: %s", macro_coverage.describe(),
+                    "Macro coverage FAILED this run: %s",
+                    macro_coverage.describe(),
                 )
             elif not macro_analysis:
                 data_status["macro"] = "parse_error"
             elif macro_coverage.status == "partial":
                 data_status["macro"] = "partial"
                 logger.warning(
-                    "Macro coverage PARTIAL this run: %s", macro_coverage.describe(),
+                    "Macro coverage PARTIAL this run: %s",
+                    macro_coverage.describe(),
                 )
             elif getattr(macro_coverage, "overdue", None):
                 # Every configured series answered, but at least one of them
@@ -976,7 +1038,8 @@ class MorningResearchStage:
                 # untouched.
                 data_status["macro"] = "release_overdue"
                 logger.error(
-                    "Macro prints OVERDUE this run: %s", macro_coverage.describe(),
+                    "Macro prints OVERDUE this run: %s",
+                    macro_coverage.describe(),
                 )
             else:
                 data_status["macro"] = "ok"
@@ -1024,23 +1087,29 @@ class MorningResearchStage:
             news_intel, news_coverage = news_future.result()
             if news_coverage is not None:
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="news_provider",
-                    kind="coverage", scope="run",
-                    evidence_json=__import__("json").dumps({
-                        "configured": news_coverage.configured,
-                        "succeeded": news_coverage.succeeded,
-                        "failed": [
-                            {"name": f.name, "reason": f.reason}
-                            for f in news_coverage.failed
-                        ],
-                        "status": news_coverage.status,
-                    }, sort_keys=True),
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="news_provider",
+                    kind="coverage",
+                    scope="run",
+                    evidence_json=__import__("json").dumps(
+                        {
+                            "configured": news_coverage.configured,
+                            "succeeded": news_coverage.succeeded,
+                            "failed": [{"name": f.name, "reason": f.reason} for f in news_coverage.failed],
+                            "status": news_coverage.status,
+                        },
+                        sort_keys=True,
+                    ),
                 )
             if news_intel:
                 logger.info("News briefing: %s", news_intel.pm_briefing[:200])
                 _persist_evidence(
-                    self.db, run_id=ctx.run_id, agent_name="news_analyst",
-                    kind="analysis", scope="run",
+                    self.db,
+                    run_id=ctx.run_id,
+                    agent_name="news_analyst",
+                    kind="analysis",
+                    scope="run",
                     evidence_json=news_intel.model_dump_json(),
                 )
             # Coverage is authoritative over parse success: total feed
@@ -1054,14 +1123,16 @@ class MorningResearchStage:
             elif news_coverage.status == "failed":
                 data_status["news"] = "failed"
                 logger.error(
-                    "News coverage FAILED this run: %s", news_coverage.describe(),
+                    "News coverage FAILED this run: %s",
+                    news_coverage.describe(),
                 )
             elif not news_intel:
                 data_status["news"] = "parse_error"
             elif news_coverage.status == "partial":
                 data_status["news"] = "partial"
                 logger.warning(
-                    "News coverage PARTIAL this run: %s", news_coverage.describe(),
+                    "News coverage PARTIAL this run: %s",
+                    news_coverage.describe(),
                 )
             else:
                 data_status["news"] = "ok"
@@ -1083,11 +1154,10 @@ class MorningResearchStage:
                     "data/parse_failures/news_analyst_*.json"
                 )
                 _persist_dropped_reasons(
-                    self.db, ctx.run_id,
-                    {("NewsIntelligenceReport", sym): 1
-                     for sym in sorted(news_symbols_asked)},
-                    {("NewsIntelligenceReport", sym): reason
-                     for sym in news_symbols_asked},
+                    self.db,
+                    ctx.run_id,
+                    {("NewsIntelligenceReport", sym): 1 for sym in sorted(news_symbols_asked)},
+                    {("NewsIntelligenceReport", sym): reason for sym in news_symbols_asked},
                     set(),
                 )
             # PM TEST GATE item 4, second half (2026-09-14). A structural
@@ -1124,10 +1194,7 @@ class MorningResearchStage:
                     "dropped to save the rest of the report: %s — those "
                     "fields read ABSENT, not neutral.",
                     len(news_intel.unreadable_fields),
-                    ", ".join(
-                        f"{k}={v!r}"
-                        for k, v in sorted(news_intel.unreadable_fields.items())
-                    ),
+                    ", ".join(f"{k}={v!r}" for k, v in sorted(news_intel.unreadable_fields.items())),
                 )
             # Self-reported confidence is a second, independent signal from
             # the coverage check above: coverage measures whether the wire
@@ -1191,9 +1258,10 @@ class MorningResearchStage:
                 if low_conviction:
                     data_status["tech"] = "low_confidence"
                     logger.warning(
-                        "Tech batch fully resolved but %d/%d read(s) carry the "
-                        "model's own low conviction: %s",
-                        len(low_conviction), len(analyses), ", ".join(low_conviction),
+                        "Tech batch fully resolved but %d/%d read(s) carry the model's own low conviction: %s",
+                        len(low_conviction),
+                        len(analyses),
+                        ", ".join(low_conviction),
                     )
                 else:
                     data_status["tech"] = "ok"
@@ -1202,7 +1270,9 @@ class MorningResearchStage:
                 logger.warning(
                     "Tech batch partial: %d/%d symbols resolved, %d failed "
                     "even after retry — proceeding with the resolved subset",
-                    len(analyses), len(analyses_map), failed_count,
+                    len(analyses),
+                    len(analyses_map),
+                    failed_count,
                 )
             else:
                 data_status["tech"] = "failed"
@@ -1213,7 +1283,8 @@ class MorningResearchStage:
             if ta_result:
                 self.db.insert_agent_log(
                     **seat_acceptance_kwargs("failed" if not analyses else None),
-                    agent_name="tech_analyst", run_id=ctx.run_id,
+                    agent_name="tech_analyst",
+                    run_id=ctx.run_id,
                     input_summary=(
                         f"Batch: {len(analyses)}/{len(analyses_map)} symbols "
                         f"analyzed" + (f", {failed_count} failed" if failed_count else "")
@@ -1230,19 +1301,32 @@ class MorningResearchStage:
                 )
                 for analysis in analyses:
                     _persist_evidence(
-                        self.db, run_id=ctx.run_id, agent_name="tech_analyst",
-                        kind="analysis", scope="symbol", symbol=analysis.symbol,
+                        self.db,
+                        run_id=ctx.run_id,
+                        agent_name="tech_analyst",
+                        kind="analysis",
+                        scope="symbol",
+                        symbol=analysis.symbol,
                         evidence_json=analysis.model_dump_json(),
                     )
                     _record_pipeline_event(
-                        self, ctx, analysis.symbol, "specialist", "evaluated",
+                        self,
+                        ctx,
+                        analysis.symbol,
+                        "specialist",
+                        "evaluated",
                         "technical_analysis_validated",
-                        specialist="tech_analyst", rating=analysis.rating,
+                        specialist="tech_analyst",
+                        rating=analysis.rating,
                     )
                 for symbol, analysis in analyses_map.items():
                     if analysis is None:
                         _record_pipeline_event(
-                            self, ctx, symbol, "specialist", "failed",
+                            self,
+                            ctx,
+                            symbol,
+                            "specialist",
+                            "failed",
                             "technical_analysis_unresolved_after_retry",
                             specialist="tech_analyst",
                         )
@@ -1285,6 +1369,7 @@ class MorningResearchStage:
                     "problem alongside others that were clean."
                 )
             import json as _json
+
             for item in earnings_results:
                 analysis = item.get("analysis") if isinstance(item, dict) else None
                 symbol = item.get("symbol") if isinstance(item, dict) else None
@@ -1293,8 +1378,12 @@ class MorningResearchStage:
                     # see EarningsAnalystAgent._analyze_new/_load_analysis —
                     # never re-derived from raw filing text here.
                     _persist_evidence(
-                        self.db, run_id=ctx.run_id, agent_name="earnings_analyst",
-                        kind="analysis", scope="symbol", symbol=symbol,
+                        self.db,
+                        run_id=ctx.run_id,
+                        agent_name="earnings_analyst",
+                        kind="analysis",
+                        scope="symbol",
+                        symbol=symbol,
                         evidence_json=_json.dumps(analysis),
                     )
         except PaidAnalysisSuspended:
@@ -1337,21 +1426,19 @@ class MorningResearchStage:
         # line is corrected to name what actually degraded: a low-conviction
         # read on a symbol the desk was actually weighing, not a no-view
         # neutral read the model was never going to act on either way.
-        tech_low_confidence_is_noise = (
-            data_status.get("tech") == "low_confidence"
-            and not any(
-                a.conviction == "low" and a.rating != "neutral" for a in analyses
-            )
+        tech_low_confidence_is_noise = data_status.get("tech") == "low_confidence" and not any(
+            a.conviction == "low" and a.rating != "neutral" for a in analyses
         )
         degraded = [
-            k for k, v in data_status.items()
-            if evidence_gate.counts_as_degraded(v)
-            and not (k == "tech" and tech_low_confidence_is_noise)
+            k
+            for k, v in data_status.items()
+            if evidence_gate.counts_as_degraded(v) and not (k == "tech" and tech_low_confidence_is_noise)
         ]
         if degraded:
             logger.error(
                 "Morning research degraded: %s | full status=%s",
-                ",".join(sorted(degraded)), data_status,
+                ",".join(sorted(degraded)),
+                data_status,
             )
         # Parse-level losses are recorded ALONGSIDE data_status, not inside
         # it — same reasoning as `macro_coverage` in RunContext: data_status
@@ -1370,7 +1457,8 @@ class MorningResearchStage:
                 "Analysis items DROPPED at parse during research (%d): %s — "
                 "these candidates were researched and never reached the "
                 "Portfolio Manager",
-                parse_telemetry.total_dropped(), parse_telemetry.describe_dropped(),
+                parse_telemetry.total_dropped(),
+                parse_telemetry.describe_dropped(),
             )
         if parse_telemetry.total_null_coercions():
             logger.warning(
@@ -1380,9 +1468,7 @@ class MorningResearchStage:
                 parse_telemetry.total_null_coercions(),
                 parse_telemetry.describe_null_coercions(),
             )
-        if parse_telemetry.total_hygiene_observations() and not (
-            parse_telemetry.total_hygiene_violations()
-        ):
+        if parse_telemetry.total_hygiene_observations() and not (parse_telemetry.total_hygiene_violations()):
             # Item 214 (2026-10-01): a silent clean run used to look
             # identical to the check never running, which is why nobody
             # could read these counters off production. State the
@@ -1441,15 +1527,23 @@ class MorningResearchStage:
         import json as _json
 
         nominations_by_seat = _collect_seat_nominations(
-            ctx.news_intel, ctx.macro_analysis, ctx.earnings_results,
+            ctx.news_intel,
+            ctx.macro_analysis,
+            ctx.earnings_results,
         )
         total_raw = sum(len(v) for v in nominations_by_seat.values())
         from src.conviction_ledger import normalize_seat as _normalize_seat
+
         for seat, noms in nominations_by_seat.items():
             for nomination in noms:
                 _record_pipeline_event(
-                    self, ctx, nomination.symbol, "opportunity", "nominated",
-                    "research_seat_nomination", seat=seat,
+                    self,
+                    ctx,
+                    nomination.symbol,
+                    "opportunity",
+                    "nominated",
+                    "research_seat_nomination",
+                    seat=seat,
                     conviction=nomination.conviction,
                     observation=nomination.observation,
                     # Item 99: the nominating seat's own falsifier, kept
@@ -1459,9 +1553,7 @@ class MorningResearchStage:
                     # falsifier reads like exit protection the desk does
                     # not actually have.
                     thesis_invalid_if=nomination.thesis_invalid_if,
-                    falsifier_missing=missing_stated_falsifier(
-                        nomination.thesis_invalid_if
-                    ),
+                    falsifier_missing=missing_stated_falsifier(nomination.thesis_invalid_if),
                 )
                 # §9.5: keep what the seat DECLARED so DecisionStage can
                 # RECORD it on the stance. It is a label, not a multiplier —
@@ -1470,7 +1562,8 @@ class MorningResearchStage:
                 # confidence it declared instead. Pure bookkeeping on the
                 # context — no stage below reads this field to decide anything.
                 ctx.nomination_convictions.setdefault(
-                    nomination.symbol.strip().upper(), {},
+                    nomination.symbol.strip().upper(),
+                    {},
                 )[_normalize_seat(seat)] = {
                     "conviction": nomination.conviction,
                     "observation": nomination.observation,
@@ -1480,33 +1573,34 @@ class MorningResearchStage:
         max_per_seat = int(getattr(nom_cfg, "max_per_seat_per_run", 3)) if nom_cfg else 3
         max_total = int(getattr(nom_cfg, "max_total_per_run", 6)) if nom_cfg else 6
         candidates = select_nominations(
-            nominations_by_seat, max_per_seat=max_per_seat, max_total=max_total,
+            nominations_by_seat,
+            max_per_seat=max_per_seat,
+            max_total=max_total,
         )
 
         if not candidates:
             logger.info(
-                "Nomination responder: %d raw nomination(s), 0 candidates "
-                "after caps — no second Technical call.", total_raw,
+                "Nomination responder: %d raw nomination(s), 0 candidates after caps — no second Technical call.",
+                total_raw,
             )
             persist_nomination_summary(
-                self.db, run_id=ctx.run_id, total_raw=total_raw,
+                self.db,
+                run_id=ctx.run_id,
+                total_raw=total_raw,
                 nominations_by_seat=nominations_by_seat,
-                max_per_seat=max_per_seat, max_total=max_total,
-                candidates_selected=0, responder_call_made=False,
+                max_per_seat=max_per_seat,
+                max_total=max_total,
+                candidates_selected=0,
+                responder_call_made=False,
             )
             return
 
-        configured = {
-            str(s).strip().upper() for s in self.config.trading.universe if str(s).strip()
-        }
+        configured = {str(s).strip().upper() for s in self.config.trading.universe if str(s).strip()}
 
         # Out-of-universe candidates must clear the SAME deterministic gate
         # the SEC Form 4 smart-money lane applies — an already-admitted or
         # in-universe symbol needs no gate at all (D3).
-        to_gate = [
-            c for c in candidates
-            if c.symbol not in configured and c.symbol not in ctx.admitted_symbols
-        ]
+        to_gate = [c for c in candidates if c.symbol not in configured and c.symbol not in ctx.admitted_symbols]
         newly_admitted: set[str] = set()
         admission_details: dict[str, dict] = {}
         if to_gate and self._admit_nominated_candidates:
@@ -1526,21 +1620,35 @@ class MorningResearchStage:
                 eligible_candidates.append(c)
             else:
                 _record_pipeline_event(
-                    self, ctx, c.symbol, "opportunity", "rejected",
+                    self,
+                    ctx,
+                    c.symbol,
+                    "opportunity",
+                    "rejected",
                     "nomination_failed_external_admission_gate",
-                    seats=c.seats, conviction=c.conviction,
+                    seats=c.seats,
+                    conviction=c.conviction,
                 )
 
         for symbol, admission in admission_details.items():
             _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="pipeline",
-                kind="admission", scope="symbol", symbol=symbol,
+                self.db,
+                run_id=ctx.run_id,
+                agent_name="pipeline",
+                kind="admission",
+                scope="symbol",
+                symbol=symbol,
                 evidence_json=_json.dumps(admission, sort_keys=True),
             )
             admission_reason = {k: v for k, v in admission.items() if k != "reason"}
             _record_pipeline_event(
-                self, ctx, symbol, "opportunity", "admitted",
-                "nomination_external_admission", **admission_reason,
+                self,
+                ctx,
+                symbol,
+                "opportunity",
+                "admitted",
+                "nomination_external_admission",
+                **admission_reason,
             )
 
         # Widen run-scoped BUY eligibility the SAME way smart-money transient
@@ -1553,9 +1661,14 @@ class MorningResearchStage:
         for c in eligible_candidates:
             if c.symbol in already_analyzed:
                 _record_pipeline_event(
-                    self, ctx, c.symbol, "opportunity", "already_covered",
+                    self,
+                    ctx,
+                    c.symbol,
+                    "opportunity",
+                    "already_covered",
                     "nomination_matched_existing_technical_analysis",
-                    seats=c.seats, conviction=c.conviction,
+                    seats=c.seats,
+                    conviction=c.conviction,
                 )
         needing_responder = [c for c in eligible_candidates if c.symbol not in already_analyzed]
 
@@ -1563,12 +1676,17 @@ class MorningResearchStage:
             logger.info(
                 "Nomination responder: %d raw nomination(s) -> %d candidate(s) "
                 "selected, all already covered by the first Technical batch — "
-                "no second call.", total_raw, len(eligible_candidates),
+                "no second call.",
+                total_raw,
+                len(eligible_candidates),
             )
             persist_nomination_summary(
-                self.db, run_id=ctx.run_id, total_raw=total_raw,
+                self.db,
+                run_id=ctx.run_id,
+                total_raw=total_raw,
                 nominations_by_seat=nominations_by_seat,
-                max_per_seat=max_per_seat, max_total=max_total,
+                max_per_seat=max_per_seat,
+                max_total=max_total,
                 candidates_selected=sorted(c.symbol for c in eligible_candidates),
                 responder_call_made=False,
             )
@@ -1611,9 +1729,7 @@ class MorningResearchStage:
             # Same live-price rule as the main morning Tech pass (2026-09-14).
             intraday_context=self._live_context([s["symbol"] for s in symbols_data]),
         )
-        ctx.tech_unreadable = dict(
-            getattr(self.tech_analyst, "last_unreadable", None) or {}
-        )
+        ctx.tech_unreadable = dict(getattr(self.tech_analyst, "last_unreadable", None) or {})
         resolved = [a for a in analyses_map.values() if a is not None]
         if resolved:
             try:
@@ -1634,10 +1750,9 @@ class MorningResearchStage:
         if ta_result:
             self.db.insert_agent_log(
                 **seat_acceptance_kwargs("failed" if not resolved else None),
-                agent_name="tech_analyst", run_id=ctx.run_id,
-                input_summary=(
-                    f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"
-                ),
+                agent_name="tech_analyst",
+                run_id=ctx.run_id,
+                input_summary=(f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"),
                 input_message=ta_result.user_message,
                 output_summary=", ".join(f"{a.symbol}:{a.rating}" for a in resolved),
                 full_response=ta_result.raw_text,
@@ -1650,21 +1765,36 @@ class MorningResearchStage:
             )
         for a in resolved:
             _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="tech_analyst",
-                kind="analysis", scope="symbol", symbol=a.symbol,
+                self.db,
+                run_id=ctx.run_id,
+                agent_name="tech_analyst",
+                kind="analysis",
+                scope="symbol",
+                symbol=a.symbol,
                 evidence_json=a.model_dump_json(),
             )
             _record_pipeline_event(
-                self, ctx, a.symbol, "specialist", "evaluated",
-                "technical_analysis_validated", specialist="tech_analyst",
-                rating=a.rating, origin="nomination_responder",
+                self,
+                ctx,
+                a.symbol,
+                "specialist",
+                "evaluated",
+                "technical_analysis_validated",
+                specialist="tech_analyst",
+                rating=a.rating,
+                origin="nomination_responder",
             )
         for symbol, a in analyses_map.items():
             if a is None:
                 _record_pipeline_event(
-                    self, ctx, symbol, "specialist", "failed",
+                    self,
+                    ctx,
+                    symbol,
+                    "specialist",
+                    "failed",
                     "technical_analysis_unresolved_after_retry",
-                    specialist="tech_analyst", origin="nomination_responder",
+                    specialist="tech_analyst",
+                    origin="nomination_responder",
                 )
 
         responder_cost = ta_result.cost_usd if ta_result else None
@@ -1674,13 +1804,18 @@ class MorningResearchStage:
             "call (%d resolved) -> cost=%s",
             total_raw,
             len([seat for seat, noms in nominations_by_seat.items() if noms]),
-            len(eligible_candidates), len(symbols_data), len(resolved),
+            len(eligible_candidates),
+            len(symbols_data),
+            len(resolved),
             f"${responder_cost:.4f}" if responder_cost is not None else "unknown",
         )
         persist_nomination_summary(
-            self.db, run_id=ctx.run_id, total_raw=total_raw,
+            self.db,
+            run_id=ctx.run_id,
+            total_raw=total_raw,
             nominations_by_seat=nominations_by_seat,
-                max_per_seat=max_per_seat, max_total=max_total,
+            max_per_seat=max_per_seat,
+            max_total=max_total,
             candidates_selected=sorted(c.symbol for c in eligible_candidates),
             responder_symbols=sorted(s["symbol"] for s in symbols_data),
             responder_call_made=True,

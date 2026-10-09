@@ -127,8 +127,7 @@ def todays_session_snapshot_stamps() -> tuple[datetime, datetime]:
     """
     now = et_now()
     return (
-        now.replace(hour=IN_SESSION_MIN // 60, minute=IN_SESSION_MIN % 60,
-                    second=0, microsecond=0),
+        now.replace(hour=IN_SESSION_MIN // 60, minute=IN_SESSION_MIN % 60, second=0, microsecond=0),
         now.replace(hour=0, minute=0, second=0, microsecond=0),
     )
 

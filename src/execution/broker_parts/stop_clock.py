@@ -16,6 +16,7 @@ already resting.
 OWNER RULING 2026-10-02, "if the market is closed, the market is closed":
 out of hours, cancel nothing, say the level is owed, apply it at the open.
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,20 +56,31 @@ def deferred_payload(symbol: str, specs: list[dict], intended: float | None) -> 
     the level the desk decided on, and `amend_status` routes to the same
     evidence row and owner alert the other non-success outcomes use.
     """
-    legs = [{
-        "id": str(spec.get("id") or ""), "qty": spec.get("qty"),
-        "old_stop": spec.get("stop_price"), "new_stop": intended,
-        "new_id": None, "outcome": "deferred",
-        "detail": "market closed: nothing cancelled, the level is owed to the open",
-    } for spec in specs]
-    return {"id": None, "status": AMEND_DEFERRED_MARKET_CLOSED,
-            "amend_status": AMEND_DEFERRED_MARKET_CLOSED,
-            "symbol": symbol, "legs": legs, "intended_stop": intended,
-            "shifted": 0, "total": len(legs)}
+    legs = [
+        {
+            "id": str(spec.get("id") or ""),
+            "qty": spec.get("qty"),
+            "old_stop": spec.get("stop_price"),
+            "new_stop": intended,
+            "new_id": None,
+            "outcome": "deferred",
+            "detail": "market closed: nothing cancelled, the level is owed to the open",
+        }
+        for spec in specs
+    ]
+    return {
+        "id": None,
+        "status": AMEND_DEFERRED_MARKET_CLOSED,
+        "amend_status": AMEND_DEFERRED_MARKET_CLOSED,
+        "symbol": symbol,
+        "legs": legs,
+        "intended_stop": intended,
+        "shifted": 0,
+        "total": len(legs),
+    }
 
 
-def defer_if_closed(placer, symbol: str, specs: list[dict],
-                    intended: float, fresh: list) -> dict | None:
+def defer_if_closed(placer, symbol: str, specs: list[dict], intended: float, fresh: list) -> dict | None:
     """Gate `replace_stop_loss`'s cancel+resubmit fallback on the tape.
 
     Returns the deferred payload when the market is shut (and the caller must
@@ -83,13 +95,14 @@ def defer_if_closed(placer, symbol: str, specs: list[dict],
         "amend does not cover this shape, a cancel+resubmit out of hours "
         "risks opening with NO stop, and a shut tape cannot elect the stop "
         "already resting — so the intended level $%.4f is owed, not lost.",
-        symbol, len(specs), intended,
+        symbol,
+        len(specs),
+        intended,
     )
     return deferred_payload(symbol, specs, intended)
 
 
-def defer_shift_if_closed(placer, symbol: str, specs: list[dict],
-                          shifted: list[dict], amount: float) -> dict | None:
+def defer_shift_if_closed(placer, symbol: str, specs: list[dict], shifted: list[dict], amount: float) -> dict | None:
     """The same gate for the ex-dividend shift's cancel+resubmit fallback.
 
     An un-shifted stop across a shut tape is simply an un-shifted stop; a
@@ -102,16 +115,18 @@ def defer_shift_if_closed(placer, symbol: str, specs: list[dict],
         "shift_stops_down: the market is CLOSED, so %s's %d resting stop(s) "
         "were NOT cancelled and not shifted by $%.4f. Nothing is exposed "
         "meanwhile; the shift is owed to the next open.",
-        symbol, len(specs), amount,
+        symbol,
+        len(specs),
+        amount,
     )
-    payload = deferred_payload(
-        symbol, specs, shifted[0]["stop_price"] if shifted else None)
+    payload = deferred_payload(symbol, specs, shifted[0]["stop_price"] if shifted else None)
     payload["mode"] = "deferred_market_closed"
     return payload
 
 
-def reprotect_or_naked(placer, symbol: str, qty, side: str, intended: float,
-                       cancelled_specs: list[dict], window) -> dict | None:
+def reprotect_or_naked(
+    placer, symbol: str, qty, side: str, intended: float, cancelled_specs: list[dict], window
+) -> dict | None:
     """Last resort after a cancel landed, the resubmit failed AND the rollback
     of the original stop failed: the broker holds a real position with NO
     protective order.
@@ -126,22 +141,25 @@ def reprotect_or_naked(placer, symbol: str, qty, side: str, intended: float,
     logger.error(
         "replace_stop_loss: %s has no confirmed stop protection after a failed "
         "replacement and a failed rollback — re-protecting immediately at $%.4f",
-        symbol, intended,
+        symbol,
+        intended,
     )
     legs: list = []
     try:
-        legs = placer._submit_stop_legs(
-            symbol=symbol, qty=qty, stop_price=intended, side=side)
+        legs = placer._submit_stop_legs(symbol=symbol, qty=qty, stop_price=intended, side=side)
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "replace_stop_loss: the immediate re-protect of %s at $%.4f ALSO "
-            "failed (%s)", symbol, intended, exc,
+            "replace_stop_loss: the immediate re-protect of %s at $%.4f ALSO failed (%s)",
+            symbol,
+            intended,
+            exc,
         )
     if legs and legs[0]:
         logger.warning(
             "replace_stop_loss: %s was left unprotected by a failed replacement "
             "and is protected again at $%.4f on the immediate re-protect",
-            symbol, intended,
+            symbol,
+            intended,
         )
         window.close("reprotected")
         return legs[0]
@@ -149,7 +167,8 @@ def reprotect_or_naked(placer, symbol: str, qty, side: str, intended: float,
         "replace_stop_loss: %s is UNPROTECTED — the stop was cancelled, the "
         "replacement failed, the rollback failed and the immediate re-protect "
         "failed. The next coverage sweep MUST place a stop on %s.",
-        symbol, symbol,
+        symbol,
+        symbol,
     )
     window.close("no_stop_confirmed")
     payload = deferred_payload(symbol, cancelled_specs, intended)

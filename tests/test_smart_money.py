@@ -18,9 +18,13 @@ ET = ZoneInfo("America/New_York")
 def _congress(*, lag=40, age=0, actor="Example Member", direction="buy"):
     disclosed = date.today() - timedelta(days=age)
     return SmartMoneyObservation(
-        symbol="NVDA", actor=actor, direction=direction,
-        transaction_date=disclosed - timedelta(days=lag), disclosure_date=disclosed,
-        source_url="https://example.test/filing", lag_days=lag,
+        symbol="NVDA",
+        actor=actor,
+        direction=direction,
+        transaction_date=disclosed - timedelta(days=lag),
+        disclosure_date=disclosed,
+        source_url="https://example.test/filing",
+        lag_days=lag,
         disclosure_age_days=age,
         freshness="stale" if age > 30 or lag > 45 else "fresh",
         economic_role="historical",
@@ -28,22 +32,41 @@ def _congress(*, lag=40, age=0, actor="Example Member", direction="buy"):
 
 
 def _insider(
-    *, symbol="NVDA", owner="1", direction="buy", value=300_000,
-    age=0, accession="0000000001-26-000001", row=0,
+    *,
+    symbol="NVDA",
+    owner="1",
+    direction="buy",
+    value=300_000,
+    age=0,
+    accession="0000000001-26-000001",
+    row=0,
 ):
     disclosed = date.today() - timedelta(days=age)
     code = "P" if direction == "buy" else "S"
     return SmartMoneyObservation(
-        symbol=symbol, stream="insider", actor=f"Owner {owner}", actor_cik=owner,
-        actor_roles=["director"], direction=direction,
-        transaction_date=disclosed - timedelta(days=2), disclosure_date=disclosed,
+        symbol=symbol,
+        stream="insider",
+        actor=f"Owner {owner}",
+        actor_cik=owner,
+        actor_roles=["director"],
+        direction=direction,
+        transaction_date=disclosed - timedelta(days=2),
+        disclosure_date=disclosed,
         accepted_at=datetime.combine(disclosed, datetime.min.time(), tzinfo=ET),
         source_url=f"https://www.sec.gov/{accession}.txt",
-        accession_number=accession, filing_form="4", transaction_code=code,
-        transaction_row=row, security_title="Common Stock", shares=value / 100,
-        price_per_share=100, transaction_value_usd=value,
-        post_transaction_shares=10_000, ownership_nature="direct",
-        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=age,
+        accession_number=accession,
+        filing_form="4",
+        transaction_code=code,
+        transaction_row=row,
+        security_title="Common Stock",
+        shares=value / 100,
+        price_per_share=100,
+        transaction_value_usd=value,
+        post_transaction_shares=10_000,
+        ownership_nature="direct",
+        listed_exchange="Nasdaq",
+        lag_days=2,
+        disclosure_age_days=age,
         freshness="fresh" if age <= 7 else "delayed",
         economic_role="confirmatory",
     )
@@ -96,23 +119,27 @@ def _submission(*, code="P", acquired="A", form="4", symbol="NVDA"):
 
 
 def _write_rows(provider: SECForm4Provider, rows):
-    provider.stores.observations_path.write_text(json.dumps([
-        row.model_dump(mode="json") for row in rows
-    ]))
+    provider.stores.observations_path.write_text(json.dumps([row.model_dump(mode="json") for row in rows]))
 
 
 def test_congressional_compatibility_remains_conservative():
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
-        summary="one buy", why_now="recently disclosed",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
+        summary="one buy",
+        why_now="recently disclosed",
         observations=[_congress(lag=2)],
     )
     assert finding.economic_role == "historical"
     assert finding.support_eligible is False
 
     cluster = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
-        summary="cluster", why_now="two disclosures",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
+        summary="cluster",
+        why_now="two disclosures",
         observations=[_congress(lag=2, actor="A"), _congress(lag=3, actor="B")],
     )
     assert cluster.support_eligible is True
@@ -138,25 +165,45 @@ def test_sec_insider_actionable_role_is_downgraded_when_directions_conflict():
     to rule out.
     """
     buy_obs = SmartMoneyObservation(
-        symbol="NVDA", stream="insider", actor="Owner 1", actor_cik="1",
-        actor_roles=["director"], direction="buy",
+        symbol="NVDA",
+        stream="insider",
+        actor="Owner 1",
+        actor_cik="1",
+        actor_roles=["director"],
+        direction="buy",
         transaction_date=date.today() - timedelta(days=5),
         disclosure_date=date.today() - timedelta(days=3),
         source_url="https://www.sec.gov/0000000001-26-000001.txt",
-        accession_number="0000000001-26-000001", filing_form="4",
-        transaction_code="P", transaction_row=0, security_title="Common Stock",
-        shares=3_000, price_per_share=100, transaction_value_usd=300_000,
-        post_transaction_shares=10_000, ownership_nature="direct",
-        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=3,
-        freshness="fresh", economic_role="confirmatory",
+        accession_number="0000000001-26-000001",
+        filing_form="4",
+        transaction_code="P",
+        transaction_row=0,
+        security_title="Common Stock",
+        shares=3_000,
+        price_per_share=100,
+        transaction_value_usd=300_000,
+        post_transaction_shares=10_000,
+        ownership_nature="direct",
+        listed_exchange="Nasdaq",
+        lag_days=2,
+        disclosure_age_days=3,
+        freshness="fresh",
+        economic_role="confirmatory",
     )
-    sell_obs = buy_obs.model_copy(update={
-        "actor": "Owner 2", "actor_cik": "2", "direction": "sell",
-        "transaction_code": "S", "accession_number": "0000000002-26-000001",
-    })
+    sell_obs = buy_obs.model_copy(
+        update={
+            "actor": "Owner 2",
+            "actor_cik": "2",
+            "direction": "sell",
+            "transaction_code": "S",
+            "accession_number": "0000000002-26-000001",
+        }
+    )
 
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
         summary="conflicting insider activity",
         why_now="one insider bought, another sold, same week",
         observations=[buy_obs, sell_obs],
@@ -186,21 +233,36 @@ def test_insider_age_alone_does_not_disqualify_support():
     past the old 7-day cutoff -- must still be structurally eligible.
     """
     old_obs = SmartMoneyObservation(
-        symbol="NVDA", stream="insider", actor="Owner 1", actor_cik="1",
-        actor_roles=["director"], direction="buy",
+        symbol="NVDA",
+        stream="insider",
+        actor="Owner 1",
+        actor_cik="1",
+        actor_roles=["director"],
+        direction="buy",
         transaction_date=date.today() - timedelta(days=62),
         disclosure_date=date.today() - timedelta(days=60),
         source_url="https://www.sec.gov/0000000001-26-000001.txt",
-        accession_number="0000000001-26-000001", filing_form="4",
-        transaction_code="P", transaction_row=0, security_title="Common Stock",
-        shares=3_000, price_per_share=100, transaction_value_usd=300_000,
-        post_transaction_shares=10_000, ownership_nature="direct",
-        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=60,
-        freshness="stale", economic_role="confirmatory",
+        accession_number="0000000001-26-000001",
+        filing_form="4",
+        transaction_code="P",
+        transaction_row=0,
+        security_title="Common Stock",
+        shares=3_000,
+        price_per_share=100,
+        transaction_value_usd=300_000,
+        post_transaction_shares=10_000,
+        ownership_nature="direct",
+        listed_exchange="Nasdaq",
+        lag_days=2,
+        disclosure_age_days=60,
+        freshness="stale",
+        economic_role="confirmatory",
     )
 
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
         summary="an insider bought two months ago",
         why_now="old but real, single-direction evidence",
         observations=[old_obs],
@@ -214,19 +276,27 @@ def test_congressional_eligibility_boundary_is_the_stock_act_45_day_deadline():
     """45 days is the actual legal filing deadline (STOCK Act) -- a filer
     right at the deadline is legally on-time, not stale evidence."""
     on_time = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
-        summary="cluster", why_now="two disclosures",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
+        summary="cluster",
+        why_now="two disclosures",
         observations=[
-            _congress(lag=45, actor="A"), _congress(lag=45, actor="B"),
+            _congress(lag=45, actor="A"),
+            _congress(lag=45, actor="B"),
         ],
     )
     assert on_time.support_eligible is True
 
     late = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
-        summary="cluster", why_now="two disclosures",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
+        summary="cluster",
+        why_now="two disclosures",
         observations=[
-            _congress(lag=46, actor="A"), _congress(lag=46, actor="B"),
+            _congress(lag=46, actor="A"),
+            _congress(lag=46, actor="B"),
         ],
     )
     assert late.support_eligible is False
@@ -236,10 +306,7 @@ def test_exact_non_derivative_purchase_parse_preserves_sec_facts(tmp_path):
     provider = SECForm4Provider(data_dir=str(tmp_path))
     rows = provider._parse_submission(
         _submission(),
-        source_url=(
-            "https://www.sec.gov/Archives/edgar/data/1045810/"
-            "000000000126000001/0000000001-26-000001.txt"
-        ),
+        source_url=("https://www.sec.gov/Archives/edgar/data/1045810/000000000126000001/0000000001-26-000001.txt"),
         listed={"1045810": {"NVDA": "Nasdaq"}},
     )
     assert len(rows) == 1  # code A award was discarded before the LLM
@@ -317,11 +384,15 @@ def test_fetch_is_broad_and_only_large_external_purchase_gets_admission(tmp_path
     provider = SECForm4Provider(data_dir=str(tmp_path))
     outside_buy = _insider(symbol="XYZ", direction="buy", value=300_000)
     outside_sell = _insider(
-        symbol="SELL", direction="sell", value=500_000,
+        symbol="SELL",
+        direction="sell",
+        value=500_000,
         accession="0000000002-26-000001",
     )
     core_buy = _insider(
-        symbol="NVDA", direction="buy", value=150_000,
+        symbol="NVDA",
+        direction="buy",
+        value=150_000,
         accession="0000000003-26-000001",
     )
     _write_rows(provider, [outside_buy, outside_sell, core_buy])
@@ -433,9 +504,17 @@ def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, mo
     provider = SECForm4Provider(data_dir=str(tmp_path), max_filings_per_refresh=5)
     listed = {"1045810": {"NVDA": "Nasdaq"}}
     monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
-    monkeypatch.setattr(provider, "_discover", lambda *_: [{
-        "accession": "0000000001-26-000001", "form": "4", "cik": "1045810",
-    }])
+    monkeypatch.setattr(
+        provider,
+        "_discover",
+        lambda *_: [
+            {
+                "accession": "0000000001-26-000001",
+                "form": "4",
+                "cik": "1045810",
+            }
+        ],
+    )
     response = Mock(status_code=200, content=_submission().encode())
     response.raise_for_status.return_value = None
     provider.session.get = Mock(return_value=response)
@@ -452,7 +531,9 @@ def test_analyst_rejects_direction_incompatible_stance(tmp_path):
     analyst.run = lambda **_: AgentResult(
         '{"findings":[{"symbol":"NVDA","stance":"bearish",'
         '"economic_role":"actionable","summary":"wrong",'
-        '"why_now":"new filing"}]}', 1, "test",
+        '"why_now":"new filing"}]}',
+        1,
+        "test",
     )
     findings, _, error = analyst.analyze([_insider()])
     assert findings == []
@@ -470,7 +551,9 @@ def test_analyst_unchanged_evidence_uses_zero_token_cache(tmp_path):
         return AgentResult(
             '{"findings":[{"symbol":"NVDA","stance":"bullish",'
             '"economic_role":"actionable","summary":"large purchase",'
-            '"why_now":"accepted today"}]}', 10, "test",
+            '"why_now":"accepted today"}]}',
+            10,
+            "test",
         )
 
     analyst.run = run
@@ -497,11 +580,13 @@ def test_analyst_cache_key_ignores_age_and_run_membership(tmp_path):
     analyst.run = run
     first = _insider()
     analyst.analyze([first])
-    changed_context = first.model_copy(update={
-        "disclosure_age_days": first.disclosure_age_days + 1,
-        "in_trading_universe": True,
-        "transient_admitted": True,
-    })
+    changed_context = first.model_copy(
+        update={
+            "disclosure_age_days": first.disclosure_age_days + 1,
+            "in_trading_universe": True,
+            "transient_admitted": True,
+        }
+    )
     _, cached_result, error = analyst.analyze([changed_context])
 
     assert error is None
@@ -558,16 +643,17 @@ def test_analyst_compacts_and_ranks_production_shaped_observations():
     assert payload["presented_symbol_count"] == 8
     assert payload["omitted_symbol_count"] == 32
     assert [row["symbol"] for row in payload["symbol_facts"]] == [
-        "S00", "S39", "S38", "S37", "S36", "S35", "S34", "S33",
+        "S00",
+        "S39",
+        "S38",
+        "S37",
+        "S36",
+        "S35",
+        "S34",
+        "S33",
     ]
-    assert all(
-        len(row["representative_transactions"]) <= 3
-        for row in payload["symbol_facts"]
-    )
-    assert all(
-        len(row["representative_transactions"][0]["actor"]) <= 96
-        for row in payload["symbol_facts"]
-    )
+    assert all(len(row["representative_transactions"]) <= 3 for row in payload["symbol_facts"])
+    assert all(len(row["representative_transactions"][0]["actor"]) <= 96 for row in payload["symbol_facts"])
     assert "https://www.sec.gov/Archives/" not in message
     assert len(message) < 15_000
 
@@ -603,9 +689,7 @@ def test_analyst_compaction_does_not_replace_canonical_finding_evidence(tmp_path
     assert error is None
     assert len(compact["symbol_facts"][0]["representative_transactions"]) == 3
     assert len(findings[0].observations) == 5
-    assert {
-        row.accession_number for row in findings[0].observations
-    } == {row.accession_number for row in observations}
+    assert {row.accession_number for row in findings[0].observations} == {row.accession_number for row in observations}
 
 
 def test_analyst_enforces_presented_unique_symbol_boundary(tmp_path):
@@ -618,18 +702,23 @@ def test_analyst_enforces_presented_unique_symbol_boundary(tmp_path):
         )
         for index in range(10)
     ]
-    raw_findings = [{
-        "symbol": observation.symbol,
-        "stance": "bullish",
-        "economic_role": "actionable",
-        "summary": "purchase",
-        "why_now": "recent filing",
-    } for observation in observations]
+    raw_findings = [
+        {
+            "symbol": observation.symbol,
+            "stance": "bullish",
+            "economic_role": "actionable",
+            "summary": "purchase",
+            "why_now": "recent filing",
+        }
+        for observation in observations
+    ]
     raw_findings.append(dict(raw_findings[-1]))
     analyst = object.__new__(SmartMoneyAnalystAgent)
     analyst.synthesis_cache_path = tmp_path / "cache.json"
     analyst.run = lambda **_: AgentResult(
-        json.dumps({"findings": raw_findings}), 10, "test",
+        json.dumps({"findings": raw_findings}),
+        10,
+        "test",
     )
 
     findings, _, error = analyst.analyze(observations)
@@ -638,10 +727,7 @@ def test_analyst_enforces_presented_unique_symbol_boundary(tmp_path):
     assert len(findings) == 8
     assert len({finding.symbol for finding in findings}) == 8
     assert {finding.symbol for finding in findings} == {
-        row["symbol"]
-        for row in _compact_payload(
-            analyst.build_user_message(observations=observations)
-        )["symbol_facts"]
+        row["symbol"] for row in _compact_payload(analyst.build_user_message(observations=observations))["symbol_facts"]
     }
 
 
@@ -652,11 +738,13 @@ def test_analyst_cache_is_bound_to_run_scoped_presented_symbols(tmp_path):
             owner=f"owner-{index}",
             value=(index + 1) * 10_000,
             accession=f"{index + 1:010d}-26-000001",
-        ).model_copy(update={
-            "transient_admission_eligible": True,
-            "admission_eligible": True,
-            "transient_admitted": index == 0,
-        })
+        ).model_copy(
+            update={
+                "transient_admission_eligible": True,
+                "admission_eligible": True,
+                "transient_admitted": index == 0,
+            }
+        )
         for index in range(9)
     ]
     analyst = object.__new__(SmartMoneyAnalystAgent)
@@ -687,24 +775,20 @@ def test_compact_symbol_surfaces_estimated_disclosure_dates_to_the_seat():
     wherever the lag it fed into reaches the prompt -- not just the
     eligibility gate the fix already covers."""
     real = _congress(lag=10, actor="Real Filer")
-    estimated = _congress(lag=45, actor="Guessed Filer").model_copy(
-        update={"disclosure_date_estimated": True}
-    )
+    estimated = _congress(lag=45, actor="Guessed Filer").model_copy(update={"disclosure_date_estimated": True})
     compact = SmartMoneyAnalystAgent._compact_symbol("NVDA", [real, estimated])
     assert compact["disclosure_date_estimated_count"] == 1
 
     # Both observations fit under the representative-transaction cap, so
     # each one's own estimated/real flag must be visible individually, not
     # just as an aggregate count.
-    flags = {
-        row["disclosure_date_estimated"]
-        for row in compact["representative_transactions"]
-    }
+    flags = {row["disclosure_date_estimated"] for row in compact["representative_transactions"]}
     assert flags == {True, False}
 
 
 # --- Board item 63: signal_weight now carries a DIRECTION channel so a
 # --- bearish/contra smart-money row cannot rank or size as a bullish buy. ---
+
 
 def test_signal_direction_channel_signs_by_direction():
     """A buy is bullish (+1); a sale and non-directional codes carry no sign (0)."""
@@ -726,10 +810,7 @@ def test_large_sale_does_not_rank_as_a_bullish_buy_of_equal_size():
     sell_rank = SmartMoneyAnalystAgent._symbol_rank("AAAA", [sell])
     assert buy_rank < sell_rank
     # And at transaction granularity, on identical magnitude.
-    assert (
-        SmartMoneyAnalystAgent._transaction_rank(buy)
-        < SmartMoneyAnalystAgent._transaction_rank(sell)
-    )
+    assert SmartMoneyAnalystAgent._transaction_rank(buy) < SmartMoneyAnalystAgent._transaction_rank(sell)
 
 
 def test_bullish_buy_value_term_is_unchanged_by_the_direction_channel():
@@ -751,15 +832,23 @@ def test_sale_census_counts_and_samples_sales_by_holdings_band():
 
     buy = _insider(direction="buy", accession="0000000001-26-000010")
     sale_small = _insider(
-        direction="sell", accession="0000000001-26-000011",
-    ).model_copy(update={
-        "holdings_fraction": 0.04, "holdings_fraction_band": "under_10pct",
-    })
+        direction="sell",
+        accession="0000000001-26-000011",
+    ).model_copy(
+        update={
+            "holdings_fraction": 0.04,
+            "holdings_fraction_band": "under_10pct",
+        }
+    )
     sale_large = _insider(
-        direction="sell", accession="0000000001-26-000012",
-    ).model_copy(update={
-        "holdings_fraction": 0.80, "holdings_fraction_band": "over_50pct",
-    })
+        direction="sell",
+        accession="0000000001-26-000012",
+    ).model_copy(
+        update={
+            "holdings_fraction": 0.80,
+            "holdings_fraction_band": "over_50pct",
+        }
+    )
 
     census = _sale_census([buy, sale_small, sale_large])
 
@@ -791,7 +880,8 @@ def test_sale_census_row_sample_is_bounded():
 
     sales = [
         _insider(
-            direction="sell", accession=f"0000000001-26-{index:06d}",
+            direction="sell",
+            accession=f"0000000001-26-{index:06d}",
         ).model_copy(update={"holdings_fraction_band": "over_50pct"})
         for index in range(MAX_SALE_CENSUS_ROWS + 25)
     ]
@@ -807,12 +897,19 @@ def test_fetch_stashes_the_sale_census_even_when_truncation_drops_sales(tmp_path
     provider = SECForm4Provider(data_dir=str(tmp_path), max_observations=1)
     rows = [
         _insider(
-            symbol="NVDA", owner="1", direction="buy", value=9_000_000,
+            symbol="NVDA",
+            owner="1",
+            direction="buy",
+            value=9_000_000,
             accession="0000000001-26-000021",
         ).model_dump(mode="json"),
         _insider(
-            symbol="NVDA", owner="2", direction="sell", value=5_000_000,
-            accession="0000000001-26-000022", row=1,
+            symbol="NVDA",
+            owner="2",
+            direction="sell",
+            value=5_000_000,
+            accession="0000000001-26-000022",
+            row=1,
         ).model_dump(mode="json"),
     ]
     (tmp_path / "smart_money").mkdir(parents=True, exist_ok=True)

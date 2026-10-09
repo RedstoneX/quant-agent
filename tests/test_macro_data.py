@@ -80,17 +80,18 @@ def test_get_fed_funds_rate_uses_dff_and_returns_dict(mock_fred_cls):
 def test_get_inflation(mock_fred_cls):
     """Headline + core CPI YoY and MoM; PCE YoY."""
     mock = MagicMock()
+
     # 14 monthly points so YoY (index[-1]/index[-13]) is defined.
     # Build a CPI series rising ~3% per year on headline, ~2.8% on core.
     # YoY is index[-1]/index[-13] − 1 (13 months back, not 14). Step sizes picked
     # so the ratio hits ~target: step such that (base + 13·step)/(base + step) ≈ 1 + target.
     def _fake_series(series_id, **kw):
         if series_id == "CPIAUCSL":
-            vals = [300 + i * 0.75 for i in range(14)]   # ~3.0% YoY
+            vals = [300 + i * 0.75 for i in range(14)]  # ~3.0% YoY
         elif series_id == "CPILFESL":
-            vals = [310 + i * 0.72 for i in range(14)]   # ~2.8% YoY
+            vals = [310 + i * 0.72 for i in range(14)]  # ~2.8% YoY
         elif series_id == "PCEPI":
-            vals = [120 + i * 0.25 for i in range(14)]   # ~2.5% YoY
+            vals = [120 + i * 0.25 for i in range(14)]  # ~2.5% YoY
         else:
             vals = [0.0]
         return pd.Series(vals, index=pd.date_range("2025-03-01", periods=len(vals), freq="MS"))
@@ -114,7 +115,8 @@ def test_get_unemployment(mock_fred_cls):
     # Starting at 3.8%, ending at 4.1% over 13 months → +0.3pp 12m, last 3m +0.1pp
     vals = [3.8, 3.8, 3.9, 3.9, 3.9, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.1, 4.1]
     mock.get_series.return_value = pd.Series(
-        vals, index=pd.date_range("2025-04-01", periods=13, freq="MS"),
+        vals,
+        index=pd.date_range("2025-04-01", periods=13, freq="MS"),
     )
     mock_fred_cls.return_value = mock
 
@@ -221,12 +223,14 @@ def test_staleness_returns_none_for_empty_series():
 # "critical missing data" and pinned the day to low-confidence / 55% cash).
 # ===========================================================================
 
+
 @patch("src.data.macro.time.sleep")
 @patch("src.data.macro.Fred")
 def test_transient_fred_timeout_recovers_on_retry(mock_fred_cls, mock_sleep):
     mock = MagicMock()
     good = pd.Series(
-        [18.5, 19.2], index=pd.date_range("2026-04-01", periods=2, freq="B"),
+        [18.5, 19.2],
+        index=pd.date_range("2026-04-01", periods=2, freq="B"),
     )
     mock.get_series.side_effect = [TimeoutError("The read operation timed out"), good]
     mock_fred_cls.return_value = mock
@@ -264,7 +268,8 @@ def test_persistent_failure_returns_empty_after_bounded_retry(mock_fred_cls, moc
 @patch("src.data.macro.time.sleep")
 @patch("src.data.macro.Fred")
 def test_outage_breaker_stops_retrying_after_consecutive_failed_series(
-    mock_fred_cls, mock_sleep,
+    mock_fred_cls,
+    mock_sleep,
 ):
     """Two series exhausting their retries looks like an outage, not a
     flake — later series must degrade after a single attempt so a full
@@ -281,12 +286,14 @@ def test_outage_breaker_stops_retrying_after_consecutive_failed_series(
     mock_fred_cls.return_value = mock
 
     provider = MacroDataProvider(
-        api_key="test-key", max_retries=1, breaker_after_failed_series=2,
+        api_key="test-key",
+        max_retries=1,
+        breaker_after_failed_series=2,
     )
-    provider.get_vix()              # attempts 2 (1 + retry)
-    provider.get_fed_funds_rate()   # attempts 2 (1 + retry) -> breaker arms
+    provider.get_vix()  # attempts 2 (1 + retry)
+    provider.get_fed_funds_rate()  # attempts 2 (1 + retry) -> breaker arms
     calls_before = mock.get_series.call_count
-    provider.get_unemployment()     # breaker armed: single attempt
+    provider.get_unemployment()  # breaker armed: single attempt
 
     assert calls_before == 4
     assert mock.get_series.call_count == 5
@@ -299,14 +306,18 @@ def test_success_resets_outage_breaker(mock_fred_cls, mock_sleep):
     good = pd.Series([1.0], index=pd.date_range("2026-04-01", periods=1))
     # fail, fail(retry) -> series 1 dead; then success resets the count.
     mock.get_series.side_effect = [
-        TimeoutError("x"), TimeoutError("x"),   # series 1: dead after retry
-        good,                                   # series 2: success -> reset
-        TimeoutError("x"), good,                # series 3: retry still armed
+        TimeoutError("x"),
+        TimeoutError("x"),  # series 1: dead after retry
+        good,  # series 2: success -> reset
+        TimeoutError("x"),
+        good,  # series 3: retry still armed
     ]
     mock_fred_cls.return_value = mock
 
     provider = MacroDataProvider(
-        api_key="test-key", max_retries=1, breaker_after_failed_series=2,
+        api_key="test-key",
+        max_retries=1,
+        breaker_after_failed_series=2,
     )
     provider.get_vix()
     provider.get_fed_funds_rate()
@@ -331,19 +342,24 @@ def test_success_resets_outage_breaker(mock_fred_cls, mock_sleep):
 from datetime import date, timedelta  # noqa: E402
 
 from src.data.macro import (  # noqa: E402
-    FRESHNESS_CURRENT, FRESHNESS_EMPTY, FRESHNESS_OVERDUE, FRESHNESS_UNKNOWN,
+    FRESHNESS_CURRENT,
+    FRESHNESS_EMPTY,
+    FRESHNESS_OVERDUE,
+    FRESHNESS_UNKNOWN,
 )
 
 
 def _info(observation_end: date, last_updated: date):
     """A minimal stand-in for FRED's /fred/series metadata response, which
     fredapi returns as a pandas Series of strings."""
-    return pd.Series({
-        "id": "X",
-        "observation_end": observation_end.isoformat(),
-        "last_updated": f"{last_updated.isoformat()} 08:31:05-05",
-        "frequency_short": "D",
-    })
+    return pd.Series(
+        {
+            "id": "X",
+            "observation_end": observation_end.isoformat(),
+            "last_updated": f"{last_updated.isoformat()} 08:31:05-05",
+            "frequency_short": "D",
+        }
+    )
 
 
 def _daily_series(today: date, *, lag_days: int = 2, points: int = 10):
@@ -358,8 +374,7 @@ def _monthly_series(today: date, *, months_back: int = 1, points: int = 14):
     """A monthly series indexed at the reference-month start, with the most
     recent reference month `months_back` months before the current one —
     i.e. an ordinary CPI/UNRATE profile, weeks old by construction."""
-    end = (pd.Timestamp(today).normalize().replace(day=1)
-           - pd.DateOffset(months=months_back))
+    end = pd.Timestamp(today).normalize().replace(day=1) - pd.DateOffset(months=months_back)
     index = pd.date_range(end=end, periods=points, freq="MS")
     return pd.Series([300.0 + i for i in range(points)], index=index)
 
@@ -382,9 +397,7 @@ def test_daily_series_at_real_fred_lag_is_current_not_stale(mock_fred_cls):
         vix = provider.get_vix()
 
     assert vix["freshness"] == FRESHNESS_CURRENT
-    assert vix["staleness_days"] == 2, (
-        "the age is still reported — it is context for the seat, no longer a gate"
-    )
+    assert vix["staleness_days"] == 2, "the age is still reported — it is context for the seat, no longer a gate"
 
 
 @patch("src.data.macro.Fred")
@@ -405,9 +418,7 @@ def test_monthly_series_weeks_old_is_current_not_stale(mock_fred_cls):
         infl = provider.get_inflation()
 
     assert infl["freshness"] == FRESHNESS_CURRENT
-    assert infl["staleness_days"] > 20, (
-        "fixture must genuinely be weeks old, or it isn't testing the point"
-    )
+    assert infl["staleness_days"] > 20, "fixture must genuinely be weeks old, or it isn't testing the point"
 
 
 @patch("src.data.macro.Fred")
@@ -482,10 +493,12 @@ def test_trailing_holiday_rows_with_no_value_are_not_overdue(mock_fred_cls):
     today = date(2026, 9, 10)
     series = _daily_series(today, lag_days=3)
     # One trailing no-value row the day after the last real reading.
-    series = pd.concat([
-        series,
-        pd.Series([float("nan")], index=[series.index[-1] + pd.Timedelta(days=1)]),
-    ])
+    series = pd.concat(
+        [
+            series,
+            pd.Series([float("nan")], index=[series.index[-1] + pd.Timedelta(days=1)]),
+        ]
+    )
     obs_end = series.index[-1].date()
     mock = MagicMock()
     mock.get_series.return_value = series
@@ -529,11 +542,10 @@ def test_malformed_metadata_does_not_crash_and_reads_unknown(mock_fred_cls):
     mock.get_series.return_value = _daily_series(today, lag_days=2)
     mock_fred_cls.return_value = mock
     for bad in (
-        pd.Series({"id": "X"}),                                   # fields absent
-        pd.Series({"observation_end": "not-a-date",
-                   "last_updated": "also-not-a-date"}),           # unparseable
-        pd.Series({"observation_end": "2026-09-08"}),             # half present
-        "a string, not a metadata row",                           # wrong type
+        pd.Series({"id": "X"}),  # fields absent
+        pd.Series({"observation_end": "not-a-date", "last_updated": "also-not-a-date"}),  # unparseable
+        pd.Series({"observation_end": "2026-09-08"}),  # half present
+        "a string, not a metadata row",  # wrong type
         None,
     ):
         mock.get_series_info.return_value = bad
@@ -556,9 +568,7 @@ def test_empty_series_reports_empty_freshness_and_no_values(mock_fred_cls):
 
     assert vix["freshness"] == FRESHNESS_EMPTY
     assert vix["current"] is None and vix["staleness_days"] is None
-    assert mock.get_series_info.call_count == 0, (
-        "no point asking for metadata about a series that returned nothing"
-    )
+    assert mock.get_series_info.call_count == 0, "no point asking for metadata about a series that returned nothing"
 
 
 @patch("src.data.macro.Fred")
@@ -583,7 +593,8 @@ def test_single_observation_window_cannot_derive_cadence(mock_fred_cls):
     mock = MagicMock()
     mock.get_series.return_value = series
     mock.get_series_info.return_value = _info(
-        date(2026, 9, 8), date(2026, 9, 9),
+        date(2026, 9, 8),
+        date(2026, 9, 9),
     )
     mock_fred_cls.return_value = mock
 
@@ -617,7 +628,6 @@ def test_macro_summary_coverage_carries_overdue_series(mock_fred_cls):
     assert coverage is not None
     assert coverage.overdue_count > 0
     assert coverage.status == "ok", (
-        "the fetch worked — overdue is a publication problem on a separate "
-        "axis from coverage, not a fetch failure"
+        "the fetch worked — overdue is a publication problem on a separate axis from coverage, not a fetch failure"
     )
     assert "OVERDUE" in coverage.describe()

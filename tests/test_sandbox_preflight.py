@@ -110,27 +110,21 @@ def test_allows_an_empty_data_dir(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("variable", ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"])
-def test_refuses_an_inherited_owner_messaging_credential(
-    tmp_path: Path, variable: str
-) -> None:
+def test_refuses_an_inherited_owner_messaging_credential(tmp_path: Path, variable: str) -> None:
     environment = _environment(tmp_path, **{variable: "inherited-from-the-desk"})
     with pytest.raises(SandboxRefusal, match="messaging credentials"):
         check_owner_channel_is_incapable(environment)
 
 
 @pytest.mark.parametrize("spelling", ["0", "false", "off", ""])
-def test_refuses_a_mute_spelling_the_notifier_ignores(
-    tmp_path: Path, spelling: str
-) -> None:
+def test_refuses_a_mute_spelling_the_notifier_ignores(tmp_path: Path, spelling: str) -> None:
     environment = _environment(tmp_path, TELEGRAM_DISABLED=spelling)
     with pytest.raises(SandboxRefusal, match="TELEGRAM_DISABLED"):
         check_owner_channel_is_incapable(environment)
 
 
 @pytest.mark.parametrize("spelling", ["1", "true", "YES"])
-def test_accepts_the_mute_spellings_the_notifier_honours(
-    tmp_path: Path, spelling: str
-) -> None:
+def test_accepts_the_mute_spellings_the_notifier_honours(tmp_path: Path, spelling: str) -> None:
     check_owner_channel_is_incapable(_environment(tmp_path, TELEGRAM_DISABLED=spelling))
 
 

@@ -8,16 +8,16 @@ from src.models.portfolio import RiskModification, SymbolRejection, _normalize_r
 #: the morning one — `portfolio_manager` reads this field's recent history to
 #: self-calibrate and a category it does not know is a silently dropped signal.
 RiskReasonCategory = Literal[
-    "clean",             # approved untouched, no mods
-    "oversized",         # sizing too aggressive vs conviction
-    "rr_fail",           # legacy label: a range BUY cut/refused with reward:risk as a named factor (no universal floor since 2026-09-11; never applies to a breakout)
-    "concentration",     # sector / single-name too heavy
+    "clean",  # approved untouched, no mods
+    "oversized",  # sizing too aggressive vs conviction
+    "rr_fail",  # legacy label: a range BUY cut/refused with reward:risk as a named factor (no universal floor since 2026-09-11; never applies to a breakout)
+    "concentration",  # sector / single-name too heavy
     "correlation_risk",  # theme/factor clustering flagged
-    "event_risk",        # pre-earnings / FOMC / macro event volatility
-    "macro_misalign",    # plan direction contradicts the macro read (legacy: exposure vs a macro target, removed 2026-09-17)
-    "data_degraded",     # multiple upstream sources failed
-    "signal_fidelity",   # PM contradicts TechAnalyst without explanation
-    "other",             # doesn't fit the above
+    "event_risk",  # pre-earnings / FOMC / macro event volatility
+    "macro_misalign",  # plan direction contradicts the macro read (legacy: exposure vs a macro target, removed 2026-09-17)
+    "data_degraded",  # multiple upstream sources failed
+    "signal_fidelity",  # PM contradicts TechAnalyst without explanation
+    "other",  # doesn't fit the above
 ]
 
 
@@ -52,12 +52,15 @@ class RiskReasoningChain(LLMOutputModel):
     which is this chain minus the three steps the exit prompt itself stands
     down or inverts — see that class.
     """
-    rr_audit: str = Field(min_length=1)             # setup-aware since 2026-09-11: breakouts carry no R/R judgement; a range trade's real ratio is an input, not a floor
-    signal_fidelity: str = Field(min_length=1)      # does PM's action align with Tech/Macro/News? silent contradictions?
-    correlation_check: str = Field(min_length=1)    # any hidden cluster / factor concentration across decisions?
-    event_risk: str = Field(min_length=1)           # earnings / FOMC / macro events in the coming 3 days affecting these names?
-    sizing_sanity: str = Field(min_length=1)        # is size proportional to conviction and R/R? any outsized bet?
-    overall: str = Field(min_length=1)              # final synthesis and why approved/rejected/modified
+
+    rr_audit: str = Field(
+        min_length=1
+    )  # setup-aware since 2026-09-11: breakouts carry no R/R judgement; a range trade's real ratio is an input, not a floor
+    signal_fidelity: str = Field(min_length=1)  # does PM's action align with Tech/Macro/News? silent contradictions?
+    correlation_check: str = Field(min_length=1)  # any hidden cluster / factor concentration across decisions?
+    event_risk: str = Field(min_length=1)  # earnings / FOMC / macro events in the coming 3 days affecting these names?
+    sizing_sanity: str = Field(min_length=1)  # is size proportional to conviction and R/R? any outsized bet?
+    overall: str = Field(min_length=1)  # final synthesis and why approved/rejected/modified
 
 
 class ExitRiskReasoningChain(LLMOutputModel):
@@ -92,12 +95,13 @@ class ExitRiskReasoningChain(LLMOutputModel):
     Nothing here touches the morning BUY path — `RiskReasoningChain` is
     unchanged and all six of its fields remain mandatory.
     """
-    rr_audit: str = ""                              # stood down on this path (no entry geometry)
-    signal_fidelity: str = Field(min_length=1)      # does the reviewer's exit align with News/Macro? silent contradictions?
-    correlation_check: str = Field(min_length=1)    # what closing these leaves the book concentrated in
-    event_risk: str = ""                            # instruction inverts on this path; report, never compelled
-    sizing_sanity: str = ""                         # stood down on this path (nothing to size)
-    overall: str = Field(min_length=1)              # final synthesis and why approved/refused
+
+    rr_audit: str = ""  # stood down on this path (no entry geometry)
+    signal_fidelity: str = Field(min_length=1)  # does the reviewer's exit align with News/Macro? silent contradictions?
+    correlation_check: str = Field(min_length=1)  # what closing these leaves the book concentrated in
+    event_risk: str = ""  # instruction inverts on this path; report, never compelled
+    sizing_sanity: str = ""  # stood down on this path (nothing to size)
+    overall: str = Field(min_length=1)  # final synthesis and why approved/refused
 
 
 class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
@@ -117,6 +121,7 @@ class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
     batch with a durable per-symbol reason; nothing on this path zeroes a
     target.
     """
+
     approved: bool
     reasoning_chain: ExitRiskReasoningChain
     # Same semantics as on `RiskVerdict`: each entry kills exactly one exit
@@ -181,5 +186,3 @@ class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
     def _normalize_enum_case(cls, values):
         values = _normalize_rejected_symbols_field(values)
         return _normalize_enum_case_fields(values, lower_fields=("reason_category",))
-
-

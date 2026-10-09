@@ -4,6 +4,7 @@ A silent pass is indistinguishable from a pass that never ran; that is the
 whole defect. These tests are the specification for the four things the
 report must always say.
 """
+
 from src.rotation import (
     ROTATION_FULL_NOTHING_BETTER,
     ROTATION_ROOM_AVAILABLE,
@@ -40,14 +41,16 @@ def test_the_kept_holdings_are_named_as_considered_and_kept():
 
 
 def test_a_cut_is_reported_on_its_conviction_reason_not_on_pnl():
-    lines = pruning_pass_lines(_record(
-        outcome=ROTATION_FULL_NOTHING_BETTER,
-        tier="ineligible_hold",
-        held_symbol="BBB",
-        held_reasons="rating fell below the entry bar",
-        held_below_entry_bar="BBB",
-        held_below_entry_bar_count=1,
-    ))
+    lines = pruning_pass_lines(
+        _record(
+            outcome=ROTATION_FULL_NOTHING_BETTER,
+            tier="ineligible_hold",
+            held_symbol="BBB",
+            held_reasons="rating fell below the entry bar",
+            held_below_entry_bar="BBB",
+            held_below_entry_bar_count=1,
+        )
+    )
     text = " ".join(lines)
     assert "BBB" in text
     assert "rating fell below the entry bar" in text
@@ -73,15 +76,11 @@ def test_the_report_tells_the_truth_if_the_second_tier_is_ever_turned_on():
 def test_no_pruning_block_when_the_pass_did_not_run():
     """Claiming an examined count for a session that never compared
     anything would be the untrue owner line this item exists to remove."""
-    assert pruning_pass_lines(
-        _record(outcome=ROTATION_TELEMETRY_UNAVAILABLE)
-    ) == []
+    assert pruning_pass_lines(_record(outcome=ROTATION_TELEMETRY_UNAVAILABLE)) == []
 
 
 def test_an_empty_book_says_so_rather_than_claiming_a_count():
-    text = " ".join(pruning_pass_lines(
-        _record(held_examined="", held_examined_count=0)
-    ))
+    text = " ".join(pruning_pass_lines(_record(held_examined="", held_examined_count=0)))
     assert "no holdings to examine" in text
     assert "score-margin" in text
 
@@ -141,9 +140,14 @@ def test_below_bar_holding_with_room_and_no_replacement_tells_the_truth():
 def test_below_bar_holding_in_a_full_book_still_says_full():
     from src.rotation import owner_precheck_lines
 
-    text = " ".join(owner_precheck_lines(_precheck_rec(
-        binding="risk_budget", headroom_pct=0.2,
-    )))
+    text = " ".join(
+        owner_precheck_lines(
+            _precheck_rec(
+                binding="risk_budget",
+                headroom_pct=0.2,
+            )
+        )
+    )
     _assert_no_placeholders(text)
     assert "the book is FULL" in text
     assert "0.20% of risk headroom" in text
@@ -154,23 +158,37 @@ def test_below_bar_holding_in_a_full_book_still_says_full():
 
 def test_the_original_outranked_case_is_unchanged():
     from src.rotation import (
-        ROTATION_FULL_OPPORTUNITY, owner_precheck_lines, precheck_outcome,
+        ROTATION_FULL_OPPORTUNITY,
+        owner_precheck_lines,
+        precheck_outcome,
     )
     from src.rotation import RotationOpportunity, RotationPrecheck
 
     opportunity = RotationOpportunity(
-        new_symbol="NEW", new_score=1.8, held_symbol="OLD", held_score=0.9,
+        new_symbol="NEW",
+        new_score=1.8,
+        held_symbol="OLD",
+        held_score=0.9,
         tier="ranked_margin",
     )
     precheck = RotationPrecheck(
-        opportunity=opportunity, headroom_pct=0.2, ceiling_pct=25.0,
+        opportunity=opportunity,
+        headroom_pct=0.2,
+        ceiling_pct=25.0,
         floor_pct=0.5,
     )
     assert precheck_outcome(precheck) == ROTATION_FULL_OPPORTUNITY
-    text = " ".join(owner_precheck_lines(_precheck_rec(
-        outcome=ROTATION_FULL_OPPORTUNITY, binding="risk_budget",
-        headroom_pct=0.2, tier="ranked_margin", new_symbol="NEW",
-    )))
+    text = " ".join(
+        owner_precheck_lines(
+            _precheck_rec(
+                outcome=ROTATION_FULL_OPPORTUNITY,
+                binding="risk_budget",
+                headroom_pct=0.2,
+                tier="ranked_margin",
+                new_symbol="NEW",
+            )
+        )
+    )
     _assert_no_placeholders(text)
     assert "the book is FULL" in text
     assert "NEW outranks OLD, the weakest thing currently using the room" in text
@@ -178,17 +196,25 @@ def test_the_original_outranked_case_is_unchanged():
 
 def test_an_opportunity_without_a_replacement_is_not_the_outranked_outcome():
     from src.rotation import (
-        ROTATION_HOLDING_BELOW_BAR, RotationOpportunity, RotationPrecheck,
+        ROTATION_HOLDING_BELOW_BAR,
+        RotationOpportunity,
+        RotationPrecheck,
         precheck_outcome,
     )
 
     precheck = RotationPrecheck(
         opportunity=RotationOpportunity(
-            new_symbol=None, new_score=None, held_symbol="OLD",
-            held_score=None, tier="ineligible_hold",
+            new_symbol=None,
+            new_score=None,
+            held_symbol="OLD",
+            held_score=None,
+            tier="ineligible_hold",
             reasons=("R2 rating below bar",),
         ),
-        headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
-        entry_budget_usd=50_000.0, min_order_usd=500.0,
+        headroom_pct=14.5,
+        ceiling_pct=25.0,
+        floor_pct=0.5,
+        entry_budget_usd=50_000.0,
+        min_order_usd=500.0,
     )
     assert precheck_outcome(precheck) == ROTATION_HOLDING_BELOW_BAR

@@ -75,7 +75,5 @@ def test_the_block_round_trips_without_losing_a_single_line() -> None:
 def test_logs_directory_is_ignored_so_the_guard_stays_honest() -> None:
     """`logs/` is documented and never committed; if it stops being ignored
     the guard would start failing for a reason that is not drift."""
-    result = subprocess.run(
-        ["git", "check-ignore", "logs/"], capture_output=True, text=True, cwd=README.parent
-    )
+    result = subprocess.run(["git", "check-ignore", "logs/"], capture_output=True, text=True, cwd=README.parent)
     assert result.returncode == 0, "logs/ must stay gitignored"

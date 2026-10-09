@@ -9,6 +9,7 @@ therefore produced nothing the owner could see. These tests pin the
 third, unconditional carrier: its own message, every session, no daily
 claim, no category (so it resolves `risk` and survives the filter).
 """
+
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -61,9 +62,16 @@ def test_banner_text_is_produced_only_when_something_is_naked():
     assert naked_position_alert({"stop_coverage_gaps": []}) is None
     assert naked_position_alert(None) is None
     # An UNREADABLE row asserts nothing about coverage (board item 172).
-    assert naked_position_alert({"stop_coverage_gaps": [
-        {"symbol": "MSFT", "coverage": "unreadable", "read_error": "timeout"},
-    ]}) is None
+    assert (
+        naked_position_alert(
+            {
+                "stop_coverage_gaps": [
+                    {"symbol": "MSFT", "coverage": "unreadable", "read_error": "timeout"},
+                ]
+            }
+        )
+        is None
+    )
     assert [g["symbol"] for g in uncovered_stop_gaps(NAKED)] == ["AAPL"]
 
 
@@ -83,9 +91,7 @@ def test_second_and_third_session_of_the_same_day_still_page(creds, monkeypatch)
 
     conn = sqlite3.connect(str(creds))
     try:
-        rows = conn.execute(
-            "SELECT kind, status FROM notifier_sends ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT kind, status FROM notifier_sends ORDER BY id").fetchall()
     finally:
         conn.close()
     assert rows == [("no_stop_at_all", "sent")] * 4, rows
@@ -94,9 +100,7 @@ def test_second_and_third_session_of_the_same_day_still_page(creds, monkeypatch)
 def test_nothing_is_sent_when_no_position_is_naked(creds):
     with patch("src.notifier.requests.post") as post:
         post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
-        assert send_naked_position_alert(
-            TelegramNotifier(), {"stop_coverage_gaps": []}
-        ) is False
+        assert send_naked_position_alert(TelegramNotifier(), {"stop_coverage_gaps": []}) is False
         assert post.call_count == 0
 
 
@@ -117,8 +121,7 @@ def test_a_session_that_died_still_tells_the_owner_something(creds):
     """
     from src.trader_feed import protection_undetermined_alert
 
-    for result in (None, {"status": "broker_error"}, {"status": "no_data"},
-                   {"status": "evidence_gate_skip"}):
+    for result in (None, {"status": "broker_error"}, {"status": "no_data"}, {"status": "evidence_gate_skip"}):
         text = protection_undetermined_alert(result)
         assert text is not None, result
         assert "UNDETERMINED" in text

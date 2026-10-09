@@ -8,6 +8,7 @@ construction is what the body sees -- collaborators are read live, never
 snapshotted here. The mixin this file used to hold is gone: a mixin is not a
 boundary, because it cannot be built or exercised without its host.
 """
+
 from __future__ import annotations
 
 from src.execution.broker_parts.stop_shifter import StopShifter
@@ -39,6 +40,9 @@ def shift_stops_down(placer, symbol: str, amount: float) -> dict | None:
 def __getattr__(name: str):
     if name in {"_quantize_price", "defer_shift_if_closed", "logger"}:
         import src.execution.broker_parts.stop_shifter as _part
+
         return getattr(_part, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # --- end mirror --------------------------------------------------------------

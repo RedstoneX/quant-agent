@@ -4,13 +4,13 @@ The backlog stop hook blocks a session that closes a board item without an
 adversary argument in the pull request. Moved here unchanged on 2026-10-08 so
 the hook could gain the finish-before-you-start check without growing.
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any
 
 from src.inflight import RETIRED_LINE, WORK_MD, OpenPR, read_open_pull_requests
-
 
 
 #: The owner's rule: no board item is closed until the adversary agent
@@ -43,7 +43,9 @@ ITEM_REF = re.compile(r"\bitems?\s+#?(\d+)\b", re.I)
 ITEM_CLOSED = re.compile(
     r"\b(?:closes?|closing|closed|resolves?|resolved|retires?|retired"
     r"|completes?|completed|finishes?|finished|fixes)\b[^.\n]{0,40}?"
-    r"\bitems?\s+#?(\d+)\b", re.I)
+    r"\bitems?\s+#?(\d+)\b",
+    re.I,
+)
 
 
 def closes_a_board_item(pr: OpenPR) -> str | None:
@@ -90,10 +92,12 @@ def unreviewed_closures(prs: list[OpenPR]) -> list[str]:
     for pr in prs:
         why = closes_a_board_item(pr)
         if why and not has_adversary_evidence(pr.body):
-            out.append(f"PR {pr.number} ({pr.title or 'untitled'}) closes a "
-                       f"board item — {why} — but its description carries no "
-                       f"'Adversary:' line, so nothing argued against closing "
-                       f"it.")
+            out.append(
+                f"PR {pr.number} ({pr.title or 'untitled'}) closes a "
+                f"board item — {why} — but its description carries no "
+                f"'Adversary:' line, so nothing argued against closing "
+                f"it."
+            )
     return out
 
 
@@ -106,8 +110,7 @@ def adversary_gaps(fetch: Any = None) -> list[str]:
     this address — which for an unauthenticated reader is routine.
     """
     try:
-        prs, problem = (read_open_pull_requests(fetch) if fetch
-                        else read_open_pull_requests())
+        prs, problem = read_open_pull_requests(fetch) if fetch else read_open_pull_requests()
     except Exception:  # noqa: BLE001 - this check never breaks a session
         return []
     if problem:

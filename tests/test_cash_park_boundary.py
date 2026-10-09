@@ -5,6 +5,7 @@ built from a stub alone (clause 5 of tests/boundary_harness.py). The host's `_sw
 callable is handed in, never lifted, so the bodies see whatever the host (or a test)
 currently binds under that name.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -48,6 +49,7 @@ def test_deployable_cash_adds_the_parked_value_the_handed_in_sweeper_reports():
 def test_deployable_cash_treats_an_unreadable_parked_value_as_zero():
     def _boom(positions):
         raise RuntimeError("sweep state unreadable")
+
     part = _build(sweeper=lambda: SimpleNamespace(parked_value=_boom))
     assert part._compute_deployable_cash(1_000.0, []) == deployable_cash(1_000.0, 0.0)
 
@@ -67,4 +69,3 @@ def test_news_held_symbols_uses_only_the_investable_split_from_the_sweeper():
     sweeper = SimpleNamespace(split_positions=lambda positions: (investable, ["parked"]))
     part = _build(sweeper=lambda: sweeper)
     assert part._news_held_symbols(["anything"]) == ["KEEP"]
-

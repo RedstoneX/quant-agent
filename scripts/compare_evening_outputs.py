@@ -47,6 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Loaders
 # ---------------------------------------------------------------------------
 
+
 def _load_live(date_iso: str, db_path: str) -> dict:
     """Read the live EveningReport parse from insights table for a date.
 
@@ -56,10 +57,12 @@ def _load_live(date_iso: str, db_path: str) -> dict:
     meta-reflector need. Fills the comparison fields only.
     """
     import sqlite3
+
     c = sqlite3.connect(db_path)
     c.row_factory = sqlite3.Row
     row = c.execute(
-        "SELECT * FROM insights WHERE date = ?", (date_iso,),
+        "SELECT * FROM insights WHERE date = ?",
+        (date_iso,),
     ).fetchone()
     c.close()
     if row is None:
@@ -127,6 +130,7 @@ def _load_shadow(path: Path) -> dict:
 # Comparison primitives
 # ---------------------------------------------------------------------------
 
+
 def _grade_counts(grades: list) -> Counter:
     return Counter((g or {}).get("grade", "?") for g in grades)
 
@@ -136,10 +140,7 @@ def _miss_category_counts(misses: list) -> Counter:
 
 
 def _universe_add_counts(misses: list) -> Counter:
-    return Counter(
-        (m or {}).get("universe_addition_recommendation", "no")
-        for m in misses
-    )
+    return Counter((m or {}).get("universe_addition_recommendation", "no") for m in misses)
 
 
 def _grades_by_symbol(grades: list, key: str = "grade") -> dict:
@@ -152,9 +153,7 @@ def _grades_by_symbol(grades: list, key: str = "grade") -> dict:
 
 
 def _theme_durability_counts(misses: list) -> Counter:
-    return Counter(
-        (m or {}).get("theme_durability", "unknown") for m in misses
-    )
+    return Counter((m or {}).get("theme_durability", "unknown") for m in misses)
 
 
 def _word_count(text: str | None) -> int:
@@ -166,6 +165,7 @@ def _word_count(text: str | None) -> int:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+
 
 def _header(title: str) -> str:
     return "\n" + title + "\n" + "=" * len(title)
@@ -208,8 +208,7 @@ def _print_grade_comparison(a: dict, b: dict, kind: str) -> None:
     # Per-symbol grade changes
     a_by = _grades_by_symbol(a.get(kind) or [])
     b_by = _grades_by_symbol(b.get(kind) or [])
-    changed = [sym for sym in (a_by.keys() & b_by.keys())
-               if a_by[sym] != b_by[sym]]
+    changed = [sym for sym in (a_by.keys() & b_by.keys()) if a_by[sym] != b_by[sym]]
     only_a = sorted(a_by.keys() - b_by.keys())
     only_b = sorted(b_by.keys() - a_by.keys())
     if changed:
@@ -253,14 +252,17 @@ def _print_missed_ops_comparison(a: dict, b: dict) -> None:
         print(f"    {_pad(k, 22)} {av:>4} → {bv:>4}")
 
     # Per-symbol category flips
-    a_by = {(m or {}).get("symbol"): (m or {}).get("miss_category")
-            for m in a.get("missed_opportunities") or []
-            if (m or {}).get("symbol")}
-    b_by = {(m or {}).get("symbol"): (m or {}).get("miss_category")
-            for m in b.get("missed_opportunities") or []
-            if (m or {}).get("symbol")}
-    flipped = [s for s in (a_by.keys() & b_by.keys())
-               if a_by[s] != b_by[s]]
+    a_by = {
+        (m or {}).get("symbol"): (m or {}).get("miss_category")
+        for m in a.get("missed_opportunities") or []
+        if (m or {}).get("symbol")
+    }
+    b_by = {
+        (m or {}).get("symbol"): (m or {}).get("miss_category")
+        for m in b.get("missed_opportunities") or []
+        if (m or {}).get("symbol")
+    }
+    flipped = [s for s in (a_by.keys() & b_by.keys()) if a_by[s] != b_by[s]]
     if flipped:
         print(f"\n  Per-symbol category flips: {len(flipped)}")
         for s in sorted(flipped)[:10]:
@@ -306,9 +308,13 @@ def _print_reasoning_chain_words(a: dict, b: dict) -> None:
         print("  (reasoning_chain not captured on either side)")
         return
     steps = [
-        "performance_attribution", "outlook_retrospection",
-        "thesis_health_review", "decision_quality_review",
-        "calibration_meta", "market_regime_read", "tomorrow_preparation",
+        "performance_attribution",
+        "outlook_retrospection",
+        "thesis_health_review",
+        "decision_quality_review",
+        "calibration_meta",
+        "market_regime_read",
+        "tomorrow_preparation",
     ]
     print(f"  {'Step':<28} {'A':>5} {'B':>5} {'Δ':>5}")
     for step in steps:
@@ -323,26 +329,33 @@ def _print_reasoning_chain_words(a: dict, b: dict) -> None:
 # Entry
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
-        "--live-date", default=None,
+        "--live-date",
+        default=None,
         help="Date (YYYY-MM-DD) of the live evening to use as side A",
     )
     parser.add_argument(
-        "--candidate", default=None,
+        "--candidate",
+        default=None,
         help="Path to a shadow evening JSON to use as side B",
     )
     parser.add_argument(
-        "--candidate-a", default=None,
+        "--candidate-a",
+        default=None,
         help="Path to shadow A (use together with --candidate-b to diff two shadows)",
     )
     parser.add_argument(
-        "--candidate-b", default=None,
+        "--candidate-b",
+        default=None,
         help="Path to shadow B",
     )
     parser.add_argument(
-        "--db", default="data/quant_agent.db", help="SQLite DB path",
+        "--db",
+        default="data/quant_agent.db",
+        help="SQLite DB path",
     )
     args = parser.parse_args()
 
@@ -359,9 +372,7 @@ def main():
         b_label = f"B {Path(args.candidate_b).name}"
     else:
         print(
-            "ERROR: pick one mode:\n"
-            "  --live-date + --candidate\n"
-            "  --candidate-a + --candidate-b",
+            "ERROR: pick one mode:\n  --live-date + --candidate\n  --candidate-a + --candidate-b",
             file=sys.stderr,
         )
         sys.exit(2)

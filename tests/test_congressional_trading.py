@@ -36,13 +36,22 @@ def _refresh_today(monkeypatch):
     consistent with the code under test even if the ET calendar day ticks
     over mid-suite."""
     import sys
+
     monkeypatch.setattr(sys.modules[__name__], "TODAY", et_today())
 
 
 def _kadoa_row(
-    *, ticker="NVDA", filer="Kevin Hern", filer_id="house_kevin_hern",
-    transaction_type="Purchase", low=15001, high=50000, label="$15,001 - $50,000",
-    transaction_date=None, filing_date=None, chamber="house",
+    *,
+    ticker="NVDA",
+    filer="Kevin Hern",
+    filer_id="house_kevin_hern",
+    transaction_type="Purchase",
+    low=15001,
+    high=50000,
+    label="$15,001 - $50,000",
+    transaction_date=None,
+    filing_date=None,
+    chamber="house",
 ):
     transaction_date = transaction_date or (TODAY - timedelta(days=10))
     filing_date = filing_date or (TODAY - timedelta(days=3))
@@ -62,9 +71,14 @@ def _kadoa_row(
 
 
 def _congresswatch_row(
-    *, ticker="NVDA", member="Kevin Hern", bioguide="H001082",
-    txn_type="Purchase", amount="$15,001 - $50,000",
-    transaction_date=None, chamber="House",
+    *,
+    ticker="NVDA",
+    member="Kevin Hern",
+    bioguide="H001082",
+    txn_type="Purchase",
+    amount="$15,001 - $50,000",
+    transaction_date=None,
+    chamber="House",
 ):
     transaction_date = transaction_date or (TODAY - timedelta(days=10))
     return {
@@ -106,7 +120,8 @@ def test_fetch_from_each_source_successfully(tmp_path):
     congresswatch = [_congresswatch_row()]
     session = _mock_session(kadoa, congresswatch)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
+        data_dir=str(tmp_path),
+        session=session,
         min_transaction_value_usd=1,
         external_min_transaction_value_usd=1,
     )
@@ -143,7 +158,8 @@ def test_kadoa_failure_leaves_pipeline_running_on_congresswatch_alone(tmp_path):
 
     session.get = Mock(side_effect=get)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
+        data_dir=str(tmp_path),
+        session=session,
         min_transaction_value_usd=1,
         external_min_transaction_value_usd=1,
     )
@@ -171,7 +187,8 @@ def test_congresswatch_failure_leaves_pipeline_running_on_kadoa_alone(tmp_path):
 
     session.get = Mock(side_effect=get)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
+        data_dir=str(tmp_path),
+        session=session,
         min_transaction_value_usd=1,
         external_min_transaction_value_usd=1,
     )
@@ -222,8 +239,10 @@ def test_deduplication_merges_same_real_trade_across_both_sources(tmp_path):
     congresswatch = [_congresswatch_row(member="Rep. Kevin Hern")]  # naming variant
     session = _mock_session(kadoa, congresswatch)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path),
+        session=session,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
     cached = json.loads(provider.observations_path.read_text())
@@ -236,8 +255,10 @@ def test_disagreement_is_flagged_not_hidden(tmp_path):
     congresswatch = [_congresswatch_row(txn_type="Sale (Full)", amount="$1,000,001 - $5,000,000")]
     session = _mock_session(kadoa, congresswatch)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path),
+        session=session,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     result = provider.refresh()
 
@@ -288,8 +309,10 @@ def test_congresswatch_only_trade_gets_conservative_disclosure_estimate(tmp_path
     congresswatch = [_congresswatch_row(transaction_date=txn_date)]
     session = _mock_session([], congresswatch)
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path),
+        session=session,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
         lookback_days=45,
     )
     provider.refresh()
@@ -303,8 +326,10 @@ def test_congressional_never_admits_or_grows_universe(tmp_path):
     kadoa = [_kadoa_row(ticker="XYZ", low=10_000_000, high=25_000_000, label="$10,000,000+")]
     session = _mock_session(kadoa, [])
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=session,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path),
+        session=session,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
     # XYZ is not in the passed-in universe/symbols list.
@@ -343,7 +368,8 @@ def test_combined_provider_concatenates_sec_and_congressional_observations(tmp_p
     congress = CongressionalTradingProvider(
         data_dir=str(tmp_path / "congress"),
         session=_mock_session([_kadoa_row()], []),
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     congress.refresh()
     combined = CombinedSmartMoneyProvider([sec_provider, congress])
@@ -361,6 +387,7 @@ def test_combined_provider_concatenates_sec_and_congressional_observations(tmp_p
 # disclosures were silently discarded before the analyst ever saw them.
 # ---------------------------------------------------------------------------
 
+
 def test_congress_lookback_default_covers_the_real_stock_act_disclosure_lag():
     """180 days, not 30. The statutory deadline alone is 45 days and filers
     routinely file at or past it."""
@@ -368,10 +395,7 @@ def test_congress_lookback_default_covers_the_real_stock_act_disclosure_lag():
     assert cfg.congress_lookback_days == 180
     assert cfg.congress_lookback_days > cfg.congress_assumed_max_disclosure_lag_days
     # The provider's own default must not silently disagree with config.
-    assert (
-        inspect.signature(CongressionalTradingProvider.__init__)
-        .parameters["lookback_days"].default == 180
-    )
+    assert inspect.signature(CongressionalTradingProvider.__init__).parameters["lookback_days"].default == 180
 
 
 def test_widening_congress_window_does_not_touch_the_sec_form4_window():
@@ -381,10 +405,7 @@ def test_widening_congress_window_does_not_touch_the_sec_form4_window():
     cfg = SmartMoneyConfig()
     assert cfg.lookback_days == 365
     assert cfg.cluster_window_days == 2
-    assert (
-        inspect.signature(SECForm4Provider.__init__)
-        .parameters["lookback_days"].default == 14
-    )
+    assert inspect.signature(SECForm4Provider.__init__).parameters["lookback_days"].default == 14
     # No ordering requirement between these two: `lookback_days` (insider/SEC
     # fetch+retention) and `congress_lookback_days` (congressional-provider
     # search window) are independently grounded — a year of insider-behavior
@@ -400,9 +421,11 @@ def test_a_disclosure_older_than_the_old_30_day_window_now_survives(tmp_path):
     provider = CongressionalTradingProvider(
         data_dir=str(tmp_path / "c"),
         session=_mock_session(
-            [_kadoa_row(transaction_date=txn, filing_date=filed)], [],
+            [_kadoa_row(transaction_date=txn, filing_date=filed)],
+            [],
         ),
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
 
@@ -414,7 +437,8 @@ def test_a_disclosure_older_than_the_old_30_day_window_now_survives(tmp_path):
         data_dir=str(tmp_path / "c"),
         session=_mock_session([], []),
         lookback_days=30,
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     assert narrow.fetch(["NVDA"])[0] == []
 
@@ -433,25 +457,34 @@ def test_real_old_congressional_evidence_is_now_genuinely_eligible():
     which asserted the opposite of the now-intended behavior."""
     old = [
         SmartMoneyObservation(
-            symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
-            direction="buy", amount_range="$15,001 - $50,000",
+            symbol="NVDA",
+            stream="congressional",
+            actor=actor,
+            actor_cik="",
+            direction="buy",
+            amount_range="$15,001 - $50,000",
             transaction_date=TODAY - timedelta(days=100),
             disclosure_date=TODAY - timedelta(days=90),
             known_at=datetime.combine(TODAY - timedelta(days=90), datetime.min.time()),
             source_url="https://example.invalid/x",
             transaction_value_usd=15001.0,
-            in_core_universe=True, in_trading_universe=True,
-            admission_eligible=False, transient_admission_eligible=False,
-            lag_days=10, disclosure_age_days=90, freshness="delayed",
+            in_core_universe=True,
+            in_trading_universe=True,
+            admission_eligible=False,
+            transient_admission_eligible=False,
+            lag_days=10,
+            disclosure_age_days=90,
+            freshness="delayed",
             economic_role="confirmatory",
         )
         for actor in ("Kevin Hern", "Jane Doe")
     ]
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
         summary="Two members bought, disclosed 90 days ago.",
-        why_now="Real, structurally sound, legally-disclosed evidence -- "
-                "old, but not disqualified by age alone.",
+        why_now="Real, structurally sound, legally-disclosed evidence -- old, but not disqualified by age alone.",
         observations=old,
     )
     assert finding.support_eligible is True
@@ -464,25 +497,34 @@ def test_congressional_disclosure_past_the_legal_deadline_is_still_ineligible():
     on time still cannot support a target."""
     late = [
         SmartMoneyObservation(
-            symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
-            direction="buy", amount_range="$15,001 - $50,000",
+            symbol="NVDA",
+            stream="congressional",
+            actor=actor,
+            actor_cik="",
+            direction="buy",
+            amount_range="$15,001 - $50,000",
             transaction_date=TODAY - timedelta(days=100),
             disclosure_date=TODAY - timedelta(days=10),
             known_at=datetime.combine(TODAY - timedelta(days=10), datetime.min.time()),
             source_url="https://example.invalid/x",
             transaction_value_usd=15001.0,
-            in_core_universe=True, in_trading_universe=True,
-            admission_eligible=False, transient_admission_eligible=False,
-            lag_days=90, disclosure_age_days=10, freshness="fresh",
+            in_core_universe=True,
+            in_trading_universe=True,
+            admission_eligible=False,
+            transient_admission_eligible=False,
+            lag_days=90,
+            disclosure_age_days=10,
+            freshness="fresh",
             economic_role="confirmatory",
         )
         for actor in ("Kevin Hern", "Jane Doe")
     ]
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
         summary="Two members bought, filed 90 days late.",
-        why_now="Recently disclosed, but the disclosure itself broke the "
-                "45-day legal filing deadline.",
+        why_now="Recently disclosed, but the disclosure itself broke the 45-day legal filing deadline.",
         observations=late,
     )
     assert finding.support_eligible is False
@@ -495,19 +537,28 @@ def test_congressional_disclosure_past_the_legal_deadline_is_still_ineligible():
 # `SmartMoneyFinding.deterministic_eligibility`'s congressional branch.
 # ---------------------------------------------------------------------------
 
+
 def _congress_obs(actor: str, *, lag_days: int = 10) -> SmartMoneyObservation:
     """One minimal, real, on-time congressional observation."""
     return SmartMoneyObservation(
-        symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
-        direction="buy", amount_range="$15,001 - $50,000",
+        symbol="NVDA",
+        stream="congressional",
+        actor=actor,
+        actor_cik="",
+        direction="buy",
+        amount_range="$15,001 - $50,000",
         transaction_date=TODAY - timedelta(days=20),
         disclosure_date=TODAY - timedelta(days=20 - lag_days),
         known_at=datetime.combine(TODAY - timedelta(days=20 - lag_days), datetime.min.time()),
         source_url="https://example.invalid/x",
         transaction_value_usd=15001.0,
-        in_core_universe=True, in_trading_universe=True,
-        admission_eligible=False, transient_admission_eligible=False,
-        lag_days=lag_days, disclosure_age_days=20 - lag_days, freshness="delayed",
+        in_core_universe=True,
+        in_trading_universe=True,
+        admission_eligible=False,
+        transient_admission_eligible=False,
+        lag_days=lag_days,
+        disclosure_age_days=20 - lag_days,
+        freshness="delayed",
         economic_role="confirmatory",
     )
 
@@ -520,8 +571,11 @@ def test_rule1_congress_enabled_by_default_evidence_is_never_zeroed_out():
     assert SmartMoneyConfig().congress_enabled is True
 
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="confirmatory",
-        summary="One member bought.", why_now="Single disclosure, no cluster.",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="confirmatory",
+        summary="One member bought.",
+        why_now="Single disclosure, no cluster.",
         observations=[_congress_obs("Kevin Hern")],
     )
     assert finding.support_eligible is False
@@ -538,8 +592,11 @@ def test_rule2_congressional_only_finding_can_never_reach_actionable():
     alone must never claim present-tense actionable trading evidence, and
     must never be sole basis for admitting a new symbol."""
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
-        summary="Two members bought.", why_now="Clustered buys.",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
+        summary="Two members bought.",
+        why_now="Clustered buys.",
         observations=[_congress_obs("Kevin Hern"), _congress_obs("Jane Doe")],
     )
     assert finding.support_eligible is True
@@ -555,13 +612,19 @@ def test_rule3_cluster_size_does_not_compound_conviction():
     at most ONE step, not compounding per additional member -- a 2-member
     and a 10-member cluster must land on the identical rung."""
     two_members = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
-        summary="Two members bought.", why_now="Clustered buys.",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
+        summary="Two members bought.",
+        why_now="Clustered buys.",
         observations=[_congress_obs("Kevin Hern"), _congress_obs("Jane Doe")],
     )
     ten_members = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
-        summary="Ten members bought.", why_now="Larger clustered buy.",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
+        summary="Ten members bought.",
+        why_now="Larger clustered buy.",
         observations=[_congress_obs(f"Member {i}") for i in range(10)],
     )
     assert two_members.economic_role == ten_members.economic_role == "confirmatory"
@@ -579,9 +642,7 @@ def test_rule4_transaction_date_is_never_inferred_from_lag_or_pattern(tmp_path):
         session=_mock_session([], []),
     )
     real_trade_date = TODAY - timedelta(days=30)
-    row, why = provider._normalize_congresswatch(
-        _congresswatch_row(transaction_date=real_trade_date)
-    )
+    row, why = provider._normalize_congresswatch(_congresswatch_row(transaction_date=real_trade_date))
     assert why is None
     assert row["transaction_date"] == real_trade_date.isoformat()
     # Only the disclosure date is estimated, and it says so honestly.
@@ -604,6 +665,7 @@ def test_rule4_transaction_date_is_never_inferred_from_lag_or_pattern(tmp_path):
 # read as the most timely.
 # ---------------------------------------------------------------------------
 
+
 def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
     """A same-day two-actor cluster whose dates are all estimated (i.e. every
     row is congresswatch-only, lag_days == 45 by construction) must NOT
@@ -611,22 +673,33 @@ def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
     on-time disclosure."""
     estimated = [
         SmartMoneyObservation(
-            symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
-            direction="buy", amount_range="$15,001 - $50,000",
+            symbol="NVDA",
+            stream="congressional",
+            actor=actor,
+            actor_cik="",
+            direction="buy",
+            amount_range="$15,001 - $50,000",
             transaction_date=TODAY - timedelta(days=45),
             disclosure_date=TODAY,
             known_at=datetime.combine(TODAY, datetime.min.time()),
             source_url="https://congresswatch.us/",
             transaction_value_usd=15001.0,
-            in_core_universe=True, in_trading_universe=True,
-            admission_eligible=False, transient_admission_eligible=False,
-            lag_days=45, disclosure_age_days=0, freshness="delayed",
-            economic_role="confirmatory", disclosure_date_estimated=True,
+            in_core_universe=True,
+            in_trading_universe=True,
+            admission_eligible=False,
+            transient_admission_eligible=False,
+            lag_days=45,
+            disclosure_age_days=0,
+            freshness="delayed",
+            economic_role="confirmatory",
+            disclosure_date_estimated=True,
         )
         for actor in ("Kevin Hern", "Jane Doe")
     ]
     finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
         summary="Two members bought, both dates estimated.",
         why_now="lag_days == 45 only because it was guessed at the ceiling.",
         observations=estimated,
@@ -638,7 +711,9 @@ def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
     # still genuinely eligible -- this is not a blanket ban on lag==45.
     real = [o.model_copy(update={"disclosure_date_estimated": False}) for o in estimated]
     real_finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
         summary="Two members bought, real dates.",
         why_now="lag_days == 45, verified against a real filing date.",
         observations=real,
@@ -660,7 +735,9 @@ def test_estimated_disclosure_date_cannot_satisfy_the_freshness_gate():
         for o in estimated
     ]
     late_finding = SmartMoneyFinding(
-        symbol="NVDA", stance="bullish", economic_role="actionable",
+        symbol="NVDA",
+        stance="bullish",
+        economic_role="actionable",
         summary="Two members bought, real dates, filed late.",
         why_now="lag_days == 60, past the 45-day statutory ceiling.",
         observations=late_real,
@@ -677,8 +754,10 @@ def test_fetch_marks_congresswatch_observations_as_disclosure_date_estimated(tmp
     guess rather than a measurement."""
     congresswatch = [_congresswatch_row(transaction_date=TODAY - timedelta(days=10))]
     provider = CongressionalTradingProvider(
-        data_dir=str(tmp_path), session=_mock_session([], congresswatch),
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        data_dir=str(tmp_path),
+        session=_mock_session([], congresswatch),
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
     rows, _ = provider.fetch(["NVDA"])
@@ -691,27 +770,31 @@ def test_fetch_marks_congresswatch_observations_as_disclosure_date_estimated(tmp
 # only full words. Those fell through to "unknown" and were lost.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("raw,expected", [
-    # Full words (both feeds' web-rendered form).
-    ("Purchase", "buy"),
-    ("purchase", "buy"),
-    ("Sale", "sell"),
-    ("Sale (Full)", "sell"),
-    ("Sale (Partial)", "sell"),
-    ("sale_full", "sell"),
-    ("sale_partial", "sell"),
-    ("Exchange", "exchange"),
-    # House PTR form short codes — the bug.
-    ("P", "buy"),
-    ("p", "buy"),
-    ("S", "sell"),
-    ("S (partial)", "sell"),
-    ("S (Partial)", "sell"),
-    ("S  (partial)", "sell"),
-    ("S (full)", "sell"),
-    ("E", "exchange"),
-    ("e", "exchange"),
-])
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Full words (both feeds' web-rendered form).
+        ("Purchase", "buy"),
+        ("purchase", "buy"),
+        ("Sale", "sell"),
+        ("Sale (Full)", "sell"),
+        ("Sale (Partial)", "sell"),
+        ("sale_full", "sell"),
+        ("sale_partial", "sell"),
+        ("Exchange", "exchange"),
+        # House PTR form short codes — the bug.
+        ("P", "buy"),
+        ("p", "buy"),
+        ("S", "sell"),
+        ("S (partial)", "sell"),
+        ("S (Partial)", "sell"),
+        ("S  (partial)", "sell"),
+        ("S (full)", "sell"),
+        ("E", "exchange"),
+        ("e", "exchange"),
+    ],
+)
 def test_direction_handles_full_words_and_short_codes(raw, expected):
     assert _direction(raw) == expected
 
@@ -735,9 +818,9 @@ def test_a_genuinely_unrecognized_transaction_type_is_flagged_not_silently_lost(
         assert _direction("Reinvestment Of Dividends Via DRIP") == "unknown"
 
     assert "Reinvestment Of Dividends Via DRIP" in _UNRECOGNIZED_TRANSACTION_TYPES
-    assert any(
-        "unrecognized transaction_type" in r.getMessage() for r in caplog.records
-    ), "an unknown transaction type must leave a trace, not vanish"
+    assert any("unrecognized transaction_type" in r.getMessage() for r in caplog.records), (
+        "an unknown transaction type must leave a trace, not vanish"
+    )
 
 
 def test_repeated_unknown_values_warn_once_per_distinct_value(caplog):
@@ -745,10 +828,7 @@ def test_repeated_unknown_values_warn_once_per_distinct_value(caplog):
     with caplog.at_level(logging.WARNING, logger="src.data.congressional_trading"):
         for _ in range(5):
             _direction("Totally Novel Type")
-    warnings = [
-        r for r in caplog.records
-        if "unrecognized transaction_type" in r.getMessage()
-    ]
+    warnings = [r for r in caplog.records if "unrecognized transaction_type" in r.getMessage()]
     assert len(warnings) == 1
 
 
@@ -760,7 +840,8 @@ def test_a_short_code_row_survives_end_to_end_instead_of_being_dropped(tmp_path)
             [_kadoa_row(transaction_type="P")],
             [_congresswatch_row(txn_type="P")],
         ),
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
 
@@ -780,7 +861,8 @@ def test_short_code_and_full_word_across_the_two_feeds_agree_not_disagree(tmp_pa
             [_kadoa_row(transaction_type="Sale")],
             [_congresswatch_row(txn_type="S (partial)")],
         ),
-        min_transaction_value_usd=1, external_min_transaction_value_usd=1,
+        min_transaction_value_usd=1,
+        external_min_transaction_value_usd=1,
     )
     provider.refresh()
 

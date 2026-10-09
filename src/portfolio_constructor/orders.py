@@ -44,8 +44,12 @@ from src.data.levels import (
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
-    Position, TargetPosition, TechAnalysisResult, TradeDecision,
-    reward_to_risk, stated_soft_exit,
+    Position,
+    TargetPosition,
+    TechAnalysisResult,
+    TradeDecision,
+    reward_to_risk,
+    stated_soft_exit,
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
@@ -99,29 +103,34 @@ class OrderBuilders:
     def _long_entry_builder(self):
         """Build the standalone LongEntryBuilder from the owner's live collaborators."""
         from src.portfolio_constructor.order_build.long_entry import LongEntryBuilder
+
         return LongEntryBuilder(**self._order_builder_collaborators())
 
     def _short_entry_builder(self):
         """Build the standalone ShortEntryBuilder from the owner's live collaborators."""
         from src.portfolio_constructor.order_build.short_entry import ShortEntryBuilder
+
         return ShortEntryBuilder(**self._order_builder_collaborators())
 
     @staticmethod
     def _hold_decision(*args, **kwargs):
         """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
         from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+
         return ExitOrderBuilders._hold_decision(*args, **kwargs)
 
     @staticmethod
     def _build_sell(*args, **kwargs):
         """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
         from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+
         return ExitOrderBuilders._build_sell(*args, **kwargs)
 
     @staticmethod
     def _build_cover(*args, **kwargs):
         """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
         from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+
         return ExitOrderBuilders._build_cover(*args, **kwargs)
 
     def _build_buy(self, *args, **kwargs):

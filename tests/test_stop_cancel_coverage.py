@@ -81,7 +81,9 @@ def test_outcome_refuses_to_be_a_boolean():
     """The forcing function: `if not broker.cancel_snapshotted_stops(...)`
     cannot compile away a coverage loss ever again."""
     out = StopCancelOutcome(
-        symbol="AMZN", requested=(SPEC_A,), unprotected=(SPEC_A,),
+        symbol="AMZN",
+        requested=(SPEC_A,),
+        unprotected=(SPEC_A,),
     )
     with pytest.raises(TypeError, match="not a boolean"):
         bool(out)
@@ -119,8 +121,11 @@ def _run_cancel(outcome):
 
 def test_wal_row_is_kept_whole_when_coverage_shrank():
     outcome = StopCancelOutcome(
-        symbol="AMZN", requested=(SPEC_A, SPEC_B), cancelled=(SPEC_A,),
-        still_resting=(SPEC_B,), unprotected=(SPEC_A,),
+        symbol="AMZN",
+        requested=(SPEC_A, SPEC_B),
+        cancelled=(SPEC_A,),
+        still_resting=(SPEC_B,),
+        unprotected=(SPEC_A,),
     )
     (ok, specs, row), pipe = _run_cancel(outcome)
 
@@ -133,7 +138,8 @@ def test_wal_row_is_kept_whole_when_coverage_shrank():
 
 def test_wal_row_is_discharged_when_rollback_fully_succeeded():
     outcome = StopCancelOutcome(
-        symbol="AMZN", requested=(SPEC_A, SPEC_B),
+        symbol="AMZN",
+        requested=(SPEC_A, SPEC_B),
         still_resting=(SPEC_A, SPEC_B),
     )
     (ok, specs, row), pipe = _run_cancel(outcome)
@@ -151,8 +157,11 @@ def test_scale_in_keeps_the_wal_when_coverage_shrank():
 
     db, prep = MagicMock(), MagicMock(wal_row_id=42)
     cancel = StopCancelOutcome(
-        symbol="COP", requested=(SPEC_A, SPEC_B), cancelled=(SPEC_A,),
-        still_resting=(SPEC_B,), unprotected=(SPEC_A,),
+        symbol="COP",
+        requested=(SPEC_A, SPEC_B),
+        cancelled=(SPEC_A,),
+        still_resting=(SPEC_B,),
+        unprotected=(SPEC_A,),
     )
     assert handle_add_cancel(db, prep, cancel, MagicMock(), MagicMock()) is False
     db.delete_pending_protection_restore.assert_not_called()
@@ -186,28 +195,32 @@ def test_no_production_caller_treats_the_outcome_as_a_truth_value():
             if not isinstance(node, (ast.If, ast.While, ast.UnaryOp, ast.BoolOp)):
                 continue
             tests = (
-                [node.test] if isinstance(node, (ast.If, ast.While))
-                else [node.operand] if isinstance(node, ast.UnaryOp)
+                [node.test]
+                if isinstance(node, (ast.If, ast.While))
+                else [node.operand]
+                if isinstance(node, ast.UnaryOp)
                 else list(node.values)
             )
             for t_ in tests:
                 for sub in ast.walk(t_):
-                    if (isinstance(sub, ast.Call)
-                            and isinstance(sub.func, ast.Attribute)
-                            and sub.func.attr == "cancel_snapshotted_stops"):
+                    if (
+                        isinstance(sub, ast.Call)
+                        and isinstance(sub.func, ast.Attribute)
+                        and sub.func.attr == "cancel_snapshotted_stops"
+                    ):
                         offenders.append(f"{path}:{node.lineno}")
-    assert not offenders, (
-        "a protection outcome is being used as a truth value at: "
-        + ", ".join(sorted(set(offenders)))
-    )
+    assert not offenders, "a protection outcome is being used as a truth value at: " + ", ".join(sorted(set(offenders)))
 
 
 def test_every_spec_lands_in_exactly_one_bucket():
     """No share can be silently dropped: requested == cancelled +
     still_resting + unprotected, always."""
     out = StopCancelOutcome(
-        symbol="X", requested=(SPEC_A, SPEC_B), cancelled=(),
-        still_resting=(SPEC_B,), unprotected=(SPEC_A,),
+        symbol="X",
+        requested=(SPEC_A, SPEC_B),
+        cancelled=(),
+        still_resting=(SPEC_B,),
+        unprotected=(SPEC_A,),
     )
     buckets = len(out.cancelled) + len(out.still_resting) + len(out.unprotected)
     assert buckets == len(out.requested)

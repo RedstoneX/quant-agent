@@ -55,7 +55,8 @@ def test_capture_wraps_both_sdk_clients_beneath_cancel_journal(monkeypatch):
     assert broker.client.get_account() == {"status": "ACTIVE"}
     assert broker._data_client.get_stock_bars("AAPL") == {"AAPL": [1, 2]}
     assert [entry["client"] for entry in cassette.to_payload()["entries"]] == [
-        "trading", "stock_historical_data",
+        "trading",
+        "stock_historical_data",
     ]
 
 
@@ -73,12 +74,8 @@ def test_captured_cancel_still_writes_one_durable_attempt(monkeypatch):
         cassette = install_recording_broker_cassette(broker)
         broker.client.cancel_order_by_id("captured-order")
         rows = OrderAttemptLog(conn=connection).recent(limit=5)
-        assert [(row["outcome"], row["broker_order_id"]) for row in rows] == [
-            ("cancelled", "captured-order")
-        ]
-        assert [entry["method"] for entry in cassette.to_payload()["entries"]] == [
-            "cancel_order_by_id"
-        ]
+        assert [(row["outcome"], row["broker_order_id"]) for row in rows] == [("cancelled", "captured-order")]
+        assert [entry["method"] for entry in cassette.to_payload()["entries"]] == ["cancel_order_by_id"]
     finally:
         connection.close()
 

@@ -35,6 +35,7 @@ still alert. Section 7 pins all three from both sides — including the case
 that must alert, so the suppression cannot degrade into "never alert about
 fractional".
 """
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -54,18 +55,27 @@ from tests.pipeline_factory import build_pipeline
 # Fixtures
 # ==========================================================================
 
+
 def _rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="m", news_check="n", earnings_check="e",
-        signal_conflicts="s", sizing_logic="z", portfolio_balance="b",
+        macro_filter="m",
+        news_check="n",
+        earnings_check="e",
+        signal_conflicts="s",
+        sizing_logic="z",
+        portfolio_balance="b",
         cash_target="c",
     )
 
 
-def _pipeline(*, live_price: float, cash: float = 1_000_000.0,
-              fractional_enabled: bool = True,
-              fractionable: dict | Exception | None = None,
-              decimals: int = 4) -> MagicMock:
+def _pipeline(
+    *,
+    live_price: float,
+    cash: float = 1_000_000.0,
+    fractional_enabled: bool = True,
+    fractionable: dict | Exception | None = None,
+    decimals: int = 4,
+) -> MagicMock:
     """An ExecutionStage pipeline with the §11.1 knobs made real.
 
     `pipeline.config` on a bare MagicMock answers every attribute with a
@@ -78,7 +88,9 @@ def _pipeline(*, live_price: float, cash: float = 1_000_000.0,
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
-        {"cash": cash, "portfolio_value": 10_000.0}, [], {},
+        {"cash": cash, "portfolio_value": 10_000.0},
+        [],
+        {},
     )
     pipeline.config.execution.fractional_enabled = fractional_enabled
     pipeline.config.execution.fractional_share_decimals = decimals
@@ -87,7 +99,8 @@ def _pipeline(*, live_price: float, cash: float = 1_000_000.0,
     else:
         pipeline.broker.get_fractionability.return_value = fractionable
     pipeline.broker.submit_order.return_value = {
-        "id": "ord-1", "status": "accepted",
+        "id": "ord-1",
+        "status": "accepted",
     }
     return pipeline
 
@@ -100,7 +113,9 @@ def _ctx(decisions, *, cash=1_000_000.0, total_value=10_000.0) -> RunContext:
     ctx.positions = []
     ctx.decision_id = "run-x-dec-frac"
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_rc(), decisions=decisions, portfolio_view="t",
+        reasoning_chain=_rc(),
+        decisions=decisions,
+        portfolio_view="t",
     )
     # No bars: the entry ATR stop floor needs them, and this file is about
     # share COUNTS, not stop placement.
@@ -121,8 +136,12 @@ def _buy(symbol="V", price=_PRICE, alloc=_ALLOC_PCT, stop=364.0):
     allocation-based size, so allocation is the binding constraint and the
     number under test is unambiguous."""
     return TradeDecision(
-        action="BUY", symbol=symbol, allocation_pct=alloc,
-        entry_price=price, stop_loss=stop, take_profit=price * 1.3,
+        action="BUY",
+        symbol=symbol,
+        allocation_pct=alloc,
+        entry_price=price,
+        stop_loss=stop,
+        take_profit=price * 1.3,
         reasoning="fractional sizing",
     )
 
@@ -135,11 +154,11 @@ def _submitted_qty(pipeline) -> float:
 # 1. Exact sizing — the tax, and its removal
 # ==========================================================================
 
+
 def test_exact_fractional_sizing_delivers_the_requested_risk_share():
     pipeline = _pipeline(
         live_price=_PRICE,
-        fractionable={"fractionable": True, "reason": "fractionable",
-                      "symbol": "V"},
+        fractionable={"fractionable": True, "reason": "fractionable", "symbol": "V"},
     )
 
     orders = ExecutionStage(pipeline=pipeline).run(_ctx([_buy()]))
@@ -212,7 +231,9 @@ def test_a_9_9k_account_sizes_a_200_dollar_stock_without_rounding_to_zero():
     # book; pin it to the census's own $9,900 so the executed quantity
     # reflects the actual scenario under test, not the fixture default.
     pipeline._refresh_account_state.return_value = (
-        {"cash": 1_000_000.0, "portfolio_value": 9_900.0}, [], {},
+        {"cash": 1_000_000.0, "portfolio_value": 9_900.0},
+        [],
+        {},
     )
     ctx = _ctx(
         [_buy(symbol="COST", price=205.0, alloc=1.0, stop=195.0)],
@@ -246,7 +267,8 @@ def test_fractional_sizing_floors_it_never_rounds_up():
     """Rounding UP would spend more risk budget than the sizing math allowed.
     At 2 decimals, 1.5625 shares must become 1.56 — not 1.57."""
     pipeline = _pipeline(
-        live_price=_PRICE, decimals=2,
+        live_price=_PRICE,
+        decimals=2,
         fractionable={"fractionable": True, "reason": "fractionable"},
     )
 
@@ -259,11 +281,11 @@ def test_fractional_sizing_floors_it_never_rounds_up():
 # 2. Eligibility fails CLOSED
 # ==========================================================================
 
+
 def test_non_fractionable_symbol_falls_back_to_whole_shares():
     pipeline = _pipeline(
         live_price=_PRICE,
-        fractionable={"fractionable": False, "reason": "not_fractionable",
-                      "symbol": "V"},
+        fractionable={"fractionable": False, "reason": "not_fractionable", "symbol": "V"},
     )
 
     ExecutionStage(pipeline=pipeline).run(_ctx([_buy()]))
@@ -276,8 +298,7 @@ def test_unknown_fractionable_flag_falls_back_to_whole_shares():
     "Absent" is not "true"."""
     pipeline = _pipeline(
         live_price=_PRICE,
-        fractionable={"fractionable": False, "reason": "fractionable_unknown",
-                      "symbol": "V"},
+        fractionable={"fractionable": False, "reason": "fractionable_unknown", "symbol": "V"},
     )
 
     ExecutionStage(pipeline=pipeline).run(_ctx([_buy()]))
@@ -290,7 +311,8 @@ def test_failed_fractionable_lookup_falls_back_to_whole_shares():
     is rejected outright by the broker, turning an approved trade into no
     trade — so an unanswerable question means whole shares, every time."""
     pipeline = _pipeline(
-        live_price=_PRICE, fractionable=RuntimeError("alpaca 500"),
+        live_price=_PRICE,
+        fractionable=RuntimeError("alpaca 500"),
     )
 
     orders = ExecutionStage(pipeline=pipeline).run(_ctx([_buy()]))
@@ -307,11 +329,17 @@ def test_short_entries_are_always_whole_share():
         fractionable={"fractionable": True, "reason": "fractionable"},
     )
     pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
+        "shortable": True,
+        "easy_to_borrow": True,
+        "reason": "eligible",
     }
     short = TradeDecision(
-        action="SHORT", symbol="TSLA", allocation_pct=7.0,
-        entry_price=200.0, stop_loss=210.0, take_profit=170.0,
+        action="SHORT",
+        symbol="TSLA",
+        allocation_pct=7.0,
+        entry_price=200.0,
+        stop_loss=210.0,
+        take_profit=170.0,
         reasoning="short it",
     )
 
@@ -323,6 +351,7 @@ def test_short_entries_are_always_whole_share():
 
 
 # --- the broker-side gate on its own ---------------------------------------
+
 
 def _broker_with_asset(asset) -> AlpacaBroker:
     with patch("src.execution.broker.TradingClient"):
@@ -339,11 +368,14 @@ def test_get_fractionability_reports_true_only_when_the_broker_says_so():
     assert broker.get_fractionability("MSFT")["fractionable"] is True
 
 
-@pytest.mark.parametrize("asset, reason", [
-    ({"fractionable": False}, "not_fractionable"),
-    ({}, "fractionable_unknown"),
-    (RuntimeError("boom"), "asset_lookup_failed"),
-])
+@pytest.mark.parametrize(
+    "asset, reason",
+    [
+        ({"fractionable": False}, "not_fractionable"),
+        ({}, "fractionable_unknown"),
+        (RuntimeError("boom"), "asset_lookup_failed"),
+    ],
+)
 def test_get_fractionability_fails_closed(asset, reason):
     broker = _broker_with_asset(asset)
     result = broker.get_fractionability("XYZ")
@@ -360,16 +392,20 @@ def test_get_fractionability_is_cached_per_symbol():
 
 # --- the quantizer on its own ----------------------------------------------
 
-@pytest.mark.parametrize("raw, fractional, expected", [
-    (1.5625, False, 1.0),
-    (1.5625, True, 1.5625),
-    (0.99999999, True, 0.9999),     # floors, never rounds up
-    (0.99999999, False, 0.0),       # ...and whole-share mode still says zero
-    (3.0, True, 3.0),
-    (float("nan"), True, 0.0),
-    (float("inf"), True, 0.0),
-    (-4.0, True, 0.0),
-])
+
+@pytest.mark.parametrize(
+    "raw, fractional, expected",
+    [
+        (1.5625, False, 1.0),
+        (1.5625, True, 1.5625),
+        (0.99999999, True, 0.9999),  # floors, never rounds up
+        (0.99999999, False, 0.0),  # ...and whole-share mode still says zero
+        (3.0, True, 3.0),
+        (float("nan"), True, 0.0),
+        (float("inf"), True, 0.0),
+        (-4.0, True, 0.0),
+    ],
+)
 def test_size_shares_quantization(raw, fractional, expected):
     pipeline = MagicMock()
     pipeline.config.execution.fractional_share_decimals = 4
@@ -379,6 +415,7 @@ def test_size_shares_quantization(raw, fractional, expected):
 # ==========================================================================
 # 3. Guard 1 — the stop retries immediately and hard
 # ==========================================================================
+
 
 def _protection_broker(*, filled_qty: float, stop_results: list) -> AlpacaBroker:
     """A broker whose entry filled `filled_qty` and whose stop submissions
@@ -516,7 +553,8 @@ def test_a_position_under_one_share_gets_a_day_stop_and_no_gtc_leg():
     which is the entire reason the desk can hold a $900 name at all on a
     ~$10k account."""
     broker = _protection_broker(
-        filled_qty=0.6, stop_results=[{"id": "stop-frac"}],
+        filled_qty=0.6,
+        stop_results=[{"id": "stop-frac"}],
     )
 
     with patch("src.execution.broker.time.sleep"):
@@ -540,7 +578,9 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
     with patch("src.execution.broker.TradingClient") as tc_cls:
         client = MagicMock()
         client.submit_order.return_value = MagicMock(
-            id="s", status="new", symbol="NVDA",
+            id="s",
+            status="new",
+            symbol="NVDA",
         )
         tc_cls.return_value = client
         broker = AlpacaBroker("k", "s", paper=True)
@@ -553,12 +593,12 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
 
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
     assert len(reqs) == 2
-    assert all(isinstance(r, StopOrderRequest) for r in reqs)   # primary = stop-MARKET
+    assert all(isinstance(r, StopOrderRequest) for r in reqs)  # primary = stop-MARKET
     frac, whole = reqs
     assert float(frac.qty) == pytest.approx(0.3456)
-    assert frac.time_in_force == TimeInForce.DAY    # the only tif the broker takes
+    assert frac.time_in_force == TimeInForce.DAY  # the only tif the broker takes
     assert float(whole.qty) == 12.0
-    assert whole.time_in_force == TimeInForce.GTC   # durable, survives 16:00 ET
+    assert whole.time_in_force == TimeInForce.GTC  # durable, survives 16:00 ET
     # Both legs sit at the SAME trigger — a remainder stopped somewhere else
     # would be a second, unreviewed risk decision.
     assert float(whole.stop_price) == float(frac.stop_price) == 95.0
@@ -570,8 +610,7 @@ def test_a_failed_day_leg_still_leaves_the_whole_shares_durably_covered():
     sub-share remainder is REPORTED, never swallowed."""
     broker = _protection_broker(
         filled_qty=12.3456,
-        stop_results=[RuntimeError("day leg refused")] * 3
-        + [{"id": "stop-whole"}],
+        stop_results=[RuntimeError("day leg refused")] * 3 + [{"id": "stop-whole"}],
     )
 
     with patch("src.execution.broker.time.sleep"):
@@ -587,10 +626,18 @@ def test_a_failed_day_leg_still_leaves_the_whole_shares_durably_covered():
 # 4. Guard 2 — a stop that never lands ALERTS THE OWNER
 # ==========================================================================
 
+
 def _entry_spec(**kw) -> dict:
-    spec = {"symbol": "NVDA", "side": "buy", "order_id": "e1",
-            "stop_price": 95.0, "qty": 10, "reference_price": 100.0,
-            "limit_price": 100.0, "trade_row_id": 1}
+    spec = {
+        "symbol": "NVDA",
+        "side": "buy",
+        "order_id": "e1",
+        "stop_price": 95.0,
+        "qty": 10,
+        "reference_price": 100.0,
+        "limit_price": 100.0,
+        "trade_row_id": 1,
+    }
     spec.update(kw)
     return spec
 
@@ -600,12 +647,19 @@ def _run_protection_phase(pipeline, spec) -> None:
     letting a real BUY flow through it with the broker's protection call
     stubbed to whatever the test wants."""
     pipeline.broker.submit_order.return_value = {
-        "id": spec["order_id"], "status": "accepted", "symbol": spec["symbol"],
-        "side": "buy", "pending_stop_price": spec["stop_price"],
+        "id": spec["order_id"],
+        "status": "accepted",
+        "symbol": spec["symbol"],
+        "side": "buy",
+        "pending_stop_price": spec["stop_price"],
     }
     decision = TradeDecision(
-        action="BUY", symbol=spec["symbol"], allocation_pct=10.0,
-        entry_price=100.0, stop_loss=spec["stop_price"], take_profit=130.0,
+        action="BUY",
+        symbol=spec["symbol"],
+        allocation_pct=10.0,
+        entry_price=100.0,
+        stop_loss=spec["stop_price"],
+        take_profit=130.0,
         reasoning="protection test",
     )
     ExecutionStage(pipeline=pipeline).run(_ctx([decision]))
@@ -631,7 +685,9 @@ def test_a_stop_that_fails_every_retry_raises_an_owner_alert():
 def test_a_partially_covering_stop_also_raises_an_owner_alert():
     pipeline = _pipeline(live_price=100.0, fractional_enabled=False)
     pipeline.broker.place_entry_protection.return_value = {
-        "id": "stop-whole", "covered_qty": 12.0, "uncovered_qty": 0.3456,
+        "id": "stop-whole",
+        "covered_qty": 12.0,
+        "uncovered_qty": 0.3456,
     }
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -670,6 +726,7 @@ def test_an_entry_that_filled_nothing_does_not_wake_the_owner():
 # ==========================================================================
 # 5. Guard 3 — the sweep separates "no stop" from "mis-sized"
 # ==========================================================================
+
 
 def _sweep_pipeline(positions, covered_by_symbol: dict) -> MagicMock:
     pipeline = MagicMock()
@@ -767,14 +824,20 @@ def test_sweep_does_not_alert_when_the_auto_repair_closed_the_gap():
 # 6. Guard 3, second half — the sweep's finding reaches the operator
 # ==========================================================================
 
+
 def test_an_ordinary_intra_tick_is_still_silent():
     """14 ticks a day. Breaking that silence casually is what makes the
     channel worthless when it matters."""
     from src.notifier import format_session_result
 
-    assert format_session_result(
-        "intra_check", {"status": "ok", "run_id": "r", "positions": 3}, 2.0,
-    ) is None
+    assert (
+        format_session_result(
+            "intra_check",
+            {"status": "ok", "run_id": "r", "positions": 3},
+            2.0,
+        )
+        is None
+    )
 
 
 def test_an_intra_tick_that_found_a_coverage_gap_breaks_the_silence():
@@ -785,11 +848,14 @@ def test_an_intra_tick_that_found_a_coverage_gap_breaks_the_silence():
 
     msg = format_session_result(
         "intra_check",
-        {"status": "ok", "run_id": "r", "positions": 3,
-         "stop_coverage_gaps": [
-             {"symbol": "NAKED", "held_qty": 10.0, "covered_qty": 0.0,
-              "coverage": "none"},
-         ]},
+        {
+            "status": "ok",
+            "run_id": "r",
+            "positions": 3,
+            "stop_coverage_gaps": [
+                {"symbol": "NAKED", "held_qty": 10.0, "covered_qty": 0.0, "coverage": "none"},
+            ],
+        },
         2.0,
     )
 
@@ -810,6 +876,7 @@ def test_an_intra_tick_that_found_a_coverage_gap_breaks_the_silence():
 # backstop. Fixed by routing through `_submit_protective_stop_retrying`.
 # ==========================================================================
 
+
 def _repair_pipeline(*, stop_loss=140.0, live_price=150.0) -> MagicMock:
     pipeline = MagicMock()
     pipeline.db.get_symbol_last_buy.return_value = {"stop_loss": stop_loss}
@@ -825,13 +892,19 @@ def test_repair_retries_a_transient_failure_in_band():
     pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "r1"}
 
     out = TradingPipeline._repair_stop_coverage(
-        pipeline, "NVDA", 10.0, is_short=False,
+        pipeline,
+        "NVDA",
+        10.0,
+        is_short=False,
     )
 
     assert out is True
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA", qty=10.0, stop_price=140.0,
-        limit_price=pytest.approx(140.0 * (1 - 0.03)), side="sell",
+        symbol="NVDA",
+        qty=10.0,
+        stop_price=140.0,
+        limit_price=pytest.approx(140.0 * (1 - 0.03)),
+        side="sell",
     )
 
 
@@ -840,7 +913,10 @@ def test_repair_exhausted_reports_unrepaired():
     pipeline.broker._submit_protective_stop_retrying.return_value = None
 
     out = TradingPipeline._repair_stop_coverage(
-        pipeline, "NVDA", 10.0, is_short=False,
+        pipeline,
+        "NVDA",
+        10.0,
+        is_short=False,
     )
 
     assert out is False
@@ -853,17 +929,25 @@ def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating(
     snapshot reclassifies the symbol 'partial' on its own."""
     pipeline = _repair_pipeline()
     pipeline.broker._submit_protective_stop_retrying.return_value = {
-        "id": "r1", "covered_qty": 12.0, "uncovered_qty": 0.3456,
+        "id": "r1",
+        "covered_qty": 12.0,
+        "uncovered_qty": 0.3456,
     }
 
     out = TradingPipeline._repair_stop_coverage(
-        pipeline, "NVDA", 12.3456, is_short=False,
+        pipeline,
+        "NVDA",
+        12.3456,
+        is_short=False,
     )
 
     assert out is False, "a real but partial cover must not read as repaired"
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA", qty=12.3456, stop_price=140.0,
-        limit_price=pytest.approx(140.0 * (1 - 0.03)), side="sell",
+        symbol="NVDA",
+        qty=12.3456,
+        stop_price=140.0,
+        limit_price=pytest.approx(140.0 * (1 - 0.03)),
+        side="sell",
     )
 
 
@@ -875,13 +959,19 @@ def test_short_repair_places_a_buy_stop_above_the_tape():
     pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "r1"}
 
     out = TradingPipeline._repair_stop_coverage(
-        pipeline, "TSLA", 10.0, is_short=True,
+        pipeline,
+        "TSLA",
+        10.0,
+        is_short=True,
     )
 
     assert out is True
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="TSLA", qty=10.0, stop_price=160.0,
-        limit_price=pytest.approx(160.0 * (1 + 0.03)), side="buy",
+        symbol="TSLA",
+        qty=10.0,
+        stop_price=160.0,
+        limit_price=pytest.approx(160.0 * (1 + 0.03)),
+        side="buy",
     )
     assert pipeline.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
 
@@ -910,14 +1000,18 @@ from src.pipeline import _classify_coverage_gap, _split_protective_qty  # noqa: 
 
 # --- the split itself -------------------------------------------------------
 
-@pytest.mark.parametrize("qty, whole, frac", [
-    (12.3456, 12.0, 0.3456),   # ordinary fractional position
-    (0.6,      0.0, 0.6),      # under one share — no GTC leg exists at all
-    (10.0,    10.0, 0.0),      # whole — must stay on the untouched GTC path
-    (1.0,      1.0, 0.0),
-    (0.0,      0.0, 0.0),
-    (-4.5,     4.0, 0.5),      # a short's signed qty is a magnitude here
-])
+
+@pytest.mark.parametrize(
+    "qty, whole, frac",
+    [
+        (12.3456, 12.0, 0.3456),  # ordinary fractional position
+        (0.6, 0.0, 0.6),  # under one share — no GTC leg exists at all
+        (10.0, 10.0, 0.0),  # whole — must stay on the untouched GTC path
+        (1.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0),
+        (-4.5, 4.0, 0.5),  # a short's signed qty is a magnitude here
+    ],
+)
 def test_whole_fractional_split(qty, whole, frac):
     w, f = _split_protective_qty(qty)
     assert w == pytest.approx(whole)
@@ -933,6 +1027,7 @@ def test_float_noise_does_not_mint_a_phantom_sub_share_leg():
 
 
 # --- the classifier ---------------------------------------------------------
+
 
 def test_classifier_names_a_sub_share_only_gap_fractional():
     """12 whole shares still covered by their durable GTC stop, 0.3456
@@ -973,8 +1068,8 @@ def test_classifier_is_unchanged_for_whole_share_positions():
 
 # --- the sweep, with the clock controlled ----------------------------------
 
-def _hybrid_sweep_pipeline(positions, covered_by_symbol: dict, *,
-                           repair: bool = True) -> MagicMock:
+
+def _hybrid_sweep_pipeline(positions, covered_by_symbol: dict, *, repair: bool = True) -> MagicMock:
     pipeline = MagicMock()
     pipeline.broker.get_positions.return_value = positions
     pipeline.db.get_pending_protection_restores.return_value = []
@@ -1007,6 +1102,7 @@ def _sweep(pipeline, *, market_open: bool):
 
 # --- case (a): the expected overnight lapse --------------------------------
 
+
 def test_a_lapsed_overnight_fractional_stop_does_not_alert_the_owner():
     """CASE (a), AND THE MOST IMPORTANT TEST IN THIS FILE.
 
@@ -1019,7 +1115,9 @@ def test_a_lapsed_overnight_fractional_stop_does_not_alert_the_owner():
     # placed. A fixture that pretends the repair succeeds would mask exactly
     # the regression this test exists to catch.
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 12.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1033,7 +1131,9 @@ def test_a_lapsed_overnight_fractional_stop_is_not_repaired_into_a_shut_market()
     """A DAY order submitted after the close is a rejection at best and a
     surprise queued order at worst. The next session's sweep owns it."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 12.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert"):
@@ -1047,7 +1147,9 @@ def test_a_sub_one_share_position_overnight_does_not_alert_either():
     classifier called NO STOP AT ALL — the owner-escalating condition — and
     it would have fired nightly for as long as the position was held."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("TINY", 0.6)], {"TINY": 0.0}, repair=False,
+        [_priced("TINY", 0.6)],
+        {"TINY": 0.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1062,7 +1164,9 @@ def test_the_overnight_exposure_is_reported_as_a_number_not_a_reassurance():
     number he can look at beats a guarantee he has to trust'. 0.3456 shares
     of a $900 name is $311.04."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456, price=900.0)], {"NVDA": 12.0}, repair=False,
+        [_priced("NVDA", 12.3456, price=900.0)],
+        {"NVDA": 12.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert"):
@@ -1077,14 +1181,24 @@ def test_the_overnight_exposure_reaches_the_session_alert():
     and NOT as a red banner, because nothing here needs doing."""
     from src.notifier import format_session_result
 
-    body = format_session_result("evening", {
-        "status": "ok", "run_id": "r",
-        "stop_coverage_gaps": [{
-            "symbol": "NVDA", "held_qty": 12.3456, "covered_qty": 12.0,
-            "coverage": "fractional_overnight", "uncovered_qty": 0.3456,
-            "unprotected_value": 311.04,
-        }],
-    }, 2.0)
+    body = format_session_result(
+        "evening",
+        {
+            "status": "ok",
+            "run_id": "r",
+            "stop_coverage_gaps": [
+                {
+                    "symbol": "NVDA",
+                    "held_qty": 12.3456,
+                    "covered_qty": 12.0,
+                    "coverage": "fractional_overnight",
+                    "uncovered_qty": 0.3456,
+                    "unprotected_value": 311.04,
+                }
+            ],
+        },
+        2.0,
+    )
 
     assert "311.04" in body
     assert "NVDA" in body
@@ -1097,23 +1211,34 @@ def test_an_expected_overnight_lapse_does_not_break_intra_check_silence():
     fractional re-placement must not be what breaks that silence."""
     from src.notifier import format_session_result
 
-    assert format_session_result("intra_check", {
-        "status": "ok", "run_id": "r", "positions": 3,
-        "stop_coverage_gaps": [
-            {"symbol": "NVDA", "held_qty": 12.3456, "covered_qty": 12.0,
-             "coverage": "fractional_replaced"},
-        ],
-    }, 2.0) is None
+    assert (
+        format_session_result(
+            "intra_check",
+            {
+                "status": "ok",
+                "run_id": "r",
+                "positions": 3,
+                "stop_coverage_gaps": [
+                    {"symbol": "NVDA", "held_qty": 12.3456, "covered_qty": 12.0, "coverage": "fractional_replaced"},
+                ],
+            },
+            2.0,
+        )
+        is None
+    )
 
 
 # --- case (b): a placement failure during session hours --------------------
+
 
 def test_a_missing_fractional_stop_during_session_hours_is_repaired():
     """CASE (b). The same shortfall, but the market is OPEN — the remainder
     should be covered right now. This is also the start-of-session
     re-placement path: the sweep is what puts the DAY stop back."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=True,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 12.0},
+        repair=True,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1132,7 +1257,9 @@ def test_a_fractional_stop_that_cannot_be_re_placed_in_hours_still_alerts():
     always has. THIS is the assertion that proves the overnight suppression
     is not just 'never alert about fractional'."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("TINY", 0.6)], {"TINY": 0.0}, repair=False,
+        [_priced("TINY", 0.6)],
+        {"TINY": 0.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1148,7 +1275,9 @@ def test_a_partly_covered_fractional_gap_in_hours_falls_back_to_the_banner():
     shares. Guard 3's existing ladder is unchanged: some coverage banners,
     it does not escalate."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 12.0}, repair=False,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 12.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1160,13 +1289,16 @@ def test_a_partly_covered_fractional_gap_in_hours_falls_back_to_the_banner():
 
 # --- case (c): the whole-share GTC leg is missing --------------------------
 
+
 def test_a_missing_whole_share_gtc_leg_alerts_even_overnight():
     """CASE (c). 12.3456 held with NOTHING covered, market shut. The durable
     leg is the one that is supposed to survive the night; its absence is
     never the expected state and must never be suppressed by the overnight
     rule."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 0.0}, repair=False,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 0.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1181,7 +1313,9 @@ def test_a_short_whole_share_gtc_leg_banners_even_overnight():
     """Case (c)'s milder half: 3 of 12 whole shares covered, market shut.
     Still a real gap, still reported, still not softened."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 12.3456)], {"NVDA": 3.0}, repair=False,
+        [_priced("NVDA", 12.3456)],
+        {"NVDA": 3.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert"):
@@ -1194,7 +1328,9 @@ def test_a_whole_share_position_is_unaffected_by_any_of_this():
     """Every short, and every long while `fractional_enabled` is off. A
     naked whole-share position alerts at 3am exactly as it did before."""
     pipeline = _hybrid_sweep_pipeline(
-        [_priced("NVDA", 10.0)], {"NVDA": 0.0}, repair=False,
+        [_priced("NVDA", 10.0)],
+        {"NVDA": 0.0},
+        repair=False,
     )
 
     with patch("src.notifier.send_owner_alert") as alert:
@@ -1205,6 +1341,7 @@ def test_a_whole_share_position_is_unaffected_by_any_of_this():
 
 
 # --- the market-hours discriminator itself ---------------------------------
+
 
 def test_market_hours_check_fails_toward_open():
     """Getting this wrong in the 'shut' direction SUPPRESSES a real naked-
@@ -1236,6 +1373,7 @@ def test_market_hours_check_respects_an_early_close():
 
 # --- the OTHER re-placement paths must not destroy the hybrid pair ---------
 
+
 def test_a_trailing_stop_ratchet_re_places_the_hybrid_pair_not_one_day_order():
     """`replace_stop_loss` cancels a position's stops and re-places coverage
     for the whole quantity. On a fractional position a single order is
@@ -1248,14 +1386,18 @@ def test_a_trailing_stop_ratchet_re_places_the_hybrid_pair_not_one_day_order():
     with patch("src.execution.broker.TradingClient") as tc_cls:
         client = MagicMock()
         client.submit_order.return_value = MagicMock(
-            id="s", status="new", symbol="NVDA",
+            id="s",
+            status="new",
+            symbol="NVDA",
         )
         tc_cls.return_value = client
         broker = AlpacaBroker("k", "s", paper=True)
         broker._list_open_stop_orders_by_side = MagicMock(return_value=([], []))
-        broker.get_positions = MagicMock(return_value=[
-            MagicMock(symbol="NVDA", qty=12.3456),
-        ])
+        broker.get_positions = MagicMock(
+            return_value=[
+                MagicMock(symbol="NVDA", qty=12.3456),
+            ]
+        )
         broker.get_latest_price = MagicMock(return_value=200.0)
         broker.replace_stop_loss("NVDA", 150.0)
 
@@ -1274,14 +1416,18 @@ def test_a_whole_share_trailing_ratchet_is_still_one_gtc_order():
     with patch("src.execution.broker.TradingClient") as tc_cls:
         client = MagicMock()
         client.submit_order.return_value = MagicMock(
-            id="s", status="new", symbol="NVDA",
+            id="s",
+            status="new",
+            symbol="NVDA",
         )
         tc_cls.return_value = client
         broker = AlpacaBroker("k", "s", paper=True)
         broker._list_open_stop_orders_by_side = MagicMock(return_value=([], []))
-        broker.get_positions = MagicMock(return_value=[
-            MagicMock(symbol="NVDA", qty=12.0),
-        ])
+        broker.get_positions = MagicMock(
+            return_value=[
+                MagicMock(symbol="NVDA", qty=12.0),
+            ]
+        )
         broker.get_latest_price = MagicMock(return_value=200.0)
         broker.replace_stop_loss("NVDA", 150.0)
 
@@ -1302,22 +1448,28 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     # the real thing over a mocked raw order call: that is what actually
     # exercises the whole-share/sliver leg split this test is about.
     pipeline.broker._submit_stop_limit_order.return_value = {
-        "id": "leg", "status": "accepted",
+        "id": "leg",
+        "status": "accepted",
     }
     pipeline.broker._stop_placer = functools.partial(AlpacaBroker._stop_placer, pipeline.broker)
-    pipeline.broker._submit_stop_leg_retrying = functools.partial(AlpacaBroker._submit_stop_leg_retrying, pipeline.broker)
-    pipeline.broker._submit_protective_stop_retrying = functools.partial(AlpacaBroker._submit_protective_stop_retrying, pipeline.broker)
+    pipeline.broker._submit_stop_leg_retrying = functools.partial(
+        AlpacaBroker._submit_stop_leg_retrying, pipeline.broker
+    )
+    pipeline.broker._submit_protective_stop_retrying = functools.partial(
+        AlpacaBroker._submit_protective_stop_retrying, pipeline.broker
+    )
 
-    cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
-                  "limit_price": 88.0}]
-    assert pipeline._reprotect_residual_after_partial_sell(
-        "NVDA", 7.3456, cancelled,
-    ) is True
+    cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0, "limit_price": 88.0}]
+    assert (
+        pipeline._reprotect_residual_after_partial_sell(
+            "NVDA",
+            7.3456,
+            cancelled,
+        )
+        is True
+    )
 
-    qtys = [
-        c.kwargs["qty"]
-        for c in pipeline.broker._submit_stop_limit_order.call_args_list
-    ]
+    qtys = [c.kwargs["qty"] for c in pipeline.broker._submit_stop_limit_order.call_args_list]
     # DAY sliver FIRST, then the whole-share GTC leg: MEASURED 2026-09-16
     # (BRK-B) the GTC hold reserved the position and Alpaca refused the
     # sub-share DAY remainder with held_for_orders when it went second.
@@ -1352,13 +1504,19 @@ def test_held_for_orders_on_day_sliver_is_covered_when_broker_already_holds_it()
         broker = AlpacaBroker("k", "s", paper=True)
     live = SimpleNamespace(id="day-live", qty=0.4393, stop_price=485.0, limit_price=470.0)
     broker._submit_stop_limit_order = MagicMock(
-        side_effect=RuntimeError("insufficient qty available for order (requested: 0.4393, available: 0) held_for_orders"),
+        side_effect=RuntimeError(
+            "insufficient qty available for order (requested: 0.4393, available: 0) held_for_orders"
+        ),
     )
     broker._list_open_protective_stop_orders = MagicMock(return_value=[live])
     with patch("src.execution.broker.time.sleep"):
         out = broker._submit_stop_leg_retrying(
-            symbol="BRK-B", qty=0.4393, stop_price=485.0,
-            limit_price=470.0, side="sell", leg="DAY fractional",
+            symbol="BRK-B",
+            qty=0.4393,
+            stop_price=485.0,
+            limit_price=470.0,
+            side="sell",
+            leg="DAY fractional",
         )
     assert out is not None
     assert out["id"] == "day-live"

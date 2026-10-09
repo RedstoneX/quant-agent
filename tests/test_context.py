@@ -67,8 +67,8 @@ class TestReturns:
 class TestRelativeStrength:
     def test_underperformer_is_negative_even_while_rising(self):
         """The gap this closes: a stock can rise and still be weak."""
-        stock = _bars(_ramp(120, 100.0, 105.0))     # +5%
-        index = _bars(_ramp(120, 100.0, 115.0))     # +15%
+        stock = _bars(_ramp(120, 100.0, 105.0))  # +5%
+        index = _bars(_ramp(120, 100.0, 115.0))  # +15%
         ctx = compute_market_context(stock, benchmark_bars=index, benchmark_symbol="SPY")
         assert ctx is not None
         assert ctx.return_1m is not None and ctx.return_1m > 0, "stock did rise"
@@ -265,9 +265,7 @@ class TestInstrumentReadShapeConstants:
             "_CONSOLIDATION_MAX_RANGE_PCT",
             "_CONSOLIDATION_MAX_DRIFT_RATIO",
         ):
-            assert not hasattr(context_mod, gone), (
-                f"{gone} is back — item 58 replaced it with an instrument read"
-            )
+            assert not hasattr(context_mod, gone), f"{gone} is back — item 58 replaced it with an instrument read"
 
     def test_consolidation_window_is_the_atr_period_not_a_picked_number(self):
         from src.data.context import _CONSOLIDATION_WINDOW

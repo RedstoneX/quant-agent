@@ -55,19 +55,23 @@ def _clear_broker_cache():
 # read_account
 # ---------------------------------------------------------------------------
 
+
 def test_read_account_returns_broker_values(monkeypatch):
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_account=lambda: {"cash": 1000.0, "portfolio_value": 25000.0,
-                             "last_equity": 24000.0},
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_account=lambda: {"cash": 1000.0, "portfolio_value": 25000.0, "last_equity": 24000.0},
+        ),
+    )
     out = broker_reads.read_account()
-    assert out == {"cash": 1000.0, "portfolio_value": 25000.0,
-                   "last_equity": 24000.0, "error": None}
+    assert out == {"cash": 1000.0, "portfolio_value": 25000.0, "last_equity": 24000.0, "error": None}
 
 
 def test_read_account_degrades_to_error_when_the_broker_raises(monkeypatch):
     """A gateway outage must produce nulls + an error string, never an
     exception the route layer has to catch."""
+
     def _raise():
         raise _Boom("gateway unreachable")
 
@@ -81,6 +85,7 @@ def test_read_account_degrades_to_error_when_the_broker_raises(monkeypatch):
 
 def test_read_account_degrades_when_the_broker_cannot_be_constructed(monkeypatch):
     """Construction itself can raise (bad credentials, SDK import failure)."""
+
     def _raise():
         raise _Boom("cannot build client")
 
@@ -90,9 +95,13 @@ def test_read_account_degrades_when_the_broker_cannot_be_constructed(monkeypatch
 
 def test_read_account_tolerates_a_partial_account_payload(monkeypatch):
     """Missing keys become None rather than KeyError-ing out of the read."""
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_account=lambda: {"cash": 1.0},
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_account=lambda: {"cash": 1.0},
+        ),
+    )
     out = broker_reads.read_account()
     assert out["cash"] == 1.0
     assert out["portfolio_value"] is None
@@ -103,18 +112,30 @@ def test_read_account_tolerates_a_partial_account_payload(monkeypatch):
 # read_positions
 # ---------------------------------------------------------------------------
 
+
 def _position(**overrides):
-    base = dict(symbol="NVDA", qty=10.0, avg_entry=100.0, current_price=110.0,
-                market_value=1100.0, unrealized_pnl=100.0,
-                unrealized_intraday_pnl=5.0, sector="Technology")
+    base = dict(
+        symbol="NVDA",
+        qty=10.0,
+        avg_entry=100.0,
+        current_price=110.0,
+        market_value=1100.0,
+        unrealized_pnl=100.0,
+        unrealized_intraday_pnl=5.0,
+        sector="Technology",
+    )
     base.update(overrides)
     return SimpleNamespace(**base)
 
 
 def test_read_positions_flattens_position_objects(monkeypatch):
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position()],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position()],
+        ),
+    )
     out = broker_reads.read_positions()
     assert out["error"] is None
     mark = out["positions"][0]["position_mark"]
@@ -125,12 +146,20 @@ def test_read_positions_flattens_position_objects(monkeypatch):
     assert mark["freshness"] == "unknown"
     assert mark["retrieved_at"]  # a real, non-empty ISO timestamp — value varies per run
     out["positions"][0].pop("position_mark")
-    assert out["positions"] == [{
-        "symbol": "NVDA", "qty": 10.0, "avg_entry": 100.0,
-        "current_price": 110.0, "market_value": 1100.0,
-        "unrealized_pnl": 100.0, "unrealized_intraday_pnl": 5.0,
-        "sector": "Technology", "is_cash_equivalent": False, "direction": "long",
-    }]
+    assert out["positions"] == [
+        {
+            "symbol": "NVDA",
+            "qty": 10.0,
+            "avg_entry": 100.0,
+            "current_price": 110.0,
+            "market_value": 1100.0,
+            "unrealized_pnl": 100.0,
+            "unrealized_intraday_pnl": 5.0,
+            "sector": "Technology",
+            "is_cash_equivalent": False,
+            "direction": "long",
+        }
+    ]
 
 
 def test_position_mark_has_unknown_market_freshness_and_preserves_broker_accounting(monkeypatch):
@@ -143,11 +172,16 @@ def test_position_mark_has_unknown_market_freshness_and_preserves_broker_account
     happened — pinned here via the `_utc_now` seam."""
     import datetime as dt
 
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position()],
-    ))
     monkeypatch.setattr(
-        broker_reads, "_utc_now",
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position()],
+        ),
+    )
+    monkeypatch.setattr(
+        broker_reads,
+        "_utc_now",
         lambda: dt.datetime(2026, 8, 21, 15, 0, tzinfo=dt.timezone.utc),
     )
 
@@ -174,13 +208,17 @@ def test_read_positions_tags_sweep_vehicle_and_inverse_etf(monkeypatch):
     `src.api.deps.INVERSE_ETF_SYMBOLS`/`get_cash_sweep_symbol`, never from
     `src.risk` (src/api may not import it)."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [
-            _position(symbol="SGOV", sector=None),
-            _position(symbol="SQQQ", sector=None),
-            _position(symbol="NVDA"),
-        ],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [
+                _position(symbol="SGOV", sector=None),
+                _position(symbol="SQQQ", sector=None),
+                _position(symbol="NVDA"),
+            ],
+        ),
+    )
     rows = {r["symbol"]: r for r in broker_reads.read_positions()["positions"]}
     assert rows["SGOV"]["is_cash_equivalent"] is True
     assert rows["SGOV"]["direction"] == "cash_equivalent"
@@ -196,9 +234,13 @@ def test_read_positions_short_position_labeled_short(monkeypatch):
     live shape (Alpaca can fill partial shares), so this pins that shape
     too rather than only a round number."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position(symbol="FLNC", qty=-36.0, market_value=-268.56)],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position(symbol="FLNC", qty=-36.0, market_value=-268.56)],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["direction"] == "short"
     assert row["direction"] != "long"
@@ -206,9 +248,13 @@ def test_read_positions_short_position_labeled_short(monkeypatch):
 
 def test_read_positions_fractional_short_labeled_short(monkeypatch):
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position(symbol="UPS", qty=-0.135, market_value=-12.9)],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position(symbol="UPS", qty=-0.135, market_value=-12.9)],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["direction"] == "short"
 
@@ -219,9 +265,13 @@ def test_read_positions_short_inverse_etf_is_short_not_hedge(monkeypatch):
     which every consumer reads as "long an inverse ETF held as a bearish
     proxy." Quantity sign wins over the symbol-based inverse-ETF check."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position(symbol="SQQQ", qty=-4.0, market_value=-40.0)],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position(symbol="SQQQ", qty=-4.0, market_value=-40.0)],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["direction"] == "short"
     assert row["direction"] != "bearish_hedge"
@@ -231,9 +281,13 @@ def test_read_positions_long_inverse_etf_is_still_bearish_hedge(monkeypatch):
     """The ordinary case — long an inverse ETF as the desk's bearish
     mechanism — must be unchanged by the sign-aware fix."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position(symbol="SQQQ", qty=4.0, market_value=40.0)],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position(symbol="SQQQ", qty=4.0, market_value=40.0)],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["direction"] == "bearish_hedge"
 
@@ -243,9 +297,13 @@ def test_read_positions_cash_sweep_wins_over_a_negative_quantity(monkeypatch):
     vehicle itself (e.g. mid-liquidation) is still `cash_equivalent`, never
     `short` — checked first in `_position_direction`."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [_position(symbol="SGOV", qty=-1.0, market_value=-1.0)],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [_position(symbol="SGOV", qty=-1.0, market_value=-1.0)],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["direction"] == "cash_equivalent"
 
@@ -254,13 +312,17 @@ def test_read_positions_zero_and_none_qty_never_raise_and_never_say_short(monkey
     """`qty` of exactly 0 or `None` carries no sign — must not crash on
     `None < 0` and must not be mislabeled "short" (it isn't one)."""
     monkeypatch.setattr(broker_reads, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [
-            _position(symbol="NVDA", qty=0.0, market_value=0.0),
-            _position(symbol="MRVL", qty=None, market_value=0.0),
-            _position(symbol="SQQQ", qty=0.0, market_value=0.0, sector=None),
-        ],
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [
+                _position(symbol="NVDA", qty=0.0, market_value=0.0),
+                _position(symbol="MRVL", qty=None, market_value=0.0),
+                _position(symbol="SQQQ", qty=0.0, market_value=0.0, sector=None),
+            ],
+        ),
+    )
     out = broker_reads.read_positions()
     assert out["error"] is None
     rows = {r["symbol"]: r for r in out["positions"]}
@@ -285,12 +347,16 @@ def test_position_direction_unit_never_labels_a_negative_quantity_long():
 def test_read_positions_defaults_optional_fields_to_none(monkeypatch):
     """`unrealized_intraday_pnl`/`sector` are read with getattr defaults —
     an older Position shape must not break the read."""
-    bare = SimpleNamespace(symbol="SPY", qty=1.0, avg_entry=1.0,
-                           current_price=1.0, market_value=1.0,
-                           unrealized_pnl=0.0)
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_positions=lambda: [bare],
-    ))
+    bare = SimpleNamespace(
+        symbol="SPY", qty=1.0, avg_entry=1.0, current_price=1.0, market_value=1.0, unrealized_pnl=0.0
+    )
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_positions=lambda: [bare],
+        ),
+    )
     row = broker_reads.read_positions()["positions"][0]
     assert row["unrealized_intraday_pnl"] is None
     assert row["sector"] is None
@@ -310,15 +376,19 @@ def test_read_positions_degrades_to_empty_list_with_error(monkeypatch):
 # _order_to_dict — defensive per-field flattening
 # ---------------------------------------------------------------------------
 
+
 def _order(**overrides):
     base = dict(
-        id="ord-1", symbol="AAPL",
+        id="ord-1",
+        symbol="AAPL",
         side=SimpleNamespace(value="BUY"),
         qty="10",
         order_type=SimpleNamespace(value="LIMIT"),
         status=SimpleNamespace(value="FILLED"),
-        limit_price="150.5", stop_price=None,
-        filled_qty="10", filled_avg_price="150.4",
+        limit_price="150.5",
+        stop_price=None,
+        filled_qty="10",
+        filled_avg_price="150.4",
         submitted_at=SimpleNamespace(isoformat=lambda: "2026-08-12T13:30:00+00:00"),
         filled_at=None,
     )
@@ -329,10 +399,10 @@ def _order(**overrides):
 def test_order_to_dict_unwraps_enums_and_coerces_numbers():
     out = broker_reads._order_to_dict(_order())
     assert out["id"] == "ord-1"
-    assert out["side"] == "buy"          # enum .value, lowercased
+    assert out["side"] == "buy"  # enum .value, lowercased
     assert out["order_type"] == "limit"
     assert out["status"] == "filled"
-    assert out["qty"] == 10.0            # str -> float
+    assert out["qty"] == 10.0  # str -> float
     assert out["limit_price"] == 150.5
     assert out["stop_price"] is None
     assert out["submitted_at"] == "2026-08-12T13:30:00+00:00"
@@ -350,12 +420,13 @@ def test_order_to_dict_degrades_one_bad_field_without_losing_the_row():
     """A single unparseable field must become None, not abort the order."""
     out = broker_reads._order_to_dict(_order(qty="not-a-number"))
     assert out["qty"] is None
-    assert out["symbol"] == "AAPL"       # the rest of the row survives
+    assert out["symbol"] == "AAPL"  # the rest of the row survives
 
 
 def test_order_to_dict_survives_a_property_that_raises():
     """`_extract_order_field` exists so an SDK attribute that raises on
     access degrades to None instead of taking down the whole response."""
+
     class _Exploding:
         id = "ord-2"
         symbol = "MSFT"
@@ -403,6 +474,7 @@ def test_order_to_dict_survives_a_missing_symbol():
 # read_orders
 # ---------------------------------------------------------------------------
 
+
 def _orders_broker(orders, capture=None):
     def _get_orders(filter=None):  # noqa: A002 — mirrors the SDK's kwarg name
         if capture is not None:
@@ -419,13 +491,20 @@ def test_read_orders_returns_flattened_rows(monkeypatch):
     assert out["orders"][0]["symbol"] == "AAPL"
 
 
-@pytest.mark.parametrize("requested,expected", [
-    ("open", "OPEN"), ("closed", "CLOSED"), ("all", "ALL"),
-    ("OPEN", "OPEN"),
-    # Unrecognized values fall back to OPEN rather than raising — route-level
-    # validation is expected to have rejected them already.
-    ("garbage", "OPEN"), ("", "OPEN"), (None, "OPEN"),
-])
+@pytest.mark.parametrize(
+    "requested,expected",
+    [
+        ("open", "OPEN"),
+        ("closed", "CLOSED"),
+        ("all", "ALL"),
+        ("OPEN", "OPEN"),
+        # Unrecognized values fall back to OPEN rather than raising — route-level
+        # validation is expected to have rejected them already.
+        ("garbage", "OPEN"),
+        ("", "OPEN"),
+        (None, "OPEN"),
+    ],
+)
 def test_read_orders_maps_status_safely(monkeypatch, requested, expected):
     from alpaca.trading.enums import QueryOrderStatus
 
@@ -447,12 +526,14 @@ def test_read_orders_degrades_a_wholly_broken_row_to_nulls(monkeypatch):
     row — of `None`s — because `_order_to_dict` guards each field
     individually. The neighbouring orders are unaffected, which is the
     property that matters."""
+
     class _Unflattenable:
         def __getattr__(self, name):
             raise _Boom("this whole object is broken")
 
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: _orders_broker([_order(), _Unflattenable(), _order(id="ord-3")]),
     )
     out = broker_reads.read_orders()
@@ -473,7 +554,8 @@ def test_read_orders_skips_a_row_whose_flattening_raises(monkeypatch):
 
     monkeypatch.setattr(broker_reads, "_order_to_dict", _flaky)
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: _orders_broker([_order(), _order(id="ord-2"), _order(id="ord-3")]),
     )
     out = broker_reads.read_orders()
@@ -490,9 +572,13 @@ def test_read_orders_degrades_when_the_query_raises(monkeypatch):
     def _raise(filter=None):  # noqa: A002
         raise _Boom("orders query failed")
 
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        client=SimpleNamespace(get_orders=_raise),
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            client=SimpleNamespace(get_orders=_raise),
+        ),
+    )
     out = broker_reads.read_orders()
     assert out["orders"] == []
     assert "orders query failed" in out["error"]
@@ -502,20 +588,27 @@ def test_read_orders_degrades_when_the_query_raises(monkeypatch):
 # read_price_bars
 # ---------------------------------------------------------------------------
 
+
 def test_read_price_bars_uses_timestamped_intraday_read(monkeypatch):
     captured = []
 
     def _intraday(symbol, timeframe, lookback_days):
         captured.append((symbol, timeframe, lookback_days))
-        return [{
-            "date": "2026-08-21",
-            "timestamp": "2026-08-21T13:30:00+00:00",
-            "open": 100.0, "high": 101.0, "low": 99.0,
-            "close": 100.5, "volume": 500,
-        }]
+        return [
+            {
+                "date": "2026-08-21",
+                "timestamp": "2026-08-21T13:30:00+00:00",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 500,
+            }
+        ]
 
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: _broker(get_intraday_chart_bars=_intraday),
     )
     out = broker_reads.read_price_bars("MRVL", lookback_days=1, timeframe="5m")
@@ -529,16 +622,23 @@ def test_read_price_bars_tags_intraday_bars_as_historical_iex(monkeypatch):
     is the bar's OWN provider timestamp, freshness is always "historical",
     and feed is only claimed "iex" when it was explicitly requested
     (5m/15m/1h go through `get_intraday_chart_bars`, which does)."""
+
     def _intraday(symbol, timeframe, lookback_days):
-        return [{
-            "date": "2026-08-21",
-            "timestamp": "2026-08-21T13:30:00+00:00",
-            "open": 100.0, "high": 101.0, "low": 99.0,
-            "close": 100.5, "volume": 500,
-        }]
+        return [
+            {
+                "date": "2026-08-21",
+                "timestamp": "2026-08-21T13:30:00+00:00",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "volume": 500,
+            }
+        ]
 
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: _broker(get_intraday_chart_bars=_intraday),
     )
     out = broker_reads.read_price_bars("MRVL", lookback_days=1, timeframe="5m")
@@ -556,11 +656,16 @@ def test_read_price_bars_tags_daily_bars_as_historical_with_no_feed_claim(monkey
     from datetime import date as _date
 
     bar = SimpleNamespace(
-        date=_date(2026, 8, 20), open=100.0, high=106.0, low=99.0,
-        close=104.5, volume=12345,
+        date=_date(2026, 8, 20),
+        open=100.0,
+        high=106.0,
+        low=99.0,
+        close=104.5,
+        volume=12345,
     )
     monkeypatch.setattr(
-        broker_reads, "_get_broker",
+        broker_reads,
+        "_get_broker",
         lambda: _broker(get_bars=lambda symbol, lookback_days: [bar]),
     )
     out = broker_reads.read_price_bars("AAPL", lookback_days=10)
@@ -576,6 +681,7 @@ def test_read_price_bars_tags_daily_bars_as_historical_with_no_feed_claim(monkey
 # _quote_freshness — exchange-session-boundary staleness, no invented cutoff
 # ---------------------------------------------------------------------------
 
+
 def test_quote_freshness_is_unknown_with_no_market_timestamp():
     assert broker_reads._quote_freshness(None, None) == "unknown"
 
@@ -583,12 +689,14 @@ def test_quote_freshness_is_unknown_with_no_market_timestamp():
 def test_quote_freshness_is_unknown_when_session_open_cannot_be_derived():
     """Non-trading day, or a calendar-lookup failure — never guess "current"."""
     from datetime import datetime, timezone
+
     ts = datetime(2026, 9, 12, 15, 0, tzinfo=timezone.utc)
     assert broker_reads._quote_freshness(ts, None) == "unknown"
 
 
 def test_quote_freshness_is_current_when_trade_is_after_session_open():
     from datetime import datetime, timezone
+
     session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)  # 9:30 ET
     trade_ts = datetime(2026, 9, 12, 14, 0, tzinfo=timezone.utc)
     assert broker_reads._quote_freshness(trade_ts, session_open) == "current"
@@ -598,6 +706,7 @@ def test_quote_freshness_is_stale_when_trade_predates_todays_session_open():
     """The exact case item 15 is about: market open, but nothing has
     traded for this symbol since the prior session — must not read as live."""
     from datetime import datetime, timezone
+
     session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)  # 9:30 ET
     trade_ts = datetime(2026, 9, 11, 19, 59, tzinfo=timezone.utc)  # yesterday's close
     assert broker_reads._quote_freshness(trade_ts, session_open) == "stale"
@@ -605,6 +714,7 @@ def test_quote_freshness_is_stale_when_trade_predates_todays_session_open():
 
 def test_quote_freshness_accepts_an_iso_string_market_timestamp():
     from datetime import datetime, timezone
+
     session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)
     assert broker_reads._quote_freshness("2026-09-12T14:00:00+00:00", session_open) == "current"
 
@@ -612,6 +722,7 @@ def test_quote_freshness_accepts_an_iso_string_market_timestamp():
 # ---------------------------------------------------------------------------
 # read_live_quotes (2026-08-21 Mission Control correctness tranche)
 # ---------------------------------------------------------------------------
+
 
 def _snapshot_broker(snapshots: dict, capture: list | None = None):
     def _get_intraday_snapshots(symbols):
@@ -630,11 +741,22 @@ def test_read_live_quotes_flattens_snapshot_data(monkeypatch):
     # printed today, so the range is only passed through when the bar's own
     # timestamp says today.
     today_bar_at = et_now().replace(hour=0, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({
-        "NVDA": {"last_price": 121.5, "prev_close": 119.0,
-                 "session_bar_at": today_bar_at,
-                 "session_open": 120.0, "session_high": 122.0, "session_low": 118.5},
-    }))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _snapshot_broker(
+            {
+                "NVDA": {
+                    "last_price": 121.5,
+                    "prev_close": 119.0,
+                    "session_bar_at": today_bar_at,
+                    "session_open": 120.0,
+                    "session_high": 122.0,
+                    "session_low": 118.5,
+                },
+            }
+        ),
+    )
     out = broker_reads.read_live_quotes(["NVDA"])
     assert out["error"] is None
     row = out["quotes"]["NVDA"]
@@ -652,9 +774,21 @@ def test_read_live_quotes_flattens_snapshot_data(monkeypatch):
 
 
 def test_read_live_quotes_never_drops_a_requested_symbol_with_no_snapshot(monkeypatch):
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _snapshot_broker({
-        "NVDA": {"last_price": 121.5, "prev_close": 119.0, "session_open": None, "session_high": None, "session_low": None},
-    }))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _snapshot_broker(
+            {
+                "NVDA": {
+                    "last_price": 121.5,
+                    "prev_close": 119.0,
+                    "session_open": None,
+                    "session_high": None,
+                    "session_low": None,
+                },
+            }
+        ),
+    )
     out = broker_reads.read_live_quotes(["NVDA", "ZZZZ"])
     assert set(out["quotes"]) == {"NVDA", "ZZZZ"}
     zzzz = out["quotes"]["ZZZZ"]
@@ -697,9 +831,12 @@ def test_read_live_quotes_flags_a_stale_last_price_against_session_open(monkeypa
         return _broker(
             get_intraday_snapshots=lambda symbols: {
                 "NVDA": {
-                    "last_price": 121.5, "last_trade_at": stale_trade_at,
-                    "prev_close": 119.0, "session_open": None,
-                    "session_high": None, "session_low": None,
+                    "last_price": 121.5,
+                    "last_trade_at": stale_trade_at,
+                    "prev_close": 119.0,
+                    "session_open": None,
+                    "session_high": None,
+                    "session_low": None,
                 },
             },
             get_session_open=lambda: session_open,
@@ -733,6 +870,7 @@ def test_read_live_quotes_empty_symbol_list_is_not_treated_as_a_failure(monkeypa
 # ---------------------------------------------------------------------------
 # _get_broker — construction is narrow by design
 # ---------------------------------------------------------------------------
+
 
 def test_get_broker_builds_from_the_narrow_accessors_only(monkeypatch):
     """The singleton must be built from `get_alpaca_credentials()` /
@@ -773,15 +911,20 @@ def test_get_broker_is_cached(monkeypatch):
 def test_check_broker_reachable_true_on_a_successful_account_call(monkeypatch):
     """The healthy leg — the two failure legs live in test_api_contract.py."""
     monkeypatch.setattr(broker_reads, "get_alpaca_credentials", lambda: ("k", "s"))
-    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
-        get_account=lambda: {"cash": 0.0},
-    ))
+    monkeypatch.setattr(
+        broker_reads,
+        "_get_broker",
+        lambda: _broker(
+            get_account=lambda: {"cash": 0.0},
+        ),
+    )
     assert broker_reads.check_broker_reachable() is True
 
 
 def test_check_broker_reachable_is_none_when_credentials_cannot_be_read(monkeypatch):
     """A config that won't load must read as "not configured", not as a
     crash — this is the state before the runtime `.env` wiring exists."""
+
     def _raise():
         raise _Boom("config unreadable")
 

@@ -9,6 +9,7 @@ config and no gate module anywhere in sight.
 Disclosure only. Nothing here refuses, scores or holds a threshold; the
 reasoning for that is kept verbatim below, where it was written.
 """
+
 from __future__ import annotations
 
 import logging
@@ -114,9 +115,7 @@ class NameCoverage:
     @property
     def never_asked(self) -> list[str]:
         """Uncovered seats with neither an unreadable row nor a lost answer."""
-        return sorted(
-            set(self.uncovered) - set(self.unreadable) - set(self.asked_no_answer)
-        )
+        return sorted(set(self.uncovered) - set(self.unreadable) - set(self.asked_no_answer))
 
     @property
     def blocking_missing(self) -> list[str]:
@@ -130,17 +129,16 @@ class NameCoverage:
 
     @property
     def summary(self) -> str:
-        unread = "".join([
-            (
-                f" (returned an unreadable answer: {', '.join(self.unreadable)})"
-                if self.unreadable else ""
-            ),
-            (
-                f" (asked and produced nothing usable: "
-                f"{', '.join(self.asked_no_answer)})"
-                if self.asked_no_answer else ""
-            ),
-        ])
+        unread = "".join(
+            [
+                (f" (returned an unreadable answer: {', '.join(self.unreadable)})" if self.unreadable else ""),
+                (
+                    f" (asked and produced nothing usable: {', '.join(self.asked_no_answer)})"
+                    if self.asked_no_answer
+                    else ""
+                ),
+            ]
+        )
         return (
             f"{self.symbol}: answered about this name by "
             f"{', '.join(self.covered) or 'no seat'}; no answer about this "
@@ -202,57 +200,39 @@ class NameCoverageRecorder:
         NEVER raises and NEVER judges: it returns a record, not a verdict.
         """
         try:
-            names = sorted(
-                {str(s).strip().upper() for s in (universe or ()) if str(s).strip()}
-            )
+            names = sorted({str(s).strip().upper() for s in (universe or ()) if str(s).strip()})
             mapping = {}
             for seat, symbols in dict(seat_symbols or {}).items():
-                mapping[str(seat)] = {
-                    str(s).strip().upper()
-                    for s in (symbols or ())
-                    if str(s).strip()
-                }
+                mapping[str(seat)] = {str(s).strip().upper() for s in (symbols or ()) if str(s).strip()}
+
             def _symbol_map(raw):
                 built = {}
                 for seat, symbols in dict(raw or {}).items():
-                    built[str(seat)] = {
-                        str(s).strip().upper()
-                        for s in (symbols or ())
-                        if str(s).strip()
-                    }
+                    built[str(seat)] = {str(s).strip().upper() for s in (symbols or ()) if str(s).strip()}
                 return built
 
             unread_map = _symbol_map(unreadable_by_seat)
             silent_map = _symbol_map(asked_no_answer_by_seat)
-            scoped = sorted({
-                str(s) for s in (
-                    self._run_scoped if run_scoped is None else (run_scoped or ())
-                )
-            })
+            scoped = sorted({str(s) for s in (self._run_scoped if run_scoped is None else (run_scoped or ()))})
             out = {}
             for name in names:
-                covered = sorted(
-                    seat for seat in self._name_scoped
-                    if name in mapping.get(seat, set())
-                )
+                covered = sorted(seat for seat in self._name_scoped if name in mapping.get(seat, set()))
                 uncovered = sorted(set(self._name_scoped) - set(covered))
                 # An unreadable answer is NOT coverage: the seat stays in
                 # `uncovered` and is additionally named here. Reporting it as
                 # covered would be the exact fabrication item 220 exists to stop.
-                unreadable = sorted(
-                    seat for seat in uncovered
-                    if name in unread_map.get(seat, set())
-                )
+                unreadable = sorted(seat for seat in uncovered if name in unread_map.get(seat, set()))
                 # An unreadable row wins over "asked and silent" when both are
                 # claimed for the same name: a row DID come back.
                 asked_no_answer = sorted(
-                    seat for seat in uncovered
-                    if name in silent_map.get(seat, set())
-                    and seat not in unreadable
+                    seat for seat in uncovered if name in silent_map.get(seat, set()) and seat not in unreadable
                 )
                 out[name] = NameCoverage(
-                    symbol=name, covered=covered, uncovered=uncovered,
-                    run_scoped=scoped, unreadable=unreadable,
+                    symbol=name,
+                    covered=covered,
+                    uncovered=uncovered,
+                    run_scoped=scoped,
+                    unreadable=unreadable,
                     asked_no_answer=asked_no_answer,
                     blocking_seats=self._blocking_seats,
                 )

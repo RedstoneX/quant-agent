@@ -46,6 +46,7 @@ from src.rotation_buy_leg_post import (  # noqa: E402,F401  lifted, re-exported
 #: ranked-margin rotation close — carry on as before".
 _ROTATION_SELL_REFUSED = object()
 
+
 def _rotation_execution_enabled(pipeline) -> bool:
     """Phase 14b — is automatic opportunity-cost rotation ON?
 
@@ -57,6 +58,7 @@ def _rotation_execution_enabled(pipeline) -> bool:
     """
     execution_cfg = getattr(getattr(pipeline, "config", None), "execution", None)
     return getattr(execution_cfg, "rotation_enabled", None) is True
+
 
 def _rotation_ranked_margin_enabled(pipeline) -> bool:
     """Board item 39 — is the RANKED-MARGIN rotation tier executable?
@@ -78,18 +80,29 @@ def _rotation_ranked_margin_enabled(pipeline) -> bool:
     execution_cfg = getattr(getattr(pipeline, "config", None), "execution", None)
     return getattr(execution_cfg, "rotation_ranked_margin_enabled", None) is True
 
+
 def _rotation_skip(pipeline, ctx, opportunity, reason: str, **details) -> None:
     """One durable `rotation` / `skipped` audit row. Every refusal to act
     lands here so the evening review can see WHY a surfaced comparison did
     not become a trade, rather than inferring it from a log line."""
     logger.info(
         "Rotation: not acting on %s -> %s (%s)",
-        opportunity.held_symbol, opportunity.new_symbol, reason,
+        opportunity.held_symbol,
+        opportunity.new_symbol,
+        reason,
     )
     _record_pipeline_event(
-        pipeline, ctx, opportunity.held_symbol, "rotation", "skipped", reason,
-        new_symbol=opportunity.new_symbol, tier=opportunity.tier, **details,
+        pipeline,
+        ctx,
+        opportunity.held_symbol,
+        "rotation",
+        "skipped",
+        reason,
+        new_symbol=opportunity.new_symbol,
+        tier=opportunity.tier,
+        **details,
     )
+
 
 def _record_rotation_precheck(pipeline, ctx) -> None:
     """One durable `rotation` / `precheck` row per session, whatever the
@@ -112,7 +125,8 @@ def _record_rotation_precheck(pipeline, ctx) -> None:
     try:
         precheck = getattr(
             getattr(pipeline, "portfolio_manager", None),
-            "last_rotation_precheck", None,
+            "last_rotation_precheck",
+            None,
         )
         if not isinstance(precheck, RotationPrecheck):
             return
@@ -122,13 +136,15 @@ def _record_rotation_precheck(pipeline, ctx) -> None:
             ranked_margin_enabled=_rotation_ranked_margin_enabled(pipeline),
         )
         logger.info(
-            "Rotation pre-check: %s (headroom %.2f%% of a %.2f%% ceiling, "
-            "binding [%s], %s vs %s at ratio %s%s)",
-            record["outcome"], record["headroom_pct"], record["ceiling_pct"],
-            record.get("binding", ""), record.get("held_symbol"),
-            record.get("new_symbol"), record.get("ratio"),
-            f", refused at {record['refusal_point']}"
-            if record.get("refusal_point") else "",
+            "Rotation pre-check: %s (headroom %.2f%% of a %.2f%% ceiling, binding [%s], %s vs %s at ratio %s%s)",
+            record["outcome"],
+            record["headroom_pct"],
+            record["ceiling_pct"],
+            record.get("binding", ""),
+            record.get("held_symbol"),
+            record.get("new_symbol"),
+            record.get("ratio"),
+            f", refused at {record['refusal_point']}" if record.get("refusal_point") else "",
         )
         # RUN-scoped, with the symbols in the payload. Scoping it to the
         # holding was tried and reverted on adversary review: this repo has
@@ -141,16 +157,19 @@ def _record_rotation_precheck(pipeline, ctx) -> None:
         # streak on essentially every run and silently disarmed the jam
         # alarm. The near-miss fields are just as queryable in the payload.
         _record_pipeline_event(
-            pipeline, ctx, None, "rotation", "precheck",
-            record["outcome"], **{
-                k: v for k, v in record.items() if k != "outcome"
-            },
+            pipeline,
+            ctx,
+            None,
+            "rotation",
+            "precheck",
+            record["outcome"],
+            **{k: v for k, v in record.items() if k != "outcome"},
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Rotation pre-check record failed: %s", exc)
 
-def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
-                              position_history: dict | None) -> None:
+
+def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions, position_history: dict | None) -> None:
     """Phase 14b — turn the CATEGORICAL rotation comparison into an ordinary
     zero-size PM target, when the desk's own data says it is safe to.
 
@@ -214,7 +233,9 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     from src.rotation import RotationPrecheck, rotation_proposal_reason
 
     precheck = getattr(
-        getattr(pipeline, "portfolio_manager", None), "last_rotation_precheck", None,
+        getattr(pipeline, "portfolio_manager", None),
+        "last_rotation_precheck",
+        None,
     )
     if not isinstance(precheck, RotationPrecheck) or precheck.opportunity is None:
         return  # nothing was surfaced this session — nothing to act on
@@ -235,12 +256,18 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         # post-sale state. Nothing here can put it on the wire.
         if not _rotation_ranked_margin_enabled(pipeline):
             _rotation_skip(
-                pipeline, ctx, opportunity, "ranked_margin_tier_not_enabled",
+                pipeline,
+                ctx,
+                opportunity,
+                "ranked_margin_tier_not_enabled",
             )
             return
     elif opportunity.tier != "ineligible_hold":
         _rotation_skip(
-            pipeline, ctx, opportunity, "unknown_rotation_tier",
+            pipeline,
+            ctx,
+            opportunity,
+            "unknown_rotation_tier",
             tier_seen=str(opportunity.tier),
         )
         return
@@ -255,12 +282,13 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     # keeps the precondition: it sells a still-eligible name purely to fund a
     # replacement, so without the replacement it has no reason at all.
     if opportunity.tier == "ranked_margin":
-        new_targeted = any(
-            t.symbol.upper() == new_symbol and not t.is_close for t in targets
-        )
+        new_targeted = any(t.symbol.upper() == new_symbol and not t.is_close for t in targets)
         if not new_targeted:
             _rotation_skip(
-                pipeline, ctx, opportunity, "pm_did_not_target_new_candidate",
+                pipeline,
+                ctx,
+                opportunity,
+                "pm_did_not_target_new_candidate",
             )
             return
 
@@ -276,22 +304,29 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         makes the room.
         """
         cand_opp = replace(
-            opportunity, held_symbol=cand_symbol, reasons=tuple(cand_reasons),
+            opportunity,
+            held_symbol=cand_symbol,
+            reasons=tuple(cand_reasons),
         )
         held_pos = next(
-            (p for p in (positions or [])
-             if (p.symbol or "").upper() == cand_symbol),
+            (p for p in (positions or []) if (p.symbol or "").upper() == cand_symbol),
             None,
         )
         if held_pos is None or held_pos.qty <= 0:
             _rotation_skip(
-                pipeline, ctx, cand_opp, "held_symbol_is_not_a_long_position",
+                pipeline,
+                ctx,
+                cand_opp,
+                "held_symbol_is_not_a_long_position",
                 qty=getattr(held_pos, "qty", None),
             )
             return None
         if any(t.symbol.upper() == cand_symbol for t in targets):
             _rotation_skip(
-                pipeline, ctx, cand_opp, "pm_already_targets_held_symbol",
+                pipeline,
+                ctx,
+                cand_opp,
+                "pm_already_targets_held_symbol",
             )
             return None
 
@@ -300,57 +335,70 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         # assumption of "clear".
         try:
             today_rows = pipeline.db.get_trades(
-                symbol=cand_symbol, limit=50, today_only=True,
+                symbol=cand_symbol,
+                limit=50,
+                today_only=True,
             )
-            bought_today = any(
-                str(r.get("action") or "").upper() == "BUY" for r in today_rows
-            )
+            bought_today = any(str(r.get("action") or "").upper() == "BUY" for r in today_rows)
             in_flight_rows = [
-                r for r in today_rows
-                if str(r.get("fill_status") or "").lower()
-                in _IN_FLIGHT_FILL_STATUSES
+                r
+                for r in today_rows
+                if str(r.get("fill_status") or "").lower() in _IN_FLIGHT_FILL_STATUSES
                 and str(r.get("action") or "").upper() != "HOLD"
             ]
             pending_restores = [
-                r for r in pipeline.db.get_pending_protection_restores()
+                r
+                for r in pipeline.db.get_pending_protection_restores()
                 if str(r.get("symbol") or "").upper() == cand_symbol
             ]
             pending_repegs = [
-                r for r in pipeline.db.get_pending_repegs()
-                if str(r.get("symbol") or "").upper() == cand_symbol
+                r for r in pipeline.db.get_pending_repegs() if str(r.get("symbol") or "").upper() == cand_symbol
             ]
             record_guarded_pass(pipeline, "rotation_exec.in_flight_check")
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(pipeline, "rotation_exec.in_flight_check", exc, log=logger)
             _rotation_skip(
-                pipeline, ctx, cand_opp, "in_flight_check_failed",
+                pipeline,
+                ctx,
+                cand_opp,
+                "in_flight_check_failed",
                 detail=str(exc),
             )
             return None
         if bought_today:
             _rotation_skip(
-                pipeline, ctx, cand_opp, "held_symbol_bought_today",
+                pipeline,
+                ctx,
+                cand_opp,
+                "held_symbol_bought_today",
             )
             return None
         if in_flight_rows:
             _rotation_skip(
-                pipeline, ctx, cand_opp, "order_in_flight_on_held_symbol",
+                pipeline,
+                ctx,
+                cand_opp,
+                "order_in_flight_on_held_symbol",
                 detail="; ".join(
-                    f"{r.get('action')}:{r.get('fill_status')}:"
-                    f"{r.get('broker_order_id')}"
-                    for r in in_flight_rows
+                    f"{r.get('action')}:{r.get('fill_status')}:{r.get('broker_order_id')}" for r in in_flight_rows
                 )[:400],
             )
             return None
         if pending_restores:
             _rotation_skip(
-                pipeline, ctx, cand_opp, "sell_already_in_flight_wal_row",
+                pipeline,
+                ctx,
+                cand_opp,
+                "sell_already_in_flight_wal_row",
                 detail=str(pending_restores[0].get("sell_order_id")),
             )
             return None
         if pending_repegs:
             _rotation_skip(
-                pipeline, ctx, cand_opp, "entry_repeg_in_flight",
+                pipeline,
+                ctx,
+                cand_opp,
+                "entry_repeg_in_flight",
                 detail=str(pending_repegs[0].get("old_order_id")),
             )
             return None
@@ -359,9 +407,11 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         # protected? Same method, same inputs `RiskStage` uses. A protected
         # (thesis-intact) name is NEVER sold — the walk passes OVER it to the
         # next below-bar name; it never overrides the discipline.
-        cand_hist = (position_history or {}).get(cand_symbol) or (
-            position_history or {}
-        ).get(getattr(held_pos, "symbol", cand_symbol)) or {}
+        cand_hist = (
+            (position_history or {}).get(cand_symbol)
+            or (position_history or {}).get(getattr(held_pos, "symbol", cand_symbol))
+            or {}
+        )
         try:
             cand_protection = pipeline._structural_protection_for_holding(
                 symbol=cand_symbol,
@@ -375,7 +425,10 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(pipeline, "rotation_exec.protection_check", exc, log=logger)
             _rotation_skip(
-                pipeline, ctx, cand_opp, "protection_check_failed",
+                pipeline,
+                ctx,
+                cand_opp,
+                "protection_check_failed",
                 detail=str(exc),
             )
             return None
@@ -399,7 +452,10 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
             # blocks only a regime-flip or bearish-state-change CLAIM proven
             # false, and a rotation reason claims neither.
             _rotation_skip(
-                pipeline, ctx, cand_opp, "held_symbol_structurally_protected",
+                pipeline,
+                ctx,
+                cand_opp,
+                "held_symbol_structurally_protected",
                 protection_basis=cand_protection.basis,
                 protection_detail=str(cand_protection.detail)[:400],
             )
@@ -415,14 +471,14 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     # `held_symbol` and behave exactly as before.
     cull_set = (
         opportunity.ineligible_candidates
-        if (opportunity.tier == "ineligible_hold"
-            and opportunity.ineligible_candidates)
+        if (opportunity.tier == "ineligible_hold" and opportunity.ineligible_candidates)
         else ((held_symbol, opportunity.reasons),)
     )
     chosen = None
     for cand_symbol, cand_reasons in cull_set:
         chosen = _sellable_this_run(
-            str(cand_symbol).strip().upper(), cand_reasons,
+            str(cand_symbol).strip().upper(),
+            cand_reasons,
         )
         if chosen is not None:
             break
@@ -458,21 +514,20 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
     # `thesis_invalid_if` is carried from the position's own entry record
     # so the built order's reasoning shows the condition the desk was
     # holding it against, exactly as a PM-authored close would.
-    portfolio_decision.targets.append(TargetPosition(
-        symbol=held_symbol,
-        direction="long",
-        risk_allocation_pct=0.0,
-        conviction="high",
-        thesis=reason,
-        thesis_invalid_if=str(hist.get("thesis_invalid_if") or ""),
-    ))
+    portfolio_decision.targets.append(
+        TargetPosition(
+            symbol=held_symbol,
+            direction="long",
+            risk_allocation_pct=0.0,
+            conviction="high",
+            thesis=reason,
+            thesis_invalid_if=str(hist.get("thesis_invalid_if") or ""),
+        )
+    )
     # `None` when the ruling sold a below-bar holding with nothing queued to
     # replace it. Never a placeholder score — see `RotationOpportunity`.
     new_symbol = opportunity.new_symbol or None
-    new_score = (
-        float(opportunity.new_score)
-        if opportunity.new_score is not None else None
-    )
+    new_score = float(opportunity.new_score) if opportunity.new_score is not None else None
     ctx.rotation = {
         "held_symbol": held_symbol,
         "new_symbol": new_symbol,
@@ -505,13 +560,20 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         "reason": reason,
     }
     logger.warning(
-        "Rotation: proposing a full close of %s (below the desk's own entry "
-        "bar; replacement candidate: %s) — %s",
-        held_symbol, new_symbol or "none", reason,
+        "Rotation: proposing a full close of %s (below the desk's own entry bar; replacement candidate: %s) — %s",
+        held_symbol,
+        new_symbol or "none",
+        reason,
     )
     _record_pipeline_event(
-        pipeline, ctx, held_symbol, "rotation", "proposed", reason,
-        new_symbol=new_symbol, new_score=new_score,
+        pipeline,
+        ctx,
+        held_symbol,
+        "rotation",
+        "proposed",
+        reason,
+        new_symbol=new_symbol,
+        new_score=new_score,
         held_reasons=list(opportunity.reasons),
         protection_basis=protection.basis,
         protection_detail=str(protection.detail)[:400],
@@ -520,12 +582,19 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         tier=opportunity.tier,
     )
 
-def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
-                                        buy_decision, positions,
-                                        total_value: float,
-                                        rotation_sell,
-                                        cash: float = 0.0,
-                                        buy_decisions_before: list | None = None):
+
+def _rotation_buy_leg_projected_refusal(
+    pipeline,
+    ctx,
+    *,
+    rotation,
+    buy_decision,
+    positions,
+    total_value: float,
+    rotation_sell,
+    cash: float = 0.0,
+    buy_decisions_before: list | None = None,
+):
     """Would the rotation's replacement BUY be refused downstream, judged
     against the book as it will be AFTER this session's exits?
 
@@ -606,19 +675,27 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # this function at all (`_pending_cover_symbols`), so the only thing
     # left to project is the one sale that has not happened yet.
     projected_positions, equity_for_weights = _projected_post_sale_book(
-        positions, total_value,
-        [rotation_sell] if rotation_sell is not None else [], [],
+        positions,
+        total_value,
+        [rotation_sell] if rotation_sell is not None else [],
+        [],
     )
 
     # --- gates 1/2: price and entry staleness, exact now -----------------
     checked.append("no_price")
     market_price = _live_fill_price(pipeline, symbol)
-    if not isinstance(market_price, (int, float)) or isinstance(
-        market_price, bool,
-    ) or market_price <= 0:
-        return None, "no_price", (
-            "no verifiable live price for the replacement buy (daily bar "
-            "close is not a fill reference)"
+    if (
+        not isinstance(market_price, (int, float))
+        or isinstance(
+            market_price,
+            bool,
+        )
+        or market_price <= 0
+    ):
+        return (
+            None,
+            "no_price",
+            ("no verifiable live price for the replacement buy (daily bar close is not a fill reference)"),
         )
     market_price = float(market_price)
     # docs/WORK.md item 120: the SHARE COUNT divides the dollar allocation by
@@ -629,7 +706,10 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # An UNREADABLE price is refused too, its detail naming
     # `sizing_price_unreadable` so it never reads as a measured absence.
     sizing_print, _why, detail = sizing_price_or_refusal(
-        _today_sizing_price, pipeline, symbol, "replacement buy",
+        _today_sizing_price,
+        pipeline,
+        symbol,
+        "replacement buy",
     )
     if sizing_print is None:
         return None, "no_price", detail
@@ -642,9 +722,10 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     if entry_price > 0:
         deviation = abs(entry_price - market_price) / market_price
         if deviation > 0.05:
-            return None, "stale_entry", (
-                f"entry ${entry_price:.2f} is {deviation * 100:.1f}% from "
-                f"market ${market_price:.2f} (threshold 5%)"
+            return (
+                None,
+                "stale_entry",
+                (f"entry ${entry_price:.2f} is {deviation * 100:.1f}% from market ${market_price:.2f} (threshold 5%)"),
             )
 
     # --- gate 3: does the replacement round to a tradeable size? ---------
@@ -654,7 +735,9 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     sizing_price = max(sizing_print, entry_price or 0.0)
     is_short = getattr(buy_decision, "action", "BUY") == "SHORT"
     fractional = _fractional_sizing_allowed(
-        pipeline, symbol, is_short=is_short,
+        pipeline,
+        symbol,
+        is_short=is_short,
     )
     try:
         allocation_pct = float(
@@ -668,23 +751,26 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
         fractional=fractional,
     )
     if qty <= 0:
-        return None, "qty_zero", (
-            f"allocation {allocation_pct:.2f}% at ${sizing_price:.2f} "
-            f"rounds to zero shares"
-        )
+        return None, "qty_zero", (f"allocation {allocation_pct:.2f}% at ${sizing_price:.2f} rounds to zero shares")
     risk_qty = _qty_by_risk_budget(
-        pipeline, total_value=float(equity_for_weights),
+        pipeline,
+        total_value=float(equity_for_weights),
         sizing_price=sizing_price,
         stop_price=getattr(buy_decision, "stop_loss", 0.0),
-        is_short=is_short, fractional=fractional,
+        is_short=is_short,
+        fractional=fractional,
     )
     if risk_qty is not None and risk_qty < qty:
         qty = risk_qty
     if qty <= 0:
-        return None, "qty_zero", (
-            f"risk budget at ${sizing_price:.2f} entry / "
-            f"${getattr(buy_decision, 'stop_loss', 0.0)} stop rounds to zero "
-            f"shares"
+        return (
+            None,
+            "qty_zero",
+            (
+                f"risk budget at ${sizing_price:.2f} entry / "
+                f"${getattr(buy_decision, 'stop_loss', 0.0)} stop rounds to zero "
+                f"shares"
+            ),
         )
 
     # --- gates 4/5: can the post-sale book actually FUND the replacement? -
@@ -705,41 +791,55 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # order that is then refused, which costs the position.
     checked.append("insufficient_cash")
     projected_cash = _projected_post_sale_cash(
-        cash, positions,
-        [rotation_sell] if rotation_sell is not None else [], [],
+        cash,
+        positions,
+        [rotation_sell] if rotation_sell is not None else [],
+        [],
     )
     try:
         entry_budget, ladder_backed, budget_note = _entry_deployment_budget(
-            pipeline, ctx, projected_positions, float(equity_for_weights),
+            pipeline,
+            ctx,
+            projected_positions,
+            float(equity_for_weights),
             projected_cash,
         )
     except Exception as exc:  # noqa: BLE001
-        return None, "insufficient_cash", (
-            f"the post-sale entry budget could not be measured ({exc}), so "
-            f"the replacement buy cannot be cleared"
+        return (
+            None,
+            "insufficient_cash",
+            (f"the post-sale entry budget could not be measured ({exc}), so the replacement buy cannot be cleared"),
         )
     # Earlier entries in the same session drain the pool before this one
     # reaches it — the submit loop subtracts each order's cost as it goes,
     # so the projection walks the same order.
     for earlier in buy_decisions_before or []:
         entry_budget -= _projected_entry_cost(
-            earlier, float(equity_for_weights),
+            earlier,
+            float(equity_for_weights),
             budget_is_gross=bool(ladder_backed),
         )
     single_name_cap = _single_name_execution_cap(
-        pipeline, float(equity_for_weights),
+        pipeline,
+        float(equity_for_weights),
     )
     order_ceiling = min(entry_budget, single_name_cap)
     estimated_cost = qty * sizing_price
     if not is_short and estimated_cost > order_ceiling:
         affordable_qty = _size_shares(
-            pipeline, order_ceiling / sizing_price, fractional=fractional,
+            pipeline,
+            order_ceiling / sizing_price,
+            fractional=fractional,
         )
         if affordable_qty <= 0:
-            return None, "insufficient_cash", (
-                f"estimated cost ${estimated_cost:.2f} exceeds the "
-                f"${order_ceiling:.2f} deployable on the post-sale book "
-                f"({budget_note})"
+            return (
+                None,
+                "insufficient_cash",
+                (
+                    f"estimated cost ${estimated_cost:.2f} exceeds the "
+                    f"${order_ceiling:.2f} deployable on the post-sale book "
+                    f"({budget_note})"
+                ),
             )
         # Fixed 2026-09-24 (retired the `below_min_notional` gate outright,
         # see `REQUIRED_BUY_LEG_GATES`): this used to refuse the rotation
@@ -757,9 +857,7 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
         # It is here so that they cannot silently stop agreeing: a gate added
         # to the list and not to this function refuses the sale rather than
         # clearing it on a check that was never run.
-        return None, "gate_coverage_incomplete", (
-            f"gates not evaluated: {', '.join(missing)}"
-        )
+        return None, "gate_coverage_incomplete", (f"gates not evaluated: {', '.join(missing)}")
     clearance = RotationClearance(
         held_symbol=str(rotation.get("held_symbol") or ""),
         new_symbol=symbol,
@@ -770,13 +868,11 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
         # LAST, so an over-long note would delete the very thing it
         # documents.
         projected_budget_basis=str(budget_note)[:60],
-        projected_positions=tuple(
-            str(getattr(p, "symbol", "") or "").strip().upper()
-            for p in projected_positions
-        ),
+        projected_positions=tuple(str(getattr(p, "symbol", "") or "").strip().upper() for p in projected_positions),
         projected_equity=float(equity_for_weights),
     )
     return clearance, None, None
+
 
 def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
     """The symbols this session will actually COVER when the rotation's
@@ -826,10 +922,7 @@ def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
     fails toward not trading, which is the direction every other guard on
     this path fails in.
     """
-    by_symbol = {
-        str(getattr(p, "symbol", "") or "").strip().upper(): p
-        for p in (positions or [])
-    }
+    by_symbol = {str(getattr(p, "symbol", "") or "").strip().upper(): p for p in (positions or [])}
     symbols = []
     for decision in cover_decisions or []:
         symbol = str(getattr(decision, "symbol", "") or "").strip().upper()
@@ -843,11 +936,20 @@ def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
         symbols.append(symbol)
     return tuple(symbols)
 
+
 from src.rotation_sell_order import _rotation_sell_last  # noqa: E402,F401
 
-def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
-                        total_value: float, cash: float,
-                        cover_decisions: list | None = None):
+
+def _rotation_sell_gate(
+    pipeline,
+    ctx,
+    decision,
+    buy_decisions,
+    positions,
+    total_value: float,
+    cash: float,
+    cover_decisions: list | None = None,
+):
     """Board item 39 — may this RANKED-MARGIN rotation close be submitted?
 
     Returns `None` for any SELL that is not a ranked-margin rotation close;
@@ -905,15 +1007,27 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
         logger.warning(
             "Rotation withdrawn BEFORE the sell (%s): %s. %s is NOT sold — "
             "the desk keeps the position rather than going naked.",
-            reason, detail, held_symbol,
+            reason,
+            detail,
+            held_symbol,
         )
         _record_pipeline_event(
-            pipeline, ctx, held_symbol, "rotation", "withdrawn", reason,
-            new_symbol=new_symbol, detail=str(detail)[:400],
+            pipeline,
+            ctx,
+            held_symbol,
+            "rotation",
+            "withdrawn",
+            reason,
+            new_symbol=new_symbol,
+            detail=str(detail)[:400],
             tier="ranked_margin",
         )
         _record_execution_skip(
-            pipeline, ctx, held_symbol, "rotation_withdrawn", str(detail)[:400],
+            pipeline,
+            ctx,
+            held_symbol,
+            "rotation_withdrawn",
+            str(detail)[:400],
         )
         # `ctx.rotation` is MARKED withdrawn, not cleared. Clearing it would
         # make `_drop_rotation_buy_if_room_not_freed` a no-op, and the
@@ -940,8 +1054,7 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
         return False, positions, total_value, cash
 
     buy_leg = next(
-        (d for d in (buy_decisions or [])
-         if str(getattr(d, "symbol", "") or "").strip().upper() == new_symbol),
+        (d for d in (buy_decisions or []) if str(getattr(d, "symbol", "") or "").strip().upper() == new_symbol),
         None,
     )
     if buy_leg is None:
@@ -959,24 +1072,20 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
     try:
         account, positions, price_map = pipeline._refresh_account_state()
         total_value = float(
-            account["portfolio_value"] if isinstance(account, dict)
+            account["portfolio_value"]
+            if isinstance(account, dict)
             else getattr(account, "portfolio_value", total_value)
         )
-        cash = float(
-            account["cash"] if isinstance(account, dict)
-            else getattr(account, "cash", cash)
-        )
+        cash = float(account["cash"] if isinstance(account, dict) else getattr(account, "cash", cash))
     except Exception as exc:  # noqa: BLE001
         _withdraw(
             "account_refresh_failed",
-            f"close withheld: the post-sale book could not be projected "
-            f"from a current account state ({exc})",
+            f"close withheld: the post-sale book could not be projected from a current account state ({exc})",
         )
         return False, positions, total_value, cash
 
     held = next(
-        (p for p in (positions or [])
-         if str(getattr(p, "symbol", "") or "").strip().upper() == held_symbol),
+        (p for p in (positions or []) if str(getattr(p, "symbol", "") or "").strip().upper() == held_symbol),
         None,
     )
     if held is None or float(getattr(held, "qty", 0.0) or 0.0) <= 0:
@@ -992,33 +1101,45 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
         return False, positions, total_value, cash
 
     clearance, reason, detail = _rotation_buy_leg_projected_refusal(
-        pipeline, ctx, rotation=rotation, buy_decision=buy_leg,
-        positions=positions, total_value=total_value, cash=cash,
+        pipeline,
+        ctx,
+        rotation=rotation,
+        buy_decision=buy_leg,
+        positions=positions,
+        total_value=total_value,
+        cash=cash,
         rotation_sell=decision,
         # The submit loop walks `buy_decisions` in order and subtracts each
         # order's cost from the pool as it goes, so everything ahead of the
         # rotation's own buy has already drawn the budget down by the time
         # it is reached.
         buy_decisions_before=list(
-            buy_decisions[:buy_decisions.index(buy_leg)],
+            buy_decisions[: buy_decisions.index(buy_leg)],
         ),
     )
     if clearance is None:
         _record_execution_skip(
-            pipeline, ctx, new_symbol, str(reason),
+            pipeline,
+            ctx,
+            new_symbol,
+            str(reason),
             f"rotation buy leg refused on projected post-sale state: {detail}",
         )
         _withdraw(
             f"buy_leg_would_be_refused:{reason}",
-            f"close withheld because the replacement buy of {new_symbol} "
-            f"would be refused ({reason}: {detail})",
+            f"close withheld because the replacement buy of {new_symbol} would be refused ({reason}: {detail})",
         )
         return False, positions, total_value, cash
 
     rotation["clearance"] = clearance
     _record_pipeline_event(
-        pipeline, ctx, held_symbol, "rotation", "buy_leg_cleared",
-        "projected_post_sale_gates_passed", new_symbol=new_symbol,
+        pipeline,
+        ctx,
+        held_symbol,
+        "rotation",
+        "buy_leg_cleared",
+        "projected_post_sale_gates_passed",
+        new_symbol=new_symbol,
         gates=list(clearance.gates_checked),
         projected_entry_budget=clearance.projected_entry_budget,
         projected_budget_basis=clearance.projected_budget_basis,
@@ -1027,6 +1148,7 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
         tier="ranked_margin",
     )
     return True, positions, total_value, cash
+
 
 def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
     """The last barrier in front of a RANKED-MARGIN rotation close.
@@ -1065,8 +1187,13 @@ def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
             symbol,
         )
         _record_pipeline_event(
-            pipeline, ctx, symbol, "rotation", "sell_refused",
-            "no_opportunity_on_context", new_symbol=rotation.get("new_symbol"),
+            pipeline,
+            ctx,
+            symbol,
+            "rotation",
+            "sell_refused",
+            "no_opportunity_on_context",
+            new_symbol=rotation.get("new_symbol"),
         )
         return _ROTATION_SELL_REFUSED
     try:
@@ -1086,14 +1213,24 @@ def _rotation_ranked_margin_sell_reason(pipeline, ctx, decision):
         logger.error(
             "Rotation SELL of %s REFUSED at the wire: %s. The position is "
             "kept — the desk does not sell into an uncleared replacement.",
-            symbol, exc,
+            symbol,
+            exc,
         )
         _record_pipeline_event(
-            pipeline, ctx, symbol, "rotation", "sell_refused",
-            "no_clearance", new_symbol=rotation.get("new_symbol"),
+            pipeline,
+            ctx,
+            symbol,
+            "rotation",
+            "sell_refused",
+            "no_clearance",
+            new_symbol=rotation.get("new_symbol"),
             detail=str(exc)[:400],
         )
         _record_execution_skip(
-            pipeline, ctx, symbol, "rotation_sell_refused", str(exc)[:400],
+            pipeline,
+            ctx,
+            symbol,
+            "rotation_sell_refused",
+            str(exc)[:400],
         )
         return _ROTATION_SELL_REFUSED

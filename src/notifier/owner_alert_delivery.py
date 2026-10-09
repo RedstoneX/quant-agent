@@ -7,6 +7,7 @@ the return value get this behaviour without each one being edited.
 
 Never raises: a failing alert path must not abort the money path it reports on.
 """
+
 from __future__ import annotations
 
 import time
@@ -35,8 +36,12 @@ UNDELIVERED_STATUS = "owner_alert_undelivered"
 
 
 def _record_undelivered(
-    notifier, text: str, attempts: int,
-    *, kind: str = "owner_alert", run_id: str | None = None,
+    notifier,
+    text: str,
+    attempts: int,
+    *,
+    kind: str = "owner_alert",
+    run_id: str | None = None,
 ) -> None:
     """Write one counted durable row; the detail carries the running count.
 
@@ -53,30 +58,41 @@ def _record_undelivered(
         try:
             conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
             try:
-                count = 1 + conn.execute(
-                    "SELECT COUNT(*) FROM notifier_sends WHERE status = ?",
-                    (UNDELIVERED_STATUS,),
-                ).fetchone()[0]
+                count = (
+                    1
+                    + conn.execute(
+                        "SELECT COUNT(*) FROM notifier_sends WHERE status = ?",
+                        (UNDELIVERED_STATUS,),
+                    ).fetchone()[0]
+                )
             finally:
                 conn.close()
         except Exception:  # noqa: BLE001  (table may not exist yet)
             count = 1
         notifier._safe_record_send(
-            kind=kind, status=UNDELIVERED_STATUS, text=text, run_id=run_id,
-            detail=f"undelivered after {attempts} attempts; "
-                   f"undelivered_total={count}",
+            kind=kind,
+            status=UNDELIVERED_STATUS,
+            text=text,
+            run_id=run_id,
+            detail=f"undelivered after {attempts} attempts; undelivered_total={count}",
         )
         logger.critical(
-            "OWNER ALERT [%s] run=%s UNDELIVERED after %d attempts "
-            "(undelivered_total=%d)",
-            kind, run_id, attempts, count,
+            "OWNER ALERT [%s] run=%s UNDELIVERED after %d attempts (undelivered_total=%d)",
+            kind,
+            run_id,
+            attempts,
+            count,
         )
     except Exception:  # noqa: BLE001
         logger.exception("could not record an undelivered owner alert")
 
 
 def deliver_with_outcome(
-    notifier, text: str, *, max_attempts: int = MAX_ATTEMPTS, **send_kwargs,
+    notifier,
+    text: str,
+    *,
+    max_attempts: int = MAX_ATTEMPTS,
+    **send_kwargs,
 ) -> tuple[bool, bool]:
     """`deliver_with_retry`, but also says whether the drop was deliberate.
 
@@ -111,7 +127,9 @@ def deliver_with_outcome(
                 except Exception:  # noqa: BLE001
                     pass
         _record_undelivered(
-            notifier, text, attempts,
+            notifier,
+            text,
+            attempts,
             kind=send_kwargs.get("kind") or "owner_alert",
             run_id=send_kwargs.get("run_id"),
         )

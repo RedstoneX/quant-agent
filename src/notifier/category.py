@@ -87,8 +87,9 @@ def resolve_category(category: str | None, kind: str | None) -> str:
         # An unknown string is a bug at the call site, not a licence to
         # drop the message.
         logger.warning(
-            "notifier: unknown message category %r (kind=%s) — "
-            "treating as money-at-risk and delivering", category, kind,
+            "notifier: unknown message category %r (kind=%s) — treating as money-at-risk and delivering",
+            category,
+            kind,
         )
         return CATEGORY_RISK
     return _KIND_CATEGORY.get(str(kind or ""), CATEGORY_RISK)
@@ -125,8 +126,13 @@ def resolve_risk_only() -> bool:
 
 
 def filtered_by_category(
-    self, *, kind: str, category: str | None, text: str,
-    run_id: str | None = None, symbols: list[str] | None = None,
+    self,
+    *,
+    kind: str,
+    category: str | None,
+    text: str,
+    run_id: str | None = None,
+    symbols: list[str] | None = None,
 ) -> bool:
     """True when risk-only mode drops this message. Records the drop.
 
@@ -147,8 +153,7 @@ def filtered_by_category(
             run_id=run_id,
             text=text,
             detail=(
-                "dropped by TELEGRAM_RISK_ONLY (operational category)"
-                + (f"; symbols: {joined}" if joined else "")
+                "dropped by TELEGRAM_RISK_ONLY (operational category)" + (f"; symbols: {joined}" if joined else "")
             ),
             strict=True,
         )
@@ -159,8 +164,9 @@ def filtered_by_category(
         # either. Deliver it instead — noise the owner can mute beats
         # an alarm nobody can find.
         logger.warning(
-            "notifier: could not record a category drop (%s); delivering "
-            "the message instead: %s", kind, exc,
+            "notifier: could not record a category drop (%s); delivering the message instead: %s",
+            kind,
+            exc,
         )
         return False
     return True

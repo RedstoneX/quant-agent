@@ -25,9 +25,15 @@ from __future__ import annotations
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    AnalystVerdict, MacroAnalysis, MacroPositionGuidance, MacroReasoningChain,
-    NO_STATED_STRENGTH, Position, TechAnalysisResult,
-    TechReasoningChain, VerdictEvidence,
+    AnalystVerdict,
+    MacroAnalysis,
+    MacroPositionGuidance,
+    MacroReasoningChain,
+    NO_STATED_STRENGTH,
+    Position,
+    TechAnalysisResult,
+    TechReasoningChain,
+    VerdictEvidence,
 )
 from src.risk.rules import (
     OWN_BAR_REASON_PREFIX,
@@ -44,6 +50,7 @@ from src.verdicts import score_verdict, seat_weight
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _chain() -> MacroReasoningChain:
     return MacroReasoningChain(
@@ -64,7 +71,9 @@ def _energy_row(reason: str = "crude backwardation") -> dict:
 
 
 def _macro_analysis(
-    *, equity_outlook: str = "bullish", confidence: str = "medium",
+    *,
+    equity_outlook: str = "bullish",
+    confidence: str = "medium",
     sector_guidance: list[dict] | None = None,
 ) -> MacroAnalysis:
     return MacroAnalysis(
@@ -76,7 +85,8 @@ def _macro_analysis(
         sector_guidance=sector_guidance or [],
         risk_factors=[],
         position_guidance=MacroPositionGuidance(
-            target_invested_pct=75.0, cash_recommendation_pct=25.0,
+            target_invested_pct=75.0,
+            cash_recommendation_pct=25.0,
             reasoning="Hold buffer.",
         ),
         bull_triggers=["credit spreads snap tighter"],
@@ -87,13 +97,23 @@ def _macro_analysis(
 
 def _analysis(symbol: str) -> TechAnalysisResult:
     return TechAnalysisResult(
-        symbol=symbol, rating="buy", entry_price=100.0, stop_loss=95.0,
-        reference_target=115.0, support_levels=[95.0], resistance_levels=[115.0],
-        computed_levels=[95.0, 115.0], atr_14=(100.0 - 95.0) / 3.5,
-        setup_type="range", expected_horizon_sessions=60,
+        symbol=symbol,
+        rating="buy",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=115.0,
+        support_levels=[95.0],
+        resistance_levels=[115.0],
+        computed_levels=[95.0, 115.0],
+        atr_14=(100.0 - 95.0) / 3.5,
+        setup_type="range",
+        expected_horizon_sessions=60,
         reasoning="test",
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
         thesis_invalid_if="closes below support",
@@ -123,7 +143,10 @@ def _uncounted(macro: MacroAnalysis, registry: dict, *, sector: str | None) -> d
 
 def _v(seat, *, direction="bullish", conviction="medium"):
     return AnalystVerdict(
-        seat=seat, symbol="XOM", direction=direction, magnitude=None,
+        seat=seat,
+        symbol="XOM",
+        direction=direction,
+        magnitude=None,
         conviction=conviction,
         evidence=[VerdictEvidence(label="ev", text="a checkable observed fact")],
         invalidation="closes back below the breakout level",
@@ -133,8 +156,11 @@ def _v(seat, *, direction="bullish", conviction="medium"):
 def _macro_verdict(*, direction="bullish", conviction="medium", sector_specific):
     label = "sector_stance:Energy" if sector_specific else "equity_outlook"
     return AnalystVerdict(
-        seat="macro", symbol="XOM", direction=direction,
-        magnitude=NO_STATED_STRENGTH, conviction=conviction,
+        seat="macro",
+        symbol="XOM",
+        direction=direction,
+        magnitude=NO_STATED_STRENGTH,
+        conviction=conviction,
         evidence=[VerdictEvidence(label=label, text="a checkable observed fact")],
         invalidation="the broad regime call reverses",
     )
@@ -143,6 +169,7 @@ def _macro_verdict(*, direction="bullish", conviction="medium", sector_specific)
 # ---------------------------------------------------------------------------
 # A broadcast stance is still COVERAGE — it is simply not per-name AGREEMENT
 # ---------------------------------------------------------------------------
+
 
 def test_a_broadcast_macro_stance_stays_in_the_registry():
     """It is real coverage the PM may still cite and `validate_grounding`
@@ -160,9 +187,15 @@ def test_a_broadcast_macro_stance_does_not_count_toward_agreement():
     assert uncounted["XOM"] == frozenset({"macro"})
     sources = registry["XOM"]
     # Technical is the only seat left corroborating.
-    assert count_aligned_sources(
-        "XOM", sources, "long", ignored_sources=uncounted["XOM"],
-    ) == 1
+    assert (
+        count_aligned_sources(
+            "XOM",
+            sources,
+            "long",
+            ignored_sources=uncounted["XOM"],
+        )
+        == 1
+    )
 
 
 def test_a_sector_specific_macro_stance_still_counts():
@@ -190,13 +223,19 @@ def test_broadcast_and_sector_stances_do_not_count_the_same():
     )
     broad_reg, sector_reg = _registry(broad, sector=None), _registry(sector, sector="Energy")
     broad_net = signed_source_score(
-        "XOM", broad_reg["XOM"], "long",
+        "XOM",
+        broad_reg["XOM"],
+        "long",
         non_corroborating_sources=_uncounted(broad, broad_reg, sector=None).get("XOM"),
     )
     sector_net = signed_source_score(
-        "XOM", sector_reg["XOM"], "long",
+        "XOM",
+        sector_reg["XOM"],
+        "long",
         non_corroborating_sources=_uncounted(
-            sector, sector_reg, sector="Energy",
+            sector,
+            sector_reg,
+            sector="Energy",
         ).get("XOM"),
     )
     assert broad_net == 1 and sector_net == 2
@@ -206,8 +245,9 @@ def test_broadcast_and_sector_stances_do_not_count_the_same():
 # SIGN SYMMETRY — the owner's second ruling, pinned
 # ---------------------------------------------------------------------------
 
+
 def test_a_sector_macro_reading_moves_a_long_and_a_short_equally_and_oppositely():
-    """"It can be measured and weighted depending on if it's positive or
+    """ "It can be measured and weighted depending on if it's positive or
     negative. Would help on a long or a short." One reading, one stated
     strength: equal magnitude, opposite sign."""
     macro = _macro_analysis(
@@ -219,7 +259,9 @@ def test_a_sector_macro_reading_moves_a_long_and_a_short_equally_and_oppositely(
     short_net = signed_source_score("XOM", sources, "short")
     assert long_net == -short_net != 0
     assert count_aligned_sources("XOM", sources, "long") == count_opposing_sources(
-        "XOM", sources, "short",
+        "XOM",
+        sources,
+        "short",
     )
     # And the mirrored reading mirrors the result exactly.
     bearish = {"macro": "bearish"}
@@ -237,16 +279,28 @@ def test_the_gate_treats_a_long_and_a_short_identically():
     sources_bear = {"macro": "bearish"}
     gate = frozenset({"macro"})
     bull_long = signed_source_score(
-        "XOM", sources_bull, "long", non_corroborating_sources=gate,
+        "XOM",
+        sources_bull,
+        "long",
+        non_corroborating_sources=gate,
     )
     bear_short = signed_source_score(
-        "XOM", sources_bear, "short", non_corroborating_sources=gate,
+        "XOM",
+        sources_bear,
+        "short",
+        non_corroborating_sources=gate,
     )
     bull_short = signed_source_score(
-        "XOM", sources_bull, "short", non_corroborating_sources=gate,
+        "XOM",
+        sources_bull,
+        "short",
+        non_corroborating_sources=gate,
     )
     bear_long = signed_source_score(
-        "XOM", sources_bear, "long", non_corroborating_sources=gate,
+        "XOM",
+        sources_bear,
+        "long",
+        non_corroborating_sources=gate,
     )
     # A broadcast stance never corroborates, either way round...
     assert bull_long == bear_short == 0
@@ -262,13 +316,18 @@ def test_the_gate_never_raises_the_net_score():
     bullish + earnings bullish + news bearish + broadcast-bearish macro is
     net 0 and REFUSED; it must not become net +1 and trade."""
     sources = {
-        "technical": "bullish", "earnings": "bullish",
-        "news": "bearish", "macro": "bearish",
+        "technical": "bullish",
+        "earnings": "bullish",
+        "news": "bearish",
+        "macro": "bearish",
     }
     gate = frozenset({"macro"})
     ungated = signed_source_score("XOM", sources, "long")
     gated = signed_source_score(
-        "XOM", sources, "long", non_corroborating_sources=gate,
+        "XOM",
+        sources,
+        "long",
+        non_corroborating_sources=gate,
     )
     assert ungated == 0 and agreement_refuses_trade(ungated)
     assert gated == 0 and agreement_refuses_trade(gated)
@@ -293,7 +352,9 @@ def test_the_gate_never_raises_the_net_on_any_stance_combination():
                 for direction in ("long", "short"):
                     before = signed_source_score("XOM", sources, direction)
                     after = signed_source_score(
-                        "XOM", sources, direction,
+                        "XOM",
+                        sources,
+                        direction,
                         non_corroborating_sources=gate,
                     )
                     assert after <= before
@@ -314,12 +375,9 @@ def test_the_stated_strength_weights_a_long_and_a_short_identically():
 
 
 def test_a_stronger_macro_reading_weighs_more_than_a_weaker_one():
-    """"Depending on how strong the data point is ... the data point should be
+    """ "Depending on how strong the data point is ... the data point should be
     weighted." Measured from the reading, not chosen here."""
-    scores = [
-        score_verdict(_macro_analysis(confidence=c).to_verdict("XOM"))
-        for c in ("low", "medium", "high")
-    ]
+    scores = [score_verdict(_macro_analysis(confidence=c).to_verdict("XOM")) for c in ("low", "medium", "high")]
     assert scores == sorted(scores) and scores[0] < scores[-1]
     assert seat_weight("macro") > 0  # never muted
 
@@ -328,8 +386,9 @@ def test_a_stronger_macro_reading_weighs_more_than_a_weaker_one():
 # NO-SOLO — enforced at the entry bar itself
 # ---------------------------------------------------------------------------
 
+
 def test_macro_alone_cannot_admit_a_name():
-    """"Nothing can green light a name on its own." Technical confirms timing
+    """ "Nothing can green light a name on its own." Technical confirms timing
     but carries no positive weight, so macro would otherwise be the only
     supporter and the name would pass."""
     for sector_specific in (True, False):
@@ -373,6 +432,7 @@ def test_the_highest_possible_macro_strength_is_still_not_enough_alone():
 # The gate can only ever lower the NET, never raise it
 # ---------------------------------------------------------------------------
 
+
 def test_the_broadcast_gate_never_manufactures_agreement():
     macro = _macro_analysis(equity_outlook="bearish")
     registry = _registry(macro, sector=None)
@@ -382,7 +442,10 @@ def test_the_broadcast_gate_never_manufactures_agreement():
         # The NET, not the aligned count: gating a source can never raise
         # the aligned count, so asserting on it proves nothing.
         assert signed_source_score(
-            "XOM", sources, direction, non_corroborating_sources=gate,
+            "XOM",
+            sources,
+            direction,
+            non_corroborating_sources=gate,
         ) <= signed_source_score("XOM", sources, direction)
 
 
@@ -391,16 +454,27 @@ def test_a_held_name_with_no_registry_coverage_is_still_reached():
     broadcasting onto — the gate has to see them or the double count survives
     on exactly the names it hurt most."""
     macro = _macro_analysis(equity_outlook="bullish")
-    positions = [Position(
-        symbol="KO", qty=10, avg_entry=60.0, current_price=62.0,
-        market_value=620.0, unrealized_pnl=20.0, sector="Consumer Defensive",
-    )]
+    positions = [
+        Position(
+            symbol="KO",
+            qty=10,
+            avg_entry=60.0,
+            current_price=62.0,
+            market_value=620.0,
+            unrealized_pnl=20.0,
+            sector="Consumer Defensive",
+        )
+    ]
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[], positions=positions, news_intel=None,
-        earnings_analyses=[], macro_analysis=macro.model_dump(),
+        analyses=[],
+        positions=positions,
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=macro.model_dump(),
     )
     uncounted = PortfolioManagerAgent.broadcast_macro_sources(
-        registry=registry, positions=positions,
+        registry=registry,
+        positions=positions,
         macro_analysis=macro.model_dump(),
     )
     assert registry["KO"]["macro"] == "bullish"
@@ -410,6 +484,7 @@ def test_a_held_name_with_no_registry_coverage_is_still_reached():
 # ---------------------------------------------------------------------------
 # ONE distinction, not two copies of it
 # ---------------------------------------------------------------------------
+
 
 def test_the_tally_and_the_bar_classify_a_held_name_the_same_way():
     """The tally asks `broadcast_macro_sources`; the conviction bar asks
@@ -425,22 +500,36 @@ def test_the_tally_and_the_bar_classify_a_held_name_the_same_way():
     macro = _macro_analysis(equity_outlook="bearish", sector_guidance=[_energy_row()])
     # XOM is HELD, and its sector is known only from the position — exactly
     # the input the verdict side used to ignore.
-    positions = [Position(
-        symbol="XOM", qty=10, avg_entry=100.0, current_price=104.0,
-        market_value=1040.0, unrealized_pnl=40.0, sector="Energy",
-    )]
+    positions = [
+        Position(
+            symbol="XOM",
+            qty=10,
+            avg_entry=100.0,
+            current_price=104.0,
+            market_value=1040.0,
+            unrealized_pnl=40.0,
+            sector="Energy",
+        )
+    ]
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[_analysis("XOM")], positions=positions, news_intel=None,
-        earnings_analyses=[], macro_analysis=macro.model_dump(),
+        analyses=[_analysis("XOM")],
+        positions=positions,
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=macro.model_dump(),
     )
     gated = PortfolioManagerAgent.broadcast_macro_sources(
-        registry=registry, positions=positions,
+        registry=registry,
+        positions=positions,
         macro_analysis=macro.model_dump(),
     )
     verdicts = PortfolioManagerAgent._collect_seat_verdicts(
-        analyses=[_analysis("XOM")], news_intel=None,
-        macro_analysis=macro.model_dump(), earnings_analyses=[],
-        smart_money_findings=None, positions=positions,
+        analyses=[_analysis("XOM")],
+        news_intel=None,
+        macro_analysis=macro.model_dump(),
+        earnings_analyses=[],
+        smart_money_findings=None,
+        positions=positions,
     )
     macro_verdict = next(v for v in verdicts if v.seat == "macro")
     tally_says_broadcast = "XOM" in gated
@@ -453,22 +542,36 @@ def test_the_tally_and_the_bar_classify_a_held_name_the_same_way():
 
 def test_the_two_sides_agree_on_a_genuine_broadcast_too():
     macro = _macro_analysis(equity_outlook="bearish")
-    positions = [Position(
-        symbol="XOM", qty=10, avg_entry=100.0, current_price=104.0,
-        market_value=1040.0, unrealized_pnl=40.0, sector="Energy",
-    )]
+    positions = [
+        Position(
+            symbol="XOM",
+            qty=10,
+            avg_entry=100.0,
+            current_price=104.0,
+            market_value=1040.0,
+            unrealized_pnl=40.0,
+            sector="Energy",
+        )
+    ]
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=[_analysis("XOM")], positions=positions, news_intel=None,
-        earnings_analyses=[], macro_analysis=macro.model_dump(),
+        analyses=[_analysis("XOM")],
+        positions=positions,
+        news_intel=None,
+        earnings_analyses=[],
+        macro_analysis=macro.model_dump(),
     )
     gated = PortfolioManagerAgent.broadcast_macro_sources(
-        registry=registry, positions=positions,
+        registry=registry,
+        positions=positions,
         macro_analysis=macro.model_dump(),
     )
     verdicts = PortfolioManagerAgent._collect_seat_verdicts(
-        analyses=[_analysis("XOM")], news_intel=None,
-        macro_analysis=macro.model_dump(), earnings_analyses=[],
-        smart_money_findings=None, positions=positions,
+        analyses=[_analysis("XOM")],
+        news_intel=None,
+        macro_analysis=macro.model_dump(),
+        earnings_analyses=[],
+        smart_money_findings=None,
+        positions=positions,
     )
     macro_verdict = next(v for v in verdicts if v.seat == "macro")
     assert ("XOM" in gated) is _is_broadcast_macro_verdict(macro_verdict) is True
@@ -477,6 +580,7 @@ def test_the_two_sides_agree_on_a_genuine_broadcast_too():
 # ---------------------------------------------------------------------------
 # What the tally does NOT do: weight by the seat's stated confidence
 # ---------------------------------------------------------------------------
+
 
 def test_the_agreement_tally_is_not_weighted_by_confidence():
     """Stated plainly so the record cannot claim otherwise. Confidence
@@ -488,6 +592,7 @@ def test_the_agreement_tally_is_not_weighted_by_confidence():
     the minimum sample that derivation needs.
     """
     from src.risk.rules import SEAT_WEIGHT as TALLY_SEAT_WEIGHT
+
     assert TALLY_SEAT_WEIGHT == 1
     low = _macro_analysis(equity_outlook="bullish", confidence="low")
     high = _macro_analysis(equity_outlook="bullish", confidence="high")
@@ -495,7 +600,9 @@ def test_the_agreement_tally_is_not_weighted_by_confidence():
     high_reg = _registry(high, sector="Energy")
     assert low_reg["XOM"] == high_reg["XOM"]
     assert signed_source_score(
-        "XOM", low_reg["XOM"], "long",
+        "XOM",
+        low_reg["XOM"],
+        "long",
     ) == signed_source_score("XOM", high_reg["XOM"], "long")
     # The ranking, by contrast, does separate them — that is where the
     # seat's own stated strength is read.

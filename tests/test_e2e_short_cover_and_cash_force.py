@@ -17,6 +17,7 @@ desk did on a past session:
 NOT COVERED: partial cover, a rejected cover order, the re-protect path
 after a partial fill, a multi-name sweep order (biggest-loser-first).
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -26,24 +27,39 @@ from unittest.mock import patch
 import tests.test_e2e_morning_session as morning
 import tests.test_e2e_close_existing_book as cb
 from tests.test_e2e_close_existing_book import (
-    CLOSE_AT, ENTRY, ONE_R_PRICE, QTY, SYMBOL, _bars, _market, _news_says_nothing,
-    _reviewer_says, _risk_says_yes, _seed_open_position,
+    CLOSE_AT,
+    ENTRY,
+    ONE_R_PRICE,
+    QTY,
+    SYMBOL,
+    _bars,
+    _market,
+    _news_says_nothing,
+    _reviewer_says,
+    _risk_says_yes,
+    _seed_open_position,
 )
 from tests.test_e2e_morning_session import (
-    _build_config, _earnings_feed_stub, _macro_feed_stub, _news_feed_stub,
+    _build_config,
+    _earnings_feed_stub,
+    _macro_feed_stub,
+    _news_feed_stub,
     _scripted_model_seats,
 )
 from tests.test_e2e_morning_protection import _seed_company_profile_cache
 
 HOLD = cb.HOLD
 SHORT_ENTRY = 105.0
-SHORT_STOP = 110.0          # buy stop above the entry
+SHORT_STOP = 110.0  # buy stop above the entry
 
 
-def _run(tmp_path, monkeypatch, *, bars, cash, qty, entry, standing_stop,
-         actions=HOLD, allow_margin=True, seed_long=True):
+def _run(
+    tmp_path, monkeypatch, *, bars, cash, qty, entry, standing_stop, actions=HOLD, allow_margin=True, seed_long=True
+):
     from ops.rehearsal.broker import (
-        BrokerSnapshot, RecordedOrder, install_rehearsal_broker,
+        BrokerSnapshot,
+        RecordedOrder,
+        install_rehearsal_broker,
     )
     from ops.rehearsal.broker_amend import give_amend_endpoint
     from ops.rehearsal.clock import frozen_clock
@@ -60,17 +76,19 @@ def _run(tmp_path, monkeypatch, *, bars, cash, qty, entry, standing_stop,
     config.risk.allow_margin = allow_margin
     now = CLOSE_AT.replace(tzinfo=ET)
     trace: list = []
-    answers = {"position": _reviewer_says(actions), "risk": _risk_says_yes(),
-               "news": _news_says_nothing()}
+    answers = {"position": _reviewer_says(actions), "risk": _risk_says_yes(), "news": _news_says_nothing()}
     monkeypatch.setattr(morning, "_scripted_answers", lambda: answers)
     attempts: list[str] = []
-    with no_network(attempts), _sentinel_credentials(), \
-         patch("src.pipeline.MarketDataProvider", return_value=_market(bars)), \
-         patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()), \
-         patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()), \
-         patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()), \
-         frozen_clock(now, run_id="e2e-short-force"), \
-         _scripted_model_seats(trace):
+    with (
+        no_network(attempts),
+        _sentinel_credentials(),
+        patch("src.pipeline.MarketDataProvider", return_value=_market(bars)),
+        patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()),
+        patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()),
+        patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()),
+        frozen_clock(now, run_id="e2e-short-force"),
+        _scripted_model_seats(trace),
+    ):
         from src.pipeline import TradingPipeline
 
         pipeline = TradingPipeline(config)
@@ -78,26 +96,40 @@ def _run(tmp_path, monkeypatch, *, bars, cash, qty, entry, standing_stop,
             _seed_open_position(pipeline.db)
         mv = qty * price
         snapshot = BrokerSnapshot(
-            as_of=now.date(), cash=cash, portfolio_value=cash + mv,
+            as_of=now.date(),
+            cash=cash,
+            portfolio_value=cash + mv,
             last_equity=cash + mv,
-            positions=[{
-                "symbol": SYMBOL, "qty": qty, "avg_entry": entry,
-                "current_price": price, "market_value": mv,
-                "unrealized_pnl": qty * (price - entry), "sector": "ETF",
-            }],
+            positions=[
+                {
+                    "symbol": SYMBOL,
+                    "qty": qty,
+                    "avg_entry": entry,
+                    "current_price": price,
+                    "market_value": mv,
+                    "unrealized_pnl": qty * (price - entry),
+                    "sector": "ETF",
+                }
+            ],
             prices={SYMBOL: price},
             standing_stops={SYMBOL: standing_stop} if qty > 0 else {},
         )
         trading = give_amend_endpoint(
             install_rehearsal_broker(pipeline.broker, snapshot, now=now),
         )
-        if qty < 0:   # the stand-in only seeds SELL stops; a short rests a BUY stop
+        if qty < 0:  # the stand-in only seeds SELL stops; a short rests a BUY stop
             oid = f"pre-existing-stop-{SYMBOL}"
             trading._orders[oid] = RecordedOrder(
-                order_id=oid, symbol=SYMBOL, side="buy", qty=abs(qty),
-                order_type="stop_limit", limit_price=round(standing_stop * 1.03, 2),
-                stop_price=standing_stop, time_in_force="gtc",
-                submitted_at=now, status="pre_existing",
+                order_id=oid,
+                symbol=SYMBOL,
+                side="buy",
+                qty=abs(qty),
+                order_type="stop_limit",
+                limit_price=round(standing_stop * 1.03, 2),
+                stop_price=standing_stop,
+                time_in_force="gtc",
+                submitted_at=now,
+                status="pre_existing",
             )
         symbols_of = pipeline.broker._data_client._symbols
         pipeline.broker._data_client.get_stock_latest_trade = lambda request: {
@@ -111,23 +143,29 @@ def _run(tmp_path, monkeypatch, *, bars, cash, qty, entry, standing_stop,
 
 
 def _closing(trading, side):
-    return [o for o in trading.submitted
-            if o.side == side and "stop" not in o.order_type]
+    return [o for o in trading.submitted if o.side == side and "stop" not in o.order_type]
 
 
 def test_a_reviewer_cover_buys_back_the_whole_short_after_clearing_its_buy_stop(tmp_path, monkeypatch):
-    bars = _bars(end=ONE_R_PRICE + 1.0)          # 99.00; the short entered at 105
+    bars = _bars(end=ONE_R_PRICE + 1.0)  # 99.00; the short entered at 105
     short_qty = -QTY
     result, trace, trading, attempts = _run(
-        tmp_path, monkeypatch, bars=bars, cash=10_000.0, qty=short_qty,
-        entry=SHORT_ENTRY, standing_stop=SHORT_STOP, actions=[{
-            "action": "COVER", "symbol": SYMBOL,
-            "reason": "thesis invalidated: the breakdown the short was "
-                      "measured on has failed",
-            "exit_trigger": "thesis_invalid",
-            "trigger_evidence": "thesis_invalid_if was 'closes above the "
-                                "breakdown level'; price has reclaimed it",
-        }],
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        cash=10_000.0,
+        qty=short_qty,
+        entry=SHORT_ENTRY,
+        standing_stop=SHORT_STOP,
+        actions=[
+            {
+                "action": "COVER",
+                "symbol": SYMBOL,
+                "reason": "thesis invalidated: the breakdown the short was measured on has failed",
+                "exit_trigger": "thesis_invalid",
+                "trigger_evidence": "thesis_invalid_if was 'closes above the breakdown level'; price has reclaimed it",
+            }
+        ],
     )
     assert attempts == [], attempts
     buys, sells = _closing(trading, "buy"), _closing(trading, "sell")
@@ -140,12 +178,18 @@ def test_a_reviewer_cover_buys_back_the_whole_short_after_clearing_its_buy_stop(
 
 
 def test_cash_only_account_in_deficit_force_sells_the_long_with_the_seat_saying_hold(tmp_path, monkeypatch):
-    bars = _bars(end=ONE_R_PRICE - 1.0)          # 97.00, well above the stop
-    deficit = 200.0   # equity stays inside the 2x gross ceiling
-    assert QTY * bars[-1].close * 0.97 >= deficit     # one name clears it
+    bars = _bars(end=ONE_R_PRICE - 1.0)  # 97.00, well above the stop
+    deficit = 200.0  # equity stays inside the 2x gross ceiling
+    assert QTY * bars[-1].close * 0.97 >= deficit  # one name clears it
     result, trace, trading, attempts = _run(
-        tmp_path, monkeypatch, bars=bars, cash=-deficit, qty=QTY, entry=ENTRY,
-        standing_stop=cb.INITIAL_STOP, allow_margin=False,
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        cash=-deficit,
+        qty=QTY,
+        entry=ENTRY,
+        standing_stop=cb.INITIAL_STOP,
+        allow_margin=False,
     )
     assert attempts == [], attempts
     sells = _closing(trading, "sell")
@@ -159,8 +203,13 @@ def test_cash_only_account_in_deficit_force_sells_the_long_with_the_seat_saying_
 def test_the_same_deficit_with_margin_allowed_sells_nothing(tmp_path, monkeypatch):
     bars = _bars(end=ONE_R_PRICE - 1.0)
     result, trace, trading, attempts = _run(
-        tmp_path, monkeypatch, bars=bars, cash=-200.0, qty=QTY, entry=ENTRY,
-        standing_stop=cb.INITIAL_STOP, allow_margin=True,
+        tmp_path,
+        monkeypatch,
+        bars=bars,
+        cash=-200.0,
+        qty=QTY,
+        entry=ENTRY,
+        standing_stop=cb.INITIAL_STOP,
+        allow_margin=True,
     )
-    assert attempts == [] and _closing(trading, "sell") == [], [
-        o.as_plain() for o in trading.submitted]
+    assert attempts == [] and _closing(trading, "sell") == [], [o.as_plain() for o in trading.submitted]

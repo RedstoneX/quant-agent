@@ -17,7 +17,8 @@ from src.notifier.base import (
     logger,
 )
 from src.notifier.category import (
-    filtered_by_category, resolve_risk_only,
+    filtered_by_category,
+    resolve_risk_only,
 )
 from src.notifier.send_log import record_send
 from src.notifier.send_funnel import send as _public_send
@@ -27,6 +28,7 @@ from src.notifier.markup import (
     _escape_with_markup,
     _linkify_symbols,
 )
+
 
 class TelegramNotifier:
     """Best-effort Telegram Bot API notifier.
@@ -85,10 +87,7 @@ class TelegramNotifier:
             if kill_switch:
                 logger.info("TelegramNotifier: disabled via TELEGRAM_DISABLED env var")
             else:
-                logger.info(
-                    "TelegramNotifier: disabled (set TELEGRAM_BOT_TOKEN + "
-                    "TELEGRAM_CHAT_ID env vars to enable)"
-                )
+                logger.info("TelegramNotifier: disabled (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars to enable)")
 
     def _redact(self, value: object) -> str:
         """Strip the bot token AND chat id out of anything headed for the
@@ -202,10 +201,7 @@ class TelegramNotifier:
         # in its plain text on purpose; no other caller does, and every
         # other caller must keep the historical "always fully escape"
         # contract.
-        escaped = (
-            _escape_with_markup(text) if preserve_structural_markup
-            else html.escape(text)
-        )
+        escaped = _escape_with_markup(text) if preserve_structural_markup else html.escape(text)
 
         resolved_url = link_url if link_url is not None else self.mission_control_url
         link_html = ""
@@ -259,6 +255,7 @@ class TelegramNotifier:
             body = response.json()
         except Exception as exc:  # noqa: BLE001 - a proxy error page is not JSON
             from src.sentinel.counted import record_swallowed
+
             record_swallowed("notifier.transport.json_body", exc, log=logger)
             return {}
         return body if isinstance(body, dict) else {}
@@ -290,7 +287,9 @@ class TelegramNotifier:
             # checked and it is broken" — collapsing those two is the exact
             # defect this whole probe exists to remove.
             return ProbeResult(
-                False, "rehearsal", "suppressed: QAMC_REHEARSAL=1, nothing sent",
+                False,
+                "rehearsal",
+                "suppressed: QAMC_REHEARSAL=1, nothing sent",
             )
         if self.muted:
             # A DELIBERATE mute is not a fault. Only this process can tell
@@ -307,8 +306,7 @@ class TelegramNotifier:
             return ProbeResult(
                 False,
                 "credentials",
-                "this process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID "
-                "— an alert raised here would reach nobody",
+                "this process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID — an alert raised here would reach nobody",
             )
 
         # link_url="" — never append the Mission Control link to a probe.
@@ -366,8 +364,12 @@ class TelegramNotifier:
         return True, ""
 
     def send_document(
-        self, csv_bytes: bytes, filename: str, caption: str = "",
-        kind: str = "document", run_id: str | None = None,
+        self,
+        csv_bytes: bytes,
+        filename: str,
+        caption: str = "",
+        kind: str = "document",
+        run_id: str | None = None,
         category: str | None = None,
     ) -> bool:
         """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
@@ -396,7 +398,10 @@ class TelegramNotifier:
         except Exception as exc:
             logger.warning("Telegram send_document failed: %s", self._redact(exc))
             self._safe_record_send(
-                kind=kind, status="failed", text=recorded_text,
-                detail=self._redact(exc), run_id=run_id,
+                kind=kind,
+                status="failed",
+                text=recorded_text,
+                detail=self._redact(exc),
+                run_id=run_id,
             )
             return False

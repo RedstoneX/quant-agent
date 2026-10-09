@@ -41,11 +41,14 @@ def _pipeline_with_snapshot(total_value, last_equity, total=(None, None, None)):
 
 # --- 1. A trading session renders REAL figures -------------------------
 
+
 def test_trading_session_result_carries_the_pnl_it_already_read():
     """The exact shape of the 2026-09-23 morning message: a `no_trades`
     result, which carried no P&L key at all."""
     p = _pipeline_with_snapshot(
-        10_041.44, 10_000.0, total=(74.90, 0.749, "2026-08-14"),
+        10_041.44,
+        10_000.0,
+        total=(74.90, 0.749, "2026-08-14"),
     )
     result = {"status": "no_trades", "orders": [], "run_id": "run-fccb2026"}
 
@@ -59,7 +62,9 @@ def test_trading_session_result_carries_the_pnl_it_already_read():
 
 def test_trading_session_message_shows_the_figure_not_not_available():
     p = _pipeline_with_snapshot(
-        10_041.44, 10_000.0, total=(74.90, 0.749, "2026-08-14"),
+        10_041.44,
+        10_000.0,
+        total=(74.90, 0.749, "2026-08-14"),
     )
     result = {"status": "no_trades", "orders": [], "run_id": "r"}
     p._attach_pnl(result)
@@ -75,7 +80,9 @@ def test_the_dated_total_label_still_renders():
     """'Total P&L' stays dated — a bare "total" would read as "since the
     account began", which the 2026-09-02 liquidation makes untrue."""
     p = _pipeline_with_snapshot(
-        10_041.44, 10_000.0, total=(74.90, 0.749, "2026-08-14"),
+        10_041.44,
+        10_000.0,
+        total=(74.90, 0.749, "2026-08-14"),
     )
     result = {"status": "executed", "orders": [], "run_id": "r"}
     p._attach_pnl(result)
@@ -98,6 +105,7 @@ def test_a_figure_the_body_already_set_is_never_overwritten():
 
 
 # --- 2. No snapshot: an honest reason, matching the actual cause -------
+
 
 def test_a_run_that_never_read_the_account_says_exactly_that():
     p = build_pipeline(_last_account_snapshot=None)
@@ -128,7 +136,8 @@ def test_the_premarket_reader_still_says_without_an_account_read():
     """The one mode where that sentence is true keeps it — set by the
     session itself, not inferred by the renderer."""
     result = {
-        "status": "preprocessed", "run_id": "r",
+        "status": "preprocessed",
+        "run_id": "r",
         "pnl_unavailable_reason": "no_account_read",
     }
 
@@ -147,6 +156,7 @@ def test_an_unlabelled_result_claims_no_cause_at_all():
 
 # --- 3. Wrappers actually wire it in -----------------------------------
 
+
 @pytest.mark.parametrize(
     "wrapper,body_name,kwargs",
     [
@@ -158,7 +168,13 @@ def test_an_unlabelled_result_claims_no_cause_at_all():
 def test_every_session_wrapper_attaches_the_pnl(wrapper, body_name, kwargs):
     """The defect was per-return-path, so it is fixed at the wrapper: any
     exit the body takes carries the figure out."""
-    p = build_pipeline(_total_pnl_since_reset=lambda tv: (74.90, 0.749, "2026-08-14"), _attach_evidence_freshness=lambda result: None, _attach_universe_changes=lambda result: None, _persist_session_report=lambda mode, result: None, _persist_intra_check_report=lambda result: None)
+    p = build_pipeline(
+        _total_pnl_since_reset=lambda tv: (74.90, 0.749, "2026-08-14"),
+        _attach_evidence_freshness=lambda result: None,
+        _attach_universe_changes=lambda result: None,
+        _persist_session_report=lambda mode, result: None,
+        _persist_intra_check_report=lambda result: None,
+    )
 
     def _body(*a, **kw):
         p._record_account_snapshot(10_041.44, 10_000.0)
@@ -182,6 +198,7 @@ def test_earnings_preprocess_labels_its_own_genuinely_absent_read():
 
 # --- 4. The evening block is untouched ---------------------------------
 
+
 def test_evening_block_still_uses_its_own_4pm_figure():
     """`_evening_pnl_block` exists because the shared renderer would show
     the after-hours-contaminated real-time figure. Nothing here may pull
@@ -189,9 +206,12 @@ def test_evening_block_still_uses_its_own_4pm_figure():
     from src.notifier import format_session_result
 
     result = {
-        "status": "analyzed", "run_id": "r",
-        "daily_pnl": 1200.0, "total_value": 101_200.0,
-        "pnl_4pm": -500.0, "equity_close": 100_500.0,
+        "status": "analyzed",
+        "run_id": "r",
+        "daily_pnl": 1200.0,
+        "total_value": 101_200.0,
+        "pnl_4pm": -500.0,
+        "equity_close": 100_500.0,
         "analysis": {"risk_rating": "low"},
     }
 

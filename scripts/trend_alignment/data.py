@@ -2,6 +2,7 @@
 
 See the docstring of scripts/measure_trend_alignment.py for why every failure is fatal.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,9 +20,7 @@ from src.models import OHLCV  # noqa: E402
 #: floor for the window the measurement claims to cover.
 MIN_BARS = 400
 
-DEFAULT_CACHE = os.environ.get(
-    "ALIGN_CACHE", "/home/ubuntu/qamc-measurements/alignment_bars.json"
-)
+DEFAULT_CACHE = os.environ.get("ALIGN_CACHE", "/home/ubuntu/qamc-measurements/alignment_bars.json")
 
 
 class MeasurementDataError(RuntimeError):
@@ -92,8 +91,7 @@ def fetch_bars(syms: list[str], attempts: int = 3) -> dict[str, list[OHLCV]]:
                 break
             if attempt + 1 < attempts:
                 print(
-                    f"fetch {sym} attempt {attempt + 1} returned {len(bars)} bars "
-                    f"(< {MIN_BARS}); retrying",
+                    f"fetch {sym} attempt {attempt + 1} returned {len(bars)} bars (< {MIN_BARS}); retrying",
                     file=sys.stderr,
                 )
                 time.sleep(2 + 3 * attempt)
@@ -136,11 +134,7 @@ def load_or_fetch(syms: list[str], cache: str, cache_only: bool) -> dict[str, li
             raise MeasurementDataError(f"--cache-only given but {cache} does not exist")
         with open(cache) as fh:
             raw = json.load(fh)
-        allbars = {
-            s: [OHLCV(**{**b, "date": date.fromisoformat(b["date"])}) for b in raw[s]]
-            for s in syms
-            if s in raw
-        }
+        allbars = {s: [OHLCV(**{**b, "date": date.fromisoformat(b["date"])}) for b in raw[s]] for s in syms if s in raw}
         print(f"bars read from cache {cache}")
     else:
         allbars = fetch_bars(syms)
@@ -149,8 +143,7 @@ def load_or_fetch(syms: list[str], cache: str, cache_only: bool) -> dict[str, li
             json.dump(
                 {
                     s: [
-                        dict(date=str(b.date), open=b.open, high=b.high, low=b.low,
-                             close=b.close, volume=b.volume)
+                        dict(date=str(b.date), open=b.open, high=b.high, low=b.low, close=b.close, volume=b.volume)
                         for b in bs
                     ]
                     for s, bs in allbars.items()

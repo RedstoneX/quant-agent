@@ -5,6 +5,7 @@ recording is unknown: the order counts cannot reconstruct sector, side or size.
 SQLite cannot add a NOT NULL constraint without rewriting the table, so the
 legacy table uses triggers for future writes. New tables have NOT NULL.
 """
+
 from __future__ import annotations
 
 import sqlite3

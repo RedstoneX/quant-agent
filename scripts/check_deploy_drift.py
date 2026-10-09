@@ -34,6 +34,7 @@ Exit codes:
     3  deployed HEAD unreadable (not a git repo, missing, no permission)
     4  check could not complete (fetch failed, ref unresolved, git error)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,11 +74,7 @@ class DriftReport:
     @property
     def checked(self) -> bool:
         """False when we couldn't determine drift at all (no fetch, no HEAD)."""
-        return (
-            self.head_sha is not None
-            and self.remote_sha is not None
-            and self.check_error is None
-        )
+        return self.head_sha is not None and self.remote_sha is not None and self.check_error is None
 
     @property
     def is_behind(self) -> bool:
@@ -97,10 +94,7 @@ def _run_git(args: list[str], *, cwd: str, timeout: float = GIT_TIMEOUT_S) -> st
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError(f"git {' '.join(args)} failed to run: {exc}") from exc
     if result.returncode != 0:
-        raise GitError(
-            f"git {' '.join(args)} exited {result.returncode}: "
-            f"{result.stderr.strip()}"
-        )
+        raise GitError(f"git {' '.join(args)} exited {result.returncode}: {result.stderr.strip()}")
     return result.stdout
 
 
@@ -136,7 +130,9 @@ def get_remote_commit(deployed_path: str, remote_ref: str) -> str | None:
 
 
 def get_missing_commits(
-    deployed_path: str, head_sha: str, remote_sha: str,
+    deployed_path: str,
+    head_sha: str,
+    remote_sha: str,
 ) -> list[tuple[str, str]]:
     """Commits reachable from remote_sha but not from head_sha, oldest first.
 
@@ -178,7 +174,10 @@ def get_unexpected_dirty_files(deployed_path: str) -> list[str]:
 
 
 def build_report(
-    deployed_path: str, remote_ref: str = DEFAULT_REMOTE_REF, *, do_fetch: bool = True,
+    deployed_path: str,
+    remote_ref: str = DEFAULT_REMOTE_REF,
+    *,
+    do_fetch: bool = True,
 ) -> DriftReport:
     report = DriftReport(deployed_path=deployed_path)
 
@@ -199,7 +198,9 @@ def build_report(
 
     try:
         report.missing_commits = get_missing_commits(
-            deployed_path, report.head_sha, report.remote_sha,
+            deployed_path,
+            report.head_sha,
+            report.remote_sha,
         )
         report.behind_count = len(report.missing_commits)
         report.unexpected_dirty_files = get_unexpected_dirty_files(deployed_path)
@@ -228,8 +229,10 @@ def format_alert(report: DriftReport, remote_ref: str) -> str:
 # repeating unchanged
 # ---------------------------------------------------------------------------
 
-def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
-                 state_path=None, today: date | None = None) -> bool:
+
+def record_state(
+    report: "DriftReport", remote_ref: str, *, alerted: bool, state_path=None, today: date | None = None
+) -> bool:
     """Write the drift snapshot where /health can read it.
 
     Written on EVERY run so the board can tell "checked and clean" from
@@ -256,10 +259,7 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
         "remote_ref": remote_ref,
         "deployed_path": report.deployed_path,
         "fetch_ok": report.fetch_ok,
-        "missing_commits": [
-            {"sha": sha, "subject": subject}
-            for sha, subject in report.missing_commits
-        ],
+        "missing_commits": [{"sha": sha, "subject": subject} for sha, subject in report.missing_commits],
         "unexpected_dirty_files": list(report.unexpected_dirty_files),
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -274,14 +274,16 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
         from src.coverage_watchdog import _record_suppressed_alert
 
         _record_suppressed_alert(
-            state, "deploy_drift", day, [report.remote_sha],
+            state,
+            "deploy_drift",
+            day,
+            [report.remote_sha],
         )
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     return cw.save_state(state, target)
 
 
-def already_alerted(report: "DriftReport", *, state_path=None,
-                    today: date | None = None) -> bool:
+def already_alerted(report: "DriftReport", *, state_path=None, today: date | None = None) -> bool:
     """True when this exact drift (same day, same origin/main tip) was already
     pushed. Five identical "QAMC deploy drift" messages went out in one day and
     changed nothing; a message that repeats unchanged is noise, and the board
@@ -304,24 +306,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deployed-path", default=DEFAULT_DEPLOYED_PATH)
     parser.add_argument("--remote-ref", default=DEFAULT_REMOTE_REF)
     parser.add_argument(
-        "--no-fetch", action="store_true",
+        "--no-fetch",
+        action="store_true",
         help="Skip `git fetch`; compare against the remote-tracking ref "
         "already on disk (used by tests / offline runs).",
     )
     parser.add_argument(
-        "--no-telegram", action="store_true",
+        "--no-telegram",
+        action="store_true",
         help="Print findings but don't push a Telegram alert.",
     )
     args = parser.parse_args(argv)
 
     report = build_report(
-        args.deployed_path, args.remote_ref, do_fetch=not args.no_fetch,
+        args.deployed_path,
+        args.remote_ref,
+        do_fetch=not args.no_fetch,
     )
 
     if report.head_sha is None:
         print(
-            f"check_deploy_drift: could not read HEAD in "
-            f"{args.deployed_path} — is it a git checkout?",
+            f"check_deploy_drift: could not read HEAD in {args.deployed_path} — is it a git checkout?",
             file=sys.stderr,
         )
         return 3
@@ -362,8 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if not report.is_behind:
-        print(f"check_deploy_drift: in sync with {args.remote_ref} "
-              f"({report.head_sha[:10]})")
+        print(f"check_deploy_drift: in sync with {args.remote_ref} ({report.head_sha[:10]})")
         record_state(report, args.remote_ref, alerted=False)
         return 0
 
@@ -379,9 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         from src.notifier import TelegramNotifier
         from src.notifier.owner_alert_funnel import send_script_alert
 
-        sent, _ = send_script_alert(
-            message, kind="deploy_drift", script="check_deploy_drift", factory=TelegramNotifier
-        )
+        sent, _ = send_script_alert(message, kind="deploy_drift", script="check_deploy_drift", factory=TelegramNotifier)
     elif repeat:
         print(
             "check_deploy_drift: same drift already alerted today — not "
@@ -390,8 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if not record_state(report, args.remote_ref, alerted=sent or repeat):
         print(
-            "check_deploy_drift: WARNING could not write the drift state "
-            "file — /health will not show this drift",
+            "check_deploy_drift: WARNING could not write the drift state file — /health will not show this drift",
             file=sys.stderr,
         )
 

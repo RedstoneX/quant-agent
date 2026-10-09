@@ -3,6 +3,7 @@
 Both are function-only modules taking the broker first, so clauses 1-2 are
 vacuous and clause 5 is satisfied by tests/test_broker_split_direct.py.
 """
+
 from __future__ import annotations
 
 from tests.boundary_harness import check_boundary

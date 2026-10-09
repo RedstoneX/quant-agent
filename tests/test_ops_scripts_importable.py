@@ -82,9 +82,11 @@ def test_module_imports(module_path: str):
     """
     assert importlib.import_module(module_path) is not None
 
+
 # ---------------------------------------------------------------------------
 # Python-version floor
 # ---------------------------------------------------------------------------
+
 
 def _fstring_backslash_offenders() -> list[str]:
     """Source locations using a backslash inside an f-string EXPRESSION.
@@ -116,9 +118,7 @@ def _fstring_backslash_offenders() -> list[str]:
                     continue
                 segment = ast.get_source_segment(source, node.value)
                 if segment and "\\" in segment:
-                    offenders.append(
-                        f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} -> {segment}"
-                    )
+                    offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno} -> {segment}")
     return offenders
 
 

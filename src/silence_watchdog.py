@@ -121,6 +121,7 @@ paused desk over a US market holiday produces one extra notice for that
 day. One message is the whole cost, and a desk still paused on a holiday
 is still a desk somebody has to remember to restart.
 """
+
 from __future__ import annotations
 
 import json
@@ -224,6 +225,7 @@ class SilenceStatus:
 # scheduled windows
 # ---------------------------------------------------------------------------
 
+
 def _elapsed_windows(now: datetime, *, lookback_days: int = LOOKBACK_DAYS) -> list[ScheduledWindow]:
     """Every (mode, date) window, across all known modes, whose slack-padded
     end has already passed, newest first. Weekends are skipped — the
@@ -257,6 +259,7 @@ def _elapsed_windows(now: datetime, *, lookback_days: int = LOOKBACK_DAYS) -> li
 # database read — advances the on-box marker, never blocks on failure
 # ---------------------------------------------------------------------------
 
+
 def _connect_ro(path: str) -> sqlite3.Connection:
     """Read-only by OS enforcement — mirrors `alert_watchdog._connect_ro`.
     This module must never write to the trading database."""
@@ -281,8 +284,7 @@ def _latest_session_check(db_path: str | Path | None = None) -> tuple[str | None
     try:
         placeholders = ",".join("?" for _ in KNOWN_MODES)
         row = conn.execute(
-            f"SELECT checked_at FROM {TABLE} WHERE source IN ({placeholders}) "
-            "ORDER BY checked_at DESC LIMIT 1",
+            f"SELECT checked_at FROM {TABLE} WHERE source IN ({placeholders}) ORDER BY checked_at DESC LIMIT 1",
             KNOWN_MODES,
         ).fetchone()
     except Exception as exc:  # noqa: BLE001
@@ -311,6 +313,7 @@ def _parse_iso(stamp: str) -> datetime | None:
 # on-box persisted state — carries `last_known_session_at` across runs so a
 # broken database does not erase the one thing this watchdog must remember
 # ---------------------------------------------------------------------------
+
 
 def load_state(path: Path | None = None) -> dict[str, Any]:
     """Never raises. A corrupt or missing record starts fresh rather than
@@ -355,6 +358,7 @@ def save_state(state: dict[str, Any], path: Path | None = None) -> bool:
 # the check itself
 # ---------------------------------------------------------------------------
 
+
 def check_silence(
     *,
     now: datetime | None = None,
@@ -393,9 +397,8 @@ def check_silence(
     consecutive_silent = len(elapsed)
     newest_elapsed = elapsed[0] if elapsed else None
 
-    already_alerted = (
-        state.get("alerted_for_baseline") is not None
-        and state.get("alerted_for_baseline") == state.get("last_known_session_at")
+    already_alerted = state.get("alerted_for_baseline") is not None and state.get("alerted_for_baseline") == state.get(
+        "last_known_session_at"
     )
 
     status = SilenceStatus(
@@ -418,6 +421,7 @@ def check_silence(
 # the paused-desk notice — the other half of the wrapper's pause guard
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PausedDeskStatus:
     """What a paused-desk run found. `should_notify` is the only field
@@ -430,11 +434,7 @@ class PausedDeskStatus:
 
     @property
     def should_notify(self) -> bool:
-        return (
-            self.is_weekday
-            and self.elapsed_windows_today > 0
-            and not self.already_notified_today
-        )
+        return self.is_weekday and self.elapsed_windows_today > 0 and not self.already_notified_today
 
 
 def _elapsed_windows_on(now: datetime) -> int:

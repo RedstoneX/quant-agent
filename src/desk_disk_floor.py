@@ -4,6 +4,7 @@ Separate from scripts/disk_guard.py, which sizes a DEVELOPMENT box (40 worktrees
 The threat here is another tenant filling the shared disk mid-session, so this reads
 real free space at session start and refuses with what it needs and what it found.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -59,8 +60,7 @@ def desk_disk_state(data_dir, floor=DESK_FLOOR_BYTES):
     except Exception as exc:  # noqa: BLE001 - any failure to measure refuses
         return False, f"CANNOT MEASURE free space for {data_dir}: {exc}"
     pct = 100.0 * u.free / u.total if u.total else 0.0
-    detail = (f"{gib(u.free)} free = {pct:.1f}% of {gib(u.total)}; "
-              f"session floor {gib(floor)}")
+    detail = f"{gib(u.free)} free = {pct:.1f}% of {gib(u.total)}; session floor {gib(floor)}"
     return u.free >= floor and u.total > 0, detail
 
 

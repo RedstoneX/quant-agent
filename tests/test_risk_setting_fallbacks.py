@@ -60,6 +60,7 @@ THREE THINGS THIS CHECKS THAT AN EARLIER DRAFT DID NOT
    as a bare numeric literal, so hoisting a literal to a constant cannot
    make it invisible to this test.
 """
+
 from __future__ import annotations
 
 import ast
@@ -120,7 +121,8 @@ def _scan_fallbacks() -> dict[str, float]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
             if isinstance(node.value.value, (int, float)) and not isinstance(
-                node.value.value, bool,
+                node.value.value,
+                bool,
             ):
                 for tgt in node.targets:
                     if isinstance(tgt, ast.Name):
@@ -147,7 +149,7 @@ def _scan_fallbacks() -> dict[str, float]:
             value = getattr(module, arg.id, None)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise AssertionError(
-                    f"`_risk_setting(\"{name}\", {arg.id})` falls back to "
+                    f'`_risk_setting("{name}", {arg.id})` falls back to '
                     f"`{imported_from[arg.id]}.{arg.id}`, which is not a "
                     "number. The fallback must resolve to the value the desk "
                     "trades, not to an object this check cannot compare.",
@@ -155,7 +157,7 @@ def _scan_fallbacks() -> dict[str, float]:
             found[name] = float(value)
         else:  # pragma: no cover - a shape this test cannot resolve
             raise AssertionError(
-                f"`_risk_setting(\"{name}\", ...)` has a fallback this test "
+                f'`_risk_setting("{name}", ...)` has a fallback this test '
                 "cannot resolve to a number. Teach `_scan_fallbacks` the new "
                 "shape rather than leaving the fallback unchecked.",
             )
@@ -165,11 +167,7 @@ def _scan_fallbacks() -> dict[str, float]:
 def _deployed_risk() -> dict[str, float]:
     data = yaml.safe_load(SETTINGS.read_text()) or {}
     risk = data.get("risk") or {}
-    return {
-        k: float(v)
-        for k, v in risk.items()
-        if isinstance(v, (int, float)) and not isinstance(v, bool)
-    }
+    return {k: float(v) for k, v in risk.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 
 def test_the_expected_field_set_is_exactly_what_is_wired() -> None:

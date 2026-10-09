@@ -47,15 +47,15 @@ def _asc(date_str: str, event: str, symbols: dict[str, str]) -> str:
 # 1. A claimed regime flip that real macro data CONTRADICTS -> caught.
 # ---------------------------------------------------------------------------
 
+
 def test_false_regime_flip_claim_is_caught():
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="Selling ACME — macro regime flipped to risk-off today, "
-               "de-risking ahead of the weekend.",
+        reason="Selling ACME — macro regime flipped to risk-off today, de-risking ahead of the weekend.",
         symbol="ACME",
         protected=True,
-        macro_regime_today="risk-on",   # real, trusted reading: NOT risk-off
+        macro_regime_today="risk-on",  # real, trusted reading: NOT risk-off
         macro_status="ok",
         active_state_changes="",
     )
@@ -72,11 +72,11 @@ def test_false_bearish_state_change_claim_is_caught():
     # real clock.
     active = _asc(TODAY, "Guidance raise", {"ACME": "bullish"})
     from datetime import date
+
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="Selling ACME on a high-conviction bearish state change "
-               "reversing the entry thesis.",
+        reason="Selling ACME on a high-conviction bearish state change reversing the entry thesis.",
         symbol="ACME",
         protected=True,
         macro_regime_today="risk-on",
@@ -94,6 +94,7 @@ def test_false_bearish_state_change_claim_is_caught():
 # 2. A SELL correctly citing a REAL, verifiable trigger -> NOT flagged.
 # ---------------------------------------------------------------------------
 
+
 def test_true_regime_flip_claim_is_not_flagged():
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
@@ -101,7 +102,7 @@ def test_true_regime_flip_claim_is_not_flagged():
         reason="Regime flipped to risk-off today per Macro; cutting risk.",
         symbol="ACME",
         protected=True,
-        macro_regime_today="risk-off",   # matches the claim
+        macro_regime_today="risk-off",  # matches the claim
         macro_status="ok",
         active_state_changes="",
     )
@@ -110,12 +111,12 @@ def test_true_regime_flip_claim_is_not_flagged():
 
 def test_true_bearish_state_change_claim_is_not_flagged():
     from datetime import date
+
     active = _asc(TODAY, "Regulatory crackdown announced", {"ACME": "bearish"})
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="High-conviction bearish state change on ACME today directly "
-               "reverses the entry thesis — exiting.",
+        reason="High-conviction bearish state change on ACME today directly reverses the entry thesis — exiting.",
         symbol="ACME",
         protected=True,
         macro_regime_today="risk-on",
@@ -131,17 +132,17 @@ def test_true_bearish_state_change_claim_is_not_flagged():
 #    must NOT be flagged just because it can't be checked.
 # ---------------------------------------------------------------------------
 
+
 def test_thesis_invalid_if_reliance_is_never_flagged():
     finding = holding_discipline_false_claim(
         state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
-        reason="thesis_invalid_if triggered: ACME closed below the $142 "
-               "support level named at entry.",
+        reason="thesis_invalid_if triggered: ACME closed below the $142 support level named at entry.",
         symbol="ACME",
         protected=True,
-        macro_regime_today="risk-on",   # no regime-flip claim made
+        macro_regime_today="risk-on",  # no regime-flip claim made
         macro_status="ok",
-        active_state_changes="",        # no state-change claim made
+        active_state_changes="",  # no state-change claim made
     )
     assert finding is None
 
@@ -173,7 +174,7 @@ def test_unverifiable_state_change_claim_is_not_flagged():
         protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
-        active_state_changes="",   # nothing recorded at all
+        active_state_changes="",  # nothing recorded at all
     )
     assert finding is None
 
@@ -181,6 +182,7 @@ def test_unverifiable_state_change_claim_is_not_flagged():
 # ---------------------------------------------------------------------------
 # Scope guards
 # ---------------------------------------------------------------------------
+
 
 def test_unprotected_position_is_out_of_scope():
     """Owner replacement for the old flat day-count boundary test: a
@@ -233,6 +235,7 @@ def test_reason_naming_no_recognized_trigger_is_not_flagged():
 # Claim-detection helpers
 # ---------------------------------------------------------------------------
 
+
 def test_claims_regime_flip_detects_both_phrasings():
     assert claims_regime_flip("the regime flipped to risk-off")
     assert claims_regime_flip("macro is risk-off now")
@@ -279,6 +282,7 @@ def test_holding_discipline_false_claim_does_not_fire_on_a_denied_claim():
 # ---------------------------------------------------------------------------
 # Dependency inversion: doctrine takes the parser, never imports an agent.
 # ---------------------------------------------------------------------------
+
 
 def test_claim_check_uses_the_supplied_parser_and_imports_no_agent():
     import pathlib

@@ -3,6 +3,7 @@
 Imported into tests/conftest.py by name; this file is where they LIVE so that
 conftest.py stays small.
 """
+
 import os
 import socket
 from unittest.mock import MagicMock
@@ -52,11 +53,7 @@ def _no_sockets_leave_the_box(monkeypatch, request):
     nodeid = request.node.nodeid
 
     def _blocked(address, what: str):
-        target = (
-            f"{address[0]}:{address[1]}"
-            if isinstance(address, tuple) and len(address) > 1
-            else str(address)
-        )
+        target = f"{address[0]}:{address[1]}" if isinstance(address, tuple) and len(address) > 1 else str(address)
         line = f"{what} to {target}"
         if line not in attempts:
             attempts.append(line)

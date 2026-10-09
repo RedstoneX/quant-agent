@@ -47,6 +47,7 @@ Three states stay distinguishable, which is the whole point:
   * a row with outcome `none`     -- the branch ran and found no usable
                                      structure on the protective side
 """
+
 from __future__ import annotations
 
 import json
@@ -216,12 +217,13 @@ def summarise(rows) -> dict[str, object]:
         by_outcome[key] = by_outcome.get(key, 0) + 1
     placements = by_outcome.get(OUTCOME_LEVEL, 0) + by_outcome.get(OUTCOME_PRIOR_BAR, 0)
     halfwidths = [
-        float(row["level_zone_halfwidth"]) for row in rows
-        if row.get("level_zone_halfwidth_measured")
-        and isinstance(row.get("level_zone_halfwidth"), (int, float))
+        float(row["level_zone_halfwidth"])
+        for row in rows
+        if row.get("level_zone_halfwidth_measured") and isinstance(row.get("level_zone_halfwidth"), (int, float))
     ]
     ratios = [
-        float(row["buffer_in_level_halfwidths"]) for row in rows
+        float(row["buffer_in_level_halfwidths"])
+        for row in rows
         if isinstance(row.get("buffer_in_level_halfwidths"), (int, float))
     ]
     return {
@@ -250,20 +252,23 @@ def recorder(analysis, is_short, entry_price, buffer_pct, min_touches):
     returns None when it is handed None. So a recording failure can never
     cost a name its stop, and the genuine skip case still skips.
     """
+
     def _write(outcome, placement=None, touches=None, candidate_levels=0):
         level, stop_price = (None, None) if placement is None else placement[:2]
-        emit_row(build_row(
-            outcome=outcome,
-            analysis=analysis,
-            is_short=is_short,
-            entry_price=entry_price,
-            buffer_pct=buffer_pct,
-            level=level,
-            stop_price=stop_price,
-            touches=touches,
-            min_touches=min_touches,
-            candidate_levels=candidate_levels,
-        ))
+        emit_row(
+            build_row(
+                outcome=outcome,
+                analysis=analysis,
+                is_short=is_short,
+                entry_price=entry_price,
+                buffer_pct=buffer_pct,
+                level=level,
+                stop_price=stop_price,
+                touches=touches,
+                min_touches=min_touches,
+                candidate_levels=candidate_levels,
+            )
+        )
         return placement
 
     return _write

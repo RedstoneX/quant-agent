@@ -2,7 +2,14 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from pydantic import ConfigDict, Field, PrivateAttr, ValidationInfo, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
-from src.models.base import LLMOutputModel, SOFT_EXIT_UNKNOWN, _normalize_enum_case_fields, _normalize_symbol, open_target_missing_falsifier, logger
+from src.models.base import (
+    LLMOutputModel,
+    SOFT_EXIT_UNKNOWN,
+    _normalize_enum_case_fields,
+    _normalize_symbol,
+    open_target_missing_falsifier,
+    logger,
+)
 from src.models.decisions import AnalystProvenance, ReasoningChain, TradeDecision
 
 from src.models.risk_narrative_claims import _explicit_risk_pct_claim_texts, risk_pct_half_ulp
@@ -142,6 +149,7 @@ class TargetPosition(LLMOutputModel):
         """Record that the exception was granted. Called by the PM gate, in
         the same breath as the starter-size cap, and by nothing else."""
         self._subfloor_catalyst_verified = True
+
     # Default preserves read compatibility for historical agent logs.  New
     # live PM decisions are required to populate this by the deterministic
     # PM grounding validator before they may reach PortfolioConstructor.
@@ -175,8 +183,7 @@ class TargetPosition(LLMOutputModel):
             return self
         field = Decimal(str(self.risk_allocation_pct))
         mismatched = [
-            text for text in _explicit_risk_pct_claim_texts(self.thesis)
-            if abs(Decimal(text) - field) > half_ulp
+            text for text in _explicit_risk_pct_claim_texts(self.thesis) if abs(Decimal(text) - field) > half_ulp
         ]
         if mismatched:
             detail = (
@@ -264,20 +271,20 @@ class TargetPosition(LLMOutputModel):
 #: the deterministic gates record their own refusals separately.
 CANDIDATE_REJECTION_CODES: tuple[str, ...] = (
     # the evidence itself
-    "evidence_insufficient",      # too few current sources to justify risk
-    "evidence_conflicts",         # sources disagree materially, unresolved
-    "evidence_stale",             # what exists is too old to act on
+    "evidence_insufficient",  # too few current sources to justify risk
+    "evidence_conflicts",  # sources disagree materially, unresolved
+    "evidence_stale",  # what exists is too old to act on
     # the idea
-    "thesis_not_compelling",      # evidence present; the setup does not earn a slot
-    "no_readable_structure",      # no level to enter or invalidate against
-    "reward_not_worth_risk",      # the seat's own read of the payoff
-    "event_risk",                 # earnings/known event too close
+    "thesis_not_compelling",  # evidence present; the setup does not earn a slot
+    "no_readable_structure",  # no level to enter or invalidate against
+    "reward_not_worth_risk",  # the seat's own read of the payoff
+    "event_risk",  # earnings/known event too close
     # the book
-    "risk_budget_full",           # no portfolio risk budget left for a new name
-    "no_deployment_headroom",     # no cash/buying power to deploy
+    "risk_budget_full",  # no portfolio risk budget left for a new name
+    "no_deployment_headroom",  # no cash/buying power to deploy
     "sector_or_cluster_crowded",  # concentration against something already held
-    "better_use_of_the_slot",     # ranked below a name that was taken instead
-    "already_sized_correctly",    # held, and the current size is the right one
+    "better_use_of_the_slot",  # ranked below a name that was taken instead
+    "already_sized_correctly",  # held, and the current size is the right one
     # the escape hatch — detail is what carries it
     "other",
 )
@@ -316,9 +323,7 @@ class CandidateRejection(LLMOutputModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce(cls, values):
-        _absent = (
-            "the portfolio manager named no reason beyond dropping the name"
-        )
+        _absent = "the portfolio manager named no reason beyond dropping the name"
         if isinstance(values, str):
             return {"symbol": values, "code": "other", "detail": _absent}
         if not isinstance(values, dict):
@@ -339,9 +344,7 @@ class CandidateRejection(LLMOutputModel):
                 # Never paraphrase an unknown code into a known one — that
                 # would invent a cause. Keep the spelling where a person can
                 # read it and let it count as `other` when compared.
-                detail = (
-                    f"[unrecognised reason code '{raw_code}'] {detail}".strip()
-                )
+                detail = f"[unrecognised reason code '{raw_code}'] {detail}".strip()
             raw_code = "other"
         values["code"] = raw_code
         values["detail"] = detail or _absent
@@ -454,16 +457,13 @@ def _normalize_rejected_symbols_field(values):
         return values
     values = dict(values)
     if isinstance(raw, str):
-        values["rejected_symbols"] = [
-            {"symbol": part} for part in raw.split(",") if part.strip()
-        ]
+        values["rejected_symbols"] = [{"symbol": part} for part in raw.split(",") if part.strip()]
     elif isinstance(raw, dict):
         if "symbol" in raw:
             values["rejected_symbols"] = [raw]
         else:
             values["rejected_symbols"] = [
-                {"symbol": sym, "reason": reason if isinstance(reason, str) else None}
-                for sym, reason in raw.items()
+                {"symbol": sym, "reason": reason if isinstance(reason, str) else None} for sym, reason in raw.items()
             ]
     return values
 
@@ -494,6 +494,7 @@ class SymbolRejection(LLMOutputModel):
     symbol's `pipeline_event`, so "why was this name refused" is answerable
     per name rather than only per run.
     """
+
     symbol: str
     reason: str = Field(min_length=1)
 
@@ -526,5 +527,3 @@ class SymbolRejection(LLMOutputModel):
     @classmethod
     def _normalize(cls, v: str) -> str:
         return _normalize_symbol(v)
-
-

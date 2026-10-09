@@ -46,9 +46,13 @@ from src.risk.exit_guard import (
 
 def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=110.0):
     return Position(
-        symbol=symbol, qty=qty, avg_entry=avg_entry, current_price=current_price,
+        symbol=symbol,
+        qty=qty,
+        avg_entry=avg_entry,
+        current_price=current_price,
         market_value=qty * current_price,
-        unrealized_pnl=qty * (current_price - avg_entry), sector="Technology",
+        unrealized_pnl=qty * (current_price - avg_entry),
+        sector="Technology",
     )
 
 
@@ -65,12 +69,16 @@ def _pipeline():
 def _review_with(action="SELL", symbol="AAA", reason="thesis_invalid triggered"):
     return PositionReview(
         reasoning_chain=PositionReasoningChain(
-            macro_continuity_check="stable", thesis_progress_check="broken",
-            thesis_integrity_check="invalidation hit", winners_discipline_check="n/a",
-            session_disposition_check="midday", execution_rationale="exit",
+            macro_continuity_check="stable",
+            thesis_progress_check="broken",
+            thesis_integrity_check="invalidation hit",
+            winners_discipline_check="n/a",
+            session_disposition_check="midday",
+            execution_rationale="exit",
         ),
         actions=[PositionAction(action=action, symbol=symbol, reason=reason)],
-        overall_assessment="one exit", risk_level="moderate",
+        overall_assessment="one exit",
+        risk_level="moderate",
     )
 
 
@@ -101,7 +109,8 @@ def test_an_adverse_move_that_clears_the_band_is_still_recorded():
     pipeline._midday_execute_llm_actions(
         positions=[_position("AAA", qty=10, avg_entry=100.0, current_price=94.0)],
         review=_review_with(
-            symbol="AAA", reason="thesis_invalid triggered — lost the level",
+            symbol="AAA",
+            reason="thesis_invalid triggered — lost the level",
         ),
         run_id="r1",
     )
@@ -125,7 +134,8 @@ def test_a_blocked_exit_keeps_its_status_and_gains_the_atr_multiple():
     orders = pipeline._midday_execute_llm_actions(
         positions=[_position("OKLO", qty=25, avg_entry=42.59, current_price=41.51)],
         review=_review_with(
-            symbol="OKLO", reason="thesis_invalid triggered — lost the level",
+            symbol="OKLO",
+            reason="thesis_invalid triggered — lost the level",
         ),
         run_id="r1",
     )
@@ -145,9 +155,17 @@ def test_both_outcomes_are_written_in_the_same_shape():
     still useless: the whole point is to put blocked and not-blocked
     observations on one axis."""
     fields = (
-        "rule=atr_noise_band", "blocked=", "adverse=", "adverse_atr_multiple=",
-        "entry=", "price=", "atr14=", "band_multiple=", "band_width=",
-        "sessions_held=", "sessions_measured=",
+        "rule=atr_noise_band",
+        "blocked=",
+        "adverse=",
+        "adverse_atr_multiple=",
+        "entry=",
+        "price=",
+        "atr14=",
+        "band_multiple=",
+        "band_width=",
+        "sessions_held=",
+        "sessions_measured=",
     )
     details = []
     for entry, price, atr in ((100.0, 94.0, 2.0), (42.59, 41.51, 1.6)):

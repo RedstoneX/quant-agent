@@ -4,6 +4,7 @@ Moved out of ``engine`` unchanged so that module can stop growing: how much
 risk budget an open position still consumes, and whether today's bar closes
 it, plus the sizing formula. They read only plain inputs; ``engine`` re-exports them.
 """
+
 from __future__ import annotations
 
 import math
@@ -31,7 +32,10 @@ def _existing_risk_pct(pos: _OpenPosition, equity: float) -> float:
 
 
 def _check_exit(
-    pos: _OpenPosition, bar: OHLCV, idx: int, max_hold_days: int,
+    pos: _OpenPosition,
+    bar: OHLCV,
+    idx: int,
+    max_hold_days: int,
 ) -> tuple[str | None, float | None]:
     """Whether today's bar closes `pos`, and at what raw (pre-slippage)
     price. Returns `(None, None)` when the position stays open.
@@ -60,8 +64,13 @@ def _check_exit(
 
 
 def _size_position(
-    *, equity: float, granted_risk_pct: float, fill_entry: float,
-    stop: float, symbol: str, max_position_pct: float,
+    *,
+    equity: float,
+    granted_risk_pct: float,
+    fill_entry: float,
+    stop: float,
+    symbol: str,
+    max_position_pct: float,
 ) -> tuple[int, float]:
     """§2.1 formula: shares = equity x risk_pct/100 / |entry - stop|,
     clamped by the single-name notional ceiling on a GROSS-leverage basis

@@ -25,6 +25,7 @@ item 157 stays open on the board. This file covers the new pieces:
   - The old "one malformed row costs only itself" scenario, replayed under
     the NEW wrapper-object answer shape.
 """
+
 import json
 import re
 from datetime import date
@@ -35,7 +36,10 @@ import pytest
 from src.agents.base import AgentResult, _response_format_for
 from src.agents.tech_analyst import TechAnalystAgent
 from src.models import (
-    OHLCV, TechAnalysisResult, TechAnalystAnswer, TechAnalystAnswerItem,
+    OHLCV,
+    TechAnalysisResult,
+    TechAnalystAnswer,
+    TechAnalystAnswerItem,
     TechnicalIndicators,
 )
 
@@ -45,9 +49,18 @@ from src.models import (
 # needs the BARS that drew the level and the level's ZONE, both computed
 # here and neither ever asked of the model.
 _DESK_FILLED_FIELDS = {
-    "atr_14", "computed_levels", "computed_level_touches", "levels_coverage",
-    "signal_bar_low", "signal_bar_high", "bars_available", "signal_age_days",
-    "computed_level_bars", "computed_level_zones", "input_fingerprint", "read_state",
+    "atr_14",
+    "computed_levels",
+    "computed_level_touches",
+    "levels_coverage",
+    "signal_bar_low",
+    "signal_bar_high",
+    "bars_available",
+    "signal_age_days",
+    "computed_level_bars",
+    "computed_level_zones",
+    "input_fingerprint",
+    "read_state",
 }
 
 _VALID_ITEM = {
@@ -62,8 +75,11 @@ _VALID_ITEM = {
     "setup_type": "range",
     "expected_horizon_sessions": 10,
     "reasoning_chain": {
-        "trend": "up", "momentum": "up", "volatility": "calm",
-        "volume": "confirming", "support_resistance": "clear",
+        "trend": "up",
+        "momentum": "up",
+        "volatility": "calm",
+        "volume": "confirming",
+        "support_resistance": "clear",
     },
     "reasoning": "clean setup",
     "thesis_invalid_if": "closes below 494",
@@ -76,11 +92,11 @@ def _result(text: str) -> AgentResult:
 
 # --- the model split ---------------------------------------------------------
 
+
 def test_the_desk_filled_fields_are_not_on_the_model_facing_schema():
     model_fields = set(TechAnalystAnswerItem.model_fields)
     assert not (model_fields & _DESK_FILLED_FIELDS), (
-        f"leaked desk-filled fields into the model-facing schema: "
-        f"{model_fields & _DESK_FILLED_FIELDS}"
+        f"leaked desk-filled fields into the model-facing schema: {model_fields & _DESK_FILLED_FIELDS}"
     )
     # Every field TechAnalysisResult carries beyond the model-facing subset
     # must be exactly the named ones -- nothing else quietly moved.
@@ -110,6 +126,7 @@ def test_the_seat_declares_the_wrapper_as_its_result_model():
 
 
 # --- the schema itself: strict, and object-rooted ----------------------------
+
 
 def test_the_schema_roots_at_an_object_not_a_list():
     schema = TechAnalystAnswer.model_json_schema()
@@ -144,12 +161,12 @@ def test_the_schema_is_strict_now_that_the_free_form_map_is_excluded():
 # it fails on any of these markers reappearing anywhere in the schema that
 # is actually transmitted, not just in the two classes fixed here.
 _INTERNAL_MARKER_PATTERNS = [
-    re.compile(r"#\d+"),                    # a PR/issue reference like #538
+    re.compile(r"#\d+"),  # a PR/issue reference like #538
     re.compile(r"\bitems?\s+\d+\b", re.I),  # "item 157" or "items 141 and 168"
-    re.compile(r"docs/"),                   # a repo doc path
+    re.compile(r"docs/"),  # a repo doc path
     re.compile(r"\b(?:src|tests|config)/[\w./-]*"),  # a repo source path
-    re.compile(r"\.py\b"),                  # a bare filename
-    re.compile(r"\b\w+\.md\b"),             # a bare doc filename ("WORK.md")
+    re.compile(r"\.py\b"),  # a bare filename
+    re.compile(r"\b\w+\.md\b"),  # a bare doc filename ("WORK.md")
     re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),  # an internal decision date
 ]
 
@@ -171,6 +188,7 @@ def test_schema_sent_to_model_has_no_engineering_markers():
 
 
 # --- parse_json_rows: wrapper-aware, backward-compatible ---------------------
+
 
 def test_parse_json_rows_unwraps_the_results_key():
     text = json.dumps({"results": [{"symbol": "A"}, {"symbol": "B"}]})
@@ -211,7 +229,7 @@ def test_a_sibling_array_after_results_does_not_win_over_the_real_rows():
         '{"results": [\n'
         '  {"symbol": "AAA", "reasoning": "fine"},\n'
         '  {"symbol": "BBB", "reasoning": "fine"}\n'
-        '],\n'
+        "],\n"
         '"unrelated_note": "actually let me redo that as"}\n'
         '[{"symbol": "ZZZ-not-a-real-row", "reasoning": "junk"}]'
     )
@@ -231,6 +249,7 @@ def test_a_sibling_array_after_results_does_not_win_over_the_real_rows():
 # which is neither a real row nor a per-symbol MalformedRow — every name in
 # the chunk vanishes silently, with no reason logged against any symbol.
 
+
 def test_wrong_key_signals_is_recovered_as_the_row_list():
     text = json.dumps({"signals": [{"symbol": "AAA"}, {"symbol": "BBB"}]})
     salvage = _result(text).parse_json_rows(list_field="results")
@@ -246,10 +265,12 @@ def test_wrong_key_analysis_is_recovered_as_the_row_list():
 
 
 def test_null_results_with_the_real_list_under_a_sibling_key_is_recovered():
-    text = json.dumps({
-        "results": None,
-        "data": [{"symbol": "AAA"}, {"symbol": "BBB"}],
-    })
+    text = json.dumps(
+        {
+            "results": None,
+            "data": [{"symbol": "AAA"}, {"symbol": "BBB"}],
+        }
+    )
     salvage = _result(text).parse_json_rows(list_field="results")
     assert [r["symbol"] for r in salvage.rows] == ["AAA", "BBB"]
     assert salvage.malformed == []
@@ -262,10 +283,12 @@ def test_two_candidate_lists_is_ambiguous_and_does_not_guess():
     unrelated array; this must fall back to the same conservative
     whole-object behaviour parse_json_rows has always had for an
     unrecognised dict, not pick one arbitrarily."""
-    text = json.dumps({
-        "signals": [{"symbol": "AAA"}],
-        "watchlist": [{"symbol": "ZZZ"}],
-    })
+    text = json.dumps(
+        {
+            "signals": [{"symbol": "AAA"}],
+            "watchlist": [{"symbol": "ZZZ"}],
+        }
+    )
     salvage = _result(text).parse_json_rows(list_field="results")
     assert salvage.rows == [json.loads(text)]
 
@@ -278,17 +301,21 @@ def test_a_single_row_that_happens_to_nest_a_list_is_not_mistaken_for_rows():
     must not assume that stays true forever: a single row is recognisable
     because IT carries `key_field` directly, which a mis-keyed wrapper of
     rows never does."""
-    text = json.dumps({
-        "symbol": "SPY", "rating": "buy", "levels": [{"price": 1}],
-    })
+    text = json.dumps(
+        {
+            "symbol": "SPY",
+            "rating": "buy",
+            "levels": [{"price": 1}],
+        }
+    )
     salvage = _result(text).parse_json_rows(list_field="results")
     assert salvage.rows == [json.loads(text)], (
-        "the real single-row answer was discarded in favour of an "
-        "unrelated nested list"
+        "the real single-row answer was discarded in favour of an unrelated nested list"
     )
 
 
 # --- the old "malformed row needs salvaging" scenario, under the NEW wrapper -
+
 
 def test_one_broken_row_inside_the_wrapper_still_costs_only_itself():
     """The #538 scenario (one garbled stock must not sink the whole answer)
@@ -301,7 +328,7 @@ def test_one_broken_row_inside_the_wrapper_still_costs_only_itself():
         '  {"symbol": "AAA", "reasoning": "fine"},\n'
         '  {"symbol": "BBB", "reasoning": "unterminated,\n},\n'
         '  {"symbol": "CCC", "reasoning": "fine"}\n'
-        ']}'
+        "]}"
     )
     salvage = _result(text).parse_json_rows(list_field="results")
     assert [r["symbol"] for r in salvage.rows] == ["AAA", "CCC"]
@@ -342,14 +369,10 @@ def test_a_schema_valid_wrapper_with_a_semantically_broken_row_is_caught_at_vali
 
 # --- end to end: the real seat, answering in the new wrapper shape -----------
 
+
 def _symbols_data(symbols):
-    bars = [OHLCV(date=date(2026, 9, 16), open=1.0, high=2.0, low=0.5,
-                  close=1.5, volume=1_000)]
-    return [
-        {"symbol": s, "bars": bars,
-         "indicators": TechnicalIndicators(symbol=s, atr_14=1.0)}
-        for s in symbols
-    ]
+    bars = [OHLCV(date=date(2026, 9, 16), open=1.0, high=2.0, low=0.5, close=1.5, volume=1_000)]
+    return [{"symbol": s, "bars": bars, "indicators": TechnicalIndicators(symbol=s, atr_14=1.0)} for s in symbols]
 
 
 def _wrapped_response_for(symbol: str) -> str:
@@ -404,9 +427,11 @@ def test_analyze_batch_still_parses_a_bare_list_answer(mock_cls):
 # correctly, not that a real provider violates the schema (that is what the
 # recorded counts are for, live).
 
+
 @pytest.fixture(autouse=True)
 def _reset_parse_telemetry():
     from src.models import parse_telemetry as pt
+
     pt.reset()
     yield
     pt.reset()
@@ -426,9 +451,7 @@ def test_fenced_markdown_around_the_answer_is_recorded_not_rejected(mock_cls):
     agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
     results, _ = agent.analyze_batch(_symbols_data(["SPY"]))
 
-    assert results["SPY"] is not None, (
-        "a hygiene violation must never cost the row — it is evidence, not a gate"
-    )
+    assert results["SPY"] is not None, "a hygiene violation must never cost the row — it is evidence, not a gate"
     assert pt.total_hygiene_violations() == 1
     assert "fenced_markdown" in pt.describe_hygiene_violations()
 
@@ -482,6 +505,7 @@ def test_a_clean_answer_records_no_hygiene_violations(mock_cls):
 # refused as a row (recorded, not salvaged into a verdict) while its
 # well-formed neighbours survive.
 
+
 def _fake_wire_client(captured: dict, text: str):
     """Minimal OpenAI-wire double: captures the create() kwargs and streams
     `text` back as one content chunk plus a terminal finish_reason."""
@@ -490,18 +514,24 @@ def _fake_wire_client(captured: dict, text: str):
 
     def _create(**kwargs):
         captured.update(kwargs)
-        return iter([
-            SimpleNamespace(
-                id="gen-test", error=None, model_extra={}, usage=None,
-                choices=[SimpleNamespace(
-                    delta=SimpleNamespace(content=text), finish_reason=None)],
-            ),
-            SimpleNamespace(
-                id="gen-test", error=None, model_extra={}, usage=None,
-                choices=[SimpleNamespace(
-                    delta=SimpleNamespace(content=None), finish_reason="stop")],
-            ),
-        ])
+        return iter(
+            [
+                SimpleNamespace(
+                    id="gen-test",
+                    error=None,
+                    model_extra={},
+                    usage=None,
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=text), finish_reason=None)],
+                ),
+                SimpleNamespace(
+                    id="gen-test",
+                    error=None,
+                    model_extra={},
+                    usage=None,
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=None), finish_reason="stop")],
+                ),
+            ]
+        )
 
     client = MagicMock()
     client.chat.completions.create.side_effect = _create
@@ -542,20 +572,18 @@ def test_a_malformed_row_over_each_route_is_refused_not_salvaged_into_a_verdict(
     captured: dict = {}
     client = _fake_wire_client(captured, payload)
 
-    content, _, _, _, _ = agent._openai_wire_call(
-        client, "test-model", route, "hello")
+    content, _, _, _, _ = agent._openai_wire_call(client, "test-model", route, "hello")
 
     result = AgentResult(raw_text=content, model="test-model", tokens_used=0)
     salvage = result.parse_json_rows(key_field="symbol", list_field="results")
-    parsed_symbols = {
-        row.get("symbol") for row in salvage.rows if isinstance(row, dict)}
+    parsed_symbols = {row.get("symbol") for row in salvage.rows if isinstance(row, dict)}
 
     assert "AAA" in parsed_symbols
     # The bad row survives JSON parsing but must not become a usable verdict.
     from src.models import TechAnalystAnswerItem
     import pydantic
-    bad_rows = [r for r in salvage.rows
-                if isinstance(r, dict) and r.get("symbol") == "BBB"]
+
+    bad_rows = [r for r in salvage.rows if isinstance(r, dict) and r.get("symbol") == "BBB"]
     for row in bad_rows:
         with pytest.raises(pydantic.ValidationError):
             TechAnalystAnswerItem(**row)

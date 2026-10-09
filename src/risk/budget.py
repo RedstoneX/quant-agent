@@ -226,9 +226,7 @@ def allocate_risk_budget(
     explain a missing order) and the resulting committed risk.
     """
     existing = {
-        str(sym).strip().upper(): _clean_pct(pct)
-        for sym, pct in (existing_pct or {}).items()
-        if str(sym).strip()
+        str(sym).strip().upper(): _clean_pct(pct) for sym, pct in (existing_pct or {}).items() if str(sym).strip()
     }
     ceiling = max(0.0, _clean_pct(ceiling_pct))
     floor = max(0.0, _clean_pct(floor_pct))
@@ -296,8 +294,7 @@ def allocate_risk_budget(
         limits: list[tuple[float, str]] = [(total_headroom, "total_ceiling")]
         if key is not None:
             limits.append(
-                (max(0.0, cluster_ceiling - cluster_committed.get(key, 0.0)),
-                 "cluster_cap"),
+                (max(0.0, cluster_ceiling - cluster_committed.get(key, 0.0)), "cluster_cap"),
             )
         allowed, binding = min(limits, key=lambda item: item[0])
 
@@ -318,7 +315,10 @@ def allocate_risk_budget(
             # side, kept executable so switching it is one line and not a
             # rewrite.
             grants[symbol] = RiskGrant(
-                symbol, requested, 0.0, limited_by="partial_fit_skipped",
+                symbol,
+                requested,
+                0.0,
+                limited_by="partial_fit_skipped",
                 cluster=key,
                 note=(
                     f"[risk budget: {symbol} skipped — "
@@ -333,7 +333,11 @@ def allocate_risk_budget(
             # Below the floor the idea is not worth trading. A token position
             # pays full commission and full attention for an immaterial payoff.
             grants[symbol] = RiskGrant(
-                symbol, requested, 0.0, limited_by="below_floor", cluster=key,
+                symbol,
+                requested,
+                0.0,
+                limited_by="below_floor",
+                cluster=key,
                 note=(
                     f"[risk budget: {symbol} denied — {binding.replace('_', ' ')} "
                     f"leaves {granted:.2f}% risk available, under the "
@@ -349,12 +353,13 @@ def allocate_risk_budget(
                 f"names consume one bet's budget"
             )
         else:
-            detail = (
-                f"total at-risk ceiling {ceiling:.2f}% of equity leaves "
-                f"{granted:.2f}%"
-            )
+            detail = f"total at-risk ceiling {ceiling:.2f}% of equity leaves {granted:.2f}%"
         grants[symbol] = RiskGrant(
-            symbol, requested, granted, limited_by=binding, cluster=key,
+            symbol,
+            requested,
+            granted,
+            limited_by=binding,
+            cluster=key,
             note=(
                 f"[risk budget: {symbol} cut from {requested:.2f}% to "
                 f"{granted:.2f}% risk — {detail}. Deterministic, not PM "

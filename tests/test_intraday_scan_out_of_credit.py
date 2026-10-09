@@ -3,6 +3,7 @@
 Carried from PR 982 into its own module: tests/test_intraday_scan.py is
 tracked by the shrink-only file-size baseline and may not grow.
 """
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -10,6 +11,7 @@ from src.config import IntradayScanConfig
 from tests.pipeline_factory import build_pipeline
 
 # ---------- an empty research account is not a crash (2026-10-01) ----------
+
 
 class _OutOfCreditError(RuntimeError):
     """The shape OpenRouter raises on an exhausted balance: HTTP 402."""
@@ -38,7 +40,9 @@ def test_payment_refusal_is_named_out_of_credit_not_crashed():
     )
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
-        "cash": 10000.0, "portfolio_value": 10100.0, "last_equity": 10000.0,
+        "cash": 10000.0,
+        "portfolio_value": 10100.0,
+        "last_equity": 10000.0,
         "non_marginable_buying_power": 10000.0,
     }
     p.broker.get_positions.return_value = []
@@ -47,9 +51,7 @@ def test_payment_refusal_is_named_out_of_credit_not_crashed():
     p._reconcile_orphan_pending_submits = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
     p._run_intraday_opportunity_scan = MagicMock(
-        side_effect=_OutOfCreditError(
-            "Error code: 402 - This request requires more credits"
-        )
+        side_effect=_OutOfCreditError("Error code: 402 - This request requires more credits")
     )
 
     result = p.run_intra_check()

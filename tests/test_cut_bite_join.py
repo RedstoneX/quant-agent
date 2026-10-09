@@ -56,11 +56,15 @@ def _funnel():
     for sym, times in (("AAA", 3), ("BBB", 3), ("CCC", 2), ("DDD", 1), ("EEE", 1)):
         for i in range(times):
             did = f"{sym}-{i}"
-            evidence.append({
-                "kind": "target", "decision_id": did, "symbol": sym,
-                "timestamp": f"2026-09-{10 + i:02d}T14:00:00",
-                "evidence_json": '{"risk_allocation_pct": 1.0}',
-            })
+            evidence.append(
+                {
+                    "kind": "target",
+                    "decision_id": did,
+                    "symbol": sym,
+                    "timestamp": f"2026-09-{10 + i:02d}T14:00:00",
+                    "evidence_json": '{"risk_allocation_pct": 1.0}',
+                }
+            )
     trades = [{"decision_id": "EEE-0", "symbol": "EEE", "fill_status": "filled"}]
     return {"evidence": evidence, "trades": trades}
 
@@ -69,13 +73,14 @@ def test_cut_site_record_is_durably_written_and_read_back():
     conn = _conn()
     db = _Db(conn, _funnel())
     ReviewBlocked(db=db)._build_blocked_proposals(
-        lookback_days=365, min_proposals=3, max_lines=1, run_id="RUN-1",
+        lookback_days=365,
+        min_proposals=3,
+        max_lines=1,
+        run_id="RUN-1",
     )
     # Read the raw table, not the helper, so the helper cannot pass by
     # returning something it never persisted.
-    raw = conn.execute(
-        "SELECT kind, run_id, detail FROM reconciliation_runs"
-    ).fetchall()
+    raw = conn.execute("SELECT kind, run_id, detail FROM reconciliation_runs").fetchall()
     assert len(raw) == 1
     assert raw[0]["kind"] == f"cut_bite:{CUT_SITE}"
     assert raw[0]["run_id"] == "RUN-1"
@@ -93,7 +98,10 @@ def test_a_run_with_no_verdict_yields_no_observation():
     conn = _conn()
     db = _Db(conn, _funnel())
     ReviewBlocked(db=db)._build_blocked_proposals(
-        lookback_days=365, min_proposals=3, max_lines=1, run_id="RUN-1",
+        lookback_days=365,
+        min_proposals=3,
+        max_lines=1,
+        run_id="RUN-1",
     )
     assert read_cut_bite(db=db, site=CUT_SITE)[0]["complete"] is False
     assert complete_cut_bite_observations(db=db, site=CUT_SITE) == []
@@ -103,7 +111,10 @@ def test_the_verdict_joins_on_run_id_and_only_on_its_own_run():
     conn = _conn()
     db = _Db(conn, _funnel())
     ReviewBlocked(db=db)._build_blocked_proposals(
-        lookback_days=365, min_proposals=3, max_lines=1, run_id="RUN-1",
+        lookback_days=365,
+        min_proposals=3,
+        max_lines=1,
+        run_id="RUN-1",
     )
     # A verdict belonging to a DIFFERENT session must not complete this one.
     conn.execute(
@@ -129,10 +140,15 @@ def test_the_verdict_joins_on_run_id_and_only_on_its_own_run():
 def test_recording_does_not_change_the_prompt_text():
     """The seat must read exactly what it read before the recording existed."""
     with_run = ReviewBlocked(db=_Db(_conn(), _funnel()))._build_blocked_proposals(
-        lookback_days=365, min_proposals=3, max_lines=1, run_id="RUN-1",
+        lookback_days=365,
+        min_proposals=3,
+        max_lines=1,
+        run_id="RUN-1",
     )
     without = ReviewBlocked(db=_Db(_conn(), _funnel()))._build_blocked_proposals(
-        lookback_days=365, min_proposals=3, max_lines=1,
+        lookback_days=365,
+        min_proposals=3,
+        max_lines=1,
     )
     assert with_run == without
     assert "AAA" in with_run
@@ -142,11 +158,16 @@ def test_a_record_with_no_run_id_is_refused_not_orphaned():
     """An unjoinable row would look like evidence and could never become one."""
     conn = _conn()
     db = _Db(conn, _funnel())
-    assert record_cut_bite(
-        db=db, run_id=None, site=CUT_SITE,
-        cuts={"min_proposals": {"before": 4, "survived": 2}},
-        oldest_surviving_age_days=1.0,
-    ) is False
+    assert (
+        record_cut_bite(
+            db=db,
+            run_id=None,
+            site=CUT_SITE,
+            cuts={"min_proposals": {"before": 4, "survived": 2}},
+            oldest_surviving_age_days=1.0,
+        )
+        is False
+    )
     assert conn.execute("SELECT COUNT(*) FROM reconciliation_runs").fetchone()[0] == 0
 
 

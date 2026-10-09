@@ -74,8 +74,13 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
         # bounds the worst possible fill — it just stops being
         # self-defeating.
         cap, offer_limit, ask_premium_bps = entry_bound(
-            pipeline, ctx, decision.symbol, market_price, ask,
-            slippage_bps, is_short=False,
+            pipeline,
+            ctx,
+            decision.symbol,
+            market_price,
+            ask,
+            slippage_bps,
+            is_short=False,
         )
 
         # THE IEX ASK DOES NOT DECIDE ANYTHING HERE (board item
@@ -139,11 +144,7 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
         # the cost is bounded at being submitted later in the
         # same burst; when the market really has run, a resting
         # order stops starving a name that could have filled.
-        if (
-            ask > cap
-            and queue_index < original_entry_count
-            and decision.symbol not in deferred_far_through
-        ):
+        if ask > cap and queue_index < original_entry_count and decision.symbol not in deferred_far_through:
             deferred_far_through.add(decision.symbol)
             submit_queue.append(decision)
             logger.info(
@@ -152,10 +153,16 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "%.0fbp ceiling $%.4f, so it draws the deployment "
                 "pool after the names quoting inside theirs. Not "
                 "a refusal: it is submitted below.",
-                decision.symbol, ask, slippage_bps, cap,
+                decision.symbol,
+                ask,
+                slippage_bps,
+                cap,
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "execution",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "execution",
                 "entry_deferred_behind_clean_quotes",
                 "buy_ask_above_cap",
                 detail=(
@@ -174,12 +181,20 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "through the %.0fbp ceiling $%.4f. IEX is not the "
                 "NBBO the order fills against; the limit cannot "
                 "pay more than the ceiling either way.",
-                decision.symbol, ask, ask_premium_bps,
-                market_price, slippage_bps, cap,
+                decision.symbol,
+                ask,
+                ask_premium_bps,
+                market_price,
+                slippage_bps,
+                cap,
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "execution",
-                "venue_quote_through_ceiling", "buy_ask_above_cap",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "execution",
+                "venue_quote_through_ceiling",
+                "buy_ask_above_cap",
                 detail=(
                     f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
                     f"above reference ${market_price:.4f}, through "
@@ -195,8 +210,11 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "better; IEX ask reads $%.4f (%.1fbp).",
                 decision.symbol,
                 f"{limit_price:.4f}" if limit_price is not None else "none",
-                offer_limit, slippage_bps, market_price,
-                ask, ask_premium_bps,
+                offer_limit,
+                slippage_bps,
+                market_price,
+                ask,
+                ask_premium_bps,
             )
         limit_price = offer_limit
         sizing_price = max(sizing_price or 0, offer_limit)
@@ -215,10 +233,13 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 used[decision.symbol] = True
                 ctx.catch_up_used = used
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "execution",
-                    "safety_net", "catch_up_inside_ceiling",
-                    detail="stall left the original entry unfillable; "
-                    "limit stays at the already-approved ceiling",
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "execution",
+                    "safety_net",
+                    "catch_up_inside_ceiling",
+                    detail="stall left the original entry unfillable; limit stays at the already-approved ceiling",
                 )
     elif is_short and isinstance(bid, (int, float)) and bid > 0:
         # Mirror of the BUY ceiling: a sell-short limit is a
@@ -229,8 +250,13 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
         # buy limit did. Set the limit AT the existing
         # slippage floor and let the match happen underneath.
         floor, bid_limit, bid_discount_bps = entry_bound(
-            pipeline, ctx, decision.symbol, market_price, bid,
-            slippage_bps, is_short=True,
+            pipeline,
+            ctx,
+            decision.symbol,
+            market_price,
+            bid,
+            slippage_bps,
+            is_short=True,
         )
 
         # Mirror of the BUY side above, and it goes for the same
@@ -261,10 +287,16 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "the %.0fbp floor $%.4f, so it draws the gross "
                 "deployment pool after the names quoting inside "
                 "theirs. Not a refusal: it is submitted below.",
-                decision.symbol, bid, slippage_bps, floor,
+                decision.symbol,
+                bid,
+                slippage_bps,
+                floor,
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "execution",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "execution",
                 "entry_deferred_behind_clean_quotes",
                 "short_bid_below_floor",
                 detail=(
@@ -283,12 +315,20 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "through the %.0fbp floor $%.4f. IEX is not the "
                 "NBBO the order fills against; the limit cannot "
                 "sell below the floor either way.",
-                decision.symbol, bid, bid_discount_bps,
-                market_price, slippage_bps, floor,
+                decision.symbol,
+                bid,
+                bid_discount_bps,
+                market_price,
+                slippage_bps,
+                floor,
             )
             _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "execution",
-                "venue_quote_through_ceiling", "short_bid_below_floor",
+                pipeline,
+                ctx,
+                decision.symbol,
+                "execution",
+                "venue_quote_through_ceiling",
+                "short_bid_below_floor",
                 detail=(
                     f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
                     f"below reference ${market_price:.4f}, through "
@@ -304,8 +344,11 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 "NBBO or better; IEX bid reads $%.4f (%.1fbp).",
                 decision.symbol,
                 f"{limit_price:.4f}" if limit_price is not None else "none",
-                bid_limit, slippage_bps, market_price,
-                bid, bid_discount_bps,
+                bid_limit,
+                slippage_bps,
+                market_price,
+                bid,
+                bid_discount_bps,
             )
         limit_price = bid_limit
         # `bid_limit` is the LIMIT (a marketable floor BELOW
@@ -328,9 +371,12 @@ def entry_limit_from_quote(run, leg, limit_price, sizing_price):
                 used[decision.symbol] = True
                 ctx.catch_up_used = used
                 _record_pipeline_event(
-                    pipeline, ctx, decision.symbol, "execution",
-                    "safety_net", "catch_up_inside_ceiling",
-                    detail="stall left the original entry unfillable; "
-                    "limit stays at the already-approved floor",
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "execution",
+                    "safety_net",
+                    "catch_up_inside_ceiling",
+                    detail="stall left the original entry unfillable; limit stays at the already-approved floor",
                 )
     return limit_price, sizing_price

@@ -34,6 +34,7 @@ Exit codes:
     3  the check itself could not run (missing file, cap not found) — an
        operator problem, not a nightly finding
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,6 +62,8 @@ CAP_TEST_FUNCTION = "test_work_md_stays_under_a_hundred_thousand_bytes"
 def _find_work_md_path(repo_dir: Path) -> str:
     """The board inside ``repo_dir`` via board_locator, or raise ReferenceUnavailable."""
     return str(repo_dir / tree_board(repo_dir)[0])
+
+
 _CAP_ASSERT_RE = re.compile(r"assert\s+size\s*<=\s*([\d_]+)")
 
 #: PROVISIONAL — not sourced from any owner ruling or repo doctrine, because
@@ -111,7 +114,7 @@ def read_cap_bytes(repo_path: Path) -> tuple[int | None, str | None]:
         return None, f"{CAP_TEST_FUNCTION} not found in {CAP_TEST_RELPATH}"
     # The assert sits inside the function body; a generous slice comfortably
     # covers it without risking a match from some unrelated later test.
-    window = text[idx:idx + 4000]
+    window = text[idx : idx + 4000]
     m = _CAP_ASSERT_RE.search(window)
     if not m:
         return None, f"could not find the cap assertion inside {CAP_TEST_FUNCTION}"
@@ -130,6 +133,7 @@ def _load_finished_item_check():
     """
     try:
         from scripts.status_board import find_closed_items_not_marked_done
+
         return find_closed_items_not_marked_done
     except ImportError:
         return None
@@ -218,8 +222,7 @@ def format_message(report: BoardHygieneReport) -> str:
     if report.near_cap:
         pct = round(100 * report.size_bytes / report.cap_bytes)
         parts.append(
-            f"The work board is at {pct}% of its size limit and needs "
-            f"finished items cleared out before it fills up."
+            f"The work board is at {pct}% of its size limit and needs finished items cleared out before it fills up."
         )
     return " ".join(parts)
 
@@ -228,7 +231,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-path", default=DEFAULT_REPO_PATH)
     parser.add_argument(
-        "--no-telegram", action="store_true",
+        "--no-telegram",
+        action="store_true",
         help="Print findings but don't push a Telegram alert.",
     )
     args = parser.parse_args(argv)
@@ -248,8 +252,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not report.has_finding:
         print(
-            f"check_board_hygiene: healthy — {report.size_bytes} of "
-            f"{report.cap_bytes} bytes, no parked finished items"
+            f"check_board_hygiene: healthy — {report.size_bytes} of {report.cap_bytes} bytes, no parked finished items"
         )
         return 0
 
@@ -265,8 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             send_owner_alert_with_outcome(message, notifier=notifier, kind="board_hygiene", pnl_header=False)
         else:
             print(
-                "check_board_hygiene: Telegram not configured; message "
-                "printed above only",
+                "check_board_hygiene: Telegram not configured; message printed above only",
                 file=sys.stderr,
             )
 

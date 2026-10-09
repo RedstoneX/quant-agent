@@ -11,6 +11,7 @@ Blind spots: attribute names (`mod.missing`), names created dynamically
 never runs. A module-level read of a name that is bound later in the file is
 not caught (a name nothing binds at all is).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,16 +24,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.undefined_names_exclusions import drop_frozen_fixtures, tracked_production_files  # noqa: E402
 
-_BUILTINS = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__spec__",
-                                  "__loader__", "__package__", "__path__",
-                                  "__builtins__", "__debug__", "__class__"}
+_BUILTINS = set(dir(builtins)) | {
+    "__file__",
+    "__name__",
+    "__doc__",
+    "__spec__",
+    "__loader__",
+    "__package__",
+    "__path__",
+    "__builtins__",
+    "__debug__",
+    "__class__",
+}
 
 
 def _walk(table, module_names, out):
     for sym in table.get_symbols():
         n = sym.get_name()
-        if (sym.is_referenced() and sym.is_global() and not sym.is_assigned()
-                and n not in module_names and n not in _BUILTINS):
+        if (
+            sym.is_referenced()
+            and sym.is_global()
+            and not sym.is_assigned()
+            and n not in module_names
+            and n not in _BUILTINS
+        ):
             out.add((table.get_lineno(), n))
     for child in table.get_children():
         _walk(child, module_names, out)
@@ -40,17 +55,20 @@ def _walk(table, module_names, out):
 
 def check_source(source: str, filename: str = "<src>"):
     """Return (sorted findings, has_star_import) for one module's source."""
-    if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
-           for n in ast.walk(ast.parse(source))):
+    if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(ast.parse(source))):
         return [], True
     top = symtable.symtable(source, filename, "exec")
-    module_names = {s.get_name() for s in top.get_symbols()
-                    if s.is_assigned() or s.is_imported() or s.is_namespace()}
+    module_names = {s.get_name() for s in top.get_symbols() if s.is_assigned() or s.is_imported() or s.is_namespace()}
     out: set = set()
     for sym in top.get_symbols():  # module-level code reading a name nothing binds
         n = sym.get_name()
-        if (sym.is_referenced() and not sym.is_assigned() and not sym.is_imported()
-                and not sym.is_namespace() and n not in _BUILTINS):
+        if (
+            sym.is_referenced()
+            and not sym.is_assigned()
+            and not sym.is_imported()
+            and not sym.is_namespace()
+            and n not in _BUILTINS
+        ):
             out.add((1, n))
     for child in top.get_children():
         _walk(child, module_names, out)
@@ -59,8 +77,7 @@ def check_source(source: str, filename: str = "<src>"):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("roots", nargs="*", default=None,
-                    help="default: every tracked .py, derived from git")
+    ap.add_argument("roots", nargs="*", default=None, help="default: every tracked .py, derived from git")
     args = ap.parse_args(argv)
     files = []
     if not args.roots:

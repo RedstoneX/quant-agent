@@ -142,8 +142,13 @@ def _probe(root: Path, scratch: Path, report: Path) -> None:
     from src import data_paths
     from src.storage.db import Database
 
-    for fn in (data_paths.data_dir, data_paths.alerting_dir, data_paths.board_dir,
-               data_paths.diary_dir, data_paths.parse_failure_dir):
+    for fn in (
+        data_paths.data_dir,
+        data_paths.alerting_dir,
+        data_paths.board_dir,
+        data_paths.diary_dir,
+        data_paths.parse_failure_dir,
+    ):
         fn().mkdir(parents=True, exist_ok=True)
         (fn() / "probe.txt").write_text("sandbox probe\n")
     data_paths.db_path().parent.mkdir(parents=True, exist_ok=True)
@@ -156,16 +161,20 @@ def _probe(root: Path, scratch: Path, report: Path) -> None:
     (Path.home() / ".cache").mkdir(parents=True, exist_ok=True)
     (Path.home() / ".cache" / "probe.txt").write_text("home-anchored writer lands in scratch home\n")
 
-    report.write_text(json.dumps({
-        "writes": sorted(set(writes)),
-        "allowed": allowed_prefix,
-        "modules": len(modules),
-        "writer_modules": len(writer_modules),
-        "import_errors": import_errors,
-        "outside_constants": sorted(set(outside_constants)),
-        "db_exists": data_paths.db_path().exists(),
-        "db_path": str(data_paths.db_path()),
-    }))
+    report.write_text(
+        json.dumps(
+            {
+                "writes": sorted(set(writes)),
+                "allowed": allowed_prefix,
+                "modules": len(modules),
+                "writer_modules": len(writer_modules),
+                "import_errors": import_errors,
+                "outside_constants": sorted(set(outside_constants)),
+                "db_exists": data_paths.db_path().exists(),
+                "db_path": str(data_paths.db_path()),
+            }
+        )
+    )
 
 
 def manifest(tree: Path) -> dict[str, str]:
@@ -200,7 +209,11 @@ def run_check(root: Path, python: str, guard_trees: list[Path]) -> tuple[list[st
         env.update({"HOME": str(scratch), "PYTHONDONTWRITEBYTECODE": "1", "TELEGRAM_DISABLED": "1"})
         proc = subprocess.run(
             [python, str(Path(__file__).resolve()), PROBE_FLAG, str(root), str(scratch), str(report)],
-            cwd=scratch / "cwd", env=env, capture_output=True, text=True, timeout=600,
+            cwd=scratch / "cwd",
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         if not report.exists():
             return [f"probe did not finish: {proc.stderr[-400:]}"], {}

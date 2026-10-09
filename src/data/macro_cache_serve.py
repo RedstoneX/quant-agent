@@ -9,6 +9,7 @@ Two reads of the same on-disk entry:
   reason, so the hole stays visible. No staleness cutoff exists here: the age
   is reported, never compared, so no number governs a decision.
 """
+
 from __future__ import annotations
 
 import logging

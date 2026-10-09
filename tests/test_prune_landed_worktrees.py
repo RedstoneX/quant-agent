@@ -1,10 +1,12 @@
 """The pruner removes only landed-and-clean worktrees; everything else is refused."""
+
 import importlib.util
 import subprocess
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
-    "prune", Path(__file__).resolve().parents[1] / "scripts" / "prune_landed_worktrees.py")
+    "prune", Path(__file__).resolve().parents[1] / "scripts" / "prune_landed_worktrees.py"
+)
 prune = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prune)
 
@@ -68,8 +70,7 @@ def test_refuses_uncommitted_changes(tmp_path):
 
 def test_refuses_open_pr(tmp_path):
     repo, wt = make(tmp_path)
-    ok, why = prune.judge(entry(repo, wt), str(repo),
-                          states=lambda b, r: [{"number": 7, "state": "OPEN"}])
+    ok, why = prune.judge(entry(repo, wt), str(repo), states=lambda b, r: [{"number": 7, "state": "OPEN"}])
     assert not ok and "OPEN" in why
 
 
@@ -89,6 +90,7 @@ def test_refuses_when_github_unreadable(tmp_path):
 
     def boom(b, r):
         raise RuntimeError("gh down")
+
     ok, why = prune.judge(entry(repo, wt), str(repo), states=boom)
     assert not ok and "cannot read" in why
 
@@ -99,8 +101,9 @@ FUTURE = lambda: __import__("time").time() + 100 * 3600  # noqa: E731
 
 
 def _stale(repo, wt, reason=DIRTY, states=lambda b, r: [], now=None, cwd="/nonexistent"):
-    return prune.judge_stale(entry(repo, wt), str(repo), reason, states=states, cwd=cwd,
-                             now=now if now is not None else FUTURE())
+    return prune.judge_stale(
+        entry(repo, wt), str(repo), reason, states=states, cwd=cwd, now=now if now is not None else FUTURE()
+    )
 
 
 def test_stale_rule_fires_on_old_prless_dirty_tree(tmp_path):
@@ -132,8 +135,10 @@ def test_stale_rule_holds_back_live_cwd_and_unlisted_reason(tmp_path):
 
 def test_stale_rule_holds_back_on_pr_lookup_failure(tmp_path):
     repo, wt = make(tmp_path)
+
     def boom(b, r):
         raise RuntimeError("gh down")
+
     assert not _stale(repo, wt, states=boom)[0]
 
 
@@ -141,6 +146,13 @@ def test_stale_rule_old_commit_but_fresh_file_is_kept(tmp_path):
     repo, wt = make(tmp_path)
     (wt / "stray").write_text("x")
     # commit is "old" (now far in future) but a file claims to be newer than the cutoff
-    ok, _ = prune.judge_stale(entry(repo, wt), str(repo), NOPR, states=lambda b, r: [],
-                              cwd="/nonexistent", now=FUTURE(), newer=lambda p, c: True)
+    ok, _ = prune.judge_stale(
+        entry(repo, wt),
+        str(repo),
+        NOPR,
+        states=lambda b, r: [],
+        cwd="/nonexistent",
+        now=FUTURE(),
+        newer=lambda p, c: True,
+    )
     assert not ok

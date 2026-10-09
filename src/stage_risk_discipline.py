@@ -15,11 +15,20 @@ def reject_false_claim(pipeline, ctx, decision, symbol_u, check) -> None:
     )
 
     _record_pipeline_event(
-        pipeline, ctx, decision.symbol, "risk", "rejected", check.finding,
+        pipeline,
+        ctx,
+        decision.symbol,
+        "risk",
+        "rejected",
+        check.finding,
     )
     _record_pipeline_event(
-        pipeline, ctx, decision.symbol, "risk",
-        "holding_discipline_claim_false", check.finding,
+        pipeline,
+        ctx,
+        decision.symbol,
+        "risk",
+        "holding_discipline_claim_false",
+        check.finding,
     )
     _alert_holding_discipline_block(
         pipeline,

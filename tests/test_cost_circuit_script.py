@@ -50,7 +50,8 @@ def _corrupt_ledger_and_latch(path: str) -> None:
 
 def _patch_script_config(monkeypatch, db_path: str, cfg) -> None:
     monkeypatch.setattr(
-        cost_circuit_script, "load_config",
+        cost_circuit_script,
+        "load_config",
         lambda _path: SimpleNamespace(
             storage=SimpleNamespace(db_path=db_path),
             llm_cost_circuit=cfg,
@@ -93,7 +94,8 @@ def test_reset_command_no_longer_blocked_by_the_fault_it_clears(tmp_path, monkey
     monkeypatch.setattr(cost_circuit_script, "LLMCostCircuitBreaker", lambda *a, **k: breaker)
     _patch_script_config(monkeypatch, path, cfg)
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cost_circuit.py", "reset", "--reason", "operator verified and repaired ledger"],
     )
 
@@ -102,9 +104,7 @@ def test_reset_command_no_longer_blocked_by_the_fault_it_clears(tmp_path, monkey
     assert rc == 0
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        state = conn.execute(
-            "SELECT * FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()
+        state = conn.execute("SELECT * FROM llm_circuit_state WHERE singleton=1").fetchone()
     assert state["suspended"] == 0
     assert state["reset_reason"] == "operator verified and repaired ledger"
 
@@ -123,7 +123,8 @@ def test_reset_reports_status_error_without_losing_the_reset(tmp_path, monkeypat
     monkeypatch.setattr(cost_circuit_script, "LLMCostCircuitBreaker", lambda *a, **k: breaker)
     _patch_script_config(monkeypatch, path, cfg)
     monkeypatch.setattr(
-        sys, "argv",
+        sys,
+        "argv",
         ["cost_circuit.py", "reset", "--reason", "operator investigating further"],
     )
 
@@ -137,9 +138,7 @@ def test_reset_reports_status_error_without_losing_the_reset(tmp_path, monkeypat
     # The reset itself is durable regardless of the still-broken ledger.
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        state = conn.execute(
-            "SELECT * FROM llm_circuit_state WHERE singleton=1"
-        ).fetchone()
+        state = conn.execute("SELECT * FROM llm_circuit_state WHERE singleton=1").fetchone()
     assert state["suspended"] == 0
 
 

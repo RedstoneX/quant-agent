@@ -1,4 +1,5 @@
 """Owner command panel, instalment 1: the intent record and the three flags."""
+
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -55,7 +56,7 @@ def test_unknown_intent_is_refused_with_its_reason(db_path):
     c.commit()
     c.close()
     oi.intake(db_path)
-    (_, _, _, state, outcome), = _rows(db_path)
+    ((_, _, _, state, outcome),) = _rows(db_path)
     assert state == "refused" and "unknown action" in outcome
     assert not hasattr(owner_flags.Flags(), "hands_off")  # no per-position exemption exists
 
@@ -77,6 +78,7 @@ def test_flags_replay_in_order(db_path):
 
 class _Door:
     """Stands in for the broker: records which verbs got through."""
+
     calls: list
     client = None
 
@@ -114,17 +116,18 @@ def test_every_broker_write_verb_is_gated_and_reads_are_not():
 
 
 def test_every_sdk_order_write_lives_behind_the_gated_broker():
-    sdk = re.compile(r"\.(submit_order|cancel_order_by_id|cancel_orders|replace_order_by_id|"
-                     r"close_position|close_all_positions)\(")
+    sdk = re.compile(
+        r"\.(submit_order|cancel_order_by_id|cancel_orders|replace_order_by_id|"
+        r"close_position|close_all_positions)\("
+    )
     # order_idempotency.py is the broker parts' own submit helper. No other exception.
-    allowed = ("src/execution/broker.py", "src/execution/broker_parts/",
-               "src/execution/order_idempotency.py")
+    allowed = ("src/execution/broker.py", "src/execution/broker_parts/", "src/execution/order_idempotency.py")
     stray = []
     for p in (ROOT / "src").rglob("*.py"):
         rel = p.relative_to(ROOT).as_posix()
         for line in p.read_text().splitlines():
             m = sdk.search(line)
-            if m and re.search(r"(client|_client)\.\w+\($", line[:m.end()]) and not rel.startswith(allowed):
+            if m and re.search(r"(client|_client)\.\w+\($", line[: m.end()]) and not rel.startswith(allowed):
                 stray.append((rel, line.strip()))
     assert not stray, stray
 
@@ -157,7 +160,7 @@ def test_unreadable_flag_uses_last_known_then_refuses_new_exposure_only(db_path,
     assert owner_flags.read_flags(db_path).unknown
     assert d.submit_order("ZZZ")["status"] == "owner_flag_halted"  # new exposure refused
     assert d.replace_entry_limit("o", 1.0)["status"] == "owner_flag_halted"
-    assert d.replace_stop_loss("ZZZ", 1.0) == "THROUGH"            # protection continues
+    assert d.replace_stop_loss("ZZZ", 1.0) == "THROUGH"  # protection continues
     assert d.cancel_protective_stops("ZZZ") == "THROUGH"
-    assert d.close_position("ZZZ") == "THROUGH"                    # reduces exposure
+    assert d.close_position("ZZZ") == "THROUGH"  # reduces exposure
     assert seen and "unreadable" in seen[0]

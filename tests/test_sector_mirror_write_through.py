@@ -5,6 +5,7 @@ moved code (src/risk/rules.py's sector gate) actually calls. Without the
 write-through `__setattr__` the patch would land in broker's own dict and the
 gate would silently keep calling the real lookup.
 """
+
 import src.execution.broker as broker
 import src.sector_reference as sector_reference
 from src.config import RiskConfig
@@ -25,13 +26,22 @@ def test_patching_broker_get_sector_reaches_the_risk_gate(monkeypatch):
     # ...and the broker-side read resolves to the same object.
     assert broker._get_sector is _spy
 
-    engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90, max_sector_pct=40,
-        require_stop_loss=True,
-    ))
+    engine = RiskRuleEngine(
+        RiskConfig(
+            max_position_pct=20,
+            max_total_position_pct=90,
+            max_sector_pct=40,
+            require_stop_loss=True,
+        )
+    )
     decision = TradeDecision(
-        action="BUY", symbol="NVDA", allocation_pct=5.0,
-        entry_price=850.0, stop_loss=810.0, take_profit=920.0, reasoning="Test",
+        action="BUY",
+        symbol="NVDA",
+        allocation_pct=5.0,
+        entry_price=850.0,
+        stop_loss=810.0,
+        take_profit=920.0,
+        reasoning="Test",
     )
     engine.check(decision, positions=[], total_value=10000.0)
     assert "NVDA" in calls, "risk gate did not call the patched _get_sector"
@@ -54,6 +64,7 @@ def test_non_mirrored_names_still_set_normally(monkeypatch):
 
 def test_sector_reference_imports_nothing_from_execution():
     import ast, pathlib
+
     tree = ast.parse(pathlib.Path(sector_reference.__file__).read_text())
     mods = [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     mods += [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]

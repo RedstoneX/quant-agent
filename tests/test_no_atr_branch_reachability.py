@@ -6,6 +6,7 @@ committed daily-bar fixture the live indicator code yields an ATR, so that
 branch is NEVER EXERCISED there. If this fails, the branch became reachable
 and the ledger note for the buffer must be revisited.
 """
+
 import gzip
 import json
 from pathlib import Path
@@ -13,8 +14,7 @@ from pathlib import Path
 from src.data.technical import compute_indicators
 from src.models.analysis import OHLCV
 
-_FIX = Path(__file__).resolve().parents[1] / (
-    "ops/model_policy/fixtures/yf_daily_bars_2026-08-28.json.gz")
+_FIX = Path(__file__).resolve().parents[1] / ("ops/model_policy/fixtures/yf_daily_bars_2026-08-28.json.gz")
 
 
 def _bars():
@@ -28,7 +28,7 @@ def test_atr_present_on_every_real_window():
     for sym, bars in _bars().items():
         for end in range(40, len(bars), 7):
             windows += 1
-            if compute_indicators(sym, bars[end - 40:end]).atr_14 is None:
+            if compute_indicators(sym, bars[end - 40 : end]).atr_14 is None:
                 missing += 1
     assert windows > 1000
     assert missing == 0

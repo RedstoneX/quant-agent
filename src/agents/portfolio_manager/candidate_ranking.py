@@ -7,14 +7,21 @@ constructor argument, so this builds and runs with no agent behind it.
 
 import logging
 from datetime import date
-from src.models import (AnalystVerdict, EarningsAnalysis, MacroAnalysis, Position, SmartMoneyFinding, TechAnalysisResult, news_verdict_for_symbol)
+from src.models import (
+    AnalystVerdict,
+    EarningsAnalysis,
+    MacroAnalysis,
+    Position,
+    SmartMoneyFinding,
+    TechAnalysisResult,
+    news_verdict_for_symbol,
+)
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.risk.rules import own_bar_block_reason, own_bar_opposition_reason, signed_source_score
 from src.verdicts import RankedCandidate, rank_verdicts
 
 # Same logger object the monolith used, so log capture by name is unchanged.
 logger = logging.getLogger("src.agents.portfolio_manager")
-
 
 
 class _HostState:
@@ -50,7 +57,8 @@ class CandidateRanking:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         get_macro_parse_failures,
         set_macro_parse_failures,
         macro_sectors,
@@ -70,7 +78,8 @@ class CandidateRanking:
             self.candidate_eligibility = candidate_eligibility
 
     def candidate_eligibility(
-        self, *,
+        self,
+        *,
         analyses: list[TechAnalysisResult],
         evidence_registry: dict[str, dict[str, str]],
         stale_sources: dict[str, set[str]] | None = None,
@@ -143,10 +152,7 @@ class CandidateRanking:
         supplies it.
         """
         _ = (active_state_changes, asof, rr_floor, real_reward_risk_by_symbol)
-        allowed = {
-            str(s).strip().upper() for s in (allowed_buy_symbols or set())
-            if str(s).strip()
-        }
+        allowed = {str(s).strip().upper() for s in (allowed_buy_symbols or set()) if str(s).strip()}
         stale = stale_sources or {}
         # Item 109: a macro stance broadcast onto a name whose sector this
         # read never mentioned may not CORROBORATE the name; its dissent
@@ -169,10 +175,17 @@ class CandidateRanking:
             # does not admit or refuse. Ranking still consumes the number
             # when it exists. `rr_floor` and catalyst rows are not a door.
             sources = evidence_registry.get(symbol, {})
-            net = signed_source_score(
-                symbol, sources, direction, ignored_sources=stale.get(symbol),
-                non_corroborating_sources=non_corroborating.get(symbol),
-            ) if sources else 0
+            net = (
+                signed_source_score(
+                    symbol,
+                    sources,
+                    direction,
+                    ignored_sources=stale.get(symbol),
+                    non_corroborating_sources=non_corroborating.get(symbol),
+                )
+                if sources
+                else 0
+            )
             if net <= 0:
                 blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
             # R6 — the constructor's preview refused this name by code
@@ -186,14 +199,14 @@ class CandidateRanking:
             refusal = (constructor_refusals_by_symbol or {}).get(symbol)
             if refusal and refusal.get("refusal"):
                 blocked.append(
-                    f"R6 constructor refused [{refusal['refusal']}] — "
-                    f"{refusal.get('detail') or 'no detail recorded'}"
+                    f"R6 constructor refused [{refusal['refusal']}] — {refusal.get('detail') or 'no detail recorded'}"
                 )
             verdicts[symbol] = blocked
         return verdicts
 
     def _collect_seat_verdicts(
-        self, *,
+        self,
+        *,
         analyses: list[TechAnalysisResult],
         news_intel: "NewsIntelligenceReport | None",
         macro_analysis: dict | None,
@@ -258,7 +271,8 @@ class CandidateRanking:
                 verdicts.append(analysis.to_verdict())
             except Exception:
                 logger.warning(
-                    "Phase 13: technical verdict failed for %s", analysis.symbol,
+                    "Phase 13: technical verdict failed for %s",
+                    analysis.symbol,
                     exc_info=True,
                 )
 
@@ -272,21 +286,22 @@ class CandidateRanking:
                         verdicts.append(verdict)
                 except Exception:
                     logger.warning(
-                        "Phase 13: news verdict failed for %s", symbol, exc_info=True,
+                        "Phase 13: news verdict failed for %s",
+                        symbol,
+                        exc_info=True,
                     )
 
         if macro_analysis:
             try:
-                payload = (
-                    macro_analysis if isinstance(macro_analysis, dict)
-                    else macro_analysis.model_dump()
-                )
+                payload = macro_analysis if isinstance(macro_analysis, dict) else macro_analysis.model_dump()
                 from src.seat_heal import coerce_macro_shape, describe_macro_parse_failure
+
                 payload, _fixes = coerce_macro_shape(payload)
                 macro = MacroAnalysis.model_validate(payload)
             except Exception as exc:
                 macro = None
                 from src.seat_heal import describe_macro_parse_failure
+
                 reason = describe_macro_parse_failure(
                     macro_analysis if isinstance(macro_analysis, dict) else {},
                     exc,
@@ -310,7 +325,8 @@ class CandidateRanking:
                 # with the tally and the conviction bar each acting on its
                 # own answer. `_macro_sectors` is now the only resolution.
                 sectors = self._host._macro_sectors(
-                    list(positions or []), symbol_sectors,
+                    list(positions or []),
+                    symbol_sectors,
                 )
                 symbols = {a.symbol.upper() for a in analyses}
                 for symbol in symbols:
@@ -320,7 +336,9 @@ class CandidateRanking:
                         )
                     except Exception:
                         logger.warning(
-                            "Phase 13: macro verdict failed for %s", symbol, exc_info=True,
+                            "Phase 13: macro verdict failed for %s",
+                            symbol,
+                            exc_info=True,
                         )
 
         for item in earnings_analyses or []:
@@ -351,15 +369,17 @@ class CandidateRanking:
                 # posture on divergent ground-truth sources.
                 if earnings.symbol.upper() != wrapper_symbol:
                     logger.warning(
-                        "Phase 13: earnings symbol mismatch, wrapper=%s "
-                        "analysis=%s — dropped", wrapper_symbol, earnings.symbol,
+                        "Phase 13: earnings symbol mismatch, wrapper=%s analysis=%s — dropped",
+                        wrapper_symbol,
+                        earnings.symbol,
                     )
                     continue
                 verdicts.append(earnings.to_verdict())
             except Exception:
                 logger.warning(
                     "Phase 13: earnings verdict failed for %s",
-                    wrapper_symbol, exc_info=True,
+                    wrapper_symbol,
+                    exc_info=True,
                 )
 
         for finding in smart_money_findings or []:
@@ -368,13 +388,15 @@ class CandidateRanking:
             except Exception:
                 logger.warning(
                     "Phase 13: smart_money verdict failed for %s",
-                    getattr(finding, "symbol", "?"), exc_info=True,
+                    getattr(finding, "symbol", "?"),
+                    exc_info=True,
                 )
 
         return verdicts
 
     def rank_candidates(
-        self, *,
+        self,
+        *,
         analyses: list[TechAnalysisResult],
         evidence_registry: dict[str, dict[str, str]],
         stale_sources: dict[str, set[str]] | None = None,
@@ -437,10 +459,7 @@ class CandidateRanking:
             symbol_sectors=symbol_sectors,
             positions=positions,
         )
-        eligible_verdicts = [
-            v for v in all_verdicts
-            if not eligibility.get(v.symbol.upper(), ["no eligibility row"])
-        ]
+        eligible_verdicts = [v for v in all_verdicts if not eligibility.get(v.symbol.upper(), ["no eligibility row"])]
         # The desk's own real, structure-derived ratio and each candidate's
         # setup type both reach the ranking (2026-09-11, item 1(d)): a range
         # trade is ordered on the REAL number rather than the analyst's
@@ -455,7 +474,8 @@ class CandidateRanking:
         return ranked, blocked
 
     def _apply_conviction_bar(
-        self, *,
+        self,
+        *,
         ranked: list[RankedCandidate],
         blocked: dict[str, list[str]],
         held_symbols: set[str],
@@ -522,10 +542,12 @@ class CandidateRanking:
                     "technical verdict in by_symbol — the ranked-implies-"
                     "technical invariant broke upstream; handling %s per the "
                     "absent-technical branch (not a silent cull, not a crash)",
-                    sym, sym,
+                    sym,
+                    sym,
                 )
             reason = own_bar_block_reason(
-                sym_verdicts, direction=c.direction,
+                sym_verdicts,
+                direction=c.direction,
             )
             if reason is None:
                 survivors.append(c)
@@ -533,7 +555,8 @@ class CandidateRanking:
                 # STAY: opposition-only. A soft miss drops the name from the
                 # entry budget order but never adds a cull reason.
                 opposition = own_bar_opposition_reason(
-                    sym_verdicts, direction=c.direction,
+                    sym_verdicts,
+                    direction=c.direction,
                 )
                 if opposition is not None:
                     blocked.setdefault(sym, []).append(opposition)
@@ -543,7 +566,9 @@ class CandidateRanking:
         return survivors, blocked
 
     def _render_candidate_ranking(
-        self, ranked: list[RankedCandidate], blocked: dict[str, list[str]],
+        self,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
     ) -> str:
         """The prompt section. Order first, arithmetic beside each row, then
         the refused names with the gate that refused them."""
@@ -579,17 +604,12 @@ class CandidateRanking:
             for i, c in enumerate(ranked, 1):
                 seats = ", ".join(c.seats)
                 convictions = "/".join(v.conviction for v in c.verdicts)
-                invalidation = "; ".join(
-                    f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation
-                )
+                invalidation = "; ".join(f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation)
                 # A seat that looked and came back with no lean is stated,
                 # not omitted (2026-09-13). Otherwise "macro's own sector
                 # rows contradicted each other on this name" is invisible
                 # here and reads exactly like "macro never covered it".
-                no_lean = (
-                    f" | no lean from: {', '.join(c.neutral_seats)}"
-                    if c.neutral_seats else ""
-                )
+                no_lean = f" | no lean from: {', '.join(c.neutral_seats)}" if c.neutral_seats else ""
                 # Item 65, 2026-09-26. The strength half is reported with
                 # the seats it is actually summed over, and is reported as
                 # ABSENT — not as 0.00 — when no seat on this name has a
@@ -599,16 +619,10 @@ class CandidateRanking:
                 # seats read here as "strength 0.00", which is what a name
                 # whose seats all measured no lean would also read as.
                 if c.strength_seats:
-                    strength = (
-                        f"strength {c.components['magnitude']:.2f} from "
-                        f"{'/'.join(c.strength_seats)}"
-                    )
+                    strength = f"strength {c.components['magnitude']:.2f} from {'/'.join(c.strength_seats)}"
                 else:
                     strength = "no strength stated by any seat on this name"
-                no_strength = (
-                    f" | no strength scale: {', '.join(c.no_strength_seats)}"
-                    if c.no_strength_seats else ""
-                )
+                no_strength = f" | no strength scale: {', '.join(c.no_strength_seats)}" if c.no_strength_seats else ""
                 lines.append(
                     f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
                     f"({strength} + conviction "

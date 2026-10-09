@@ -2,8 +2,21 @@ from datetime import date
 from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from src.quantities import collapse_stances
-from src.models.base import LLMOutputModel, _ALLOWED_SECTORS, _SECTOR_ALIASES, _normalize_enum_case_fields, normalize_sector_stance
-from src.models.analysis import AnalystVerdict, NO_STATED_STRENGTH, Nomination, VerdictEvidence, _sanitize_nominations_field
+from src.models.base import (
+    LLMOutputModel,
+    _ALLOWED_SECTORS,
+    _SECTOR_ALIASES,
+    _normalize_enum_case_fields,
+    normalize_sector_stance,
+)
+from src.models.analysis import (
+    AnalystVerdict,
+    NO_STATED_STRENGTH,
+    Nomination,
+    VerdictEvidence,
+    _sanitize_nominations_field,
+)
+
 
 class MacroObservation(LLMOutputModel):
     indicator: str
@@ -11,13 +24,20 @@ class MacroObservation(LLMOutputModel):
     interpretation: str
 
 
-
-
 class MacroSectorGuidance(LLMOutputModel):
     sector: Literal[
-        "Technology", "Financial Services", "Healthcare", "Consumer Cyclical",
-        "Consumer Defensive", "Energy", "Industrials", "Communication Services",
-        "Utilities", "Basic Materials", "Real Estate", "Broad",
+        "Technology",
+        "Financial Services",
+        "Healthcare",
+        "Consumer Cyclical",
+        "Consumer Defensive",
+        "Energy",
+        "Industrials",
+        "Communication Services",
+        "Utilities",
+        "Basic Materials",
+        "Real Estate",
+        "Broad",
     ]
     stance: Literal["overweight", "neutral", "underweight"]
     reason: str
@@ -42,6 +62,7 @@ class MacroPositionGuidance(LLMOutputModel):
     before then still carry both keys; unknown keys are ignored, so they
     still parse and the numbers simply stop reaching anyone.
     """
+
     reasoning: str
 
 
@@ -50,12 +71,13 @@ class MacroReasoningChain(LLMOutputModel):
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
     """
-    volatility_analysis: str = Field(min_length=1)        # VIX regime, trend, term structure if inferable
-    yield_curve_analysis: str = Field(min_length=1)       # 2Y/10Y level, spread, inversion trajectory
-    monetary_policy_analysis: str = Field(min_length=1)   # Fed funds (DFF) level + direction
-    inflation_labor_credit: str = Field(min_length=1)     # CPI + UNRATE + HY OAS combined read
-    cross_signal_synthesis: str = Field(min_length=1)     # How the above reinforce or contradict each other
-    sector_implications: str = Field(min_length=1)        # What this means for sector tilts
+
+    volatility_analysis: str = Field(min_length=1)  # VIX regime, trend, term structure if inferable
+    yield_curve_analysis: str = Field(min_length=1)  # 2Y/10Y level, spread, inversion trajectory
+    monetary_policy_analysis: str = Field(min_length=1)  # Fed funds (DFF) level + direction
+    inflation_labor_credit: str = Field(min_length=1)  # CPI + UNRATE + HY OAS combined read
+    cross_signal_synthesis: str = Field(min_length=1)  # How the above reinforce or contradict each other
+    sector_implications: str = Field(min_length=1)  # What this means for sector tilts
 
 
 class MacroAnalysis(LLMOutputModel):
@@ -216,13 +238,9 @@ class MacroAnalysis(LLMOutputModel):
         # whitespace-insensitively, the same way `build_evidence_registry`
         # keys its own lookup.
         wanted = (sector or "").strip().lower()
-        sector_rows = [
-            row for row in self.sector_guidance
-            if wanted and row.sector.strip().lower() == wanted
-        ]
+        sector_rows = [row for row in self.sector_guidance if wanted and row.sector.strip().lower() == wanted]
         sector_direction = (
-            normalize_sector_stance(collapse_stances(row.stance for row in sector_rows))
-            if sector_rows else None
+            normalize_sector_stance(collapse_stances(row.stance for row in sector_rows)) if sector_rows else None
         )
         if sector_rows and sector_direction is None:
             # `collapse_stances` returned "mixed" — the sector's own rows
@@ -237,24 +255,30 @@ class MacroAnalysis(LLMOutputModel):
 
         evidence: list[VerdictEvidence] = []
         for row in sector_rows:
-            evidence.append(VerdictEvidence(
-                label=f"sector_stance:{row.sector}",
-                text=(
-                    f"{row.stance} — {row.reason} (this sector stance sets "
-                    f"{symbol}'s macro direction; broad equity_outlook is "
-                    f"{self.equity_outlook})"
-                ),
-            ))
+            evidence.append(
+                VerdictEvidence(
+                    label=f"sector_stance:{row.sector}",
+                    text=(
+                        f"{row.stance} — {row.reason} (this sector stance sets "
+                        f"{symbol}'s macro direction; broad equity_outlook is "
+                        f"{self.equity_outlook})"
+                    ),
+                )
+            )
         for obs in self.key_observations:
-            evidence.append(VerdictEvidence(
-                label=obs.indicator,
-                text=f"{obs.reading} — {obs.interpretation}",
-            ))
+            evidence.append(
+                VerdictEvidence(
+                    label=obs.indicator,
+                    text=f"{obs.reading} — {obs.interpretation}",
+                )
+            )
         for row in self.sector_guidance:
-            evidence.append(VerdictEvidence(
-                label=f"sector:{row.sector}",
-                text=f"{row.stance} — {row.reason}",
-            ))
+            evidence.append(
+                VerdictEvidence(
+                    label=f"sector:{row.sector}",
+                    text=f"{row.stance} — {row.reason}",
+                )
+            )
         for i, factor in enumerate(self.risk_factors):
             evidence.append(VerdictEvidence(label=f"risk_factor_{i}", text=factor))
         if not evidence and direction != "neutral":
@@ -265,10 +289,12 @@ class MacroAnalysis(LLMOutputModel):
             # reasoning chain is mandatory (`min_length=1` on every field),
             # so it is always available as a last-resort citation — nothing
             # is invented, this is the analyst's own synthesis restated.
-            evidence.append(VerdictEvidence(
-                label="cross_signal_synthesis",
-                text=self.reasoning_chain.cross_signal_synthesis,
-            ))
+            evidence.append(
+                VerdictEvidence(
+                    label="cross_signal_synthesis",
+                    text=self.reasoning_chain.cross_signal_synthesis,
+                )
+            )
 
         invalidation = ""
         if direction != "neutral":
@@ -285,10 +311,7 @@ class MacroAnalysis(LLMOutputModel):
                 # always-present number, so the fallback is a generic but
                 # honest statement rather than a blank field that would
                 # fail `AnalystVerdict`'s non-neutral-invalidation rule.
-                invalidation = (
-                    f"equity_outlook reverses from {direction} "
-                    "(macro analyst stated no explicit trigger)"
-                )
+                invalidation = f"equity_outlook reverses from {direction} (macro analyst stated no explicit trigger)"
 
         return AnalystVerdict(
             seat="macro",
@@ -344,11 +367,13 @@ class MacroAnalysis(LLMOutputModel):
                 stance = reverse.get(str(direction or "").strip().lower())
                 if stance is None:
                     stance = str(direction or "").strip().lower()
-                converted.append({
-                    "sector": sector,
-                    "stance": stance,
-                    "reason": "",
-                })
+                converted.append(
+                    {
+                        "sector": sector,
+                        "stance": stance,
+                        "reason": "",
+                    }
+                )
             values = dict(values)
             values["sector_guidance"] = converted
             sg = converted
@@ -382,5 +407,3 @@ class MacroNarrative(LLMOutputModel):
     def validate_date_format(cls, v: str) -> str:
         date.fromisoformat(v)
         return v
-
-

@@ -53,6 +53,7 @@ SEC Form 4 (`src.data.smart_money_cluster.cluster_survivors`) — see that
 module's docstring for why this is a shared function rather than two
 independent implementations.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -77,10 +78,7 @@ from src.util.time import et_now, et_today
 
 logger = logging.getLogger(__name__)
 
-KADOA_TRADES_URL = (
-    "https://raw.githubusercontent.com/kadoa-org/"
-    "congress-trading-monitor/main/public/data/trades.json"
-)
+KADOA_TRADES_URL = "https://raw.githubusercontent.com/kadoa-org/congress-trading-monitor/main/public/data/trades.json"
 CONGRESSWATCH_TRADES_URL = "https://congresswatch.us/data/trades.json"
 
 _AMOUNT_RE = re.compile(r"\$?([\d,]+)")
@@ -124,12 +122,25 @@ def _normalize_actor_name(raw: str) -> str:
 # ``startswith("s")`` would wrongly read "Stock Split" or "Stock Dividend" as a
 # sale. Short codes match only as an exact whole token.
 _BUY_TYPES = frozenset({"p", "purchase", "purchased", "buy"})
-_SELL_TYPES = frozenset({
-    "s", "s (partial)", "s (full)", "s(partial)", "s(full)",
-    "sale", "sold", "sell",
-    "sale (full)", "sale (partial)", "sale_full", "sale_partial",
-    "sale full", "sale partial", "partial sale",
-})
+_SELL_TYPES = frozenset(
+    {
+        "s",
+        "s (partial)",
+        "s (full)",
+        "s(partial)",
+        "s(full)",
+        "sale",
+        "sold",
+        "sell",
+        "sale (full)",
+        "sale (partial)",
+        "sale_full",
+        "sale_partial",
+        "sale full",
+        "sale partial",
+        "partial sale",
+    }
+)
 _EXCHANGE_TYPES = frozenset({"e", "exchange", "exchanged"})
 
 #: Distinct raw transaction-type values that matched nothing above. Populated
@@ -297,13 +308,30 @@ _SOURCES: tuple[str, ...] = ("kadoa", "congresswatch")
 # row look new every morning — the very re-reading this exists to stop.
 _FINGERPRINT_FIELDS: dict[str, tuple[str, ...]] = {
     "kadoa": (
-        "id", "ticker", "transaction_date", "filing_date", "filer_name",
-        "filer_id", "transaction_type", "amount_range_low", "amount_range_high",
-        "amount_range_label", "doc_url", "chamber",
+        "id",
+        "ticker",
+        "transaction_date",
+        "filing_date",
+        "filer_name",
+        "filer_id",
+        "transaction_type",
+        "amount_range_low",
+        "amount_range_high",
+        "amount_range_label",
+        "doc_url",
+        "chamber",
     ),
     "congresswatch": (
-        "ticker", "transaction_date", "member_name", "bioguide_id", "type",
-        "amount", "ptr_link", "chamber", "owner", "asset_description",
+        "ticker",
+        "transaction_date",
+        "member_name",
+        "bioguide_id",
+        "type",
+        "amount",
+        "ptr_link",
+        "chamber",
+        "owner",
+        "asset_description",
     ),
 }
 
@@ -311,7 +339,11 @@ _WATERMARK_FIELD = {"kadoa": "disclosure_date", "congresswatch": "transaction_da
 
 #: Every reason a row can be refused, in the order the log line prints them.
 _DROP_REASONS: tuple[str, ...] = (
-    "future_dated", "bad_date", "no_ticker", "no_filer", "outside_lookback",
+    "future_dated",
+    "bad_date",
+    "no_ticker",
+    "no_filer",
+    "outside_lookback",
     "malformed_row",
 )
 
@@ -329,9 +361,7 @@ def _disclosure_keys(source: str, rows: list) -> list[str]:
     keys: list[str] = []
     for raw in rows:
         values = [raw.get(f) for f in fields] if isinstance(raw, dict) else raw
-        digest = hashlib.sha1(
-            json.dumps(values, sort_keys=True, default=str).encode()
-        ).hexdigest()
+        digest = hashlib.sha1(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
         keys.append(f"{digest}#{seen[digest]}")
         seen[digest] += 1
     return keys
@@ -419,7 +449,8 @@ class CongressionalTradingProvider:
         self.lookback_days = max(1, int(lookback_days))
         self.min_transaction_value_usd = max(0.0, float(min_transaction_value_usd))
         self.external_min_transaction_value_usd = max(
-            self.min_transaction_value_usd, float(external_min_transaction_value_usd),
+            self.min_transaction_value_usd,
+            float(external_min_transaction_value_usd),
         )
         self.cluster_window_days = max(1, int(cluster_window_days))
         self.min_cluster_owners = max(2, int(min_cluster_owners))
@@ -450,7 +481,8 @@ class CongressionalTradingProvider:
         if not actor:
             return None, "no_filer"
         low, high = _amount_bracket(
-            row.get("amount_range_low"), row.get("amount_range_high"),
+            row.get("amount_range_low"),
+            row.get("amount_range_high"),
             row.get("amount_range_label", ""),
         )
         chamber = str(row.get("chamber") or "").strip().lower()
@@ -528,8 +560,7 @@ class CongressionalTradingProvider:
             notes = []
             if not direction_agrees:
                 notes.append(
-                    f"direction disagreement: kadoa={kadoa['direction']} "
-                    f"congresswatch={congresswatch['direction']}"
+                    f"direction disagreement: kadoa={kadoa['direction']} congresswatch={congresswatch['direction']}"
                 )
             if not amount_agrees:
                 notes.append(
@@ -574,15 +605,15 @@ class CongressionalTradingProvider:
         store = self._load_json(self.store_path, None)
         observations = self._load_json(self.observations_path, None)
         claims_progress = any(
-            (state or {}).get("processed_keys")
-            for state in manifest["sources"].values() if isinstance(state, dict)
+            (state or {}).get("processed_keys") for state in manifest["sources"].values() if isinstance(state, dict)
         )
         if not isinstance(store, dict) or not isinstance(observations, list):
             if claims_progress:
                 logger.warning(
                     "Congressional saved copy missing or unreadable at %s; "
                     "its processed record is discarded and both sources will "
-                    "be read in full once", self.data_dir,
+                    "be read in full once",
+                    self.data_dir,
                 )
             for state in manifest["sources"].values():
                 if isinstance(state, dict):
@@ -599,8 +630,14 @@ class CongressionalTradingProvider:
     # ---- one source --------------------------------------------------------
 
     def _refresh_source(
-        self, source: str, state: dict, store_rows: dict, touched: set[str],
-        deadline: float, cutoff: date, now: datetime,
+        self,
+        source: str,
+        state: dict,
+        store_rows: dict,
+        touched: set[str],
+        deadline: float,
+        cutoff: date,
+        now: datetime,
     ) -> dict:
         """Fetch one source (conditionally) and process only unseen rows.
 
@@ -611,15 +648,24 @@ class CongressionalTradingProvider:
         processed = set(state.get("processed_keys") or [])
         watermark_before = str(state.get("watermark") or "")
         result = {
-            "outcome": "", "fetched": 0, "already_seen": 0, "new": 0,
-            "processed": 0, "dropped": 0,
+            "outcome": "",
+            "fetched": 0,
+            "already_seen": 0,
+            "new": 0,
+            "processed": 0,
+            "dropped": 0,
             "dropped_by_reason": {reason: 0 for reason in _DROP_REASONS},
-            "unknown_type_kept": 0, "truncated": 0, "complete": True,
-            "watermark_before": watermark_before, "watermark_after": watermark_before,
+            "unknown_type_kept": 0,
+            "truncated": 0,
+            "complete": True,
+            "watermark_before": watermark_before,
+            "watermark_after": watermark_before,
             "watermark_field": _WATERMARK_FIELD[source],
-            "processed_total": len(processed), "error": None,
+            "processed_total": len(processed),
+            "error": None,
             "last_success_at": str(state.get("last_success_at") or ""),
-            "cache_age_hours": None, "duration_s": 0.0,
+            "cache_age_hours": None,
+            "duration_s": 0.0,
         }
         state["last_attempt_at"] = now.isoformat()
         headers = {"User-Agent": self.user_agent, "Accept": "application/json, */*"}
@@ -635,7 +681,8 @@ class CongressionalTradingProvider:
             if remaining <= 0:
                 raise TimeoutError("refresh deadline reached before this source")
             response = self.session.get(
-                self.urls[source], headers=headers,
+                self.urls[source],
+                headers=headers,
                 timeout=min(self.request_timeout_s, remaining),
             )
             not_modified = getattr(response, "status_code", None) == 304
@@ -646,8 +693,10 @@ class CongressionalTradingProvider:
                     payload = response.json()
                 except ValueError as exc:
                     raise _Unreadable(f"not JSON: {exc}") from exc
-                rows = payload if isinstance(payload, list) else (
-                    payload.get("trades") if isinstance(payload, dict) else None
+                rows = (
+                    payload
+                    if isinstance(payload, list)
+                    else (payload.get("trades") if isinstance(payload, dict) else None)
                 )
                 if not isinstance(rows, list):
                     raise _Unreadable("payload is not a list of trades")
@@ -710,9 +759,7 @@ class CongressionalTradingProvider:
         state["complete"] = bool(result["complete"])
         # Validators are kept only for a copy that was processed in full.
         state["etag"] = _header(response, "ETag") if result["complete"] else None
-        state["last_modified"] = (
-            _header(response, "Last-Modified") if result["complete"] else None
-        )
+        state["last_modified"] = _header(response, "Last-Modified") if result["complete"] else None
         result["duration_s"] = round(time.monotonic() - started, 3)
         self._log_source(source, result)
         return result
@@ -721,18 +768,27 @@ class CongressionalTradingProvider:
         state["last_status"] = f"{kind}:{type(exc).__name__}"
         last = str(state.get("last_success_at") or "")
         age = _hours_since(last, now) if last else None
-        result.update({
-            "outcome": kind, "error": f"{kind}:{type(exc).__name__}",
-            "cache_age_hours": age, "complete": bool(state.get("complete", True)),
-            "duration_s": round(time.monotonic() - started, 3),
-        })
+        result.update(
+            {
+                "outcome": kind,
+                "error": f"{kind}:{type(exc).__name__}",
+                "cache_age_hours": age,
+                "complete": bool(state.get("complete", True)),
+                "duration_s": round(time.monotonic() - started, 3),
+            }
+        )
         served = (
             f"serving the saved copy last refreshed {age}h ago ({last})"
-            if last else "no saved copy exists; this source contributes nothing"
+            if last
+            else "no saved copy exists; this source contributes nothing"
         )
         logger.warning(
             "Congressional source %s: source=%s error=%s: %s — %s",
-            kind, source, type(exc).__name__, exc, served,
+            kind,
+            source,
+            type(exc).__name__,
+            exc,
+            served,
         )
         return result
 
@@ -744,10 +800,21 @@ class CongressionalTradingProvider:
             "already_seen=%d processed=%d new=%d dropped=%d (%s) "
             "unknown_type_kept=%d truncated=%d complete=%s "
             "watermark(%s)=%s->%s duration_s=%.3f",
-            source, r["outcome"], r["fetched"], r["already_seen"], r["processed"],
-            r["new"], r["dropped"], reasons, r["unknown_type_kept"], r["truncated"],
-            r["complete"], r["watermark_field"], r["watermark_before"] or "none",
-            r["watermark_after"] or "none", r["duration_s"],
+            source,
+            r["outcome"],
+            r["fetched"],
+            r["already_seen"],
+            r["processed"],
+            r["new"],
+            r["dropped"],
+            reasons,
+            r["unknown_type_kept"],
+            r["truncated"],
+            r["complete"],
+            r["watermark_field"],
+            r["watermark_before"] or "none",
+            r["watermark_after"] or "none",
+            r["duration_s"],
         )
 
     # ---- refresh -------------------------------------------------------------
@@ -785,7 +852,13 @@ class CongressionalTradingProvider:
             for source in _SOURCES:
                 state = manifest["sources"].setdefault(source, {})
                 per_source[source] = self._refresh_source(
-                    source, state, store[source], touched, deadline, cutoff, now,
+                    source,
+                    state,
+                    store[source],
+                    touched,
+                    deadline,
+                    cutoff,
+                    now,
                 )
                 if per_source[source]["error"]:
                     errors.append(f"{source}:{per_source[source]['error']}")
@@ -803,17 +876,15 @@ class CongressionalTradingProvider:
                         observations[group] = self._merge_group(members[group])
             # Age out whole groups past the retention cutoff, with their rows.
             expired = {
-                group for group, row in observations.items()
+                group
+                for group, row in observations.items()
                 if date.fromisoformat(str(row["disclosure_date"])[:10]) < cutoff
             }
             for group in expired:
                 observations.pop(group, None)
             if expired:
                 for source in _SOURCES:
-                    store[source] = {
-                        key: row for key, row in store[source].items()
-                        if _group_key(row) not in expired
-                    }
+                    store[source] = {key: row for key, row in store[source].items() if _group_key(row) not in expired}
 
             rows_out = sorted(observations.values(), key=lambda r: r["group_key"])
             freshness = self._freshness(rows_out, manifest, now)
@@ -834,13 +905,16 @@ class CongressionalTradingProvider:
             "expired_groups=%d newest_disclosure=%s (%s days old) "
             "newest_transaction=%s (%s days old) reporting_lag_days=%s "
             "stale_sources=%s duration_s=%.3f",
-            len(rows_out), sum(r["new"] for r in per_source.values()),
-            sum(r["processed"] for r in per_source.values()), len(expired),
+            len(rows_out),
+            sum(r["new"] for r in per_source.values()),
+            sum(r["processed"] for r in per_source.values()),
+            len(expired),
             freshness["newest_disclosure_date"] or "none",
             freshness["newest_disclosure_age_days"],
             freshness["newest_transaction_date"] or "none",
             freshness["newest_transaction_age_days"],
-            freshness["reporting_lag_days"], freshness["stale_sources"] or "none",
+            freshness["reporting_lag_days"],
+            freshness["stale_sources"] or "none",
             duration,
         )
 
@@ -848,19 +922,14 @@ class CongressionalTradingProvider:
         if errors:
             error = ("provider_partial_error" if rows_out else "provider_error") + ":" + ",".join(errors)
         return {
-            "status": (
-                "provider_error" if error and not rows_out else
-                "partial" if error else "ok"
-            ),
+            "status": ("provider_error" if error and not rows_out else "partial" if error else "ok"),
             "kadoa_raw_count": per_source["kadoa"]["fetched"],
             "congresswatch_raw_count": per_source["congresswatch"]["fetched"],
             "merged_count": len(rows_out),
             "cached_observations": len(rows_out),
             "new_disclosures": sum(r["new"] for r in per_source.values()),
             "processed_disclosures": sum(r["processed"] for r in per_source.values()),
-            "discrepancy_count": sum(
-                row.get("cross_source_agreement") == "discrepancy" for row in rows_out
-            ),
+            "discrepancy_count": sum(row.get("cross_source_agreement") == "discrepancy" for row in rows_out),
             "congressional_sources": per_source,
             "congressional_freshness": freshness,
             "duration_s": duration,
@@ -887,8 +956,9 @@ class CongressionalTradingProvider:
         newest_disclosure = max((str(r["disclosure_date"])[:10] for r in pool), default="")
         newest_transaction = max((str(r["transaction_date"])[:10] for r in rows), default="")
         lags = sorted(
-            (date.fromisoformat(str(r["disclosure_date"])[:10])
-             - date.fromisoformat(str(r["transaction_date"])[:10])).days
+            (
+                date.fromisoformat(str(r["disclosure_date"])[:10]) - date.fromisoformat(str(r["transaction_date"])[:10])
+            ).days
             for r in real
         )
         sources: dict[str, dict] = {}
@@ -918,18 +988,15 @@ class CongressionalTradingProvider:
             "observations": len(rows),
             "newest_disclosure_date": newest_disclosure,
             "newest_disclosure_age_days": (
-                (today - date.fromisoformat(newest_disclosure)).days
-                if newest_disclosure else None
+                (today - date.fromisoformat(newest_disclosure)).days if newest_disclosure else None
             ),
             "newest_disclosure_estimated": bool(rows) and not real,
             "newest_transaction_date": newest_transaction,
             "newest_transaction_age_days": (
-                (today - date.fromisoformat(newest_transaction)).days
-                if newest_transaction else None
+                (today - date.fromisoformat(newest_transaction)).days if newest_transaction else None
             ),
             "reporting_lag_days": (
-                {"min": lags[0], "median": median(lags), "max": lags[-1], "rows": len(lags)}
-                if lags else None
+                {"min": lags[0], "median": median(lags), "max": lags[-1], "rows": len(lags)} if lags else None
             ),
             "sources": sources,
             "stale_sources": stale,
@@ -965,17 +1032,18 @@ class CongressionalTradingProvider:
             if info["last_success_at"]:
                 label = f"{source}:age_h={info['cache_age_hours']}:last_success={info['last_success_at']}"
                 logger.warning(
-                    "Congressional cache served stale: source=%s last refreshed "
-                    "%sh ago (%s) last_status=%s",
-                    source, info["cache_age_hours"], info["last_success_at"],
+                    "Congressional cache served stale: source=%s last refreshed %sh ago (%s) last_status=%s",
+                    source,
+                    info["cache_age_hours"],
+                    info["last_success_at"],
                     info["last_status"] or "none",
                 )
             else:
                 label = f"{source}:never_refreshed"
                 logger.warning(
-                    "Congressional cache served stale: source=%s has never "
-                    "been refreshed successfully last_status=%s",
-                    source, info["last_status"] or "none",
+                    "Congressional cache served stale: source=%s has never been refreshed successfully last_status=%s",
+                    source,
+                    info["last_status"] or "none",
                 )
             stale_labels.append(label)
         parsed: list[SmartMoneyObservation] = []
@@ -996,8 +1064,8 @@ class CongressionalTradingProvider:
                 # age called it "fresh" and invited the seat to read it as
                 # current news (median filing lag 60 days, measured 2026-09-19).
                 trade_age_days = max(0, (et_today() - transaction_date).days)
-                freshness = "fresh" if trade_age_days <= 7 else (
-                    "delayed" if trade_age_days <= self.lookback_days else "stale"
+                freshness = (
+                    "fresh" if trade_age_days <= 7 else ("delayed" if trade_age_days <= self.lookback_days else "stale")
                 )
                 lag_days = max(0, (disclosure_date - transaction_date).days)
                 item = SmartMoneyObservation(
@@ -1035,8 +1103,7 @@ class CongressionalTradingProvider:
         survivors = cluster_survivors(
             parsed,
             threshold_fn=lambda symbol: (
-                self.min_transaction_value_usd
-                if symbol in core else self.external_min_transaction_value_usd
+                self.min_transaction_value_usd if symbol in core else self.external_min_transaction_value_usd
             ),
             cluster_window_days=self.cluster_window_days,
             min_cluster_owners=self.min_cluster_owners,
@@ -1081,9 +1148,7 @@ def _form4_drain_summary(results) -> dict:
     from src.data.smart_money_edgar_coverage import blank_edgar_coverage
 
     edgars = [
-        r.get("edgar_coverage") if isinstance(r.get("edgar_coverage"), dict)
-        else blank_edgar_coverage()
-        for r in form4
+        r.get("edgar_coverage") if isinstance(r.get("edgar_coverage"), dict) else blank_edgar_coverage() for r in form4
     ]
     edgar_total = sum(int(e.get("edgar_total") or 0) for e in edgars)
     enumerated = sum(int(e.get("enumerated") or 0) for e in edgars)
@@ -1092,9 +1157,10 @@ def _form4_drain_summary(results) -> dict:
     edgar_coverage = {
         "known": bool(edgars) and all(bool(e.get("known")) for e in edgars),
         "verified": bool(edgars) and all(bool(e.get("verified")) for e in edgars),
-        "reasons": sorted({
-            str(x) for e in edgars for x in (e.get("reasons") or []) if str(x).strip()
-        } or ({"never_recorded"} if not edgars else set())),
+        "reasons": sorted(
+            {str(x) for e in edgars for x in (e.get("reasons") or []) if str(x).strip()}
+            or ({"never_recorded"} if not edgars else set())
+        ),
         "edgar_total": edgar_total,
         "enumerated": enumerated,
         "rows_received": sum(int(e.get("rows_received") or 0) for e in edgars),
@@ -1102,34 +1168,25 @@ def _form4_drain_summary(results) -> dict:
         # A window, not a quantity — see `form4_coverage` below.
         "days_queried": days_queried,
         "days_in_window": days_in_window,
-        "window_fraction": (
-            round(days_queried / days_in_window, 4) if days_in_window > 0 else None
-        ),
+        "window_fraction": (round(days_queried / days_in_window, 4) if days_in_window > 0 else None),
         # Also a day count, so also min — summing it beside a min'd
         # `days_queried` produced merged records claiming more days with a
         # readable count than days queried at all.
         "days_with_total": min(
-            (int(e.get("days_with_total") or 0) for e in edgars), default=0,
+            (int(e.get("days_with_total") or 0) for e in edgars),
+            default=0,
         ),
     }
     return {
         "edgar_coverage": edgar_coverage,
         "watched_read_through": "" if any(not d for d in dates) else min(dates),
-        "watched_unchecked_names": sorted({
-            str(n) for r in form4 for n in (r.get("watched_unchecked_names") or [])
-        }),
+        "watched_unchecked_names": sorted({str(n) for r in form4 for n in (r.get("watched_unchecked_names") or [])}),
         "watched_drain_ran": any(bool(r.get("watched_drain_ran")) for r in form4),
         "watched_drain_read": sum(int(r.get("watched_drain_read") or 0) for r in form4),
-        "watched_drain_deadline_hit": any(
-            bool(r.get("watched_drain_deadline_hit")) for r in form4
-        ),
+        "watched_drain_deadline_hit": any(bool(r.get("watched_drain_deadline_hit")) for r in form4),
         "watched_names": sum(int(r.get("watched_names") or 0) for r in form4),
-        "watched_names_read_through": sum(
-            int(r.get("watched_names_read_through") or 0) for r in form4
-        ),
-        "watched_names_unread": sorted({
-            str(n) for r in form4 for n in (r.get("watched_names_unread") or [])
-        }),
+        "watched_names_read_through": sum(int(r.get("watched_names_read_through") or 0) for r in form4),
+        "watched_names_unread": sorted({str(n) for r in form4 for n in (r.get("watched_names_unread") or [])}),
     }
 
 
@@ -1142,14 +1199,22 @@ def _congressional_summary(results) -> dict:
     """
     for r in results:
         if isinstance(r, dict) and "congressional_sources" in r:
-            return {"congressional": {
-                key: r.get(key) for key in (
-                    "status", "new_disclosures", "processed_disclosures",
-                    "cached_observations", "discrepancy_count",
-                    "congressional_sources", "congressional_freshness",
-                    "duration_s", "error",
-                )
-            }}
+            return {
+                "congressional": {
+                    key: r.get(key)
+                    for key in (
+                        "status",
+                        "new_disclosures",
+                        "processed_disclosures",
+                        "cached_observations",
+                        "discrepancy_count",
+                        "congressional_sources",
+                        "congressional_freshness",
+                        "duration_s",
+                        "error",
+                    )
+                }
+            }
     return {}
 
 
@@ -1187,24 +1252,19 @@ class CombinedSmartMoneyProvider:
                 errors.append(f"{name}:refresh_exception:{type(exc).__name__}")
         return {
             "status": (
-                "ok" if not errors else
-                "provider_error" if all(
-                    r.get("status") == "provider_error" for r in results.values()
-                ) else "partial"
+                "ok"
+                if not errors
+                else "provider_error"
+                if all(r.get("status") == "provider_error" for r in results.values())
+                else "partial"
             ),
             "providers": results,
             # Surfaced at the top level, not only nested per sub-provider, so
             # the unread-Form-4 backlog is a number the session payload and
             # the pre-market log line can actually read.
-            "pending_filings": sum(
-                int(r.get("pending_filings") or 0) for r in results.values()
-            ),
-            "watched_pending_filings": sum(
-                int(r.get("watched_pending_filings") or 0) for r in results.values()
-            ),
-            "discovery_cap_reached": any(
-                bool(r.get("discovery_cap_reached")) for r in results.values()
-            ),
+            "pending_filings": sum(int(r.get("pending_filings") or 0) for r in results.values()),
+            "watched_pending_filings": sum(int(r.get("watched_pending_filings") or 0) for r in results.values()),
+            "discovery_cap_reached": any(bool(r.get("discovery_cap_reached")) for r in results.values()),
             # The drain's outcome, surfaced for the pre-open check. Until
             # 2026-09-19 only the three counts above were lifted out of the
             # per-provider dict, so the pre-open check always read an empty
@@ -1243,9 +1303,15 @@ class CombinedSmartMoneyProvider:
         are skipped rather than counted as failures.
         """
         verdict = {
-            "ok": False, "new_filings": [], "read_through": "",
-            "checked": 0, "covered": 0, "unread_names": [], "unread_filings": 0,
-            "unchecked": [], "reason": "no Form 4 provider",
+            "ok": False,
+            "new_filings": [],
+            "read_through": "",
+            "checked": 0,
+            "covered": 0,
+            "unread_names": [],
+            "unread_filings": 0,
+            "unchecked": [],
+            "reason": "no Form 4 provider",
         }
         answered = False
         covered = 0
@@ -1270,10 +1336,7 @@ class CombinedSmartMoneyProvider:
                 reasons.append(f"{name}:{type(exc).__name__}")
                 continue
             answered = True
-            new_filings.update(
-                str(a).strip() for a in (result.get("new_filings") or [])
-                if str(a).strip()
-            )
+            new_filings.update(str(a).strip() for a in (result.get("new_filings") or []) if str(a).strip())
             unchecked.extend(str(c) for c in (result.get("unchecked") or []))
             checked += int(result.get("checked") or 0)
             covered += int(result.get("covered") or 0)
@@ -1297,7 +1360,8 @@ class CombinedSmartMoneyProvider:
         verdict["ok"] = True
         verdict["reason"] = (
             f"{len(new_filings)} new filing(s) on names read through"
-            if new_filings else "every watched name read through; nothing new"
+            if new_filings
+            else "every watched name read through; nothing new"
         )
         return verdict
 
@@ -1327,14 +1391,21 @@ class CombinedSmartMoneyProvider:
         from src.data.smart_money_edgar_coverage import blank_edgar_coverage
 
         blank_edgar = blank_edgar_coverage()
-        merged = {"known": False, "as_of": "", "watched": 0,
-                  "read_through": 0, "unread": [], "edgar": dict(blank_edgar),
-                  # Market-wide blindness merges as OR, the same posture as
-                  # `unread` and `verified`: one sub-provider that read none
-                  # of the wider market makes the merged view blind, because
-                  # the coverage it did not get is not supplied by another.
-                  "market_wide_blind": False, "market_wide_read": 0,
-                  "market_wide_pending": 0}
+        merged = {
+            "known": False,
+            "as_of": "",
+            "watched": 0,
+            "read_through": 0,
+            "unread": [],
+            "edgar": dict(blank_edgar),
+            # Market-wide blindness merges as OR, the same posture as
+            # `unread` and `verified`: one sub-provider that read none
+            # of the wider market makes the merged view blind, because
+            # the coverage it did not get is not supplied by another.
+            "market_wide_blind": False,
+            "market_wide_read": 0,
+            "market_wide_pending": 0,
+        }
         found = False
         # EDGAR coverage across sub-providers is only as verified as the
         # least verified one, and its reasons are the union — the same
@@ -1361,9 +1432,7 @@ class CombinedSmartMoneyProvider:
             merged["watched"] += int(result.get("watched") or 0)
             merged["read_through"] += int(result.get("read_through") or 0)
             merged["unread"].extend(str(s) for s in (result.get("unread") or []))
-            merged["market_wide_blind"] = bool(
-                merged["market_wide_blind"] or result.get("market_wide_blind")
-            )
+            merged["market_wide_blind"] = bool(merged["market_wide_blind"] or result.get("market_wide_blind"))
             try:
                 merged["market_wide_read"] += int(result.get("market_wide_read") or 0)
                 merged["market_wide_pending"] += int(
@@ -1375,9 +1444,7 @@ class CombinedSmartMoneyProvider:
             if not isinstance(sub_edgar, dict):
                 sub_edgar = dict(blank_edgar)
             edgar_verified.append(bool(sub_edgar.get("verified")))
-            edgar_reasons.update(
-                str(r) for r in (sub_edgar.get("reasons") or []) if str(r).strip()
-            )
+            edgar_reasons.update(str(r) for r in (sub_edgar.get("reasons") or []) if str(r).strip())
             for key in ("edgar_total", "enumerated", "rows_received"):
                 try:
                     merged["edgar"][key] += int(sub_edgar.get(key) or 0)
@@ -1408,18 +1475,11 @@ class CombinedSmartMoneyProvider:
         merged["unread"] = sorted(set(merged["unread"]))
         merged["edgar"]["known"] = bool(edgar_verified)
         merged["edgar"]["verified"] = bool(edgar_verified) and all(edgar_verified)
-        merged["edgar"]["reasons"] = sorted(
-            edgar_reasons or ({"never_recorded"} if not edgar_verified else set())
-        )
+        merged["edgar"]["reasons"] = sorted(edgar_reasons or ({"never_recorded"} if not edgar_verified else set()))
         total = int(merged["edgar"]["edgar_total"] or 0)
-        merged["edgar"]["ratio"] = (
-            round(int(merged["edgar"]["enumerated"] or 0) / total, 4)
-            if total > 0 else None
-        )
+        merged["edgar"]["ratio"] = round(int(merged["edgar"]["enumerated"] or 0) / total, 4) if total > 0 else None
         window = int(merged["edgar"]["days_in_window"] or 0)
         merged["edgar"]["window_fraction"] = (
-            round(int(merged["edgar"]["days_queried"] or 0) / window, 4)
-            if window > 0 else None
+            round(int(merged["edgar"]["days_queried"] or 0) / window, 4) if window > 0 else None
         )
         return merged
-

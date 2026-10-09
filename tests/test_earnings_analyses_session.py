@@ -3,6 +3,7 @@
 Every collaborator is an explicit constructor argument, so the step can be
 built from stubs alone and exercised directly.
 """
+
 from __future__ import annotations
 
 import inspect

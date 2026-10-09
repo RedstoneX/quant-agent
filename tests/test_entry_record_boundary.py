@@ -10,6 +10,7 @@ Second witness: the three fields a settlement recording pins at entry
 decision object missing one of them raises at the accessor instead of quietly
 handing ``insert_trade`` a NULL.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -26,10 +27,18 @@ MODULE = "src.entry_record"
 
 def _decision(**overrides):
     fields = dict(
-        symbol="ABCD", action="BUY", reasoning="r", take_profit=None,
-        setup_type="breakout", structural_ceiling=True, stop_rule="atr",
-        stop_level_basis=None, conviction="HIGH", requested_risk_pct=0.5,
-        allocated_risk_pct=0.4, thesis_invalid_if="x",
+        symbol="ABCD",
+        action="BUY",
+        reasoning="r",
+        take_profit=None,
+        setup_type="breakout",
+        structural_ceiling=True,
+        stop_rule="atr",
+        stop_level_basis=None,
+        conviction="HIGH",
+        requested_risk_pct=0.5,
+        allocated_risk_pct=0.4,
+        thesis_invalid_if="x",
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -37,9 +46,16 @@ def _decision(**overrides):
 
 def _call(db, decision, add_prep=None, is_short=False):
     return insert_pending_entry(
-        db=db, decision=decision, add_prep=add_prep, is_short=is_short,
-        qty=3, executed_price=10.0, run_id="run", stop_price=9.0,
-        decision_id=7, entry_analysis=SimpleNamespace(atr_14=0.3, expected_horizon_sessions=5),
+        db=db,
+        decision=decision,
+        add_prep=add_prep,
+        is_short=is_short,
+        qty=3,
+        executed_price=10.0,
+        run_id="run",
+        stop_price=9.0,
+        decision_id=7,
+        entry_analysis=SimpleNamespace(atr_14=0.3, expected_horizon_sessions=5),
         decision_model="model",
     )
 
@@ -92,9 +108,17 @@ def test_a_missing_pinned_field_fails_at_the_accessor_not_as_null(missing):
 def test_a_missing_entry_analysis_records_no_atr_rather_than_a_reconstructed_one():
     db = MagicMock()
     insert_pending_entry(
-        db=db, decision=_decision(), add_prep=None, is_short=False, qty=1,
-        executed_price=1.0, run_id="run", stop_price=0.9, decision_id=1,
-        entry_analysis=None, decision_model="m",
+        db=db,
+        decision=_decision(),
+        add_prep=None,
+        is_short=False,
+        qty=1,
+        executed_price=1.0,
+        run_id="run",
+        stop_price=0.9,
+        decision_id=1,
+        entry_analysis=None,
+        decision_model="m",
     )
     kw = db.insert_trade.call_args.kwargs
     assert kw["entry_atr"] is None and kw["expected_horizon_sessions"] is None

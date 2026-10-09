@@ -4,6 +4,7 @@ made LOUD. Pure functions over the pydantic models: nothing here reads the
 desk, so a malformed shape fails closed exactly as before -- it is only now
 counted (``NO_LEDGER``: nothing ledger-bearing is ever in scope here).
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +33,7 @@ def canonical_rejections(rejections) -> list[tuple] | None:
         # Same container shorthands `RiskVerdict` itself accepts; route
         # them through the model so both sides canonicalize identically.
         from src.models import _normalize_rejected_symbols_field
+
         rejections = _normalize_rejected_symbols_field(
             {"rejected_symbols": rejections},
         )["rejected_symbols"]
@@ -49,8 +51,10 @@ def canonical_rejections(rejections) -> list[tuple] | None:
     record_guarded_pass(NO_LEDGER, "risk_manager.canonical_rejections", log=logger)
     record_guarded_pass(NO_LEDGER, "risk_manager.canonical_modifications", log=logger)
     return sorted(
-        ((r.symbol, r.reason) for r in models), key=lambda row: row[0],
+        ((r.symbol, r.reason) for r in models),
+        key=lambda row: row[0],
     )
+
 
 def canonical_modifications(mods) -> list[tuple] | None:
     """Full RiskModification decision payload (symbol, field,
@@ -78,10 +82,7 @@ def canonical_modifications(mods) -> list[tuple] | None:
             record_guarded_pass(NO_LEDGER, "risk_manager.canonical_modifications", exc, log=logger)
             return None
     return sorted(
-        (
-            (m.symbol, m.field, m.original_value, m.new_value, m.reason)
-            for m in models
-        ),
+        ((m.symbol, m.field, m.original_value, m.new_value, m.reason) for m in models),
         key=lambda row: (row[0], row[1]),
     )
 
@@ -108,8 +109,9 @@ def drop_invalid_modifications(parsed: dict) -> dict:
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             logger.warning(
-                "Risk manager: dropping non-dict modifications entry "
-                "at index %d: %r", i, item,
+                "Risk manager: dropping non-dict modifications entry at index %d: %r",
+                i,
+                item,
             )
             continue
         try:
@@ -118,7 +120,8 @@ def drop_invalid_modifications(parsed: dict) -> dict:
             sym = item.get("symbol") or f"<idx {i}>"
             logger.warning(
                 "Risk manager: dropping malformed modification for %s: %s",
-                sym, e,
+                sym,
+                e,
             )
             continue
         valid.append(item)

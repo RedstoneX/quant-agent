@@ -46,10 +46,7 @@ def import_bindings(tree: ast.AST) -> dict[str, tuple[str, str]]:
 
 
 def has_star_import(tree: ast.AST) -> bool:
-    return any(
-        isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
-        for n in ast.walk(tree)
-    )
+    return any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(tree))
 
 
 def local_defs(tree: ast.AST) -> dict[str, ast.AST]:
@@ -58,11 +55,7 @@ def local_defs(tree: ast.AST) -> dict[str, ast.AST]:
     A module-local ``def record_site`` is NOT the recorder of that name: it is
     judged by what its own body does (see ``Resolver``), never by its name.
     """
-    return {
-        n.name: n
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    return {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
 def _is_foreign(module: str) -> bool:

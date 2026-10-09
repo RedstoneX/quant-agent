@@ -24,6 +24,7 @@ class MalformedRow:
     broken text when it is legible, else None. `reason` is the decoder's own
     message plus the offending line, short enough for one log line.
     """
+
     key: str | None
     reason: str
 
@@ -33,6 +34,7 @@ class RowSalvage:
     """Result of `parse_json_rows_text`: every well-formed row, plus
     every row that was present in the answer but malformed. A row in neither
     list was genuinely not returned by the model."""
+
     rows: list
     malformed: list[MalformedRow]
 
@@ -122,18 +124,11 @@ def parse_json_rows_text(
 
     Returns None only when nothing in the answer parses at all.
     """
+
     def _rows_from(parsed):
-        if (
-            list_field is not None
-            and isinstance(parsed, dict)
-            and isinstance(parsed.get(list_field), list)
-        ):
+        if list_field is not None and isinstance(parsed, dict) and isinstance(parsed.get(list_field), list):
             return parsed[list_field]
-        if (
-            list_field is not None
-            and isinstance(parsed, dict)
-            and key_field not in parsed
-        ):
+        if list_field is not None and isinstance(parsed, dict) and key_field not in parsed:
             # Adversary review, 2026-09-23: a model can answer with a
             # valid JSON OBJECT under the WRONG key — a differently
             # named wrapper ("signals", "analysis") or a null under the
@@ -168,11 +163,9 @@ def parse_json_rows_text(
             # deliberately falls through to the same conservative
             # whole-object behaviour as before rather than picking one.
             list_candidates = [
-                v for v in parsed.values()
-                if isinstance(v, list) and v
-                and all(
-                    isinstance(e, dict) and key_field in e for e in v
-                )
+                v
+                for v in parsed.values()
+                if isinstance(v, list) and v and all(isinstance(e, dict) and key_field in e for e in v)
             ]
             if len(list_candidates) == 1:
                 return list_candidates[0]
@@ -253,9 +246,12 @@ def parse_json_rows_text(
         key_match = key_re.search(chunk)
         key = key_match.group(1) if key_match else None
         if end is None:
-            malformed.append(MalformedRow(
-                key, "row cut off: the answer ended before the row closed",
-            ))
+            malformed.append(
+                MalformedRow(
+                    key,
+                    "row cut off: the answer ended before the row closed",
+                )
+            )
             continue
         error: json.JSONDecodeError | None = None
         for candidate in (chunk, repair_unquoted_keys(chunk)):
@@ -268,9 +264,12 @@ def parse_json_rows_text(
         if error is not None:
             lines = chunk.splitlines()
             bad_line = lines[error.lineno - 1].strip() if 0 < error.lineno <= len(lines) else ""
-            malformed.append(MalformedRow(
-                key, f"{error.msg} near {bad_line!r}",
-            ))
+            malformed.append(
+                MalformedRow(
+                    key,
+                    f"{error.msg} near {bad_line!r}",
+                )
+            )
     if not rows and not malformed:
         return None
     return RowSalvage(rows=rows, malformed=malformed)

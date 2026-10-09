@@ -4,6 +4,7 @@ A real ledger is lent through the client already in scope. Never reached writes
 no row; a swallowed fault writes exactly one ``disagreed`` row carrying the error
 type and message; a clean pass writes exactly one ``agreed`` row.
 """
+
 import json
 from types import SimpleNamespace
 
@@ -27,8 +28,17 @@ def _rows(db):
 
 
 def _gate(client, side):
-    return quantity_refusal_live("ZZZZ", "ZZZZ", 1, side, price=10.0, client=client,
-                                 get_fractionability=None, get_account=None, max_position_pct=None)
+    return quantity_refusal_live(
+        "ZZZZ",
+        "ZZZZ",
+        1,
+        side,
+        price=10.0,
+        client=client,
+        get_fractionability=None,
+        get_account=None,
+        max_position_pct=None,
+    )
 
 
 def test_never_reached_writes_nothing(db):
@@ -39,6 +49,7 @@ def test_never_reached_writes_nothing(db):
 def test_failure_writes_one_disagreed_row(db):
     def boom():
         raise ValueError("positions down")
+
     _gate(SimpleNamespace(db=db, get_all_positions=boom), "sell")
     rows = _rows(db)
     assert len(rows) == 1

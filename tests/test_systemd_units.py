@@ -98,6 +98,7 @@ def parse_unit(path: Path) -> dict[str, list[str]]:
 # 1. The repository must describe the machine it is deployed to
 # ===========================================================================
 
+
 def test_the_units_directory_is_not_empty():
     """A guard on every parametrization below: `glob` returning nothing
     would make each of them vacuously pass."""
@@ -114,10 +115,7 @@ def test_no_unit_carries_a_foreign_home_path(unit: Path):
     Installing the tracked copy would have broken the daily P&L export, and
     the repository had no way to notice.
     """
-    foreign = sorted({
-        user for user in _HOME_PATH.findall(unit.read_text())
-        if user != DEPLOY_USER
-    })
+    foreign = sorted({user for user in _HOME_PATH.findall(unit.read_text()) if user != DEPLOY_USER})
     assert not foreign, (
         f"{unit.name} references /home/{', /home/'.join(foreign)}; QAMC is "
         f"deployed at {DEPLOY_ROOT}. A unit carrying another account's path "
@@ -130,8 +128,7 @@ def test_every_service_runs_from_the_deploy_root(service: Path):
     working_dir = parse_unit(service).get("Service.WorkingDirectory")
     assert working_dir, f"{service.name} declares no WorkingDirectory"
     assert working_dir[0] == DEPLOY_ROOT, (
-        f"{service.name} has WorkingDirectory={working_dir[0]}, expected "
-        f"{DEPLOY_ROOT}"
+        f"{service.name} has WorkingDirectory={working_dir[0]}, expected {DEPLOY_ROOT}"
     )
 
 
@@ -147,25 +144,20 @@ def test_every_service_execstart_exists_in_the_repo(service: Path):
         if token.endswith((".py", ".sh")):
             candidate = SCRIPTS_DIR / Path(token).name
             assert candidate.is_file(), (
-                f"{service.name} runs {token}, but scripts/{candidate.name} "
-                f"does not exist in the repository"
+                f"{service.name} runs {token}, but scripts/{candidate.name} does not exist in the repository"
             )
 
 
 @pytest.mark.parametrize("timer", TIMERS, ids=lambda p: p.name)
 def test_every_timer_has_the_service_it_activates(timer: Path):
     service = SYSTEMD_DIR / f"{timer.stem}.service"
-    assert service.is_file(), (
-        f"{timer.name} would activate {service.name}, which is not tracked"
-    )
+    assert service.is_file(), f"{timer.name} would activate {service.name}, which is not tracked"
 
 
 @pytest.mark.parametrize("timer", TIMERS, ids=lambda p: p.name)
 def test_every_timer_is_installable_and_scheduled(timer: Path):
     parsed = parse_unit(timer)
-    assert parsed.get("Timer.OnCalendar"), (
-        f"{timer.name} declares no OnCalendar — it would never fire"
-    )
+    assert parsed.get("Timer.OnCalendar"), f"{timer.name} declares no OnCalendar — it would never fire"
     assert parsed.get("Install.WantedBy"), (
         f"{timer.name} has no [Install] WantedBy, so `systemctl --user "
         f"enable` has nothing to link and the timer never starts"
@@ -183,9 +175,7 @@ def test_every_service_is_reachable(service: Path):
     way, so accepting only `.timer` here would fail a unit that is in fact
     reachable.
     """
-    activators = [
-        SYSTEMD_DIR / f"{service.stem}{ext}" for ext in (".timer", ".path")
-    ]
+    activators = [SYSTEMD_DIR / f"{service.stem}{ext}" for ext in (".timer", ".path")]
     has_activator = any(a.is_file() for a in activators)
     declares_install = bool(parse_unit(service).get("Install.WantedBy"))
     assert has_activator or declares_install, (
@@ -223,8 +213,7 @@ def test_no_unit_contains_an_inline_secret(unit: Path):
 def test_every_unit_describes_itself(unit: Path):
     description = parse_unit(unit).get("Unit.Description")
     assert description and description[0], (
-        f"{unit.name} has no Description; `systemctl --user list-timers` "
-        f"would show it as a bare filename"
+        f"{unit.name} has no Description; `systemctl --user list-timers` would show it as a bare filename"
     )
 
 
@@ -237,7 +226,11 @@ def test_every_unit_describes_itself(unit: Path):
 
 # The six ET-windowed trading sessions, self-gating through one wrapper.
 SESSION_MODES = (
-    "morning", "midday", "intra_check", "close", "evening",
+    "morning",
+    "midday",
+    "intra_check",
+    "close",
+    "evening",
     "earnings_preprocess",
 )
 
@@ -261,8 +254,7 @@ def test_every_session_service_self_gates_through_the_window_wrapper(mode: str):
     service = SYSTEMD_DIR / f"quant-agent-{mode}.service"
     exec_start = parse_unit(service)["Service.ExecStart"][0]
     assert exec_start.endswith(f"run_if_et_window.sh {mode}"), (
-        f"{service.name} runs {exec_start!r}; expected the shared window "
-        f"wrapper invoked with the {mode!r} mode"
+        f"{service.name} runs {exec_start!r}; expected the shared window wrapper invoked with the {mode!r} mode"
     )
 
 
@@ -328,8 +320,9 @@ WantedBy=paths.target
 """
 
 
-def _make_box(tmp_path: Path, repo: dict[str, str], installed: dict[str, str],
-              enabled: tuple[str, ...] = ()) -> tuple[Path, Path]:
+def _make_box(
+    tmp_path: Path, repo: dict[str, str], installed: dict[str, str], enabled: tuple[str, ...] = ()
+) -> tuple[Path, Path]:
     """Build a fake checkout and a fake ~/.config/systemd/user."""
     repo_root = tmp_path / "checkout"
     repo_units = repo_root / "scripts" / "systemd"
@@ -444,7 +437,9 @@ def test_enablement_is_not_reported_for_units_that_are_not_installed(tmp_path):
     as 'not enabled' is the same fact twice, which is how an operator learns
     to skim."""
     report = _report(
-        tmp_path, {"a.timer": TIMER_BODY}, {},
+        tmp_path,
+        {"a.timer": TIMER_BODY},
+        {},
     )
     assert report.undeployed == ["a.timer"]
     assert report.not_enabled == []
@@ -456,7 +451,9 @@ def test_a_oneshot_service_with_no_install_section_is_not_expected_enabled(
     """The six session services are started by their timers and declare no
     `[Install]`. Demanding a `.wants` link for them would alarm forever."""
     report = _report(
-        tmp_path, {"a.service": UNIT_BODY}, {"a.service": UNIT_BODY},
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY},
     )
     assert report.not_enabled == []
     assert report.has_drift is False
@@ -466,7 +463,9 @@ def test_a_dangling_wants_symlink_reads_as_not_enabled(tmp_path):
     from scripts.check_unit_drift import build_report
 
     repo_root, units_dir = _make_box(
-        tmp_path, {"a.timer": TIMER_BODY}, {"a.timer": TIMER_BODY},
+        tmp_path,
+        {"a.timer": TIMER_BODY},
+        {"a.timer": TIMER_BODY},
     )
     wants = units_dir / "timers.target.wants"
     wants.mkdir()
@@ -483,14 +482,14 @@ def test_a_dangling_wants_symlink_reads_as_not_enabled(tmp_path):
 # and no bucket would ever catch it. These four cases prove each bucket now
 # sees it, and that its `paths.target` enablement is handled like a timer's.
 
+
 def test_a_tracked_path_unit_edited_in_place_is_reported_as_modified(tmp_path):
     """Was invisible before item 123: `.path` was not in the suffix set, so
     the modified bucket never compared its bytes."""
     report = _report(
         tmp_path,
         {"a.service": UNIT_BODY, "a.path": PATH_BODY},
-        {"a.service": UNIT_BODY,
-         "a.path": PATH_BODY.replace("docs/WORK.md", "docs/OTHER.md")},
+        {"a.service": UNIT_BODY, "a.path": PATH_BODY.replace("docs/WORK.md", "docs/OTHER.md")},
     )
     assert report.modified == ["a.path"]
     assert report.has_drift is True
@@ -685,6 +684,7 @@ def test_non_unit_files_are_ignored(tmp_path):
 
 # --- exit codes and the alert path -----------------------------------------
 
+
 def test_missing_systemd_directory_is_an_operator_problem_not_drift(tmp_path):
     from scripts.check_unit_drift import build_report, main
 
@@ -692,11 +692,18 @@ def test_missing_systemd_directory_is_an_operator_problem_not_drift(tmp_path):
     report = build_report(str(repo_root), str(tmp_path / "nope"))
     assert report.checked is False
     assert report.has_drift is False
-    assert main([
-        "--repo-path", str(repo_root),
-        "--units-path", str(tmp_path / "nope"),
-        "--no-telegram",
-    ]) == 3
+    assert (
+        main(
+            [
+                "--repo-path",
+                str(repo_root),
+                "--units-path",
+                str(tmp_path / "nope"),
+                "--no-telegram",
+            ]
+        )
+        == 3
+    )
 
 
 def test_missing_repo_unit_directory_is_an_operator_problem(tmp_path):
@@ -711,12 +718,19 @@ def test_main_exits_zero_when_in_sync(tmp_path, capsys):
     from scripts.check_unit_drift import main
 
     repo_root, units_dir = _make_box(
-        tmp_path, {"a.service": UNIT_BODY}, {"a.service": UNIT_BODY},
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY},
     )
-    code = main([
-        "--repo-path", str(repo_root), "--units-path", str(units_dir),
-        "--no-telegram",
-    ])
+    code = main(
+        [
+            "--repo-path",
+            str(repo_root),
+            "--units-path",
+            str(units_dir),
+            "--no-telegram",
+        ]
+    )
     assert code == 0
     assert "in sync" in capsys.readouterr().out
 
@@ -727,13 +741,17 @@ def test_main_exits_one_and_names_every_bucket_on_drift(tmp_path, capsys):
     repo_root, units_dir = _make_box(
         tmp_path,
         {"a.service": UNIT_BODY, "gone.service": UNIT_BODY},
-        {"a.service": UNIT_BODY.replace("oneshot", "simple"),
-         "rogue.service": UNIT_BODY},
+        {"a.service": UNIT_BODY.replace("oneshot", "simple"), "rogue.service": UNIT_BODY},
     )
-    code = main([
-        "--repo-path", str(repo_root), "--units-path", str(units_dir),
-        "--no-telegram",
-    ])
+    code = main(
+        [
+            "--repo-path",
+            str(repo_root),
+            "--units-path",
+            str(units_dir),
+            "--no-telegram",
+        ]
+    )
     out = capsys.readouterr().out
     assert code == 1
     assert "rogue.service" in out
@@ -751,9 +769,7 @@ def _write_paused(repo_root: Path, units: tuple[str, ...]) -> None:
         lines.append(f"  - unit: {name}")
         lines.append('    since: "2026-09-14"')
         lines.append('    reason: "test fixture"')
-    (repo_root / "scripts" / "systemd" / "paused_units.yaml").write_text(
-        "\n".join(lines) + "\n"
-    )
+    (repo_root / "scripts" / "systemd" / "paused_units.yaml").write_text("\n".join(lines) + "\n")
 
 
 def test_a_paused_unlisted_timer_is_not_reported_and_alarms_nothing(tmp_path):
@@ -874,16 +890,12 @@ def test_the_seeded_paused_list_only_names_units_tracked_in_the_repo():
     data = yaml.safe_load(seed.read_text()) or {}
     entries = data.get("paused_units") or []
     assert isinstance(entries, list), (
-        "paused_units.yaml must declare paused_units as a list "
-        "(empty means the desk is fully running)"
+        "paused_units.yaml must declare paused_units as a list (empty means the desk is fully running)"
     )
     tracked = {p.name for p in ALL_UNITS}
     for entry in entries:
         name = entry["unit"]
-        assert name in tracked, (
-            f"paused_units.yaml names {name!r}, which is not tracked in "
-            f"{SYSTEMD_DIR}"
-        )
+        assert name in tracked, f"paused_units.yaml names {name!r}, which is not tracked in {SYSTEMD_DIR}"
 
 
 def test_the_alert_is_pushed_through_the_existing_notifier(tmp_path):
@@ -892,14 +904,21 @@ def test_the_alert_is_pushed_through_the_existing_notifier(tmp_path):
     from scripts.check_unit_drift import main
 
     repo_root, units_dir = _make_box(
-        tmp_path, {}, {"rogue.service": UNIT_BODY},
+        tmp_path,
+        {},
+        {"rogue.service": UNIT_BODY},
     )
     notifier = MagicMock()
     notifier.enabled = True
     with patch("src.notifier.TelegramNotifier", return_value=notifier):
-        code = main([
-            "--repo-path", str(repo_root), "--units-path", str(units_dir),
-        ])
+        code = main(
+            [
+                "--repo-path",
+                str(repo_root),
+                "--units-path",
+                str(units_dir),
+            ]
+        )
     assert code == 1
     notifier.send.assert_called_once()
     assert "rogue.service" in notifier.send.call_args[0][0]
@@ -909,14 +928,24 @@ def test_no_alert_is_pushed_when_in_sync(tmp_path):
     from scripts.check_unit_drift import main
 
     repo_root, units_dir = _make_box(
-        tmp_path, {"a.service": UNIT_BODY}, {"a.service": UNIT_BODY},
+        tmp_path,
+        {"a.service": UNIT_BODY},
+        {"a.service": UNIT_BODY},
     )
     notifier = MagicMock()
     notifier.enabled = True
     with patch("src.notifier.TelegramNotifier", return_value=notifier):
-        assert main([
-            "--repo-path", str(repo_root), "--units-path", str(units_dir),
-        ]) == 0
+        assert (
+            main(
+                [
+                    "--repo-path",
+                    str(repo_root),
+                    "--units-path",
+                    str(units_dir),
+                ]
+            )
+            == 0
+        )
     notifier.send.assert_not_called()
 
 
@@ -926,20 +955,28 @@ def test_a_disabled_notifier_degrades_to_printing(tmp_path, capsys):
     from scripts.check_unit_drift import main
 
     repo_root, units_dir = _make_box(
-        tmp_path, {}, {"rogue.service": UNIT_BODY},
+        tmp_path,
+        {},
+        {"rogue.service": UNIT_BODY},
     )
     notifier = MagicMock()
     notifier.enabled = False
     with patch("src.notifier.TelegramNotifier", return_value=notifier):
-        code = main([
-            "--repo-path", str(repo_root), "--units-path", str(units_dir),
-        ])
+        code = main(
+            [
+                "--repo-path",
+                str(repo_root),
+                "--units-path",
+                str(units_dir),
+            ]
+        )
     assert code == 1
     notifier.send.assert_not_called()
     assert "Telegram not configured" in capsys.readouterr().err
 
 
 # --- the unit that schedules the check -------------------------------------
+
 
 def test_the_unit_drift_check_is_itself_scheduled_on_the_box():
     """A check nobody runs is a check that does not exist."""
@@ -950,18 +987,14 @@ def test_the_unit_drift_check_is_itself_scheduled_on_the_box():
     # Exit 1 is a finding, not a crash — same contract as the deploy-drift
     # unit. Exit 3 (missing directory) must still mark the unit failed.
     assert parsed["Service.SuccessExitStatus"] == ["0 1"]
-    assert parsed["Service.ExecStart"] == [
-        f"{DEPLOY_ROOT}/scripts/run_unit_drift_check.sh"
-    ]
+    assert parsed["Service.ExecStart"] == [f"{DEPLOY_ROOT}/scripts/run_unit_drift_check.sh"]
 
 
 def test_the_unit_drift_check_runs_every_day_not_only_weekdays():
     """Units get hand-added at weekends too, and this desk's recorded blind
     spot is precisely the weekend (the pricing cache went stale over one).
     The check costs no network and no model call."""
-    on_calendar = parse_unit(
-        SYSTEMD_DIR / "quant-agent-unit-drift.timer"
-    )["Timer.OnCalendar"]
+    on_calendar = parse_unit(SYSTEMD_DIR / "quant-agent-unit-drift.timer")["Timer.OnCalendar"]
     assert on_calendar == ["*-*-* 08:50 America/New_York"]
     assert not any("Mon" in entry for entry in on_calendar)
 
@@ -996,9 +1029,7 @@ def _fire_minutes(on_calendar: str) -> set[int]:
     `*:MM,MM`). Not a general OnCalendar parser — just enough to prove two
     timers never share a tick.
     """
-    assert on_calendar.startswith("*:"), (
-        f"unrecognised OnCalendar shape for this helper: {on_calendar!r}"
-    )
+    assert on_calendar.startswith("*:"), f"unrecognised OnCalendar shape for this helper: {on_calendar!r}"
     spec = on_calendar[2:]
     if "/" in spec:
         start, step = spec.split("/")
@@ -1015,12 +1046,9 @@ def test_fire_minutes_helper_matches_systemd_on_the_two_shapes_in_use():
 
 
 def test_intra_check_timer_moved_off_the_shared_tick():
-    on_calendar = parse_unit(
-        SYSTEMD_DIR / "quant-agent-intra_check.timer"
-    )["Timer.OnCalendar"]
+    on_calendar = parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"]
     assert on_calendar == ["*:15,45"], (
-        "intra_check must fire at :15/:45 — off the :00/:30 tick every "
-        "other session timer shares"
+        "intra_check must fire at :15/:45 — off the :00/:30 tick every other session timer shares"
     )
 
 
@@ -1029,9 +1057,7 @@ def test_the_other_session_timers_keep_the_shared_half_hour_tick(mode: str):
     """Only intra_check moves. The rest still fire together and rely on
     run_if_et_window.sh's cross-mode session lock to serialize, exactly as
     before."""
-    on_calendar = parse_unit(
-        SYSTEMD_DIR / f"quant-agent-{mode}.timer"
-    )["Timer.OnCalendar"]
+    on_calendar = parse_unit(SYSTEMD_DIR / f"quant-agent-{mode}.timer")["Timer.OnCalendar"]
     assert on_calendar == ["*:0/30"]
 
 
@@ -1043,36 +1069,23 @@ def test_coverage_sweep_timer_also_keeps_the_shared_tick():
     `trading_session_lock_held()` in src/coverage_watchdog.py (see
     tests/test_coverage_watchdog.py), not by a schedule change.
     """
-    on_calendar = parse_unit(
-        SYSTEMD_DIR / "quant-agent-coverage-sweep.timer"
-    )["Timer.OnCalendar"]
+    on_calendar = parse_unit(SYSTEMD_DIR / "quant-agent-coverage-sweep.timer")["Timer.OnCalendar"]
     assert on_calendar == ["*:0/30"]
 
 
 def test_morning_and_intra_check_can_no_longer_land_on_the_same_tick():
     """THE 2026-09-17 DEFECT, pinned by name: this exact pair raced at
     09:30 because both fired on *:0/30."""
-    morning = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / "quant-agent-morning.timer")["Timer.OnCalendar"][0]
-    )
-    intra = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0]
-    )
+    morning = _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-morning.timer")["Timer.OnCalendar"][0])
+    intra = _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0])
     assert morning.isdisjoint(intra)
 
 
 @pytest.mark.parametrize("mode", NON_INTRA_SESSION_MODES)
 def test_intra_check_shares_no_tick_with_any_other_session_timer(mode: str):
-    intra = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0]
-    )
-    other = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / f"quant-agent-{mode}.timer")["Timer.OnCalendar"][0]
-    )
-    assert intra.isdisjoint(other), (
-        f"intra_check and {mode} still share a tick — the exact "
-        f"2026-09-17 defect"
-    )
+    intra = _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0])
+    other = _fire_minutes(parse_unit(SYSTEMD_DIR / f"quant-agent-{mode}.timer")["Timer.OnCalendar"][0])
+    assert intra.isdisjoint(other), f"intra_check and {mode} still share a tick — the exact 2026-09-17 defect"
 
 
 # === Board item 177, the CADENCE third ================================
@@ -1106,7 +1119,9 @@ def _intra_check_et_window_minutes() -> tuple[int, int]:
     it, so this test cannot drift from the gate."""
     text = (SCRIPTS_DIR / "run_if_et_window.sh").read_text()
     match = re.search(
-        r"^\s*intra_check\)\s*LO=(\d+);\s*HI=(\d+)", text, re.MULTILINE,
+        r"^\s*intra_check\)\s*LO=(\d+);\s*HI=(\d+)",
+        text,
+        re.MULTILINE,
     )
     assert match, "intra_check's LO/HI window is no longer parseable"
     return int(match.group(1)), int(match.group(2))
@@ -1114,10 +1129,7 @@ def _intra_check_et_window_minutes() -> tuple[int, int]:
 
 def _cyclic_gaps(minutes: set[int]) -> set[int]:
     ordered = sorted(minutes)
-    return {
-        (ordered[(i + 1) % len(ordered)] - m) % 60
-        for i, m in enumerate(ordered)
-    }
+    return {(ordered[(i + 1) % len(ordered)] - m) % 60 for i, m in enumerate(ordered)}
 
 
 def test_the_production_timer_spacing_is_the_ledgered_cadence_constant():
@@ -1127,11 +1139,7 @@ def test_the_production_timer_spacing_is_the_ledgered_cadence_constant():
     production does not use."""
     from src.config import INTRA_CHECK_TICK_MINUTES
 
-    minutes = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
-            "Timer.OnCalendar"
-        ][0]
-    )
+    minutes = _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0])
     assert _cyclic_gaps(minutes) == {INTRA_CHECK_TICK_MINUTES}, (
         "quant-agent-intra_check.timer no longer ticks every "
         f"{INTRA_CHECK_TICK_MINUTES} minutes — the cost circuit's "
@@ -1148,18 +1156,14 @@ def test_the_production_and_live_mode_cadences_cannot_silently_diverge():
     from src.scheduler import TradingScheduler
 
     timer_gaps = _cyclic_gaps(
-        _fire_minutes(
-            parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
-                "Timer.OnCalendar"
-            ][0]
-        )
+        _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0])
     )
+
     def _field(trigger, name: str) -> int:
         return int(str(next(f for f in trigger.fields if f.name == name)))
 
     fired = sorted(
-        _field(t, "hour") * 60 + _field(t, "minute")
-        for t in TradingScheduler._build_intra_check_trigger().triggers
+        _field(t, "hour") * 60 + _field(t, "minute") for t in TradingScheduler._build_intra_check_trigger().triggers
     )
     scheduler_gaps = {b - a for a, b in zip(fired, fired[1:])}
     assert scheduler_gaps == timer_gaps, (
@@ -1177,11 +1181,7 @@ def test_the_number_of_paid_intraday_ticks_a_day_is_derived_not_asserted():
     :15/:45, and 14 on each day before it — both reproduced here from the
     two files rather than typed in."""
     lo, hi = _intra_check_et_window_minutes()
-    minutes = _fire_minutes(
-        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")[
-            "Timer.OnCalendar"
-        ][0]
-    )
+    minutes = _fire_minutes(parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0])
     ticks = [m for m in range(lo, hi + 1) if m % 60 in minutes]
     assert ticks, "the intra_check timer fires nowhere inside its own window"
     assert len(ticks) == 13, (
@@ -1195,6 +1195,5 @@ def test_the_number_of_paid_intraday_ticks_a_day_is_derived_not_asserted():
     quoted = re.search(r"intra_check's ~(\d+) OK ticks/day", text)
     assert quoted, "the wrapper no longer states its tick count"
     assert int(quoted.group(1)) == len(ticks), (
-        "run_if_et_window.sh tells the operator a tick count the schedule "
-        "no longer produces"
+        "run_if_et_window.sh tells the operator a tick count the schedule no longer produces"
     )

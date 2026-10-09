@@ -31,9 +31,11 @@ def _data(close=100.0):
 
 
 def _fp(**kw):
-    return tech_input_fingerprint("AAA", symbol_data=_data(**{
-        k: v for k, v in kw.items() if k == "close"}), **{
-        k: v for k, v in kw.items() if k != "close"})
+    return tech_input_fingerprint(
+        "AAA",
+        symbol_data=_data(**{k: v for k, v in kw.items() if k == "close"}),
+        **{k: v for k, v in kw.items() if k != "close"},
+    )
 
 
 def test_identical_inputs_give_the_same_fingerprint():
@@ -49,36 +51,32 @@ def test_a_new_bar_changes_the_fingerprint():
 
 def test_a_moved_live_price_changes_the_fingerprint():
     """The one input that actually moves intraday must be watched."""
-    a = tech_input_fingerprint(
-        "AAA", symbol_data=_data(), intraday={"live_price": 100.0})
-    b = tech_input_fingerprint(
-        "AAA", symbol_data=_data(), intraday={"live_price": 100.01})
+    a = tech_input_fingerprint("AAA", symbol_data=_data(), intraday={"live_price": 100.0})
+    b = tech_input_fingerprint("AAA", symbol_data=_data(), intraday={"live_price": 100.01})
     assert a != b
 
 
 def test_no_tolerance_band_on_price():
     """A one-ULP price move is a move. No rounding, no 'close enough'."""
     import math
+
     base = 100.0
     nudged = math.nextafter(base, math.inf)
     assert tech_input_fingerprint(
-        "AAA", symbol_data=_data(), intraday={"live_price": base},
-    ) != tech_input_fingerprint(
-        "AAA", symbol_data=_data(), intraday={"live_price": nudged})
+        "AAA",
+        symbol_data=_data(),
+        intraday={"live_price": base},
+    ) != tech_input_fingerprint("AAA", symbol_data=_data(), intraday={"live_price": nudged})
 
 
 def test_changed_prior_rating_or_valuation_or_macro_changes_it():
     base = tech_input_fingerprint("AAA", symbol_data=_data())
-    assert base != tech_input_fingerprint(
-        "AAA", symbol_data=_data(), prior_rating={"rating": "buy"})
-    assert base != tech_input_fingerprint(
-        "AAA", symbol_data=_data(), valuation={"trailing_pe": 11.0})
-    assert base != tech_input_fingerprint(
-        "AAA", symbol_data=_data(), prior_macro_regime="risk_off")
+    assert base != tech_input_fingerprint("AAA", symbol_data=_data(), prior_rating={"rating": "buy"})
+    assert base != tech_input_fingerprint("AAA", symbol_data=_data(), valuation={"trailing_pe": 11.0})
+    assert base != tech_input_fingerprint("AAA", symbol_data=_data(), prior_macro_regime="risk_off")
 
 
-@pytest.mark.parametrize("bad", [None, {}, {"symbol": "AAA"},
-                                 {"symbol": "AAA", "bars": []}])
+@pytest.mark.parametrize("bad", [None, {}, {"symbol": "AAA"}, {"symbol": "AAA", "bars": []}])
 def test_missing_bars_fails_open(bad):
     assert tech_input_fingerprint("AAA", symbol_data=bad) is None
 
@@ -86,14 +84,12 @@ def test_missing_bars_fails_open(bad):
 def test_unfingerprintable_input_fails_open():
     class Opaque:
         __slots__ = ()
-    assert tech_input_fingerprint(
-        "AAA", symbol_data=_data(), valuation={"x": Opaque()}) is None
+
+    assert tech_input_fingerprint("AAA", symbol_data=_data(), valuation={"x": Opaque()}) is None
 
 
 def _entry(fp, rating="buy", conviction="high"):
-    return {"input_fingerprint": fp,
-            "last_result": {"symbol": "AAA", "rating": rating,
-                            "conviction": conviction}}
+    return {"input_fingerprint": fp, "last_result": {"symbol": "AAA", "rating": rating, "conviction": conviction}}
 
 
 def test_unchanged_inputs_are_carried():
@@ -106,17 +102,18 @@ def test_changed_inputs_are_not_carried():
     assert carry_unchanged_tech_reads({"AAA": fp}, {"AAA": _entry("other")}) == {}
 
 
-@pytest.mark.parametrize("entry", [
-    None, {}, {"input_fingerprint": "fp"},                 # no stored verdict
-    {"input_fingerprint": "fp", "last_result": "garbled"},  # unreadable
-    {"input_fingerprint": "fp", "last_result": {"symbol": "AAA"}},  # no verdict
-    {"input_fingerprint": "fp", "last_result": {"symbol": "BBB",
-                                                "rating": "buy",
-                                                "conviction": "high"}},
-    {"input_fingerprint": None, "last_result": {"symbol": "AAA",
-                                                "rating": "buy",
-                                                "conviction": "high"}},
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        None,
+        {},
+        {"input_fingerprint": "fp"},  # no stored verdict
+        {"input_fingerprint": "fp", "last_result": "garbled"},  # unreadable
+        {"input_fingerprint": "fp", "last_result": {"symbol": "AAA"}},  # no verdict
+        {"input_fingerprint": "fp", "last_result": {"symbol": "BBB", "rating": "buy", "conviction": "high"}},
+        {"input_fingerprint": None, "last_result": {"symbol": "AAA", "rating": "buy", "conviction": "high"}},
+    ],
+)
 def test_an_unreadable_or_absent_prior_read_asks(entry):
     assert carry_unchanged_tech_reads({"AAA": "fp"}, {"AAA": entry}) == {}
 
@@ -127,13 +124,25 @@ def test_a_none_fingerprint_never_matches():
 
 def _result():
     return TechAnalysisResult(
-        symbol="AAA", rating="buy", conviction="high",
-        thesis_invalid_if="loses 99", reasoning="because",
-        entry_price=100.0, stop_loss=95.0, reference_target=120.0,
-        setup_type="range", expected_horizon_sessions=10,
-        support_levels=[95.0], resistance_levels=[120.0],
-        reasoning_chain={"trend": "up", "momentum": "firm",
-                         "volatility": "normal", "support_resistance": "mid", "volume": "average"},
+        symbol="AAA",
+        rating="buy",
+        conviction="high",
+        thesis_invalid_if="loses 99",
+        reasoning="because",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=120.0,
+        setup_type="range",
+        expected_horizon_sessions=10,
+        support_levels=[95.0],
+        resistance_levels=[120.0],
+        reasoning_chain={
+            "trend": "up",
+            "momentum": "firm",
+            "volatility": "normal",
+            "support_resistance": "mid",
+            "volume": "average",
+        },
     )
 
 
@@ -223,6 +232,7 @@ def test_an_input_that_cannot_be_compared_asks_the_seat(tmp_path):
 
 def test_agent_inherits_no_mixin_and_the_shim_reads_the_instance_spy():
     from src.agents.base import BaseAgent
+
     assert TechAnalystAgent.__bases__ == (BaseAgent,)
     agent, spy = _agent_and_spy()
     agent.analyze_batch([{"symbol": "AAA"}])

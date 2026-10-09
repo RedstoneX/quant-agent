@@ -4,6 +4,7 @@ Records what the LIVE level finder does over every 60-bar window (stride 7)
 of the committed daily-bar fixture. If a count moves, the matching
 `narrowed:` note in config/number_ledger.yaml must be revisited.
 """
+
 import collections
 import gzip
 import json
@@ -13,8 +14,7 @@ from src.data.levels import find_structural_levels as find
 from src.data.technical import compute_indicators
 from src.models.analysis import OHLCV
 
-_FIX = Path(__file__).resolve().parents[1] / (
-    "ops/model_policy/fixtures/yf_daily_bars_2026-08-28.json.gz")
+_FIX = Path(__file__).resolve().parents[1] / ("ops/model_policy/fixtures/yf_daily_bars_2026-08-28.json.gz")
 
 
 def _run():
@@ -35,7 +35,7 @@ def _run():
     for sym, rows in raw.items():
         bars = [OHLCV(**r) for r in rows]
         for end in range(60, len(bars), 7):
-            win = bars[end - 60:end]
+            win = bars[end - 60 : end]
             windows += 1
             atr = compute_indicators(sym, win).atr_14
             ref = win[-1].close

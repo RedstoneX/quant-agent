@@ -3,6 +3,7 @@
 Bodies moved verbatim from the former src/cost_circuit/breaker_notify.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
+
 from __future__ import annotations
 import logging
 from typing import Any, Callable, TypeVar
@@ -14,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 class OwnerNotify:
     def __init__(
-        self, *,
+        self,
+        *,
         enabled,
         infrastructure_lock,
         read_unavailable_sentinel,
@@ -79,11 +81,7 @@ class OwnerNotify:
             state = self._state_row(conn)
             if int(state.get("suspended") or 0):
                 episode_paged = self._episode_already_paged_locked(conn, state)
-                if episode_paged or (
-                    self._suspension_still_inside_self_clear_window_locked(
-                        conn, state
-                    )
-                ):
+                if episode_paged or (self._suspension_still_inside_self_clear_window_locked(conn, state)):
                     # === docs/WORK.md item 208 ===
                     # Do not page yet. A latch of a self-clearing code that
                     # is still inside its OWN self-clear window has not yet
@@ -104,7 +102,9 @@ class OwnerNotify:
                     # the deferral event below and the CRITICAL log line all
                     # remain.
                     self._record_suspension_deferral_locked(
-                        conn, state, episode_paged=episode_paged,
+                        conn,
+                        state,
+                        episode_paged=episode_paged,
                     )
                 else:
                     cur = conn.execute(
@@ -123,7 +123,9 @@ class OwnerNotify:
             # The DB lease remains retryable when send() returns false.
             logger.critical("\n%s", text)
             delivered, suppressed = _send_alert_outcome(
-                self.notifier, text, "cost circuit Telegram alert failed",
+                self.notifier,
+                text,
+                "cost circuit Telegram alert failed",
             )
             with self._connect() as conn:
                 conn.execute(
@@ -149,12 +151,15 @@ class OwnerNotify:
                     "ORDER BY id LIMIT 1"
                 ).fetchone()
                 if row is not None:
-                    claimed = conn.execute(
-                        "UPDATE llm_quota_holds SET alert_state=-1, "
-                        "alert_updated_at=datetime('now') "
-                        "WHERE id=? AND (alert_state=0 OR alert_state=-1)",
-                        (row["id"],),
-                    ).rowcount == 1
+                    claimed = (
+                        conn.execute(
+                            "UPDATE llm_quota_holds SET alert_state=-1, "
+                            "alert_updated_at=datetime('now') "
+                            "WHERE id=? AND (alert_state=0 OR alert_state=-1)",
+                            (row["id"],),
+                        ).rowcount
+                        == 1
+                    )
                     if claimed:
                         hold = dict(row)
                 conn.commit()
@@ -163,7 +168,9 @@ class OwnerNotify:
             message = self.format_quota_alert(hold)
             logger.critical("\n%s", message)
             delivered, suppressed = _send_alert_outcome(
-                self.notifier, message, "cost quota Telegram alert failed",
+                self.notifier,
+                message,
+                "cost quota Telegram alert failed",
             )
             sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:
@@ -189,14 +196,17 @@ class OwnerNotify:
                     "ORDER BY id LIMIT 1"
                 ).fetchone()
                 if row is not None:
-                    claimed = conn.execute(
-                        "UPDATE llm_quota_holds SET recovery_alert_state=-1, "
-                        "recovery_alert_updated_at=datetime('now') "
-                        "WHERE id=? AND active=0 AND alert_state=1 AND "
-                        "(recovery_alert_state=0 OR "
-                        "recovery_alert_state=-1)",
-                        (row["id"],),
-                    ).rowcount == 1
+                    claimed = (
+                        conn.execute(
+                            "UPDATE llm_quota_holds SET recovery_alert_state=-1, "
+                            "recovery_alert_updated_at=datetime('now') "
+                            "WHERE id=? AND active=0 AND alert_state=1 AND "
+                            "(recovery_alert_state=0 OR "
+                            "recovery_alert_state=-1)",
+                            (row["id"],),
+                        ).rowcount
+                        == 1
+                    )
                     if claimed:
                         hold = dict(row)
                 conn.commit()
@@ -205,7 +215,9 @@ class OwnerNotify:
             message = self.format_recovery_alert(hold)
             logger.info("\n%s", message)
             delivered, suppressed = _send_alert_outcome(
-                self.notifier, message, "cost quota recovery Telegram alert failed",
+                self.notifier,
+                message,
+                "cost quota recovery Telegram alert failed",
             )
             sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:
@@ -250,13 +262,16 @@ class OwnerNotify:
                     "ORDER BY id LIMIT 1"
                 ).fetchone()
                 if row is not None:
-                    claimed = conn.execute(
-                        "UPDATE llm_circuit_events SET recovery_alert_state=-1, "
-                        "recovery_alert_updated_at=datetime('now') "
-                        "WHERE id=? AND (recovery_alert_state=0 OR "
-                        "recovery_alert_state=-1)",
-                        (row["id"],),
-                    ).rowcount == 1
+                    claimed = (
+                        conn.execute(
+                            "UPDATE llm_circuit_events SET recovery_alert_state=-1, "
+                            "recovery_alert_updated_at=datetime('now') "
+                            "WHERE id=? AND (recovery_alert_state=0 OR "
+                            "recovery_alert_state=-1)",
+                            (row["id"],),
+                        ).rowcount
+                        == 1
+                    )
                     if claimed:
                         event = dict(row)
                 conn.commit()
@@ -272,11 +287,12 @@ class OwnerNotify:
             # retried forever, and keep the DB event and the log line, which
             # is where an operator reads the full history.
             with self._connect() as conn:
-                episode_paged = (
-                    int(event.get("suspension_alert_state") or 0) == 1
-                    or self._episode_already_paged_locked(
-                        conn, event, before=str(event.get("created_at") or ""),
-                    )
+                episode_paged = int(
+                    event.get("suspension_alert_state") or 0
+                ) == 1 or self._episode_already_paged_locked(
+                    conn,
+                    event,
+                    before=str(event.get("created_at") or ""),
                 )
                 live = self._state_row(conn)
             # Item 211. A clear in the MIDDLE of a live episode is not the
@@ -284,10 +300,8 @@ class OwnerNotify:
             # "RESUMED" would be a false statement about the desk's state.
             # Resolve it unpaired (2) so it is not retried forever; the
             # clear that genuinely ends the episode still pages.
-            if (
-                int(live.get("suspended") or 0)
-                and str(live.get("trigger_code") or "")
-                == str(event.get("trigger_code") or "")
+            if int(live.get("suspended") or 0) and str(live.get("trigger_code") or "") == str(
+                event.get("trigger_code") or ""
             ):
                 logger.info(
                     "cost-circuit auto-reset %s: holding the owner resume "
@@ -309,7 +323,8 @@ class OwnerNotify:
                     "cost-circuit auto-reset %s: suppressing the owner resume "
                     "alert because the matching suspension alert never "
                     "reached him (%s)",
-                    event.get("id"), event.get("detail"),
+                    event.get("id"),
+                    event.get("detail"),
                 )
                 with self._connect() as conn:
                     conn.execute(
@@ -329,7 +344,9 @@ class OwnerNotify:
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
             delivered, suppressed = _send_alert_outcome(
-                self.notifier, message, "cost-circuit auto-reset Telegram alert failed",
+                self.notifier,
+                message,
+                "cost-circuit auto-reset Telegram alert failed",
             )
             sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:

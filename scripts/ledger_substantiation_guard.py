@@ -29,6 +29,7 @@ new entry needs a Guard-rule-change line).
 
 Run: ``python -m scripts.ledger_substantiation_guard``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -133,7 +134,9 @@ def _statement_window(tree: ast.Module, lines: list[str], lineno: int) -> tuple[
     if isinstance(best, (ast.Import, ast.ImportFrom)):
         return "", "pin lands on an import statement"
     if isinstance(best, (ast.Assign, ast.AnnAssign)):
-        names = [t.id for t in (best.targets if isinstance(best, ast.Assign) else [best.target]) if isinstance(t, ast.Name)]
+        names = [
+            t.id for t in (best.targets if isinstance(best, ast.Assign) else [best.target]) if isinstance(t, ast.Name)
+        ]
         if "__all__" in names:
             return "", "pin lands on an `__all__` entry"
     if isinstance(best, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -175,8 +178,14 @@ def classify(ledger: dict[str, dict[str, Any]], read: Reader) -> list[Pin]:
                 else:
                     seg = ast.get_source_segment(body, node) or ""
                     ok = mentions(seg, site_id, value)
-                    out.append(Pin(site_id, cite, "mentions" if ok else "no_mention",
-                                   "definition names the row or its value" if ok else "definition names neither"))
+                    out.append(
+                        Pin(
+                            site_id,
+                            cite,
+                            "mentions" if ok else "no_mention",
+                            "definition names the row or its value" if ok else "definition names neither",
+                        )
+                    )
                 continue
             toks = snip.split()
             if not toks:
@@ -196,13 +205,19 @@ def classify(ledger: dict[str, dict[str, Any]], read: Reader) -> list[Pin]:
             if all(ln.strip().startswith("#") for ln in span) and rel.endswith((".py", ".yaml", ".yml", ".toml")):
                 out.append(Pin(site_id, cite, "dead", "pin lands on a comment"))
                 continue
-            window, dead = (_statement_window(tree, lines, lineno) if tree is not None else (lines[lineno - 1], None))
+            window, dead = _statement_window(tree, lines, lineno) if tree is not None else (lines[lineno - 1], None)
             if dead:
                 out.append(Pin(site_id, cite, "dead", dead))
                 continue
             ok = mentions(window + " " + snip, site_id, value)
-            out.append(Pin(site_id, cite, "mentions" if ok else "no_mention",
-                           "text names the row or its value" if ok else "text names neither"))
+            out.append(
+                Pin(
+                    site_id,
+                    cite,
+                    "mentions" if ok else "no_mention",
+                    "text names the row or its value" if ok else "text names neither",
+                )
+            )
     return out
 
 
@@ -248,8 +263,11 @@ UNCITED_ALLOWLIST = ALLOWLIST_DIR / "ledger_substantiation_uncited.txt"
 
 def read_allowlist(path: Path) -> set[str]:
     """Entries of a committed allow-list; `#` lines and blanks are comments."""
-    return {ln.strip("\n") for ln in path.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.lstrip().startswith("#")}
+    return {
+        ln.strip("\n")
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    }
 
 
 def pin_key(p: Pin) -> str:
@@ -272,21 +290,30 @@ def source_violations(pins: list[Pin] | None = None) -> list[str]:
     its value cannot be what the field says it is; `note` pins stay ratcheted below.
     """
     pins = source_pins() if pins is None else pins
-    return [f"{p.site_id}: source citation {p.cite} is {p.verdict} ({p.why}); a source must carry the number"
-            for p in pins if p.verdict in BAD]
+    return [
+        f"{p.site_id}: source citation {p.cite} is {p.verdict} ({p.why}); a source must carry the number"
+        for p in pins
+        if p.verdict in BAD
+    ]
 
 
-def violations(now: list[Pin] | None = None, allowed: set[str] | None = None,
-               sources: list[Pin] | None = None) -> list[str]:
+def violations(
+    now: list[Pin] | None = None, allowed: set[str] | None = None, sources: list[Pin] | None = None
+) -> list[str]:
     """Bad pins not on the committed allow-list, stale list entries, plus every bad `source` pin."""
     now = working_pins() if now is None else now
     allowed = read_allowlist(PINS_ALLOWLIST) if allowed is None else allowed
     absolute = source_violations(sources)
     bad = {pin_key(p): p for p in now if p.verdict in BAD}
-    new = [f"{p.site_id}: {p.verdict} citation {p.cite} ({p.why}); it resolves but cannot substantiate"
-           for k, p in sorted(bad.items()) if k not in allowed]
-    stale = [f"{k.replace(chr(9), ' | ')}: on ledger_substantiation.txt but no longer a bad pin; delete the entry"
-             for k in sorted(allowed - set(bad))]
+    new = [
+        f"{p.site_id}: {p.verdict} citation {p.cite} ({p.why}); it resolves but cannot substantiate"
+        for k, p in sorted(bad.items())
+        if k not in allowed
+    ]
+    stale = [
+        f"{k.replace(chr(9), ' | ')}: on ledger_substantiation.txt but no longer a bad pin; delete the entry"
+        for k in sorted(allowed - set(bad))
+    ]
     return absolute + new + stale
 
 
@@ -299,8 +326,7 @@ def uncited_ids(ledger: dict[str, dict[str, Any]]) -> set[str]:
     return {k for k, e in ledger.items() if not _has_citation(e)}
 
 
-def uncited_violations(now: dict[str, dict[str, Any]] | None = None,
-                       allowed: set[str] | None = None) -> list[str]:
+def uncited_violations(now: dict[str, dict[str, Any]] | None = None, allowed: set[str] | None = None) -> list[str]:
     """Uncited rows must be on the committed list; a listed row that gained a citation is stale.
 
     Catches both a citation deleted from a cited row and a new row added bare; fixing
@@ -310,10 +336,14 @@ def uncited_violations(now: dict[str, dict[str, Any]] | None = None,
         now = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
     allowed = read_allowlist(UNCITED_ALLOWLIST) if allowed is None else allowed
     bare = uncited_ids(now)
-    return ([f"{k}: carries no citation and is not on ledger_substantiation_uncited.txt; "
-             f"deleting or omitting a citation is not substantiation" for k in sorted(bare - allowed)]
-            + [f"{k}: on ledger_substantiation_uncited.txt but now cites something or is gone; delete the entry"
-               for k in sorted(allowed - bare)])
+    return [
+        f"{k}: carries no citation and is not on ledger_substantiation_uncited.txt; "
+        f"deleting or omitting a citation is not substantiation"
+        for k in sorted(bare - allowed)
+    ] + [
+        f"{k}: on ledger_substantiation_uncited.txt but now cites something or is gone; delete the entry"
+        for k in sorted(allowed - bare)
+    ]
 
 
 def main() -> int:
@@ -326,8 +356,11 @@ def main() -> int:
     t = tally(now)
     ts = tally(source_pins())
     print(f"source-field pins: dead+no_mention={ts['dead'] + ts['no_mention']} of {sum(ts.values())} (absolute)")
-    print(f"pins={len(now)} " + " ".join(f"{k}={t[k]}" for k in ("unresolved", "dead", "no_mention", "mentions"))
-          + f" | allow-listed: {len(read_allowlist(PINS_ALLOWLIST))}")
+    print(
+        f"pins={len(now)} "
+        + " ".join(f"{k}={t[k]}" for k in ("unresolved", "dead", "no_mention", "mentions"))
+        + f" | allow-listed: {len(read_allowlist(PINS_ALLOWLIST))}"
+    )
     led = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
     print(f"uncited rows: {len(uncited_ids(led))} of {len(led)} (down-only ratchet)")
     for line in bad:

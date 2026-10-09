@@ -22,7 +22,8 @@ def _with_pm_parser(kwargs: dict) -> dict:
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
     kwargs.setdefault(
-        "state_change_parser", PortfolioManagerAgent._state_change_symbols_by_date,
+        "state_change_parser",
+        PortfolioManagerAgent._state_change_symbols_by_date,
     )
     return kwargs
 

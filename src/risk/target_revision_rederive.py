@@ -17,6 +17,7 @@ from src.risk.target_revision_basis import (
     remaining_horizon_sessions,
 )
 
+
 def _rederive_on_todays_bars(
     *,
     sym: str,
@@ -63,8 +64,11 @@ def _rederive_on_todays_bars(
     # only levels, ATR and coverage come from today's bars.
     raw_levels = [p for p in (_finite(lv) for lv in levels or ()) if p is not None]
     surviving = levels_still_in_the_way(
-        computed_levels=raw_levels, close_price=close, atr=vol,
-        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
+        computed_levels=raw_levels,
+        close_price=close,
+        atr=vol,
+        is_short=is_short,
+        break_margin_atr_multiple=break_margin_atr_multiple,
     )
     if raw_levels and not surviving:
         # The chart HAS structure; the price has closed decisively beyond all
@@ -77,9 +81,12 @@ def _rederive_on_todays_bars(
         # at most one horizon's travel from a price that has already run
         # past every level, which is the REVISION_BEHIND_PRICE case below.
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_CEILING_LEFT,
-            refusal=REVISION_NO_CEILING_LEFT, trigger=trigger,
-            prior_price=target, level_used=_finite(target_level),
+            symbol=sym,
+            code=REVISION_NO_CEILING_LEFT,
+            refusal=REVISION_NO_CEILING_LEFT,
+            trigger=trigger,
+            prior_price=target,
+            level_used=_finite(target_level),
             detail=(
                 f"{trigger} fired, but the latest close of ${close:,.2f} has "
                 f"closed decisively beyond every one of the "
@@ -109,8 +116,10 @@ def _rederive_on_todays_bars(
         return TargetRevisionOutcome(
             symbol=sym,
             code=derivation.fault or derivation.refusal or REVISION_NO_TRIGGER,
-            trigger=trigger, prior_price=target,
-            refusal=derivation.refusal, fault=derivation.fault,
+            trigger=trigger,
+            prior_price=target,
+            refusal=derivation.refusal,
+            fault=derivation.fault,
             detail=(
                 f"{trigger} fired, but today's bars yield no derivable "
                 f"target — the stored ${target:,.2f} stands: "
@@ -145,9 +154,14 @@ def _rederive_on_todays_bars(
         # once more with the reach anchored on the latest completed close
         # over the REMAINING horizon — never on the close alone, and never
         # on a measured move.
-        remaining = remaining_horizon_sessions(
-            pinned_horizon_sessions=horizon, sessions_held=sessions_held,
-        ) if allow_reanchor else None
+        remaining = (
+            remaining_horizon_sessions(
+                pinned_horizon_sessions=horizon,
+                sessions_held=sessions_held,
+            )
+            if allow_reanchor
+            else None
+        )
         reanchor_note = ""
         if not allow_reanchor:
             reanchor_note = (
@@ -206,16 +220,15 @@ def _rederive_on_todays_bars(
                     f"price with no structure behind it is not a target"
                 )
             else:
-                re_ahead = (
-                    re_price < close if is_short else re_price > close
-                )
-                further = (
-                    re_price < target if is_short else re_price > target
-                )
+                re_ahead = re_price < close if is_short else re_price > close
+                further = re_price < target if is_short else re_price > target
                 if re_ahead and further:
                     return TargetRevisionOutcome(
-                        symbol=sym, code=trigger, trigger=trigger,
-                        new_price=round(re_price, 2), prior_price=target,
+                        symbol=sym,
+                        code=trigger,
+                        trigger=trigger,
+                        new_price=round(re_price, 2),
+                        prior_price=target,
                         basis=REANCHORED_BASIS,
                         level_used=redo.level_used,
                         detail=(
@@ -239,9 +252,12 @@ def _rederive_on_todays_bars(
                     f"never pull it back toward entry"
                 )
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_BEHIND_PRICE,
-            refusal=REVISION_BEHIND_PRICE, trigger=trigger,
-            prior_price=target, basis=derivation.basis,
+            symbol=sym,
+            code=REVISION_BEHIND_PRICE,
+            refusal=REVISION_BEHIND_PRICE,
+            trigger=trigger,
+            prior_price=target,
+            basis=derivation.basis,
             level_used=derivation.level_used,
             detail=(
                 f"{trigger} fired, but the only target derivable from the "
@@ -253,8 +269,11 @@ def _rederive_on_todays_bars(
         )
     if round(new_price, 2) == round(target, 2):
         return TargetRevisionOutcome(
-            symbol=sym, code=REVISION_NO_CHANGE, trigger=trigger,
-            prior_price=target, basis=derivation.basis,
+            symbol=sym,
+            code=REVISION_NO_CHANGE,
+            trigger=trigger,
+            prior_price=target,
+            basis=derivation.basis,
             level_used=derivation.level_used,
             detail=(
                 f"{trigger} fired and the re-derivation ran, but it landed on "
@@ -263,9 +282,13 @@ def _rederive_on_todays_bars(
         )
 
     return TargetRevisionOutcome(
-        symbol=sym, code=trigger, trigger=trigger,
-        new_price=round(new_price, 2), prior_price=target,
-        basis=derivation.basis, level_used=derivation.level_used,
+        symbol=sym,
+        code=trigger,
+        trigger=trigger,
+        new_price=round(new_price, 2),
+        prior_price=target,
+        basis=derivation.basis,
+        level_used=derivation.level_used,
         detail=(
             f"{trigger}: re-derived on today's bars from the pinned "
             f"${entry:,.2f} entry and {horizon}-session horizon — "

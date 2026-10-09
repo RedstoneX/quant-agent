@@ -22,6 +22,7 @@ wiring into `run_intra_check`:
      all idempotent. Opening a new position is not, so this path needs its
      own fail-closed concurrency guard.
 """
+
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,12 +41,21 @@ from src.trading_calendar import et_today
 
 def _ta_result(symbol, rating="buy"):
     return TechAnalysisResult(
-        symbol=symbol, rating=rating, conviction="medium",
-        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
-        support_levels=[95.0], resistance_levels=[110.0],
-        setup_type="range", expected_horizon_sessions=10,
+        symbol=symbol,
+        rating=rating,
+        conviction="medium",
+        entry_price=100.0,
+        stop_loss=95.0,
+        reference_target=110.0,
+        support_levels=[95.0],
+        resistance_levels=[110.0],
+        setup_type="range",
+        expected_horizon_sessions=10,
         reasoning_chain=TechReasoningChain(
-            trend="x", momentum="x", volatility="x", volume="x",
+            trend="x",
+            momentum="x",
+            volatility="x",
+            volume="x",
             support_resistance="x",
         ),
         reasoning="test",
@@ -61,6 +71,7 @@ def _todays_macro_state():
     persisted live shape.
     """
     from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
+
     return {
         "date": str(et_today()),
         **MacroAnalysis(
@@ -76,7 +87,8 @@ def _todays_macro_state():
             confidence="medium",
             equity_outlook="bullish",
             position_guidance=MacroPositionGuidance(
-                target_invested_pct=70, cash_recommendation_pct=30,
+                target_invested_pct=70,
+                cash_recommendation_pct=30,
                 reasoning="stay invested",
             ),
             summary="risk on",
@@ -88,30 +100,43 @@ def _todays_macro_state():
 def _todays_news_dump():
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated=str(et_today()), era_themes=["test"],
+            last_updated=str(et_today()),
+            era_themes=["test"],
             current_regime="risk-on, test",
         ),
-        state_changes=[], stock_news={},
-        pm_briefing="test", market_sentiment="bullish",
+        state_changes=[],
+        stock_news={},
+        pm_briefing="test",
+        market_sentiment="bullish",
         confidence="medium",
     ).model_dump()
 
 
-def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
-                       move_threshold_pct=3.0, cooldown_hours=3.0,
-                       max_candidates=5, cooldown_rows=None, db_path=None):
+def _intraday_pipeline(
+    universe=("SPY", "SQQQ", "AAPL"),
+    enabled=True,
+    move_threshold_pct=3.0,
+    cooldown_hours=3.0,
+    max_candidates=5,
+    cooldown_rows=None,
+    db_path=None,
+):
     # REAL constructor, production settings; the scan's advisory flock gets a per-test temp dir.
     config = test_config(
         trading={"universe": list(universe), "lookback_days": 100},
         storage={"db_path": str(db_path or (Path(tempfile.mkdtemp()) / "t.db"))},
         intraday_scan=IntradayScanConfig(
-            enabled=enabled, move_threshold_pct=move_threshold_pct,
-            cooldown_hours=cooldown_hours, max_candidates_per_scan=max_candidates,
+            enabled=enabled,
+            move_threshold_pct=move_threshold_pct,
+            cooldown_hours=cooldown_hours,
+            max_candidates_per_scan=max_candidates,
         ).model_dump(),
     )
     broker = MagicMock()
     broker.get_account.return_value = {
-        "cash": 10_000.0, "portfolio_value": 10_100.0, "last_equity": 10_000.0,
+        "cash": 10_000.0,
+        "portfolio_value": 10_100.0,
+        "last_equity": 10_000.0,
         "non_marginable_buying_power": 10_000.0,
     }
     broker.get_positions.return_value = []
@@ -121,10 +146,17 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
     news_store = MagicMock(**{"load_daily_report.return_value": _todays_news_dump()})
     tech_store = MagicMock(**{"load.return_value": {}, "compute_ages.return_value": {}})
     return build_pipeline(
-        config, broker=broker, db=db, market=market, macro_store=macro_store,
-        news_store=news_store, tech_store=tech_store,
-        tech_analyst=MagicMock(), decision_stage=MagicMock(),
-        risk_stage=MagicMock(), execution_stage=MagicMock(),
+        config,
+        broker=broker,
+        db=db,
+        market=market,
+        macro_store=macro_store,
+        news_store=news_store,
+        tech_store=tech_store,
+        tech_analyst=MagicMock(),
+        decision_stage=MagicMock(),
+        risk_stage=MagicMock(),
+        execution_stage=MagicMock(),
         sec_form4_provider=MagicMock(name="sec_form4_provider"),
         earnings_provider=MagicMock(name="earnings_provider"),
         news_provider=MagicMock(name="news_provider"),
@@ -155,6 +187,7 @@ def _snapshot(last, prev, *, trade_at="today"):
 
 # ---------- disabled by default ----------
 
+
 def test_intraday_scan_config_defaults_disabled():
     cfg = IntradayScanConfig()
     assert cfg.enabled is False
@@ -173,6 +206,7 @@ def test_scan_is_inert_when_disabled():
 
 # ---------- material move reaches the shared decision chain ----------
 
+
 @patch("src.pipeline_intraday.compute_indicators")
 def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     """A symbol that moved well past threshold since the last close must
@@ -182,17 +216,19 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["SPY", "AAPL"])
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=500.0, prev=499.0),      # 0.2% — below threshold
-        "AAPL": _snapshot(last=110.0, prev=100.0),     # 10% — qualifies
+        "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
+        "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% — qualifies
     }
     analysis = _ta_result("AAPL", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None  # no early-exit -> proceed to execution
@@ -204,9 +240,7 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     assert result["status"] == "intraday_executed"
     assert result["candidates"] == ["AAPL"]
     # tech_analyst was only asked about the qualifying symbol, not SPY.
-    submitted_symbols = [
-        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
-    ]
+    submitted_symbols = [s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]]
     assert submitted_symbols == ["AAPL"]
     # The exact same stage objects morning uses were invoked — proves reuse,
     # not a parallel decision path.
@@ -222,10 +256,8 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     assert ctx.data_status["macro"] == "carried_from_morning"
     assert ctx.data_status["news"] == "carried_from_morning"
     from src import evidence_gate
-    assert [
-        k for k, v in ctx.data_status.items()
-        if evidence_gate.counts_as_degraded(v)
-    ] == []
+
+    assert [k for k, v in ctx.data_status.items() if evidence_gate.counts_as_degraded(v)] == []
 
 
 @patch("src.pipeline_intraday.compute_indicators")
@@ -236,17 +268,19 @@ def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["SPY", "SQQQ"])
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=498.0, prev=500.0),      # -0.4%, below threshold
-        "SQQQ": _snapshot(last=112.0, prev=100.0),     # +12% (3x inverse Nasdaq)
+        "SPY": _snapshot(last=498.0, prev=500.0),  # -0.4%, below threshold
+        "SQQQ": _snapshot(last=112.0, prev=100.0),  # +12% (3x inverse Nasdaq)
     }
     analysis = _ta_result("SQQQ", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"SQQQ": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="SQQQ")]),
     )
     p.risk_stage.run.return_value = None
@@ -257,9 +291,7 @@ def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
 
     assert result["status"] == "intraday_executed"
     assert result["candidates"] == ["SQQQ"]
-    submitted_symbols = [
-        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
-    ]
+    submitted_symbols = [s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]]
     assert submitted_symbols == ["SQQQ"], "SPY's own sub-threshold move must not qualify"
 
 
@@ -278,6 +310,7 @@ def test_below_threshold_move_never_calls_tech_analyst(mock_compute_indicators):
 
 # ---------- cooldown / dedup ----------
 
+
 @patch("src.pipeline_intraday.compute_indicators")
 def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators):
     """A symbol already evaluated by an intra_check-triggered scan within
@@ -292,11 +325,17 @@ def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators)
     # well inside the 3h cooldown window under test.
     aged_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     p = _intraday_pipeline(
-        universe=["AAPL"], cooldown_hours=3.0,
-        cooldown_rows=[{
-            "symbol": "AAPL", "action": "HOLD", "run_id": "intra_check-abcd1234",
-            "timestamp": aged_ts, "reasoning": "prior intraday scan",
-        }],
+        universe=["AAPL"],
+        cooldown_hours=3.0,
+        cooldown_rows=[
+            {
+                "symbol": "AAPL",
+                "action": "HOLD",
+                "run_id": "intra_check-abcd1234",
+                "timestamp": aged_ts,
+                "reasoning": "prior intraday scan",
+            }
+        ],
     )
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),  # still 10% — well past threshold
@@ -318,11 +357,17 @@ def test_cooldown_expired_allows_rescan(mock_compute_indicators):
     mock_compute_indicators.return_value = MagicMock()
     stale_ts = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
     p = _intraday_pipeline(
-        universe=["AAPL"], cooldown_hours=3.0,
-        cooldown_rows=[{
-            "symbol": "AAPL", "action": "HOLD", "run_id": "intra_check-abcd1234",
-            "timestamp": stale_ts, "reasoning": "prior intraday scan",
-        }],
+        universe=["AAPL"],
+        cooldown_hours=3.0,
+        cooldown_rows=[
+            {
+                "symbol": "AAPL",
+                "action": "HOLD",
+                "run_id": "intra_check-abcd1234",
+                "timestamp": stale_ts,
+                "reasoning": "prior intraday scan",
+            }
+        ],
     )
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -350,10 +395,15 @@ def test_non_intra_check_trades_do_not_count_toward_cooldown(mock_compute_indica
     morning_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     p = _intraday_pipeline(
         universe=["AAPL"],
-        cooldown_rows=[{
-            "symbol": "AAPL", "action": "HOLD", "run_id": "run-abcd1234",
-            "timestamp": morning_ts, "reasoning": "morning run",
-        }],
+        cooldown_rows=[
+            {
+                "symbol": "AAPL",
+                "action": "HOLD",
+                "run_id": "run-abcd1234",
+                "timestamp": morning_ts,
+                "reasoning": "morning run",
+            }
+        ],
     )
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -368,12 +418,18 @@ def test_non_intra_check_trades_do_not_count_toward_cooldown(mock_compute_indica
 
 def _held_position(symbol: str) -> Position:
     return Position(
-        symbol=symbol, qty=10.0, avg_entry=100.0, current_price=100.2,
-        market_value=1_002.0, unrealized_pnl=2.0, sector="Technology",
+        symbol=symbol,
+        qty=10.0,
+        avg_entry=100.0,
+        current_price=100.2,
+        market_value=1_002.0,
+        unrealized_pnl=2.0,
+        sector="Technology",
     )
 
 
 # ---------- held names join the Tech batch (produce Tech, don't drop) ----------
+
 
 @patch("src.pipeline_intraday.compute_indicators")
 def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
@@ -385,19 +441,21 @@ def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["SPY", "AAPL", "MSFT"])
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=500.0, prev=499.0),       # 0.2% — below threshold
-        "AAPL": _snapshot(last=110.0, prev=100.0),      # 10% — qualifies as mover
-        "MSFT": _snapshot(last=100.2, prev=100.0),      # 0.2% — quiet hold
+        "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
+        "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% — qualifies as mover
+        "MSFT": _snapshot(last=100.2, prev=100.0),  # 0.2% — quiet hold
     }
     mover = _ta_result("AAPL", rating="buy")
     held = _ta_result("MSFT", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": mover, "MSFT": held},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None
@@ -407,18 +465,13 @@ def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
     ctx.positions = [_held_position("MSFT")]
     result = p._run_intraday_opportunity_scan(ctx)
 
-    submitted = [
-        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
-    ]
+    submitted = [s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]]
     assert "AAPL" in submitted
     assert "MSFT" in submitted
     assert "SPY" not in submitted
     assert result["candidates"] == ["AAPL"], "quiet holds are coverage, not movers"
     assert {a.symbol for a in ctx.analyses} == {"AAPL", "MSFT"}
-    ledgered = [
-        call.kwargs["symbol"]
-        for call in p.db.record_intraday_evaluation.call_args_list
-    ]
+    ledgered = [call.kwargs["symbol"] for call in p.db.record_intraday_evaluation.call_args_list]
     assert "MSFT" not in ledgered, "hold coverage must not consume mover cooldown"
 
 
@@ -428,9 +481,7 @@ def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
     mock_compute_indicators.return_value = MagicMock()
     universe = [f"SYM{i}" for i in range(10)] + ["MSFT"]
     p = _intraday_pipeline(universe=universe, max_candidates=2, move_threshold_pct=3.0)
-    snaps = {
-        sym: _snapshot(last=100.0 + i, prev=100.0) for i, sym in enumerate(universe[:-1])
-    }
+    snaps = {sym: _snapshot(last=100.0 + i, prev=100.0) for i, sym in enumerate(universe[:-1])}
     snaps["MSFT"] = _snapshot(last=100.2, prev=100.0)
     p.broker.get_intraday_snapshots.return_value = snaps
     p.tech_analyst.analyze_batch.return_value = ({}, None)
@@ -439,9 +490,7 @@ def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
     ctx.positions = [_held_position("MSFT")]
     p._run_intraday_opportunity_scan(ctx)
 
-    submitted = {
-        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
-    }
+    submitted = {s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]}
     assert submitted == {"SYM9", "SYM8", "MSFT"}
 
 
@@ -475,13 +524,12 @@ def test_held_mover_is_not_submitted_twice(mock_compute_indicators):
     ctx = RunContext.start("intra_check")
     ctx.positions = [_held_position("AAPL")]
     p._run_intraday_opportunity_scan(ctx)
-    submitted = [
-        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
-    ]
+    submitted = [s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]]
     assert submitted == ["AAPL"]
 
 
 # ---------- bounded cost ----------
+
 
 @patch("src.pipeline_intraday.compute_indicators")
 def test_candidates_capped_at_max_per_scan(mock_compute_indicators):
@@ -521,7 +569,9 @@ def test_run_intra_check_runs_the_scan():
     p.broker = MagicMock()
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
-        "cash": 10000.0, "portfolio_value": 10100.0, "last_equity": 10000.0,
+        "cash": 10000.0,
+        "portfolio_value": 10100.0,
+        "last_equity": 10000.0,
         "non_marginable_buying_power": 10000.0,
     }
     p.broker.get_positions.return_value = []
@@ -563,7 +613,9 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
     p.broker = MagicMock()
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
-        "cash": 10000.0, "portfolio_value": 10100.0, "last_equity": 10000.0,
+        "cash": 10000.0,
+        "portfolio_value": 10100.0,
+        "last_equity": 10000.0,
         "non_marginable_buying_power": 10000.0,
     }
     p.broker.get_positions.return_value = []
@@ -583,6 +635,7 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
 
 
 # ---------- concurrency guard (intra_check is session-lock exempt) ----------
+
 
 @patch("src.pipeline_intraday.compute_indicators")
 def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indicators):
@@ -672,10 +725,15 @@ def test_finished_session_trade_rows_do_not_skip_the_scan(mock_compute_indicator
     mock_compute_indicators.return_value = MagicMock()
     recent_ts = datetime.now(timezone.utc).isoformat()
     p = _intraday_pipeline(universe=["AAPL"])
-    p.db.get_trades.return_value = [{
-        "symbol": "MSFT", "action": "BUY", "run_id": "run-morning1",
-        "timestamp": recent_ts, "reasoning": "morning already filled",
-    }]
+    p.db.get_trades.return_value = [
+        {
+            "symbol": "MSFT",
+            "action": "BUY",
+            "run_id": "run-morning1",
+            "timestamp": recent_ts,
+            "reasoning": "morning already filled",
+        }
+    ]
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
     }
@@ -697,10 +755,15 @@ def test_scan_proceeds_when_other_session_activity_is_old(mock_compute_indicator
     mock_compute_indicators.return_value = MagicMock()
     old_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     p = _intraday_pipeline(universe=["AAPL"])
-    p.db.get_trades.return_value = [{
-        "symbol": "MSFT", "action": "BUY", "run_id": "run-morning1",
-        "timestamp": old_ts, "reasoning": "morning run, long finished",
-    }]
+    p.db.get_trades.return_value = [
+        {
+            "symbol": "MSFT",
+            "action": "BUY",
+            "run_id": "run-morning1",
+            "timestamp": old_ts,
+            "reasoning": "morning run, long finished",
+        }
+    ]
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
     }
@@ -739,7 +802,8 @@ def test_get_trades_error_does_not_skip_paid_discovery():
     ctx = RunContext.start("intra_check")
     assert p._another_session_recently_active(ctx.run_id) is False
     assert p._run_intraday_opportunity_scan(ctx) == {
-        "status": "intraday_scan_no_opportunity", "run_id": ctx.run_id,
+        "status": "intraday_scan_no_opportunity",
+        "run_id": ctx.run_id,
     }
 
 
@@ -750,10 +814,15 @@ def test_own_run_id_rows_do_not_trip_the_concurrency_guard():
 
     p = _intraday_pipeline(universe=["AAPL"])
     ctx = RunContext.start("intra_check")
-    p.db.get_trades.return_value = [{
-        "symbol": "AAPL", "action": "HOLD", "run_id": ctx.run_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(), "reasoning": "self",
-    }]
+    p.db.get_trades.return_value = [
+        {
+            "symbol": "AAPL",
+            "action": "HOLD",
+            "run_id": ctx.run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "reasoning": "self",
+        }
+    ]
 
     assert p._another_session_recently_active(ctx.run_id) is False
 
@@ -788,7 +857,8 @@ def test_process_lock_excludes_a_second_concurrent_scan(mock_compute_indicators,
             assert second is False
         # ...and the full scan entrypoint must therefore do nothing at all.
         assert rival._run_intraday_opportunity_scan(ctx) == {
-            "status": "intraday_scan_lock_contended", "run_id": ctx.run_id,
+            "status": "intraday_scan_lock_contended",
+            "run_id": ctx.run_id,
         }
         rival.broker.get_intraday_snapshots.assert_not_called()
         rival.tech_analyst.analyze_batch.assert_not_called()
@@ -828,7 +898,8 @@ def test_process_lock_propagates_scan_exception_and_releases(tmp_path):
 
 @patch("src.pipeline_intraday.compute_indicators")
 def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
-    mock_compute_indicators, tmp_path,
+    mock_compute_indicators,
+    tmp_path,
 ):
     """Regression for the 2026-08-25 production tick: a suspension thrown
     inside the real process-lock wrapper must reach run_intra_check's specific
@@ -854,7 +925,8 @@ def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
     p.cost_circuit = MagicMock()
     p.cost_circuit.activate_session.return_value = {"suspended": True}
     p.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
-        "prelatched", {"suspended": True},
+        "prelatched",
+        {"suspended": True},
     )
 
     result = p.run_intra_check()
@@ -877,8 +949,8 @@ def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
 # INCOMPLETE current-session block. An incomplete day is never presented
 # as a finished daily bar.
 
-def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None,
-                      *, trade_at="today", bar_at="today"):
+
+def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None, *, trade_at="today", bar_at="today"):
     """Today's snapshot for a name that has genuinely traded today.
 
     board item 120: `session_bar_at` dates the `session_*` block, which
@@ -902,10 +974,14 @@ def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None,
     if bar_at == "today":
         bar_at = today_bar_at
     return {
-        "last_price": last, "prev_close": prev, "last_trade_at": trade_at,
+        "last_price": last,
+        "prev_close": prev,
+        "last_trade_at": trade_at,
         "session_bar_at": bar_at,
-        "session_open": o, "session_high": h,
-        "session_low": lo, "session_volume": v,
+        "session_open": o,
+        "session_high": h,
+        "session_low": lo,
+        "session_volume": v,
     }
 
 
@@ -914,8 +990,7 @@ def test_todays_move_is_passed_to_tech_as_current_session_context(mock_compute_i
     """The live figures the scan triggered on must reach tech_analyst."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
-    snap = _session_snapshot(last=110.0, prev=100.0, o=101.0, h=111.0,
-                             lo=100.5, v=9_100_000)
+    snap = _session_snapshot(last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5, v=9_100_000)
     p.broker.get_intraday_snapshots.return_value = {"AAPL": snap}
     p.tech_analyst.analyze_batch.return_value = ({}, None)
 
@@ -935,12 +1010,21 @@ def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
     from src.models import OHLCV, TechnicalIndicators
     from src.pipeline import TradingPipeline
 
-    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0,
-                  close=100.0, volume=5_000_000)]
+    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0, close=100.0, volume=5_000_000)]
     indicators = TechnicalIndicators(
-        symbol="AAPL", ma_20=99.0, ma_50=98.0, ma_200=95.0, rsi_14=55.0,
-        macd=0.5, macd_signal=0.4, macd_hist=0.1, bb_upper=104.0,
-        bb_middle=100.0, bb_lower=96.0, atr_14=2.0, volume_change_pct=5.0,
+        symbol="AAPL",
+        ma_20=99.0,
+        ma_50=98.0,
+        ma_200=95.0,
+        rsi_14=55.0,
+        macd=0.5,
+        macd_signal=0.4,
+        macd_hist=0.1,
+        bb_upper=104.0,
+        bb_middle=100.0,
+        bb_lower=96.0,
+        atr_14=2.0,
+        volume_change_pct=5.0,
     )
     with patch("anthropic.Anthropic"):
         agent = TechAnalystAgent(api_key="t", model="claude-sonnet-4-6-20250514")
@@ -949,17 +1033,23 @@ def test_tech_prompt_renders_todays_move_without_faking_a_daily_bar():
             # Resolved exactly as the scan resolves it (item 120) — the
             # prompt is never handed a raw, unchecked snapshot.
             intraday_context=TradingPipeline._resolve_live_context(
-                {"AAPL": _session_snapshot(
-                    last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5,
-                    v=9_100_000,
-                )},
+                {
+                    "AAPL": _session_snapshot(
+                        last=110.0,
+                        prev=100.0,
+                        o=101.0,
+                        h=111.0,
+                        lo=100.5,
+                        v=9_100_000,
+                    )
+                },
                 ["AAPL"],
             )[0],
         )
 
     assert "CURRENT SESSION" in msg and "INCOMPLETE" in msg
-    assert "110.00" in msg                    # today's live price
-    assert "+10.00%" in msg                   # move vs prior close
+    assert "110.00" in msg  # today's live price
+    assert "+10.00%" in msg  # move vs prior close
     # 100.0 now renders as "100" — see _px in src/agents/tech_analyst.py.
     # Same number, fewer tokens; assert the value, not its spelling.
     assert "Last completed close: 100\n" in msg or "Last completed close: 100" in msg
@@ -978,12 +1068,21 @@ def test_tech_prompt_omits_session_block_when_no_intraday_context():
     from src.agents.tech_analyst import TechAnalystAgent
     from src.models import OHLCV, TechnicalIndicators
 
-    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0,
-                  close=100.0, volume=5_000_000)]
+    bars = [OHLCV(date=date(2026, 8, 18), open=99.0, high=101.0, low=98.0, close=100.0, volume=5_000_000)]
     indicators = TechnicalIndicators(
-        symbol="AAPL", ma_20=99.0, ma_50=98.0, ma_200=95.0, rsi_14=55.0,
-        macd=0.5, macd_signal=0.4, macd_hist=0.1, bb_upper=104.0,
-        bb_middle=100.0, bb_lower=96.0, atr_14=2.0, volume_change_pct=5.0,
+        symbol="AAPL",
+        ma_20=99.0,
+        ma_50=98.0,
+        ma_200=95.0,
+        rsi_14=55.0,
+        macd=0.5,
+        macd_signal=0.4,
+        macd_hist=0.1,
+        bb_upper=104.0,
+        bb_middle=100.0,
+        bb_lower=96.0,
+        atr_14=2.0,
+        volume_change_pct=5.0,
     )
     with patch("anthropic.Anthropic"):
         agent = TechAnalystAgent(api_key="t", model="claude-sonnet-4-6-20250514")
@@ -1001,17 +1100,18 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
     p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": _session_snapshot(last=110.0, prev=100.0, o=101.0,
-                                  h=111.0, lo=100.5, v=9_100_000),
+        "AAPL": _session_snapshot(last=110.0, prev=100.0, o=101.0, h=111.0, lo=100.5, v=9_100_000),
     }
     analysis = _ta_result("AAPL", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None
@@ -1021,8 +1121,7 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     result = p._run_intraday_opportunity_scan(ctx)
 
     # Tech saw today's live move...
-    tech_ctx = p.tech_analyst.analyze_batch.call_args.kwargs[
-        "intraday_context"]["AAPL"]
+    tech_ctx = p.tech_analyst.analyze_batch.call_args.kwargs["intraday_context"]["AAPL"]
     assert tech_ctx["live_price"] == 110.0
     # item 120: the RAW provider field is not republished beside the
     # resolved one — what no consumer can reach, no consumer can misread.
@@ -1034,7 +1133,8 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     p.execution_stage.run.assert_called_once_with(ctx)
     assert result["status"] == "intraday_executed"
     lifecycle = [
-        call.kwargs for call in p.db.insert_specialist_evidence.call_args_list
+        call.kwargs
+        for call in p.db.insert_specialist_evidence.call_args_list
         if call.kwargs.get("kind") == "pipeline_event"
     ]
     assert any('"stage": "opportunity"' in row["evidence_json"] for row in lifecycle)
@@ -1042,6 +1142,7 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
 
 
 # ---------- symbol snapshot-health tracking / owner alert (2026-09-10) ----
+
 
 def test_a_symbol_missing_snapshot_data_is_tracked_but_not_alerted_once():
     """A single miss must not page the owner — see
@@ -1061,9 +1162,7 @@ def test_a_symbol_missing_snapshot_data_is_tracked_but_not_alerted_once():
         ctx = RunContext.start("intra_check")
         p._run_intraday_opportunity_scan(ctx)
         mock_alert.assert_not_called()
-    row = real_db.conn.execute(
-        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'"
-    ).fetchone()
+    row = real_db.conn.execute("SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'").fetchone()
     assert row["consecutive_misses"] == 1
     real_db.close()
 
@@ -1126,14 +1225,13 @@ def test_a_recovered_symbol_resets_its_miss_streak():
     ctx = RunContext.start("intra_check")
     p._run_intraday_opportunity_scan(ctx)
 
-    row = real_db.conn.execute(
-        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'"
-    ).fetchone()
+    row = real_db.conn.execute("SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'").fetchone()
     assert row["consecutive_misses"] == 0
     real_db.close()
 
 
 # ---------- item 20: empty/failed carry-forward refuses; intentional skip does not
+
 
 def _qualifying_move_pipeline():
     """A scan that has found a usable tech analysis and would otherwise
@@ -1146,11 +1244,13 @@ def _qualifying_move_pipeline():
     analysis = _ta_result("AAPL", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None
@@ -1161,7 +1261,8 @@ def _qualifying_move_pipeline():
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
-    mock_alert, mock_compute_indicators,
+    mock_alert,
+    mock_compute_indicators,
 ):
     """This morning's macro/news never arrived. The SPLIT STATUS is
     unchanged — `carry_forward_empty` is still a lost answer, never the
@@ -1195,7 +1296,8 @@ def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_failed_morning_carry_forward_skips_the_intraday_pm(
-    mock_alert, mock_compute_indicators,
+    mock_alert,
+    mock_compute_indicators,
 ):
     """The lookup itself raised. That is `carry_forward_failed`, not the
     intentional skip, and it refuses the same way a morning `failed` does."""
@@ -1218,7 +1320,8 @@ def test_failed_morning_carry_forward_skips_the_intraday_pm(
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
-    mock_alert, mock_compute_indicators,
+    mock_alert,
+    mock_compute_indicators,
 ):
     """The thin-decision shape the mandate change creates, end to end: news
     lost, macro carried from the morning, one chart read done just now. The
@@ -1240,6 +1343,7 @@ def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
     assert freshness["absent_seats"] == ["news"]
     assert freshness["seats_read_this_tick"] == 1
     from src.notifier import describe_evidence_freshness
+
     words = " ".join(describe_evidence_freshness(freshness))
     assert "1 of 5 research seats read just now" in words
     assert "the market-backdrop research" in words
@@ -1247,10 +1351,12 @@ def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
 
 # ---------- item 20 (board): a fully lost intraday tech seat is LOST, not quiet ----------
 
+
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
-    mock_alert, mock_compute_indicators,
+    mock_alert,
+    mock_compute_indicators,
 ):
     """Every submitted symbol failed to resolve even after tech_analyst's own
     retry. This used to fall into `intraday_scan_no_opportunity` — the same
@@ -1268,8 +1374,9 @@ def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
     # every one of them, not "there was nothing to submit".
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": None},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
 
     ctx = RunContext.start("intra_check")
@@ -1280,15 +1387,18 @@ def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
     assert "tech" in result["blocking_lost_seats"]
     p.decision_stage.run.assert_not_called()
     from src import evidence_gate
+
     assert evidence_gate.counts_as_degraded(ctx.data_status["tech"]) is True
     from src.notifier import maybe_alert_data_quality
+
     assert maybe_alert_data_quality(result, mode="intra_check") is True
 
 
 @patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_intraday_tech_batch_raising_is_also_lost_not_a_crash(
-    mock_alert, mock_compute_indicators,
+    mock_alert,
+    mock_compute_indicators,
 ):
     """The morning path wraps its tech_analyst call in try/except; the
     intraday one used to have no guard at all, so a batch-level raise
@@ -1326,11 +1436,13 @@ def test_intraday_partial_tech_failure_still_trades(mock_compute_indicators):
     analysis = _ta_result("AAPL", rating="buy")
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis, "MSFT": None},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None
@@ -1355,7 +1467,7 @@ def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["SPY", "AAPL"], move_threshold_pct=3.0)
     p.broker.get_intraday_snapshots.return_value = {
-        "SPY": _snapshot(last=500.0, prev=499.0),   # 0.2% — below threshold
+        "SPY": _snapshot(last=500.0, prev=499.0),  # 0.2% — below threshold
         "AAPL": _snapshot(last=100.5, prev=100.0),  # 0.5% — below threshold
     }
 
@@ -1381,24 +1493,36 @@ def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
 # never the denominator. These tests pin the recording of that denominator.
 # NO THRESHOLD IS CHANGED by any of this.
 
+
 def test_move_in_atr_is_the_move_over_the_names_own_daily_range():
     atr_pct, move_atr = TradingPipeline._intraday_move_in_atr(
-        move_pct=6.0, atr_14=3.0, prev_close=100.0,
+        move_pct=6.0,
+        atr_14=3.0,
+        prev_close=100.0,
     )
     assert atr_pct == pytest.approx(3.0)
     assert move_atr == pytest.approx(2.0)
 
 
-@pytest.mark.parametrize("atr_14,prev_close", [
-    (None, 100.0), (0.0, 100.0), (-1.0, 100.0),
-    (3.0, None), (3.0, 0.0), (3.0, -5.0),
-])
+@pytest.mark.parametrize(
+    "atr_14,prev_close",
+    [
+        (None, 100.0),
+        (0.0, 100.0),
+        (-1.0, 100.0),
+        (3.0, None),
+        (3.0, 0.0),
+        (3.0, -5.0),
+    ],
+)
 def test_move_in_atr_refuses_to_invent_a_denominator(atr_14, prev_close):
     """An unreadable ATR or prev_close must produce nothing, never a
     fabricated ratio — the measurement exists to answer a live money
     question and a made-up row would poison it."""
     assert TradingPipeline._intraday_move_in_atr(
-        move_pct=6.0, atr_14=atr_14, prev_close=prev_close,
+        move_pct=6.0,
+        atr_14=atr_14,
+        prev_close=prev_close,
     ) == (None, None)
 
 
@@ -1411,15 +1535,18 @@ def test_a_movers_ledger_row_records_the_atr_denominator(
     mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
     p = _intraday_pipeline(universe=["AAPL"])
     p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": _snapshot(last=110.0, prev=100.0),   # 10% move, ATR 2% of close
+        "AAPL": _snapshot(last=110.0, prev=100.0),  # 10% move, ATR 2% of close
     }
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": _ta_result("AAPL", rating="buy")},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+        ctx,
+        "portfolio_decision",
+        SimpleNamespace(decisions=[]),
     )
     p.risk_stage.run.return_value = None
     p.execution_stage.run.return_value = []
@@ -1427,9 +1554,7 @@ def test_a_movers_ledger_row_records_the_atr_denominator(
     p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
 
     details = [
-        c.kwargs["detail"]
-        for c in p.db.record_intraday_evaluation.call_args_list
-        if c.kwargs["symbol"] == "AAPL"
+        c.kwargs["detail"] for c in p.db.record_intraday_evaluation.call_args_list if c.kwargs["symbol"] == "AAPL"
     ]
     assert details, "the mover was never ledgered at all"
     assert "atr_pct=2.0000" in details[-1]
@@ -1452,11 +1577,14 @@ def test_the_atr_stamp_reuses_the_selection_row_and_never_adds_one(
     }
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": _ta_result("AAPL", rating="buy")},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+        ctx,
+        "portfolio_decision",
+        SimpleNamespace(decisions=[]),
     )
     p.risk_stage.run.return_value = None
     p.execution_stage.run.return_value = []
@@ -1479,17 +1607,19 @@ def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
     mock_compute_indicators.return_value = SimpleNamespace(atr_14=2.0)
     p = _intraday_pipeline(universe=["AAPL", "MSFT"])
     p.broker.get_intraday_snapshots.return_value = {
-        "AAPL": _snapshot(last=110.0, prev=100.0),   # mover
-        "MSFT": _snapshot(last=100.2, prev=100.0),   # quiet hold
+        "AAPL": _snapshot(last=110.0, prev=100.0),  # mover
+        "MSFT": _snapshot(last=100.2, prev=100.0),  # quiet hold
     }
     p.tech_analyst.analyze_batch.return_value = (
-        {"AAPL": _ta_result("AAPL", rating="buy"),
-         "MSFT": _ta_result("MSFT", rating="buy")},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        {"AAPL": _ta_result("AAPL", rating="buy"), "MSFT": _ta_result("MSFT", rating="buy")},
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+        ctx,
+        "portfolio_decision",
+        SimpleNamespace(decisions=[]),
     )
     p.risk_stage.run.return_value = None
     p.execution_stage.run.return_value = []
@@ -1498,10 +1628,7 @@ def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
     ctx.positions = [_held_position("MSFT")]
     p._run_intraday_opportunity_scan(ctx)
 
-    ledgered = {
-        c.kwargs["symbol"]
-        for c in p.db.record_intraday_evaluation.call_args_list
-    }
+    ledgered = {c.kwargs["symbol"] for c in p.db.record_intraday_evaluation.call_args_list}
     assert ledgered == {"AAPL"}
 
 
@@ -1519,11 +1646,14 @@ def test_an_unreadable_atr_is_recorded_as_unreadable_not_dropped(
     }
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": _ta_result("AAPL", rating="buy")},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision", SimpleNamespace(decisions=[]),
+        ctx,
+        "portfolio_decision",
+        SimpleNamespace(decisions=[]),
     )
     p.risk_stage.run.return_value = None
     p.execution_stage.run.return_value = []
@@ -1531,9 +1661,7 @@ def test_an_unreadable_atr_is_recorded_as_unreadable_not_dropped(
     p._run_intraday_opportunity_scan(RunContext.start("intra_check"))
 
     detail = [
-        c.kwargs["detail"]
-        for c in p.db.record_intraday_evaluation.call_args_list
-        if c.kwargs["symbol"] == "AAPL"
+        c.kwargs["detail"] for c in p.db.record_intraday_evaluation.call_args_list if c.kwargs["symbol"] == "AAPL"
     ][-1]
     assert "atr_pct=unreadable" in detail
     assert "move_atr=unreadable" in detail
@@ -1554,17 +1682,19 @@ def test_a_ledger_write_failure_on_the_stamp_never_breaks_the_scan(
 
     def _flaky(**kwargs):
         calls["n"] += 1
-        if calls["n"] > 1:            # the selection write succeeds, the stamp fails
+        if calls["n"] > 1:  # the selection write succeeds, the stamp fails
             raise RuntimeError("disk full")
 
     p.db.record_intraday_evaluation.side_effect = _flaky
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": _ta_result("AAPL", rating="buy")},
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+        MagicMock(
+            user_message="m", raw_text="{}", tokens_used=1, input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"
+        ),
     )
     p.decision_stage.run.side_effect = lambda ctx: setattr(
-        ctx, "portfolio_decision",
+        ctx,
+        "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
     p.risk_stage.run.return_value = None

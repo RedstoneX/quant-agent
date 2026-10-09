@@ -10,7 +10,6 @@ from src.notifier.markup import (
 )
 
 
-
 def _actionable_coverage_gaps(gaps) -> list[dict]:
     """The subset of coverage gaps that a human has to do something about.
 
@@ -22,10 +21,7 @@ def _actionable_coverage_gaps(gaps) -> list[dict]:
     """
     if not isinstance(gaps, list):
         return []
-    return [
-        g for g in gaps
-        if isinstance(g, dict) and not _gap_is_expected_fractional(g)
-    ]
+    return [g for g in gaps if isinstance(g, dict) and not _gap_is_expected_fractional(g)]
 
 
 def _gap_is_uncovered(gap: dict) -> bool:
@@ -88,10 +84,7 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     # mis-sized banner, which asserts that a stop IS standing watch over
     # most of the position — a claim nobody established here.
     unreadable = [g for g in rows if _gap_is_unreadable(g)]
-    faults = [
-        g for g in rows
-        if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
-    ]
+    faults = [g for g in rows if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
     if unreadable:
@@ -105,27 +98,19 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
             f"🛑🛑 STOP UNREADABLE: {len(unreadable)} position(s) whose "
             "protective stops the broker could not be asked about — "
             "coverage UNKNOWN, not confirmed either way — "
-            + "; ".join(
-                f"{g.get('symbol', '?')} holding "
-                f"{_fmt_qty(g.get('held_qty', 0) or 0)}"
-                for g in unreadable[:6]
-            )
+            + "; ".join(f"{g.get('symbol', '?')} holding {_fmt_qty(g.get('held_qty', 0) or 0)}" for g in unreadable[:6])
         )
     if uncovered:
         # Top severity tier (item 21b): a held position with ZERO stop
         # coverage is unbounded loss, not just a degraded state — the one
         # class of alert on this desk that gets the triple mark.
         lines.append(
-            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing "
-            f"protecting them — {_describe(uncovered)}"
+            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing protecting them — {_describe(uncovered)}"
         )
     if partial:
         # Still under-protected but a stop IS standing watch over most of
         # the position — warning tier, not the top one.
-        lines.append(
-            f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) only partly "
-            f"protected — {_describe(partial)}"
-        )
+        lines.append(f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) only partly protected — {_describe(partial)}")
     _append_fractional_overnight_line(lines, expected)
 
 
@@ -150,7 +135,8 @@ def _gap_is_expected_fractional(gap: dict) -> bool:
     re-placed this session. Neither is operator-actionable.
     """
     return str(gap.get("coverage", "")).strip().lower() in (
-        "fractional_overnight", "fractional_replaced",
+        "fractional_overnight",
+        "fractional_replaced",
     )
 
 
@@ -173,10 +159,7 @@ def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) ->
     (nothing is exposed) — only a live, currently-unprotected remainder
     prints.
     """
-    live = [
-        g for g in expected
-        if str(g.get("coverage", "")).strip().lower() == "fractional_overnight"
-    ]
+    live = [g for g in expected if str(g.get("coverage", "")).strip().lower() == "fractional_overnight"]
     if not live:
         return
     total = 0.0
@@ -185,10 +168,7 @@ def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) ->
             total += float(gap.get("unprotected_value") or 0)
         except (TypeError, ValueError):
             continue
-    detail = ", ".join(
-        f"{g.get('symbol', '?')} {_fmt_qty(g.get('uncovered_qty', 0) or 0)}sh"
-        for g in live[:6]
-    )
+    detail = ", ".join(f"{g.get('symbol', '?')} {_fmt_qty(g.get('uncovered_qty', 0) or 0)}sh" for g in live[:6])
     lines.append(
         f"🌙 overnight fractional remainder unprotected (by design): "
         f"${total:,.2f} across {len(live)} position(s) — {detail}. "

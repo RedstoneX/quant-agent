@@ -34,11 +34,11 @@ def test_weekly_review_runs_on_fresh_db(tmp_path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--db", str(db_path), "--days", "7"],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
-    assert result.returncode == 0, (
-        f"weekly_review exited {result.returncode}\nstderr:\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"weekly_review exited {result.returncode}\nstderr:\n{result.stderr}"
     out = result.stdout
     # Every section header must appear (proves all `report_*` functions ran).
     for header in (
@@ -83,46 +83,84 @@ def test_weekly_review_shows_numbers_when_data_present(tmp_path):
 
     # Insights row with some grades
     import json
+
     db.conn.execute(
         "INSERT INTO insights (date, tomorrow_outlook, lessons, risk_rating, "
         "tomorrow_bias, tomorrow_conviction, sell_grades_json, buy_grades_json) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            fixture_day, "watch FOMC", "be patient", "moderate",
-            "bullish", "high",
-            json.dumps([
-                {"symbol": "GOOGL", "grade": "premature", "sell_date": fixture_day,
-                 "sell_price": 320.0, "current_price": 327.0,
-                 "pct_move_since_sell": 2.2, "reason": "noise"},
-                {"symbol": "XOM", "grade": "correct", "sell_date": fixture_day,
-                 "sell_price": 108.0, "current_price": 106.0,
-                 "pct_move_since_sell": -1.8, "reason": "ceasefire"},
-            ]),
-            json.dumps([
-                {"symbol": "NVDA", "grade": "correct", "buy_date": fixture_day_minus_one,
-                 "buy_price": 196.0, "current_price": 210.0,
-                 "pct_move_since_buy": 7.1, "reason": "capex"},
-            ]),
+            fixture_day,
+            "watch FOMC",
+            "be patient",
+            "moderate",
+            "bullish",
+            "high",
+            json.dumps(
+                [
+                    {
+                        "symbol": "GOOGL",
+                        "grade": "premature",
+                        "sell_date": fixture_day,
+                        "sell_price": 320.0,
+                        "current_price": 327.0,
+                        "pct_move_since_sell": 2.2,
+                        "reason": "noise",
+                    },
+                    {
+                        "symbol": "XOM",
+                        "grade": "correct",
+                        "sell_date": fixture_day,
+                        "sell_price": 108.0,
+                        "current_price": 106.0,
+                        "pct_move_since_sell": -1.8,
+                        "reason": "ceasefire",
+                    },
+                ]
+            ),
+            json.dumps(
+                [
+                    {
+                        "symbol": "NVDA",
+                        "grade": "correct",
+                        "buy_date": fixture_day_minus_one,
+                        "buy_price": 196.0,
+                        "current_price": 210.0,
+                        "pct_move_since_buy": 7.1,
+                        "reason": "capex",
+                    },
+                ]
+            ),
         ),
     )
     # A FORCE_DELEVER trade today
     db.insert_trade(
-        symbol="TSLA", action="FORCE_DELEVER", qty=5, price=250.0,
-        reasoning="cash-only auto de-lever", run_id="r1",
-        broker_order_id="ord-1", fill_status="filled",
+        symbol="TSLA",
+        action="FORCE_DELEVER",
+        qty=5,
+        price=250.0,
+        reasoning="cash-only auto de-lever",
+        run_id="r1",
+        broker_order_id="ord-1",
+        fill_status="filled",
     )
     # An LLM call
     db.insert_agent_log(
-        agent_name="evening_analyst", run_id="r1",
-        input_summary="test", input_message="msg",
-        output_summary="ok", full_response="{}",
-        model="test-model", tokens_used=1234,
+        agent_name="evening_analyst",
+        run_id="r1",
+        input_summary="test",
+        input_message="msg",
+        output_summary="ok",
+        full_response="{}",
+        model="test-model",
+        tokens_used=1234,
     )
     db.conn.commit()
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--db", str(db_path), "--days", "30"],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     assert result.returncode == 0
     out = result.stdout
@@ -146,7 +184,9 @@ def test_weekly_review_fails_cleanly_on_missing_db(tmp_path):
     bogus = tmp_path / "does_not_exist.db"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--db", str(bogus)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode != 0
     assert "DB not found" in result.stderr
@@ -188,8 +228,15 @@ def test_weekly_review_counts_reduce_and_take_profit_as_closed_trades(tmp_path):
             "fill_status, fill_qty, fill_price, timestamp) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                symbol, action, qty, price, "test", "run-cal",
-                "filled", qty, price,
+                symbol,
+                action,
+                qty,
+                price,
+                "test",
+                "run-cal",
+                "filled",
+                qty,
+                price,
                 (base + timedelta(minutes=offset)).strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
@@ -197,7 +244,9 @@ def test_weekly_review_counts_reduce_and_take_profit_as_closed_trades(tmp_path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--db", str(db_path), "--days", "30"],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
 
     assert result.returncode == 0

@@ -16,6 +16,7 @@ Forward outcomes (what the market did next) live in market data / `daily_pnl`,
 so a replayed decision can later be *scored* against reality, not just diffed —
 that A/B-with-outcome judge is the natural next layer on top of this.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class StoredDecision:
     """One historical agent call, as persisted in agent_logs."""
+
     agent_name: str
     run_id: str
     timestamp: str
@@ -35,9 +37,7 @@ class StoredDecision:
     full_response: str
 
 
-def load_decisions(
-    conn, agent_name: str, limit: int = 5, run_id: str | None = None
-) -> list[StoredDecision]:
+def load_decisions(conn, agent_name: str, limit: int = 5, run_id: str | None = None) -> list[StoredDecision]:
     """Pull stored agent calls (exact input + response) from agent_logs, newest
     first. `conn` is a sqlite3 connection (the operator script opens it); we
     query directly rather than widening the DB abstraction for a tool. Only rows
@@ -116,11 +116,7 @@ def diff_pm_targets(old_text: str, new_text: str) -> dict:
     old = _parse_targets(old_text)
     new = _parse_targets(new_text)
     old_s, new_s = set(old), set(new)
-    changed = [
-        {"symbol": s, "old": old[s], "new": new[s]}
-        for s in sorted(old_s & new_s)
-        if old[s] != new[s]
-    ]
+    changed = [{"symbol": s, "old": old[s], "new": new[s]} for s in sorted(old_s & new_s) if old[s] != new[s]]
     return {
         "added": [{"symbol": s, **new[s]} for s in sorted(new_s - old_s)],
         "removed": [{"symbol": s, **old[s]} for s in sorted(old_s - new_s)],

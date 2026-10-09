@@ -37,15 +37,20 @@ from tests.pipeline_factory import build_pipeline
 
 def _pos(symbol: str, qty: float, entry: float, price: float) -> Position:
     return Position(
-        symbol=symbol, qty=qty, avg_entry=entry, current_price=price,
-        market_value=qty * price, unrealized_pnl=qty * (price - entry),
+        symbol=symbol,
+        qty=qty,
+        avg_entry=entry,
+        current_price=price,
+        market_value=qty * price,
+        unrealized_pnl=qty * (price - entry),
         sector="Technology",
     )
 
 
 def _wire_broker_seams(broker, events: list[tuple[str, str]]) -> None:
-    broker.snapshot_protective_stops.side_effect = (
-        lambda symbol, **_kw: (True, [{"id": f"stop-{symbol}", "stop_price": 80.0}])
+    broker.snapshot_protective_stops.side_effect = lambda symbol, **_kw: (
+        True,
+        [{"id": f"stop-{symbol}", "stop_price": 80.0}],
     )
 
     def _cancel(symbol, _specs):
@@ -54,8 +59,7 @@ def _wire_broker_seams(broker, events: list[tuple[str, str]]) -> None:
 
     def _submit(*, symbol, side, **_kw):
         events.append(("submit", symbol))
-        return {"id": f"ord-{symbol}", "symbol": symbol, "status": "accepted",
-                "side": side}
+        return {"id": f"ord-{symbol}", "symbol": symbol, "status": "accepted", "side": side}
 
     broker.cancel_snapshotted_stops.side_effect = _cancel
     broker.submit_order.side_effect = _submit
@@ -66,6 +70,7 @@ def _recording_finalize(events: list[tuple[str, str]]) -> MagicMock:
     def _finalize(order_id, symbol, *_a, **_kw):
         events.append(("covered", symbol))
         return True, []
+
     return MagicMock(side_effect=_finalize)
 
 
@@ -91,6 +96,7 @@ def _assert_no_symbol_left_naked_while_another_is_touched(events):
 # ---------------------------------------------------------------------------
 # Midday / close position reviewer
 # ---------------------------------------------------------------------------
+
 
 def _midday_pipeline(events):
     pipeline = build_pipeline(broker=MagicMock())
@@ -120,11 +126,13 @@ def test_midday_reviewer_restores_each_stop_before_touching_the_next_name():
         _pos("AMD", qty=20, entry=100.0, price=90.0),
         _pos("TSLA", qty=-15, entry=250.0, price=260.0),
     ]
-    review = MagicMock(actions=[
-        PositionAction(action="SELL", symbol="NVDA", reason=_TRIGGER),
-        PositionAction(action="SELL", symbol="AMD", reason=_TRIGGER),
-        PositionAction(action="COVER", symbol="TSLA", reason=_TRIGGER),
-    ])
+    review = MagicMock(
+        actions=[
+            PositionAction(action="SELL", symbol="NVDA", reason=_TRIGGER),
+            PositionAction(action="SELL", symbol="AMD", reason=_TRIGGER),
+            PositionAction(action="COVER", symbol="TSLA", reason=_TRIGGER),
+        ]
+    )
 
     orders = pipeline._midday_execute_llm_actions(positions, review, run_id="r1")
 
@@ -142,10 +150,12 @@ def test_midday_reviewer_still_rebuilds_coverage_when_the_trade_row_fails():
         _pos("NVDA", qty=10, entry=100.0, price=90.0),
         _pos("AMD", qty=20, entry=100.0, price=90.0),
     ]
-    review = MagicMock(actions=[
-        PositionAction(action="SELL", symbol="NVDA", reason=_TRIGGER),
-        PositionAction(action="SELL", symbol="AMD", reason=_TRIGGER),
-    ])
+    review = MagicMock(
+        actions=[
+            PositionAction(action="SELL", symbol="NVDA", reason=_TRIGGER),
+            PositionAction(action="SELL", symbol="AMD", reason=_TRIGGER),
+        ]
+    )
 
     pipeline._midday_execute_llm_actions(positions, review, run_id="r1")
 
@@ -157,18 +167,27 @@ def test_midday_reviewer_still_rebuilds_coverage_when_the_trade_row_fails():
 # ExecutionStage — the decision path's SELL and COVER loops
 # ---------------------------------------------------------------------------
 
+
 def _pm_rc() -> ReasoningChain:
     return ReasoningChain(
-        macro_filter="x", news_check="x", earnings_check="x",
-        signal_conflicts="x", sizing_logic="x",
-        portfolio_balance="x", cash_target="x",
+        macro_filter="x",
+        news_check="x",
+        earnings_check="x",
+        signal_conflicts="x",
+        sizing_logic="x",
+        portfolio_balance="x",
+        cash_target="x",
     )
 
 
 def _exit_decision(action: str, symbol: str, pct: float) -> TradeDecision:
     return TradeDecision(
-        action=action, symbol=symbol, allocation_pct=pct,
-        entry_price=0.0, stop_loss=0.0, take_profit=0.0,
+        action=action,
+        symbol=symbol,
+        allocation_pct=pct,
+        entry_price=0.0,
+        stop_loss=0.0,
+        take_profit=0.0,
         reasoning="exit",
     )
 
@@ -182,13 +201,16 @@ def _execution_stage_pipeline(events, positions):
     pipeline._full_sell_qty = TradingPipeline._full_sell_qty
     pipeline._reduce_sell_qty = TradingPipeline._reduce_sell_qty
     pipeline._refresh_account_state.return_value = (
-        {"cash": 50_000.0, "portfolio_value": 100_000.0}, positions, {},
+        {"cash": 50_000.0, "portfolio_value": 100_000.0},
+        positions,
+        {},
     )
     _wire_broker_seams(pipeline.broker, events)
     pipeline._write_ahead_protection_restore.return_value = 1
     pipeline._finalize_protection_after_sell = _recording_finalize(events)
     for name in (
-        "_submit_protected_sell", "_cancel_stops_with_write_ahead",
+        "_submit_protected_sell",
+        "_cancel_stops_with_write_ahead",
         "_finalize_pending_protections",
     ):
         setattr(pipeline, name, getattr(TradingPipeline, name).__get__(pipeline))
@@ -202,7 +224,9 @@ def _execution_ctx(decisions, positions) -> RunContext:
     ctx.last_equity = 100_000.0
     ctx.positions = positions
     ctx.portfolio_decision = PortfolioDecision(
-        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+        reasoning_chain=_pm_rc(),
+        decisions=decisions,
+        portfolio_view="test",
     )
     ctx.symbols_bars = {}
     return ctx
@@ -216,11 +240,14 @@ def test_execution_stage_sell_loop_restores_each_stop_before_the_next_name():
         _pos("MSFT", qty=30, entry=100.0, price=90.0),
     ]
     pipeline = _execution_stage_pipeline(events, positions)
-    ctx = _execution_ctx([
-        _exit_decision("SELL", "NVDA", 100.0),
-        _exit_decision("SELL", "AMD", 50.0),
-        _exit_decision("SELL", "MSFT", 100.0),
-    ], positions)
+    ctx = _execution_ctx(
+        [
+            _exit_decision("SELL", "NVDA", 100.0),
+            _exit_decision("SELL", "AMD", 50.0),
+            _exit_decision("SELL", "MSFT", 100.0),
+        ],
+        positions,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 
@@ -238,10 +265,13 @@ def test_execution_stage_cover_loop_restores_each_stop_before_the_next_name():
         _pos("RIVN", qty=-30, entry=20.0, price=21.0),
     ]
     pipeline = _execution_stage_pipeline(events, positions)
-    ctx = _execution_ctx([
-        _exit_decision("COVER", "TSLA", 100.0),
-        _exit_decision("COVER", "RIVN", 50.0),
-    ], positions)
+    ctx = _execution_ctx(
+        [
+            _exit_decision("COVER", "TSLA", 100.0),
+            _exit_decision("COVER", "RIVN", 50.0),
+        ],
+        positions,
+    )
 
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
 

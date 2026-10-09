@@ -4,6 +4,7 @@ src/execution/broker_parts/market_data.py.
 The data client and the snapshot request model are built in market_data.py and
 passed in, so this module imports no provider client: the replay seam stays
 where the client is built (board item 202)."""
+
 from __future__ import annotations
 
 import logging
@@ -19,29 +20,23 @@ def _fetch_batch(data_client, snapshot_request, batch: list[str], ok_batches: li
     if not batch:
         return {}
     try:
-        result = data_client.get_stock_snapshot(
-            snapshot_request(symbol_or_symbols=batch)
-        )
+        result = data_client.get_stock_snapshot(snapshot_request(symbol_or_symbols=batch))
         ok_batches[0] += 1
         return result if isinstance(result, dict) else {}
     except Exception as exc:
         status_code = getattr(exc, "status_code", None)
-        symbol_error = (
-            status_code in (400, 404, 422)
-            or "invalid symbol" in str(exc).lower()
-        )
+        symbol_error = status_code in (400, 404, 422) or "invalid symbol" in str(exc).lower()
         if len(batch) == 1:
-            record_swallowed("broker.intraday_snapshots_single", exc,
-                             log=logger, symbol=batch[0])
+            record_swallowed("broker.intraday_snapshots_single", exc, log=logger, symbol=batch[0])
             return {}
         if not symbol_error:
-            record_swallowed("broker.intraday_snapshots_bulk", exc,
-                             log=logger, symbols=len(batch))
+            record_swallowed("broker.intraday_snapshots_bulk", exc, log=logger, symbols=len(batch))
             return {}
         midpoint = len(batch) // 2
         logger.warning(
             "get_intraday_snapshots: batch of %d rejected; isolating bad symbol(s): %s",
-            len(batch), exc,
+            len(batch),
+            exc,
         )
         return {
             **_fetch_batch(data_client, snapshot_request, batch[:midpoint], ok_batches),

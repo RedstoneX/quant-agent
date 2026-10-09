@@ -20,15 +20,22 @@ def client() -> TestClient:
 
 
 def test_quotes_returns_seeded_snapshot(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_live_quotes", lambda symbols: {
-        "quotes": {
-            "AAPL": {
-                "last_price": 231.5, "prev_close": 229.0,
-                "session_open": 230.0, "session_high": 232.1, "session_low": 229.8,
+    monkeypatch.setattr(
+        routes_live,
+        "read_live_quotes",
+        lambda symbols: {
+            "quotes": {
+                "AAPL": {
+                    "last_price": 231.5,
+                    "prev_close": 229.0,
+                    "session_open": 230.0,
+                    "session_high": 232.1,
+                    "session_low": 229.8,
+                },
             },
+            "error": None,
         },
-        "error": None,
-    })
+    )
     r = client.get("/quotes", params={"symbols": "aapl"})
     assert r.status_code == 200
     body = r.json()
@@ -42,13 +49,29 @@ def test_quotes_returns_seeded_snapshot(client, monkeypatch):
 
 
 def test_quotes_handles_multiple_symbols_and_preserves_request_order(client, monkeypatch):
-    monkeypatch.setattr(routes_live, "read_live_quotes", lambda symbols: {
-        "quotes": {
-            "MSFT": {"last_price": 410.0, "prev_close": 408.0, "session_open": None, "session_high": None, "session_low": None},
-            "AAPL": {"last_price": 231.5, "prev_close": 229.0, "session_open": None, "session_high": None, "session_low": None},
+    monkeypatch.setattr(
+        routes_live,
+        "read_live_quotes",
+        lambda symbols: {
+            "quotes": {
+                "MSFT": {
+                    "last_price": 410.0,
+                    "prev_close": 408.0,
+                    "session_open": None,
+                    "session_high": None,
+                    "session_low": None,
+                },
+                "AAPL": {
+                    "last_price": 231.5,
+                    "prev_close": 229.0,
+                    "session_open": None,
+                    "session_high": None,
+                    "session_low": None,
+                },
+            },
+            "error": None,
         },
-        "error": None,
-    })
+    )
     r = client.get("/quotes", params={"symbols": "AAPL,MSFT"})
     assert r.status_code == 200
     symbols = [q["symbol"] for q in r.json()["quotes"]]
@@ -72,6 +95,7 @@ def test_quotes_symbol_with_no_snapshot_data_reports_all_none_not_dropped(client
 def test_quotes_degrades_to_error_without_crashing(client, monkeypatch):
     def _boom(symbols):
         raise RuntimeError("data client unreachable")
+
     monkeypatch.setattr(routes_live, "read_live_quotes", _boom)
     r = client.get("/quotes", params={"symbols": "AAPL"})
     assert r.status_code == 200
@@ -83,6 +107,7 @@ def test_quotes_degrades_to_error_without_crashing(client, monkeypatch):
 def test_quotes_rejects_empty_symbols_without_a_broker_call(client, monkeypatch):
     def _boom(symbols):
         raise AssertionError("must not call the broker with zero symbols")
+
     monkeypatch.setattr(routes_live, "read_live_quotes", _boom)
     r = client.get("/quotes", params={"symbols": "  ,  "})
     assert r.status_code == 200

@@ -45,6 +45,7 @@ from src.models import (
 # /health
 # ---------------------------------------------------------------------------
 
+
 class HealthResponse(BaseModel):
     status: str  # "ok" | "degraded" — process can respond while decisions are broken
     # WHY the status is what it is, assembled from the fields already in
@@ -80,6 +81,7 @@ class HealthResponse(BaseModel):
 # /account
 # ---------------------------------------------------------------------------
 
+
 class DailyPnlPoint(BaseModel):
     date: str
     total_value: float | None = None
@@ -105,11 +107,12 @@ class LiquidityBreakdown(BaseModel):
     under its own name, `cash_above_reserve`, because it answers a
     different question.
     """
+
     sweep_enabled: bool = False
     sweep_symbol: str | None = None
-    raw_cash: float | None = None            # broker cash, includes the reserve
+    raw_cash: float | None = None  # broker cash, includes the reserve
     sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
-    reserve_usd: float | None = None         # cash_reserve.pct% of portfolio_value
+    reserve_usd: float | None = None  # cash_reserve.pct% of portfolio_value
     # raw_cash + sweep_parked_value — what the engine can actually deploy
     # without borrowing, because fund_buys sells the sweep vehicle on demand.
     deployable_cash: float | None = None
@@ -137,6 +140,7 @@ class ExposureBreakdown(BaseModel):
     free module outside `src.risk`, so this does not breach the structural
     guardrail in tests/test_api_safety.py. None when the positions or
     account read failed; never a fabricated 0."""
+
     # sum(market_value * signed ETF multiplier), sweep vehicle excluded.
     # A hedge SUBTRACTS; a 3x fund counts at 3x.
     net_exposure_usd: float | None = None
@@ -152,6 +156,7 @@ class RiskLimits(BaseModel):
     UI exposure gauge scale against QAMC's actual hard-block thresholds
     instead of an arbitrary UI-only banding. None when the config read
     fails — never a guessed/default limit standing in for the real one."""
+
     max_position_pct: float | None = None
     max_total_position_pct: float | None = None
     max_sector_pct: float | None = None
@@ -170,7 +175,7 @@ class AccountResponse(BaseModel):
     cash: float | None = None
     portfolio_value: float | None = None
     last_equity: float | None = None
-    daily_pnl: float | None = None       # portfolio_value - last_equity (computed here)
+    daily_pnl: float | None = None  # portfolio_value - last_equity (computed here)
     daily_pnl_pct: float | None = None
     #: Total P&L since the earliest row the `daily_pnl` table actually has —
     #: `current portfolio_value - (that row's total_value - that row's own
@@ -193,12 +198,12 @@ class AccountResponse(BaseModel):
     total_pnl_since: str | None = None
     paper: bool | None = None
     source: str = "alpaca_live"
-    history: list[DailyPnlPoint] = []    # recent daily_pnl table rows, newest first
+    history: list[DailyPnlPoint] = []  # recent daily_pnl table rows, newest first
     liquidity: LiquidityBreakdown | None = None
     exposure: ExposureBreakdown | None = None
     risk_limits: RiskLimits | None = None
     margin_interest: MarginInterestEstimate | None = None
-    error: str | None = None             # set (fields above null) when the broker read failed
+    error: str | None = None  # set (fields above null) when the broker read failed
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +294,7 @@ class PositionsResponse(BaseModel):
 # /orders
 # ---------------------------------------------------------------------------
 
+
 class OrderItem(BaseModel):
     id: str
     symbol: str
@@ -314,11 +320,13 @@ class OrdersResponse(BaseModel):
 # /company/{symbol} — cached identity for the chart header
 # ---------------------------------------------------------------------------
 
+
 class CompanyIdentityResponse(BaseModel):
     """Cached company name for one ticker. `name` is None when the on-disk
     profile cache has no identity for this symbol — never invented, and
     this path never fetches. `error` is only set when the cache itself
     could not be read."""
+
     symbol: str
     name: str | None = None
     error: str | None = None
@@ -327,6 +335,7 @@ class CompanyIdentityResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /prices/{symbol}
 # ---------------------------------------------------------------------------
+
 
 class PriceBar(BaseModel):
     date: str
@@ -356,9 +365,11 @@ class PriceBarsResponse(BaseModel):
 # /events/{symbol} — dividend/earnings chart markers
 # ---------------------------------------------------------------------------
 
+
 class DividendEvent(BaseModel):
     """One ex-dividend date, past or upcoming. `amount` is None when a
     source reported the date without a per-share figure (never fabricated)."""
+
     date: str  # YYYY-MM-DD
     amount: float | None = None
 
@@ -367,6 +378,7 @@ class EarningsEvent(BaseModel):
     """One earnings-report date. `upcoming=True` marks a scheduled/estimated
     future report (not yet happened); `upcoming=False` marks one already
     reported — the chart renders these as visually distinct markers."""
+
     date: str  # YYYY-MM-DD
     upcoming: bool
 
@@ -387,6 +399,7 @@ class SymbolEventsResponse(BaseModel):
     `error` means the whole request failed; this means one degraded
     sub-source inside an otherwise-successful one (2026-09-12 incident —
     see docs/INCIDENT_HISTORY.md)."""
+
     symbol: str
     dividends: list[DividendEvent] = []
     earnings: list[EarningsEvent] = []
@@ -398,12 +411,14 @@ class SymbolEventsResponse(BaseModel):
 # /quotes
 # ---------------------------------------------------------------------------
 
+
 class LiveQuote(BaseModel):
     """One symbol's current-session quote facts — distinct from a
     PositionItem's broker-marked current_price (held positions only) and
     from a PriceBar (historical, one row per completed/forming day).
     Any field is None when Alpaca had nothing to report for this symbol,
     never fabricated."""
+
     symbol: str
     last_price: float | None = None
     # The freshness-resolved current-session price (docs/WORK.md item 169
@@ -455,6 +470,7 @@ class LiveQuotesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /trades
 # ---------------------------------------------------------------------------
+
 
 class TradeItem(BaseModel):
     id: int
@@ -511,6 +527,7 @@ class TradesResponse(BaseModel):
 # /positions/{position_id}/history
 # ---------------------------------------------------------------------------
 
+
 class PositionHistoryResponse(BaseModel):
     position_id: str
     symbol: str
@@ -537,6 +554,7 @@ class PositionHistoryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /runs, /runs/{run_id}, /decisions/{decision_id}
 # ---------------------------------------------------------------------------
+
 
 class AgentLogItem(BaseModel):
     id: int
@@ -615,12 +633,13 @@ class DecisionDetailResponse(BaseModel):
 # /candidates
 # ---------------------------------------------------------------------------
 
+
 class CandidateItem(BaseModel):
     symbol: str
     add_count: int = 0
     watch_count: int = 0
     total_flags: int = 0
-    dates: list[str] = []          # ISO dates flagged, newest first
+    dates: list[str] = []  # ISO dates flagged, newest first
     themes: list[str] = []
     latest_reason: str = ""
     latest_miss_category: str = ""
@@ -634,6 +653,7 @@ class CandidatesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /agents, /agents/{agent_name}
 # ---------------------------------------------------------------------------
+
 
 class AgentRosterItem(BaseModel):
     agent_name: str
@@ -657,6 +677,7 @@ class AgentDetailResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /reflections
 # ---------------------------------------------------------------------------
+
 
 class ReflectionItem(BaseModel):
     date: str
@@ -690,6 +711,7 @@ class ReflectionsResponse(BaseModel):
 # /runs/{run_id}/candidates, /runs/{run_id}/candidates/{symbol}  (Stage 4)
 # ---------------------------------------------------------------------------
 
+
 class RunCandidatesResponse(BaseModel):
     run_id: str
     candidates: list[str] = []
@@ -698,6 +720,7 @@ class RunCandidatesResponse(BaseModel):
 class PmReasoning(BaseModel):
     """Run-scoped PM reasoning_chain + portfolio_view — the "why", separate
     from the per-symbol `target`/`proposed_order` rows (the "what")."""
+
     portfolio_view: str | None = None
     reasoning_chain: ReasoningChain | None = None
     timestamp: str | None = None
@@ -707,6 +730,7 @@ class NewsBroaderContext(BaseModel):
     """Run/theme-scoped news context — deliberately NOT attributed to the
     candidate symbol (see ConsensusSummary for the symbol-specific slice
     of the same NewsIntelligenceReport, extracted separately below)."""
+
     market_sentiment: str | None = None
     confidence: str | None = None
     pm_briefing: str | None = None
@@ -725,6 +749,7 @@ class MacroBroaderContext(BaseModel):
     and inventing one here would violate the Stage 4 boundary against
     manufacturing per-symbol macro conclusions from a run/sector-scoped
     source."""
+
     regime: str | None = None
     equity_outlook: str | None = None
     confidence: str | None = None
@@ -736,13 +761,14 @@ class MacroBroaderContext(BaseModel):
 class RiskManagerVerdict(BaseModel):
     """Run-scoped RM verdict — approved/rejected + full reasoning, separate
     from any per-symbol `risk_modification` row."""
+
     verdict: RiskVerdict | None = None
     timestamp: str | None = None
 
 
 class ConsensusSignal(BaseModel):
-    source: str        # "tech_analyst" | "earnings_analyst" | "news_analyst"
-    direction: str      # "bullish" | "bearish" | "neutral"
+    source: str  # "tech_analyst" | "earnings_analyst" | "news_analyst"
+    direction: str  # "bullish" | "bearish" | "neutral"
     detail: str = ""
 
 
@@ -768,6 +794,7 @@ class CandidateDetailResponse(BaseModel):
     involved remain available via GET /runs/{run_id} (agent_logs), not
     duplicated here.
     """
+
     run_id: str
     symbol: str
     decision_id: str | None = None
@@ -802,6 +829,7 @@ class CandidateDetailResponse(BaseModel):
 # /runs/{run_id}/funnel — decision-funnel / "why no trade?" aggregation
 # ---------------------------------------------------------------------------
 
+
 class PipelineEvent(BaseModel):
     stage: str
     outcome: str
@@ -814,6 +842,7 @@ class CandidateFunnelItem(BaseModel):
     """One candidate's progress through the decision chain this run —
     the structural facts only (did it reach each stage, what stage it
     stopped at), never a synthesized narrative."""
+
     symbol: str
     # "bullish" | "bearish" | "neutral" | "unknown" — from tech_analyst's
     # rating when available (see _TECH_DIRECTION), else "unknown". Purely
@@ -830,7 +859,7 @@ class CandidateFunnelItem(BaseModel):
     #: the other without the stop, so both are carried.
     pm_risk_allocation_pct: float | None = None
     reached_proposed_order: bool = False
-    proposed_action: str | None = None       # BUY | SELL | HOLD | None
+    proposed_action: str | None = None  # BUY | SELL | HOLD | None
     risk_modified: bool = False
     executed: bool = False
     trade_action: str | None = None
@@ -874,6 +903,7 @@ class RunFunnelResponse(BaseModel):
     text below is quoted verbatim from what those agents actually wrote —
     never a Mission-Control-authored summary of "why," which could
     misrepresent the decision."""
+
     run_id: str
     session_prefix: str | None = None
     timestamp: str | None = None
@@ -902,6 +932,7 @@ class RunFunnelResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # /journal/dates, /journal/{date}, /search  (Stage 5)
 # ---------------------------------------------------------------------------
+
 
 class JournalDatesResponse(BaseModel):
     dates: list[str] = []
@@ -945,6 +976,7 @@ class SearchAgentLogHit(BaseModel):
 # ---------------------------------------------------------------------------
 # /research/daily/{date} — day-scoped Research Intelligence projection
 # ---------------------------------------------------------------------------
+
 
 class ResearchFreshness(BaseModel):
     latest_recorded_at: str | None = None
@@ -1027,6 +1059,7 @@ class SearchResponse(BaseModel):
 # into dollars using `risk_dollars_per_call` (a labeled display convention,
 # not a real position size).
 # ---------------------------------------------------------------------------
+
 
 class ScorecardPoint(BaseModel):
     """One resolved call in an analyst's running-profit series."""
@@ -1330,5 +1363,3 @@ from src.api.schemas_muted import (  # noqa: E402,F401
     MutedKindCount,
     MutedLiveRiskMessage,
 )
-
-

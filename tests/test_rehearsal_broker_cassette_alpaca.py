@@ -50,9 +50,7 @@ def test_real_alpaca_trade_numeric_print_id_is_tokenized_and_public_safe():
     assert "987654321012345" not in json.dumps(payload)
     assert_public_safe(payload)
     replay = ReplayBrokerCassette(json.loads(json.dumps(payload)))
-    answer = replay.client("stock_historical_data").get_stock_latest_trade(
-        {"symbol_or_symbols": ["SPY"]}
-    )
+    answer = replay.client("stock_historical_data").get_stock_latest_trade({"symbol_or_symbols": ["SPY"]})
     assert answer["SPY"].id == "<QAMC:broker_id:0001>"
     replay.assert_consumed()
 
@@ -149,13 +147,9 @@ def test_real_alpaca_snapshot_revives_nested_models_for_the_real_consumer():
     )
     actual = market_data.get_intraday_snapshots(["SPY"])["SPY"]
     assert actual["last_price"] == 670.25
-    assert actual["last_trade_at"] == datetime(
-        2026, 10, 5, 14, 30, tzinfo=timezone.utc
-    )
+    assert actual["last_trade_at"] == datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
     assert actual["minute_close"] == 670.22
-    assert actual["minute_bar_at"] == datetime(
-        2026, 10, 5, 14, 30, tzinfo=timezone.utc
-    )
+    assert actual["minute_bar_at"] == datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
     assert actual["session_open"] == 668.0
     assert actual["session_close"] == 670.10
     assert actual["prev_close"] == 667.0

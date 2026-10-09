@@ -44,61 +44,79 @@ def _db(tmp_path, name="census.db"):
 
 def _target(db, run_id, decision_id, symbol, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="portfolio_manager",
-        kind="target", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({
-            "symbol": symbol, "risk_allocation_pct": 1.0,
-            "conviction": "high", "thesis": "t", "thesis_invalid_if": "x",
-        }),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps(
+            {
+                "symbol": symbol,
+                "risk_allocation_pct": 1.0,
+                "conviction": "high",
+                "thesis": "t",
+                "thesis_invalid_if": "x",
+            }
+        ),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
 def _proposed_order(db, run_id, decision_id, symbol, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="portfolio_manager",
-        kind="proposed_order", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({"action": "BUY", "symbol": symbol,
-                                  "allocation_pct": 5.0}),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps({"action": "BUY", "symbol": symbol, "allocation_pct": 5.0}),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
-def _pipeline_event(db, run_id, decision_id, symbol, stage, outcome, reason,
-                     detail=None, days_ago=1):
+def _pipeline_event(db, run_id, decision_id, symbol, stage, outcome, reason, detail=None, days_ago=1):
     payload = {"stage": stage, "outcome": outcome, "reason": reason}
     if detail is not None:
         payload["detail"] = detail
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="pipeline",
-        kind="pipeline_event", scope="symbol", symbol=symbol,
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="pipeline",
+        kind="pipeline_event",
+        scope="symbol",
+        symbol=symbol,
         evidence_json=json.dumps(payload),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
 
 def _skip(db, run_id, decision_id, symbol, reason, days_ago=1):
     row_id = db.insert_specialist_evidence(
-        run_id=run_id, decision_id=decision_id, agent_name="execution",
-        kind="execution_skip", scope="symbol", symbol=symbol,
-        evidence_json=json.dumps({"symbol": symbol, "reason": reason,
-                                  "detail": "d"}),
+        run_id=run_id,
+        decision_id=decision_id,
+        agent_name="execution",
+        kind="execution_skip",
+        scope="symbol",
+        symbol=symbol,
+        evidence_json=json.dumps({"symbol": symbol, "reason": reason, "detail": "d"}),
     )
     db.conn.execute(
-        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) "
-        "WHERE id = ?", (f"-{days_ago} days", row_id),
+        "UPDATE specialist_evidence SET timestamp = datetime('now', ?) WHERE id = ?",
+        (f"-{days_ago} days", row_id),
     )
     db.conn.commit()
 
@@ -125,14 +143,22 @@ def test_symbol_guard_block_is_attributed_not_order_not_placed(tmp_path):
     db, path = _db(tmp_path)
     _target(db, "r1", "d1", "PATH", days_ago=2)
     _proposed_order(db, "r1", "d1", "PATH", days_ago=2)
-    _pipeline_event(db, "r1", "d1", "PATH", "deterministic_gate", "blocked",
-                     "symbol_guard", detail="no supporting analysis",
-                     days_ago=2)
+    _pipeline_event(
+        db,
+        "r1",
+        "d1",
+        "PATH",
+        "deterministic_gate",
+        "blocked",
+        "symbol_guard",
+        detail="no supporting analysis",
+        days_ago=2,
+    )
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "PATH", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "PATH", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "symbol_guard"
     assert reason != "order_not_placed"
 
@@ -145,14 +171,22 @@ def test_sector_concentration_block_is_attributed_via_hard_risk(tmp_path):
     db, path = _db(tmp_path)
     _target(db, "r1", "d1", "XOM", days_ago=2)
     _proposed_order(db, "r1", "d1", "XOM", days_ago=2)
-    _pipeline_event(db, "r1", "d1", "XOM", "deterministic_gate", "blocked",
-                     "hard_risk", detail="sector_concentration: Energy at 32%",
-                     days_ago=2)
+    _pipeline_event(
+        db,
+        "r1",
+        "d1",
+        "XOM",
+        "deterministic_gate",
+        "blocked",
+        "hard_risk",
+        detail="sector_concentration: Energy at 32%",
+        days_ago=2,
+    )
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "XOM", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "XOM", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "hard_risk"
     assert reason != "order_not_placed"
 
@@ -167,13 +201,12 @@ def test_malformed_risk_manager_response_is_attributed(tmp_path):
     db, path = _db(tmp_path)
     _target(db, "r1", "d1", "NVDA", days_ago=2)
     _proposed_order(db, "r1", "d1", "NVDA", days_ago=2)
-    _pipeline_event(db, "r1", "d1", "NVDA", "risk", "failed",
-                     "risk_manager_unparseable_output", days_ago=2)
+    _pipeline_event(db, "r1", "d1", "NVDA", "risk", "failed", "risk_manager_unparseable_output", days_ago=2)
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "NVDA", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "NVDA", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "risk_manager_unparseable_output"
     assert reason != "order_not_placed"
 
@@ -189,9 +222,9 @@ def test_insufficient_cash_was_already_correctly_attributed(tmp_path):
     _skip(db, "r1", "d1", "JPM", "insufficient_cash", days_ago=2)
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "JPM", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "JPM", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "insufficient_cash"
     assert ("d1", "JPM") not in recorded_reasons
 
@@ -204,17 +237,18 @@ def test_a_data_fault_is_its_own_bucket_not_constructor_dropped(tmp_path):
     "why didn't we trade" statistic as a rules failure."""
     db, path = _db(tmp_path)
     _target(db, "r1", "d1", "NVDA")
-    _pipeline_event(db, "r1", "d1", "NVDA", "deterministic_gate",
-                    "unmeasurable", "data_fault",
-                    detail="DATA FAULT: no ATR reading")
+    _pipeline_event(
+        db, "r1", "d1", "NVDA", "deterministic_gate", "unmeasurable", "data_fault", detail="DATA FAULT: no ATR reading"
+    )
     db.conn.execute(
         "UPDATE specialist_evidence SET evidence_json = json_set(evidence_json, "
         "'$.fault', 'volatility_reading_missing') WHERE kind='pipeline_event'",
     )
     db.conn.commit()
     ordered, verdicts, skips, fills, recorded = _classify_all(path)
-    reason = classify("d1", "NVDA", ordered=ordered, verdicts=verdicts,
-                      skips=skips, fills=fills, recorded_reasons=recorded)
+    reason = classify(
+        "d1", "NVDA", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded
+    )
     assert reason == "data_fault:volatility_reading_missing"
     assert reason != "constructor_dropped"
 
@@ -226,14 +260,22 @@ def test_constructor_dropped_attribution_is_unchanged(tmp_path):
     """
     db, path = _db(tmp_path)
     _target(db, "r1", "d1", "AMD", days_ago=2)
-    _pipeline_event(db, "r1", "d1", "AMD", "deterministic_gate", "blocked",
-                     "constructor_dropped", detail="widened past noise band",
-                     days_ago=2)
+    _pipeline_event(
+        db,
+        "r1",
+        "d1",
+        "AMD",
+        "deterministic_gate",
+        "blocked",
+        "constructor_dropped",
+        detail="widened past noise band",
+        days_ago=2,
+    )
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "AMD", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "AMD", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "constructor_dropped"
 
 
@@ -247,7 +289,7 @@ def test_genuinely_unrecorded_gap_still_falls_through(tmp_path):
     _proposed_order(db, "r1", "d1", "GAP", days_ago=2)
 
     ordered, verdicts, skips, fills, recorded_reasons = _classify_all(path)
-    reason = classify("d1", "GAP", ordered=ordered, verdicts=verdicts,
-                       skips=skips, fills=fills,
-                       recorded_reasons=recorded_reasons)
+    reason = classify(
+        "d1", "GAP", ordered=ordered, verdicts=verdicts, skips=skips, fills=fills, recorded_reasons=recorded_reasons
+    )
     assert reason == "order_not_placed"

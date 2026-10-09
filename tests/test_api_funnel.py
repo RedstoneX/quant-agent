@@ -64,7 +64,8 @@ def test_funnel_executed_trade_reports_executed_state(client, seeded_evidence_db
 
 
 def test_funnel_exposes_canonical_lifecycle_events_and_terminal_trade(
-    client, seeded_evidence_db,
+    client,
+    seeded_evidence_db,
 ):
     db = Database(str(seeded_evidence_db))
     db.initialize()
@@ -80,20 +81,30 @@ def test_funnel_exposes_canonical_lifecycle_events_and_terminal_trade(
         ("position_management", "exited", "validated_exit_fill"),
     ):
         db.insert_specialist_evidence(
-            run_id=EXECUTED_RUN_ID, agent_name="pipeline",
-            kind="pipeline_event", scope="symbol", symbol="AAPL",
-            evidence_json=json.dumps({
-                "stage": stage, "outcome": outcome, "reason": reason,
-            }),
+            run_id=EXECUTED_RUN_ID,
+            agent_name="pipeline",
+            kind="pipeline_event",
+            scope="symbol",
+            symbol="AAPL",
+            evidence_json=json.dumps(
+                {
+                    "stage": stage,
+                    "outcome": outcome,
+                    "reason": reason,
+                }
+            ),
         )
-    db.conn.execute(
-        "UPDATE trades SET fill_qty=10, fill_price=150 WHERE broker_order_id='ord-1'"
-    )
+    db.conn.execute("UPDATE trades SET fill_qty=10, fill_price=150 WHERE broker_order_id='ord-1'")
     db.conn.commit()
     db.insert_trade(
-        symbol="AAPL", action="SELL", qty=5, price=160,
-        reasoning="position review exit", run_id=EXECUTED_RUN_ID,
-        broker_order_id="ord-exit", fill_status="submitted",
+        symbol="AAPL",
+        action="SELL",
+        qty=5,
+        price=160,
+        reasoning="position review exit",
+        run_id=EXECUTED_RUN_ID,
+        broker_order_id="ord-exit",
+        fill_status="submitted",
     )
     db.update_trade_fill("ord-exit", "filled", fill_qty=5, fill_price=160)
     db.close()
@@ -101,8 +112,14 @@ def test_funnel_exposes_canonical_lifecycle_events_and_terminal_trade(
     body = client.get(f"/runs/{EXECUTED_RUN_ID}/funnel").json()
     candidate = body["candidates"][0]
     assert [event["stage"] for event in candidate["pipeline_events"]] == [
-        "opportunity", "specialist", "portfolio_manager", "risk",
-        "deterministic_gate", "funding", "order", "protection",
+        "opportunity",
+        "specialist",
+        "portfolio_manager",
+        "risk",
+        "deterministic_gate",
+        "funding",
+        "order",
+        "protection",
         "position_management",
     ]
     assert candidate["order_status"] == "filled"
@@ -138,20 +155,32 @@ def neutral_pm_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=NEUTRAL_RUN_ID, agent_name="portfolio_manager", kind="reasoning", scope="run",
-        evidence_json=json.dumps({
-            "portfolio_view": "Decline noted; staying neutral pending confirmation.",
-            "reasoning_chain": _pm_reasoning_chain(),
-        }),
+        run_id=NEUTRAL_RUN_ID,
+        agent_name="portfolio_manager",
+        kind="reasoning",
+        scope="run",
+        evidence_json=json.dumps(
+            {
+                "portfolio_view": "Decline noted; staying neutral pending confirmation.",
+                "reasoning_chain": _pm_reasoning_chain(),
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=NEUTRAL_RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
+        run_id=NEUTRAL_RUN_ID,
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
         symbol="SQQQ",
-        evidence_json=json.dumps({
-            "symbol": "SQQQ", "rating": "buy", "conviction": "medium",
-            "reasoning_chain": _tech_reasoning_chain(),
-            "reasoning": "Breadth deteriorating, inverse setup forming.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "symbol": "SQQQ",
+                "rating": "buy",
+                "conviction": "medium",
+                "reasoning_chain": _tech_reasoning_chain(),
+                "reasoning": "Breadth deteriorating, inverse setup forming.",
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -188,29 +217,53 @@ def rejected_proposal_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=REJECTED_RUN_ID, agent_name="portfolio_manager", kind="target", scope="symbol",
-        symbol="TSLA", decision_id=REJECTED_DECISION_ID,
-        evidence_json=json.dumps({
-            "symbol": "TSLA", "target_weight_pct": 8.0, "conviction": "medium",
-            "thesis": "Momentum continuation.",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=REJECTED_RUN_ID, agent_name="portfolio_manager", kind="proposed_order", scope="symbol",
-        symbol="TSLA", decision_id=REJECTED_DECISION_ID,
-        evidence_json=json.dumps({
-            "action": "BUY", "symbol": "TSLA", "allocation_pct": 8.0,
-            "entry_price": 250.0, "stop_loss": 230.0, "take_profit": 290.0,
-            "reasoning": "constructed order",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=REJECTED_RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        run_id=REJECTED_RUN_ID,
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="TSLA",
         decision_id=REJECTED_DECISION_ID,
-        evidence_json=json.dumps({
-            "approved": False, "reasoning_chain": _risk_reasoning_chain(),
-            "reasoning": "Concentration limit already binding.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "symbol": "TSLA",
+                "target_weight_pct": 8.0,
+                "conviction": "medium",
+                "thesis": "Momentum continuation.",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=REJECTED_RUN_ID,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol="TSLA",
+        decision_id=REJECTED_DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "action": "BUY",
+                "symbol": "TSLA",
+                "allocation_pct": 8.0,
+                "entry_price": 250.0,
+                "stop_loss": 230.0,
+                "take_profit": 290.0,
+                "reasoning": "constructed order",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=REJECTED_RUN_ID,
+        agent_name="risk_manager",
+        kind="verdict",
+        scope="run",
+        decision_id=REJECTED_DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "approved": False,
+                "reasoning_chain": _risk_reasoning_chain(),
+                "reasoning": "Concentration limit already binding.",
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -247,37 +300,68 @@ def unfunded_skip_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=UNFUNDED_RUN_ID, agent_name="portfolio_manager", kind="target", scope="symbol",
-        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
-        evidence_json=json.dumps({
-            "symbol": "XLE", "target_weight_pct": 10.0, "conviction": "high",
-            "thesis": "Energy tailwind.",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=UNFUNDED_RUN_ID, agent_name="portfolio_manager", kind="proposed_order", scope="symbol",
-        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
-        evidence_json=json.dumps({
-            "action": "BUY", "symbol": "XLE", "allocation_pct": 10.0,
-            "entry_price": 63.78, "stop_loss": 59.0, "take_profit": 73.34,
-            "reasoning": "constructed order",
-        }),
-    )
-    db.insert_specialist_evidence(
-        run_id=UNFUNDED_RUN_ID, agent_name="risk_manager", kind="verdict", scope="run",
+        run_id=UNFUNDED_RUN_ID,
+        agent_name="portfolio_manager",
+        kind="target",
+        scope="symbol",
+        symbol="XLE",
         decision_id=UNFUNDED_DECISION_ID,
-        evidence_json=json.dumps({
-            "approved": True, "reasoning_chain": _risk_reasoning_chain(),
-            "reasoning": "Approved.",
-        }),
+        evidence_json=json.dumps(
+            {
+                "symbol": "XLE",
+                "target_weight_pct": 10.0,
+                "conviction": "high",
+                "thesis": "Energy tailwind.",
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=UNFUNDED_RUN_ID, agent_name="execution", kind="execution_skip", scope="symbol",
-        symbol="XLE", decision_id=UNFUNDED_DECISION_ID,
-        evidence_json=json.dumps({
-            "symbol": "XLE", "reason": "insufficient_cash",
-            "detail": "estimated cost $637.80 exceeds available cash $145.11",
-        }),
+        run_id=UNFUNDED_RUN_ID,
+        agent_name="portfolio_manager",
+        kind="proposed_order",
+        scope="symbol",
+        symbol="XLE",
+        decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "action": "BUY",
+                "symbol": "XLE",
+                "allocation_pct": 10.0,
+                "entry_price": 63.78,
+                "stop_loss": 59.0,
+                "take_profit": 73.34,
+                "reasoning": "constructed order",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID,
+        agent_name="risk_manager",
+        kind="verdict",
+        scope="run",
+        decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "approved": True,
+                "reasoning_chain": _risk_reasoning_chain(),
+                "reasoning": "Approved.",
+            }
+        ),
+    )
+    db.insert_specialist_evidence(
+        run_id=UNFUNDED_RUN_ID,
+        agent_name="execution",
+        kind="execution_skip",
+        scope="symbol",
+        symbol="XLE",
+        decision_id=UNFUNDED_DECISION_ID,
+        evidence_json=json.dumps(
+            {
+                "symbol": "XLE",
+                "reason": "insufficient_cash",
+                "detail": "estimated cost $637.80 exceeds available cash $145.11",
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))
@@ -315,34 +399,57 @@ def analysis_drop_db(tmp_path, monkeypatch):
     db = Database(str(db_path))
     db.initialize()
     db.insert_specialist_evidence(
-        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
-        scope="symbol", symbol="NVDA",
-        evidence_json=json.dumps({
-            "stage": "analysis", "outcome": "dropped",
-            "model": "TechAnalysisResult", "reason_code": "malformed_row",
-            "reason": "malformed: Expecting ',' delimiter",
-            "count": 1, "recovered": False,
-        }),
+        run_id=DROPPED_RUN_ID,
+        agent_name="pipeline",
+        kind="analysis_drop",
+        scope="symbol",
+        symbol="NVDA",
+        evidence_json=json.dumps(
+            {
+                "stage": "analysis",
+                "outcome": "dropped",
+                "model": "TechAnalysisResult",
+                "reason_code": "malformed_row",
+                "reason": "malformed: Expecting ',' delimiter",
+                "count": 1,
+                "recovered": False,
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
-        scope="symbol", symbol="META",
-        evidence_json=json.dumps({
-            "stage": "analysis", "outcome": "recovered",
-            "model": "TechAnalysisResult", "reason_code": "schema_invalid",
-            "reason": "failed validation on rating",
-            "count": 1, "recovered": True,
-        }),
+        run_id=DROPPED_RUN_ID,
+        agent_name="pipeline",
+        kind="analysis_drop",
+        scope="symbol",
+        symbol="META",
+        evidence_json=json.dumps(
+            {
+                "stage": "analysis",
+                "outcome": "recovered",
+                "model": "TechAnalysisResult",
+                "reason_code": "schema_invalid",
+                "reason": "failed validation on rating",
+                "count": 1,
+                "recovered": True,
+            }
+        ),
     )
     db.insert_specialist_evidence(
-        run_id=DROPPED_RUN_ID, agent_name="pipeline", kind="analysis_drop",
-        scope="symbol", symbol="ORCL",
-        evidence_json=json.dumps({  # pre-158-code row: no reason_code key
-            "stage": "analysis", "outcome": "dropped",
-            "model": "TechAnalysisResult",
-            "reason": "malformed: unterminated string",
-            "count": 1, "recovered": False,
-        }),
+        run_id=DROPPED_RUN_ID,
+        agent_name="pipeline",
+        kind="analysis_drop",
+        scope="symbol",
+        symbol="ORCL",
+        evidence_json=json.dumps(
+            {  # pre-158-code row: no reason_code key
+                "stage": "analysis",
+                "outcome": "dropped",
+                "model": "TechAnalysisResult",
+                "reason": "malformed: unterminated string",
+                "count": 1,
+                "recovered": False,
+            }
+        ),
     )
     db.close()
     monkeypatch.setattr(db_reads, "get_db_path", lambda: str(db_path))

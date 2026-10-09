@@ -31,22 +31,38 @@ def seeded_journal_db(tmp_path, monkeypatch):
     db.initialize()
 
     db.insert_agent_log(
-        agent_name="tech_analyst", run_id=RUN_ID,
-        input_summary="tech input", output_summary="tech output",
-        full_response="{}", model="claude-opus-4-7", tokens_used=200,
+        agent_name="tech_analyst",
+        run_id=RUN_ID,
+        input_summary="tech input",
+        output_summary="tech output",
+        full_response="{}",
+        model="claude-opus-4-7",
+        tokens_used=200,
         cost_usd=0.01,
     )
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=RUN_ID,
-        input_summary="pm input", output_summary="Deployed into AAPL strength",
-        full_response='{"targets": []}', model="gpt-5.5", tokens_used=500,
-        cost_usd=0.05, decision_id=DECISION_ID,
+        agent_name="portfolio_manager",
+        run_id=RUN_ID,
+        input_summary="pm input",
+        output_summary="Deployed into AAPL strength",
+        full_response='{"targets": []}',
+        model="gpt-5.5",
+        tokens_used=500,
+        cost_usd=0.05,
+        decision_id=DECISION_ID,
     )
     db.insert_trade(
-        symbol="AAPL", action="BUY", qty=10, price=150.0,
-        reasoning="services growth thesis", run_id=RUN_ID,
-        stop_loss=140.0, take_profit=170.0,
-        broker_order_id="ord-1", fill_status="filled", decision_id=DECISION_ID,
+        symbol="AAPL",
+        action="BUY",
+        qty=10,
+        price=150.0,
+        reasoning="services growth thesis",
+        run_id=RUN_ID,
+        stop_loss=140.0,
+        take_profit=170.0,
+        broker_order_id="ord-1",
+        fill_status="filled",
+        decision_id=DECISION_ID,
     )
     # insert_agent_log/insert_trade default `timestamp` to `datetime('now')`
     # (real wall-clock UTC), not the fixed DATE this fixture is journaling
@@ -62,12 +78,19 @@ def seeded_journal_db(tmp_path, monkeypatch):
     db.conn.commit()
     db.insert_daily_pnl(date=DATE, total_value=100_000.0, daily_pnl=500.0, daily_return_pct=0.5)
     db.save_insights(
-        date=DATE, tomorrow_outlook="cautiously bullish", lessons="none yet",
-        suggested_actions="hold", risk_rating="low",
+        date=DATE,
+        tomorrow_outlook="cautiously bullish",
+        lessons="none yet",
+        suggested_actions="hold",
+        risk_rating="low",
     )
     db.insert_specialist_evidence(
-        run_id=RUN_ID, agent_name="tech_analyst", kind="analysis", scope="symbol",
-        symbol="AAPL", evidence_json='{"symbol": "AAPL", "rating": "buy"}',
+        run_id=RUN_ID,
+        agent_name="tech_analyst",
+        kind="analysis",
+        scope="symbol",
+        symbol="AAPL",
+        evidence_json='{"symbol": "AAPL", "rating": "buy"}',
     )
 
     db.close()
@@ -99,9 +122,13 @@ def run_only_day_db(tmp_path, monkeypatch):
     db.initialize()
 
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=RUN_ONLY_RUN_ID,
-        input_summary="pm input", output_summary="stayed neutral",
-        full_response='{"targets": []}', model="gpt-5.5", tokens_used=300,
+        agent_name="portfolio_manager",
+        run_id=RUN_ONLY_RUN_ID,
+        input_summary="pm input",
+        output_summary="stayed neutral",
+        full_response='{"targets": []}',
+        model="gpt-5.5",
+        tokens_used=300,
         cost_usd=0.02,
     )
     # 15:00 UTC on RUN_ONLY_DATE is 11:00 ET the same calendar day (EDT,
@@ -118,7 +145,8 @@ def run_only_day_db(tmp_path, monkeypatch):
 
 
 def test_journal_dates_includes_a_day_with_only_a_run_no_insights_no_daily_pnl(
-    client, run_only_day_db,
+    client,
+    run_only_day_db,
 ):
     r = client.get("/journal/dates")
     assert r.status_code == 200
@@ -146,9 +174,13 @@ def late_utc_and_malformed_ts_db(tmp_path, monkeypatch):
     db.initialize()
 
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=LATE_UTC_RUN_ID,
-        input_summary="i", output_summary="o", full_response="{}",
-        model="m", tokens_used=1,
+        agent_name="portfolio_manager",
+        run_id=LATE_UTC_RUN_ID,
+        input_summary="i",
+        output_summary="o",
+        full_response="{}",
+        model="m",
+        tokens_used=1,
     )
     db.conn.execute(
         "UPDATE agent_logs SET timestamp = ? WHERE run_id = ?",
@@ -156,9 +188,13 @@ def late_utc_and_malformed_ts_db(tmp_path, monkeypatch):
     )
 
     db.insert_agent_log(
-        agent_name="portfolio_manager", run_id=MALFORMED_TS_RUN_ID,
-        input_summary="i", output_summary="o", full_response="{}",
-        model="m", tokens_used=1,
+        agent_name="portfolio_manager",
+        run_id=MALFORMED_TS_RUN_ID,
+        input_summary="i",
+        output_summary="o",
+        full_response="{}",
+        model="m",
+        tokens_used=1,
     )
     db.conn.execute(
         "UPDATE agent_logs SET timestamp = ? WHERE run_id = ?",
@@ -171,7 +207,8 @@ def late_utc_and_malformed_ts_db(tmp_path, monkeypatch):
 
 
 def test_journal_dates_converts_a_late_utc_timestamp_to_the_prior_et_day(
-    client, late_utc_and_malformed_ts_db,
+    client,
+    late_utc_and_malformed_ts_db,
 ):
     r = client.get("/journal/dates")
     assert r.status_code == 200
@@ -180,7 +217,8 @@ def test_journal_dates_converts_a_late_utc_timestamp_to_the_prior_et_day(
 
 
 def test_journal_dates_skips_a_malformed_timestamp_without_500(
-    client, late_utc_and_malformed_ts_db,
+    client,
+    late_utc_and_malformed_ts_db,
 ):
     """A malformed agent_logs.timestamp must degrade (skip that one run),
     never take down the whole /journal/dates read for every other day."""

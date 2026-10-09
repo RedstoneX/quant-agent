@@ -235,11 +235,11 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
             width = cur.low - prev.high
             from_price, to_price, direction = prev.high, cur.low, "up"
             # Filled if anything after it traded back down into the gap.
-            filled = any(b.low <= prev.high for b in bars[i + 1:])
+            filled = any(b.low <= prev.high for b in bars[i + 1 :])
         elif cur.high < prev.low:  # gap down
             width = prev.low - cur.high
             from_price, to_price, direction = prev.low, cur.high, "down"
-            filled = any(b.high >= prev.low for b in bars[i + 1:])
+            filled = any(b.high >= prev.low for b in bars[i + 1 :])
         else:
             continue
         if filled:
@@ -253,9 +253,7 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
             # No ATR reading yet (start of history). Report the gap rather
             # than invent a threshold to judge it by.
             size_atr = None
-        out.append(
-            Gap(str(cur.date), from_price, to_price, direction, n - 1 - i, size_atr)
-        )
+        out.append(Gap(str(cur.date), from_price, to_price, direction, n - 1 - i, size_atr))
     return out
 
 
@@ -301,8 +299,8 @@ def compute_market_context(
 
     # 52-week range.
     window_52w = closes[-_W_12M:] if len(closes) >= _W_12M else closes
-    high_52w = float(highs[-len(window_52w):].max())
-    low_52w = float(lows[-len(window_52w):].min())
+    high_52w = float(highs[-len(window_52w) :].max())
+    low_52w = float(lows[-len(window_52w) :].min())
     span = high_52w - low_52w
     range_position = round((last_close - low_52w) / span * 100.0, 1) if span > 0 else None
 
@@ -319,9 +317,7 @@ def compute_market_context(
         atr_pct = round(atr_now / last_close * 100.0, 2)
         recent = atr[-_W_12M:] if atr.size >= _W_12M else atr
         if recent.size > 1:
-            atr_percentile = round(
-                float((recent <= atr_now).sum()) / float(recent.size) * 100.0, 1
-            )
+            atr_percentile = round(float((recent <= atr_now).sum()) / float(recent.size) * 100.0, 1)
             if atr_percentile >= 70:
                 volatility_state = "expanding"
             elif atr_percentile <= 30:
@@ -374,7 +370,7 @@ def compute_market_context(
     sessions_in_range = None
     if len(bars) >= 2 * _CONSOLIDATION_WINDOW:
         window = bars[-_CONSOLIDATION_WINDOW:]
-        prior = bars[-2 * _CONSOLIDATION_WINDOW:-_CONSOLIDATION_WINDOW]
+        prior = bars[-2 * _CONSOLIDATION_WINDOW : -_CONSOLIDATION_WINDOW]
         cons_high = float(max(b.high for b in window))
         cons_low = float(min(b.low for b in window))
         mid = (cons_high + cons_low) / 2.0
@@ -490,7 +486,8 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         state = f" · {ctx.volatility_state}" if ctx.volatility_state else ""
         pctile = (
             f" (ATR at the {ctx.atr_percentile_1y:.0f}th percentile of its past year)"
-            if ctx.atr_percentile_1y is not None else ""
+            if ctx.atr_percentile_1y is not None
+            else ""
         )
         lines.append(f"  Volatility: ATR {ctx.atr_pct:.2f}% of price{state}{pctile}")
 
@@ -506,10 +503,7 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         # Width is stated in the name's OWN ATR as well as in percent: a 6%
         # base on a quiet name and a 6% base on a high-beta name are not the
         # same object, and the ATR multiple is the half that says which.
-        in_atr = (
-            f", {ctx.consolidation_range_atr:.1f}× its own ATR"
-            if ctx.consolidation_range_atr is not None else ""
-        )
+        in_atr = f", {ctx.consolidation_range_atr:.1f}× its own ATR" if ctx.consolidation_range_atr is not None else ""
         lines.append(
             f"  CONSOLIDATING: ${ctx.consolidation_low:,.2f}–${ctx.consolidation_high:,.2f} "
             f"({ctx.consolidation_range_pct:.1f}% wide{in_atr}) for "
@@ -523,8 +517,10 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         lines.append(f"  Liquidity: ${ctx.avg_dollar_volume_20d / 1e6:,.1f}M average daily dollar volume")
 
     if ctx.up_down_volume_ratio is not None:
-        verdict = "accumulation" if ctx.up_down_volume_ratio > 1.2 else (
-            "distribution" if ctx.up_down_volume_ratio < 0.83 else "balanced"
+        verdict = (
+            "accumulation"
+            if ctx.up_down_volume_ratio > 1.2
+            else ("distribution" if ctx.up_down_volume_ratio < 0.83 else "balanced")
         )
         lines.append(f"  Up/down volume (20d): {ctx.up_down_volume_ratio:.2f} — {verdict}")
 

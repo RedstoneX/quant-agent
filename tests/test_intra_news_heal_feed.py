@@ -10,6 +10,7 @@ The gate is right and untouched. The defect is upstream: the peek's wire
 text must reach the news seat's one paid heal retry. A peek that returned
 nothing must still lose the seat.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -23,17 +24,24 @@ def _stored_report() -> dict:
 
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
-            last_updated="2026-09-17", era_themes=["AI capex"],
+            last_updated="2026-09-17",
+            era_themes=["AI capex"],
             current_regime="risk-on",
         ),
         state_changes=[],
-        stock_news={"AAPL": [{
-            "headline": "Apple beats",
-            "sentiment": "bullish",
-            "conviction": "high",
-            "impact_summary": "beat",
-        }]},
-        pm_briefing="ok", market_sentiment="bullish", confidence="medium",
+        stock_news={
+            "AAPL": [
+                {
+                    "headline": "Apple beats",
+                    "sentiment": "bullish",
+                    "conviction": "high",
+                    "impact_summary": "beat",
+                }
+            ]
+        },
+        pm_briefing="ok",
+        market_sentiment="bullish",
+        confidence="medium",
     ).model_dump()
 
 
@@ -148,7 +156,8 @@ def test_expired_news_seat_is_re_run_with_that_wire():
     ctx = _ctx()
     analyst = _Analyst()
     obj = _pipeline(
-        ["Apple beats", "AAPL guidance cut after close"], analyst=analyst,
+        ["Apple beats", "AAPL guidance cut after close"],
+        analyst=analyst,
     )
     ctx.data_status = {"news": _carry(obj, ctx).status}
     assert ctx.data_status["news"] == "expired"

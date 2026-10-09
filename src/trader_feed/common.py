@@ -2,6 +2,7 @@
 
 Moved verbatim from src/trader_feed.py; see src/trader_feed/__init__.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,10 @@ _DB_PATH = _NOTIFIER_DB_PATH
 _SWEEP_SYMBOLS = frozenset({"SGOV", "BIL"})
 _BASE_ONLY_STATUSES = frozenset(
     {
-        "market_holiday", "early_close", "broker_error", "analysis_error",
+        "market_holiday",
+        "early_close",
+        "broker_error",
+        "analysis_error",
         "fetch_error",
         # Guard 1 (2026-09-02): the kill switch's early check returns before
         # any of the rich per-mode data (orders/positions/trades) exists to
@@ -61,14 +65,17 @@ _BASE_ONLY_STATUSES = frozenset(
 # the scan ran and correctly found nothing. Only a real candidate engaged
 # (intraday_no_trades/intraday_executed) or a genuine problem (crashed/
 # suspended/analysis_error) is worth a message.
-_INTRADAY_SILENT_STATUSES = frozenset({
-    "intraday_scan_disabled", "intraday_scan_lock_contended",
-    "intraday_scan_no_opportunity",
-    # item 121: morning released the owner lock on this same 09:30-shared
-    # tick — still the open, not a real INTRADAY look, so no INTRADAY
-    # OPPORTUNITY message is sold to the owner for it.
-    "intraday_scan_open_overlap",
-})
+_INTRADAY_SILENT_STATUSES = frozenset(
+    {
+        "intraday_scan_disabled",
+        "intraday_scan_lock_contended",
+        "intraday_scan_no_opportunity",
+        # item 121: morning released the owner lock on this same 09:30-shared
+        # tick — still the open, not a real INTRADAY look, so no INTRADAY
+        # OPPORTUNITY message is sold to the owner for it.
+        "intraday_scan_open_overlap",
+    }
+)
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -116,7 +123,9 @@ def _status_emoji(status: str) -> str:
         # ordinary is the wrong kind of wrong. Nothing emits either any more
         # (item 32 — the liquidation half went 2026-09-14, the halt itself
         # 2026-09-20).
-        "failed", "emergency_sold", "daily_loss_halted",  # retired-ok
+        "failed",
+        "emergency_sold",
+        "daily_loss_halted",  # retired-ok
         "kill_switch_halted",
     }:
         return "🔴"
@@ -274,17 +283,19 @@ def _skip_who(reason: str) -> str:
 #   insufficient_cash / unusable_stop / bad_quantity / fat_finger_guard
 #     "no cash", "no usable stop", "absurd quantity", "absurd price" must all
 #     be said loudly: a guard firing means something upstream went wrong.
-_DELIBERATE_SKIP_REASONS = frozenset({
-    # The $500 minimum trade size — one of the three the owner named.
-    "below_min_notional",
-    # Deterministic sizing arithmetic resolving to nothing to place.
-    "qty_zero",
-    # A full book with nothing outranking a holding. PR #600 established
-    # on the owner's own words that this is the desk's normal operating
-    # state, not a fault: "Yes portfolio is full. But we're still reviewing
-    # things, which is how we built it."
-    "rotation_room_not_freed",
-})
+_DELIBERATE_SKIP_REASONS = frozenset(
+    {
+        # The $500 minimum trade size — one of the three the owner named.
+        "below_min_notional",
+        # Deterministic sizing arithmetic resolving to nothing to place.
+        "qty_zero",
+        # A full book with nothing outranking a holding. PR #600 established
+        # on the owner's own words that this is the desk's normal operating
+        # state, not a fault: "Yes portfolio is full. But we're still reviewing
+        # things, which is how we built it."
+        "rotation_room_not_freed",
+    }
+)
 
 
 def _skip_is_fault(reason: Any) -> bool:
@@ -340,10 +351,7 @@ def _machine_detail(text: Any) -> str:
     would be inventing a fact. What changes is that the owner is told what
     he is looking at and that there is nothing in it for him to do.
     """
-    return (
-        "Machine fault text, kept for the record — nothing here needs "
-        f"anything from you: {_clip(text, 900)}"
-    )
+    return f"Machine fault text, kept for the record — nothing here needs anything from you: {_clip(text, 900)}"
 
 
 def _order_end_plain(fill_status: Any) -> str:
@@ -368,8 +376,7 @@ def _fill_state_plain(fill_status: Any) -> str:
     if known:
         return known
     return (
-        "state not recorded in plain words (its own code for it, kept for "
-        f"the record, is “{token or 'not recorded'}”)"
+        f"state not recorded in plain words (its own code for it, kept for the record, is “{token or 'not recorded'}”)"
     )
 
 
@@ -420,8 +427,14 @@ def _trade_reached_broker(fill_status: Any) -> bool:
     FAILED — a false alarm on an order that was, in fact, working.
     """
     return str(fill_status or "").lower() in {
-        "filled", "submitted", "pending_submit",
-        "partially_filled", "accepted", "new", "held", "pending_new",
+        "filled",
+        "submitted",
+        "pending_submit",
+        "partially_filled",
+        "accepted",
+        "new",
+        "held",
+        "pending_new",
     }
 
 
@@ -468,13 +481,15 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         symbol = str(row.get("symbol", "?")).upper()
         if symbol in seen:
             continue
-        rows.append({
-            "symbol": symbol,
-            "action": _decision_action_for(symbol, snap),
-            "who": _skip_who(row.get("reason", "")),
-            "reason": row.get("detail") or row.get("reason") or "blocked",
-            "fault": _skip_is_fault(row.get("reason")),
-        })
+        rows.append(
+            {
+                "symbol": symbol,
+                "action": _decision_action_for(symbol, snap),
+                "who": _skip_who(row.get("reason", "")),
+                "reason": row.get("detail") or row.get("reason") or "blocked",
+                "fault": _skip_is_fault(row.get("reason")),
+            }
+        )
         seen.add(symbol)
 
     risk = snap.get("risk")
@@ -486,18 +501,20 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             if symbol in seen:
                 continue
             stated = str(row.get("reason") or "").strip()
-            rows.append({
-                "symbol": symbol,
-                "action": _decision_action_for(symbol, snap),
-                "who": "Blocked by risk manager",
-                "reason": stated or "refused without a stated reason",
-                # The risk seat refusing a name it is built to refuse is
-                # the risk seat working. But this field is free text with
-                # no code behind it, so the ONLY thing separating a working
-                # risk seat from a malfunctioning one here is whether it
-                # said why. A refusal with nothing written down stays loud.
-                "fault": not stated,
-            })
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "action": _decision_action_for(symbol, snap),
+                    "who": "Blocked by risk manager",
+                    "reason": stated or "refused without a stated reason",
+                    # The risk seat refusing a name it is built to refuse is
+                    # the risk seat working. But this field is free text with
+                    # no code behind it, so the ONLY thing separating a working
+                    # risk seat from a malfunctioning one here is whether it
+                    # said why. A refusal with nothing written down stays loud.
+                    "fault": not stated,
+                }
+            )
             seen.add(symbol)
 
     _, stalled = _classify_trades(snap)
@@ -505,20 +522,22 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         symbol = str(row.get("symbol", "?")).upper()
         if symbol in seen:
             continue
-        rows.append({
-            "symbol": symbol,
-            "action": str(row.get("action", "?")).upper(),
-            "who": "Not filled in time",
-            # Board item 89 defect 5: this used to print the broker's own
-            # status token verbatim ("(status: canceled)"). `_ORDER_END_WORDS`
-            # says the same thing in words; an unmapped token is described,
-            # never pasted.
-            "reason": _order_end_plain(row.get("fill_status")),
-            # An order the desk MEANT to place that reached neither a fill
-            # nor a live working order is an intention that did not happen.
-            # Loud.
-            "fault": True,
-        })
+        rows.append(
+            {
+                "symbol": symbol,
+                "action": str(row.get("action", "?")).upper(),
+                "who": "Not filled in time",
+                # Board item 89 defect 5: this used to print the broker's own
+                # status token verbatim ("(status: canceled)"). `_ORDER_END_WORDS`
+                # says the same thing in words; an unmapped token is described,
+                # never pasted.
+                "reason": _order_end_plain(row.get("fill_status")),
+                # An order the desk MEANT to place that reached neither a fill
+                # nor a live working order is an intention that did not happen.
+                # Loud.
+                "fault": True,
+            }
+        )
         seen.add(symbol)
 
     # Board item 89 defect 6 — the silent drop. A target the constructor
@@ -529,7 +548,7 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
     # sentence written at the refusal site (`PortfolioConstructor._note_
     # refusal`), so nothing is invented here; the internal refusal CODE
     # beside it is deliberately NOT rendered.
-    for row in (snap.get("constructor_blocks") or []):
+    for row in snap.get("constructor_blocks") or []:
         if not isinstance(row, dict):
             continue
         symbol = str(row.get("symbol", "?")).upper()
@@ -552,24 +571,25 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         if not detail:
             # Never a guess and never an internal code: say that the reason
             # was not written down.
-            detail = (
-                "the desk ended this plan before placing an order and did "
-                "not record why"
-            )
-        rows.append({
-            "symbol": symbol,
-            "action": _decision_action_for(symbol, snap),
-            "who": "Stopped by the desk before an order was placed",
-            "reason": detail,
-            "fault": fault,
-        })
+            detail = "the desk ended this plan before placing an order and did not record why"
+        rows.append(
+            {
+                "symbol": symbol,
+                "action": _decision_action_for(symbol, snap),
+                "who": "Stopped by the desk before an order was placed",
+                "reason": detail,
+                "fault": fault,
+            }
+        )
         seen.add(symbol)
 
     return rows
 
 
 def _looked_at_rows(
-    snap: dict[str, Any], candidates: list[str] | None, acted_symbols: set[str],
+    snap: dict[str, Any],
+    candidates: list[str] | None,
+    acted_symbols: set[str],
 ) -> list[dict]:
     """Analyzed signals that were neither done nor blocked — the PM/
     constructor's silent "pass". Addresses the 5-analyzed/5-actionable
@@ -590,10 +610,7 @@ def _traded_word(done_rows: list[dict] | None) -> str:
     broker: all exits read SOLD, all entries read BOUGHT, a mix reads
     TRADED. An unknown action falls back to TRADED rather than guessing
     a direction."""
-    actions = {
-        str(row.get("action", "")).upper() for row in (done_rows or [])
-        if isinstance(row, dict)
-    }
+    actions = {str(row.get("action", "")).upper() for row in (done_rows or []) if isinstance(row, dict)}
     exits = {"SELL", "REDUCE", "COVER", "TRIM"}
     entries = {"BUY", "SHORT", "ADD"}
     if actions and actions <= exits:
@@ -607,14 +624,13 @@ def _fault_count(blocked_rows: list[dict] | None) -> int:
     """How many blocked rows mean something BROKE. A row with no `fault`
     key is counted as one: an unclassified block is the case the report
     cannot tell apart, and the unknown case falls the loud way."""
-    return sum(
-        1 for row in (blocked_rows or [])
-        if not isinstance(row, dict) or row.get("fault", True)
-    )
+    return sum(1 for row in (blocked_rows or []) if not isinstance(row, dict) or row.get("fault", True))
 
 
 def _outcome_word(
-    status: str, done_count: int, blocked_count: int,
+    status: str,
+    done_count: int,
+    blocked_count: int,
     done_rows: list[dict] | None = None,
     fault_count: int | None = None,
 ) -> str:
@@ -708,15 +724,16 @@ def _wrap_details(
     `detail_lines`, PM prioritised over Signals as before) with whatever
     is left over.
     """
-    protected_text = "\n".join(
-        line for line in (protected_lines or []) if line is not None
-    ).strip("\n")
+    protected_text = "\n".join(line for line in (protected_lines or []) if line is not None).strip("\n")
     free_text = "\n".join(line for line in detail_lines if line is not None).strip("\n")
     wrapper_overhead = len("<b>DETAILS</b>\n<blockquote expandable></blockquote>")
     used = len("\n".join(lines))
     budget = (
-        TelegramNotifier.MAX_MESSAGE_CHARS - used - wrapper_overhead
-        - _DETAILS_SAFETY_RESERVE_CHARS - max(0, extra_reserve)
+        TelegramNotifier.MAX_MESSAGE_CHARS
+        - used
+        - wrapper_overhead
+        - _DETAILS_SAFETY_RESERVE_CHARS
+        - max(0, extra_reserve)
     )
     budget = max(0, budget)
     marker = "\n[details truncated — see Mission Control]"
@@ -748,8 +765,12 @@ def _wrap_details(
 
 
 def _budgeted_sections(
-    lines: list[str], slot: int, looked_at_rows: list[dict], profiles: dict,
-    snap: dict[str, Any] | None, detail_lines: list[str],
+    lines: list[str],
+    slot: int,
+    looked_at_rows: list[dict],
+    profiles: dict,
+    snap: dict[str, Any] | None,
+    detail_lines: list[str],
     protected_lines: list[str] | None = None,
 ) -> None:
     """Fit BOTH the candidate list and the reasoning block into one
@@ -786,12 +807,18 @@ def _budgeted_sections(
     # +1 for the blank separator line `_seal_section` would insert.
     reserve = (len("\n".join(floor)) + 1) if floor else 0
     spare = _wrap_details(
-        lines, detail_lines, extra_reserve=reserve, protected_lines=protected_lines,
+        lines,
+        detail_lines,
+        extra_reserve=reserve,
+        protected_lines=protected_lines,
     )
     if not floor:
         return
     block = _looked_at_block(
-        looked_at_rows, profiles, snap, budget=max(0, reserve - 1 + spare),
+        looked_at_rows,
+        profiles,
+        snap,
+        budget=max(0, reserve - 1 + spare),
     )
     lines[slot:slot] = ([""] + block) if slot > 0 else block
 
@@ -850,8 +877,7 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
 
         try:
             rows = conn.execute(
-                "SELECT agent_name, kind, symbol, evidence_json "
-                "FROM specialist_evidence WHERE run_id = ? ORDER BY id",
+                "SELECT agent_name, kind, symbol, evidence_json FROM specialist_evidence WHERE run_id = ? ORDER BY id",
                 (run_id,),
             ).fetchall()
             for row in rows:
@@ -888,23 +914,15 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                     # (data faults) already pages separately.
                     stage = str(data.get("stage") or "")
                     outcome = str(data.get("outcome") or "")
-                    if (
-                        stage == "deterministic_gate"
-                        and outcome == "blocked"
-                        and row["symbol"]
-                    ):
-                        snapshot["constructor_blocks"].append(
-                            {**data, "symbol": row["symbol"]}
-                        )
+                    if stage == "deterministic_gate" and outcome == "blocked" and row["symbol"]:
+                        snapshot["constructor_blocks"].append({**data, "symbol": row["symbol"]})
                     # The PM's per-candidate accounting. One row per
                     # non-targeted candidate, every one carrying the named
                     # ground the seat gave (or the honest record that it
                     # would not give one). Last row for a symbol wins: the
                     # accounting re-ask re-records the names it healed.
                     elif stage == "portfolio_manager" and row["symbol"]:
-                        snapshot["pm_accounting"][
-                            str(row["symbol"]).upper()
-                        ] = dict(data)
+                        snapshot["pm_accounting"][str(row["symbol"]).upper()] = dict(data)
                     elif stage == "rotation" and outcome == "precheck":
                         # The event's `reason` slot carries the named
                         # pre-check outcome (`rotation.precheck_outcome`);
@@ -913,7 +931,8 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                         # audit row and the owner's sentence stay one
                         # vocabulary rather than two spellings of it.
                         snapshot["rotation"] = {
-                            **data, "outcome": data.get("reason"),
+                            **data,
+                            "outcome": data.get("reason"),
                         }
         except sqlite3.DatabaseError:
             pass
@@ -948,13 +967,11 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                     (run_id,),
                 ).fetchall()
                 snapshot["calls"] = sum(
-                    (1 if row["provider_requests"] is None
-                     else max(0, int(row["provider_requests"]))) for row in rows
+                    (1 if row["provider_requests"] is None else max(0, int(row["provider_requests"]))) for row in rows
                 )
             except sqlite3.DatabaseError:
                 rows = conn.execute(
-                    "SELECT agent_name, output_summary, cost_usd FROM agent_logs "
-                    "WHERE run_id = ? ORDER BY id",
+                    "SELECT agent_name, output_summary, cost_usd FROM agent_logs WHERE run_id = ? ORDER BY id",
                     (run_id,),
                 ).fetchall()
                 snapshot["calls"] = len(rows)
@@ -975,6 +992,7 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
             # available" rather than the false "none". Reused here instead
             # of re-implementing it so the two surfaces cannot drift apart.
             from src.api.db_reads import _canonical_run_cost
+
             snapshot["cost"] = _canonical_run_cost(conn, run_id, rows)
         except sqlite3.DatabaseError:
             pass
@@ -990,7 +1008,8 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
 
 
 def _signal_rows(
-    snap: dict[str, Any], candidates: list[str] | None = None,
+    snap: dict[str, Any],
+    candidates: list[str] | None = None,
 ) -> list[dict]:
     """The tech rows a signals listing renders as bullets — filtered to
     `candidates` when given, priority-ordered — shared by `_append_signals`
@@ -1022,15 +1041,16 @@ def _execution_rows(snap: dict[str, Any]) -> tuple[list[dict], list[dict]]:
     trades = [row for row in (snap.get("trades") or []) if isinstance(row, dict)]
     sweep = [row for row in trades if str(row.get("action", "")).upper().startswith("SWEEP_")]
     real = [
-        row for row in trades
-        if str(row.get("action", "")).upper() != "HOLD"
-        and not str(row.get("action", "")).upper().startswith("SWEEP_")
+        row
+        for row in trades
+        if str(row.get("action", "")).upper() != "HOLD" and not str(row.get("action", "")).upper().startswith("SWEEP_")
     ]
     return sweep, real
 
 
 def _pm_pass_reason(
-    symbol: str, snap: dict[str, Any] | None,
+    symbol: str,
+    snap: dict[str, Any] | None,
 ) -> tuple[str | None, str]:
     """The desk's own recorded ground for not trading `symbol` this run, in
     plain words, or None when there genuinely is not one.
@@ -1077,7 +1097,9 @@ def _pm_pass_reason(
 
 
 def _looked_at_groups(
-    rows: list[dict], profiles: dict, snap: dict[str, Any] | None,
+    rows: list[dict],
+    profiles: dict,
+    snap: dict[str, Any] | None,
 ) -> list[tuple[str, list[tuple[str, str, str]]]]:
     """`[(ground, [(ticker, name_with_rating, detail), ...]), ...]`, groups
     in the order their first name appears — which is the existing priority
@@ -1096,18 +1118,20 @@ def _looked_at_groups(
         # The honest fallback is conditioned on there being NO recorded
         # ground — never on the renderer being unable to reach one.
         ground = (
-            f"the desk did not take these because {reason}" if reason
+            f"the desk did not take these because {reason}"
+            if reason
             else "the desk did not record why it passed on these"
         )
         grouped.setdefault(ground, []).append(
-            (symbol, f"{_ticker_co(symbol, profiles)} {rating}/{conviction}",
-             detail),
+            (symbol, f"{_ticker_co(symbol, profiles)} {rating}/{conviction}", detail),
         )
     return list(grouped.items())
 
 
 def _looked_at_block(
-    rows: list[dict], profiles: dict, snap: dict[str, Any] | None = None,
+    rows: list[dict],
+    profiles: dict,
+    snap: dict[str, Any] | None = None,
     budget: int | None = None,
 ) -> list[str]:
     """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on,
@@ -1168,10 +1192,7 @@ def _looked_at_block(
             details = {detail for _, _, detail in entries}
             shared = len(entries) > 1 and len(details) == 1
             for _symbol, name, detail in entries:
-                out.append(
-                    f"      • {name} — {detail}"
-                    if detail and not shared else f"      • {name}"
-                )
+                out.append(f"      • {name} — {detail}" if detail and not shared else f"      • {name}")
         return out
 
     def _tier2() -> list[str]:
@@ -1193,9 +1214,7 @@ def _looked_at_block(
         out = [header]
         for ground, entries in groups:
             out.append(f"   ▪ {len(entries)} — {ground}")
-            out.append(
-                "      " + ", ".join(symbol for symbol, _n, _d in entries)
-            )
+            out.append("      " + ", ".join(symbol for symbol, _n, _d in entries))
         return out
 
     for build in (_tier1, _tier2, _tier3):
@@ -1276,19 +1295,13 @@ def _pnl_section_lines(result: dict) -> list[str]:
 _PNL_UNAVAILABLE_REASONS = {
     # The message's own mode does no account read at all (pre-market
     # filing reader).
-    "no_account_read":
-        "This message was built without an account read, so there is no "
-        "figure yet.",
+    "no_account_read": "This message was built without an account read, so there is no figure yet.",
     # The session ended — holiday short-circuit, kill switch, broker
     # snapshot failure — before it reached its account read.
-    "ended_before_account_read":
-        "This run ended before the account was read, so there is no figure "
-        "yet.",
+    "ended_before_account_read": "This run ended before the account was read, so there is no figure yet.",
     # The account WAS read, but the broker reported no usable prior-day
     # close to measure today's change against.
-    "no_prior_close":
-        "The broker reported no prior-day close, so today's change cannot "
-        "be measured.",
+    "no_prior_close": "The broker reported no prior-day close, so today's change cannot be measured.",
 }
 _PNL_UNAVAILABLE_FALLBACK = "No P&L figure was recorded with this message."
 

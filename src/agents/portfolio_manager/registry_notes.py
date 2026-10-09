@@ -1,5 +1,6 @@
 """Notes the PM briefing prints under the evidence registry (lifted out of
 the agent's briefing builder, wording unchanged)."""
+
 from __future__ import annotations
 
 from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
@@ -68,10 +69,7 @@ def omitted_rows_line(omitted: int, n_broadcast: int, n_stale: int) -> str:
             "— see the note below."
         )
     if n_stale:
-        breakdown += (
-            f" {n_stale} of them have only a stale stance, "
-            "counted neither way."
-        )
+        breakdown += f" {n_stale} of them have only a stale stance, counted neither way."
     return (
         f"- ({omitted} further symbol(s) are present in "
         "the registry above but have no aligned and no opposed source "

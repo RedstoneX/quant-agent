@@ -25,8 +25,10 @@ class MacroEvent:
     days_away: int
 
     def describe(self) -> str:
-        when = "TODAY" if self.days_away == 0 else (
-            "TOMORROW" if self.days_away == 1 else f"in {self.days_away} calendar days"
+        when = (
+            "TODAY"
+            if self.days_away == 0
+            else ("TOMORROW" if self.days_away == 1 else f"in {self.days_away} calendar days")
         )
         return f"{self.event_date.isoformat()} ({when}): {self.label} — {self.why}"
 
@@ -101,8 +103,7 @@ class EventCalendarCoverage:
         if not self.from_cache:
             return ""
         served = ", ".join(
-            f"{label} (cached {age}d ago)" if age else f"{label} (cached today)"
-            for label, age in self.from_cache
+            f"{label} (cached {age}d ago)" if age else f"{label} (cached today)" for label, age in self.from_cache
         )
         return (
             f" SERVED FROM THE PRE-OPEN SCHEDULE CACHE, not fetched this run: "
@@ -113,21 +114,18 @@ class EventCalendarCoverage:
 
     def _describe_coverage(self) -> str:
         if self.configured == 0:
-            return (
-                "Macro event calendar: NO releases configured (misconfiguration)."
-            )
+            return "Macro event calendar: NO releases configured (misconfiguration)."
         if self.succeeded == 0:
             names = ", ".join(f"{f.label} ({f.reason})" for f in self.failed)
             return (
                 f"Macro event calendar: 0/{self.configured} release schedules "
                 f"returned this run — the calendar is UNAVAILABLE. FAILED: "
                 f"{names}. An empty calendar here means NOT FETCHED, never "
-                f"\"no events scheduled\"."
+                f'"no events scheduled".'
             )
         if not self.failed:
             return (
-                f"Macro event calendar: {self.succeeded}/{self.configured} "
-                f"release schedules returned. Full coverage."
+                f"Macro event calendar: {self.succeeded}/{self.configured} release schedules returned. Full coverage."
             )
         names = ", ".join(f"{f.label} ({f.reason})" for f in self.failed)
         return (

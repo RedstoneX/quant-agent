@@ -106,9 +106,7 @@ def _record_full_cassette():
     cassette = BrokerCassette()
     client = RecordingBrokerClient(_TradingClient(), cassette, "trading")
     account = client.get_account()
-    order = client.submit_order(
-        order_data=_OrderRequest("SPY", "qamc-capture-client-order-raw")
-    )
+    order = client.submit_order(order_data=_OrderRequest("SPY", "qamc-capture-client-order-raw"))
     client.get_order_by_id(order.id)
     client.get_activities()
     with pytest.raises(_FakeAPIError):
@@ -158,9 +156,7 @@ def test_capture_tokenizes_identifiers_and_replay_is_strict_and_shape_compatible
         lambda _symbol: "ETF",
     )
     account = broker.get_account()
-    order = client.submit_order(
-        order_data=_OrderRequest("SPY", "different-generated-client-order")
-    )
+    order = client.submit_order(order_data=_OrderRequest("SPY", "different-generated-client-order"))
     fetched = client.get_order_by_id(order.id)
     activities = client.get_activities()
 
@@ -275,10 +271,12 @@ def test_real_alpaca_request_model_has_stable_json_call_shape():
     )
     cassette = BrokerCassette()
     recorder = RecordingBrokerClient(
-        SimpleNamespace(submit_order=lambda *, order_data: SimpleNamespace(
-            id=ORDER_ID,
-            client_order_id=order_data.client_order_id,
-        )),
+        SimpleNamespace(
+            submit_order=lambda *, order_data: SimpleNamespace(
+                id=ORDER_ID,
+                client_order_id=order_data.client_order_id,
+            )
+        ),
         cassette,
         "trading",
     )
@@ -304,9 +302,7 @@ def test_response_serialization_failure_never_turns_success_into_a_retry_signal(
 
     answer = UnsupportedResponse()
     cassette = BrokerCassette()
-    recorder = RecordingBrokerClient(
-        SimpleNamespace(submit_order=lambda: answer), cassette, "trading"
-    )
+    recorder = RecordingBrokerClient(SimpleNamespace(submit_order=lambda: answer), cassette, "trading")
 
     assert recorder.submit_order() is answer
     with pytest.raises(RuntimeError, match="cannot export cassette"):
@@ -351,9 +347,7 @@ def _round_tripped_error(message: str, status_code: int, code: int):
 
 
 def test_replayed_errors_preserve_every_current_rest_classifier_surface():
-    duplicate = _round_tripped_error(
-        "client_order_id must be unique", 422, 42210000
-    )
+    duplicate = _round_tripped_error("client_order_id must be unique", 422, 42210000)
     assert str(duplicate) == "client_order_id must be unique"
     assert duplicate.message == str(duplicate)
     assert duplicate.status_code == 422
@@ -367,9 +361,7 @@ def test_replayed_errors_preserve_every_current_rest_classifier_surface():
     assert _is_held_for_orders_error(held)
     assert not _is_unsupported_stop_market_rejection(held)
 
-    unsupported = _round_tripped_error(
-        "order type is not supported for this time_in_force", 422, 42210001
-    )
+    unsupported = _round_tripped_error("order type is not supported for this time_in_force", 422, 42210001)
     assert _is_unsupported_stop_market_rejection(unsupported)
 
     missing = _round_tripped_error("invalid symbol", 404, 40410000)

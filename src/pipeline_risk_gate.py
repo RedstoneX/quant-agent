@@ -55,7 +55,8 @@ class RiskGate:
         # Spec §11.2. The ladder-resolved gross-exposure ceiling for this
         # session. None falls back to the configured cap inside the engine —
         # a caller that forgets it still gets a ceiling, never none.
-        gross_ceiling=None,) -> tuple[list[TradeDecision], list, list[str]]:
+        gross_ceiling=None,
+    ) -> tuple[list[TradeDecision], list, list[str]]:
         allowed_decisions: list[TradeDecision] = []
         remaining_violations = []
         blocked_reasons: list[str] = []
@@ -126,7 +127,8 @@ class RiskGate:
                     logger.warning(
                         "SELL pre-sum: skipping %s — broker returned non-finite "
                         "market_value=%s; cash budget will be conservative",
-                        d.symbol, held.market_value,
+                        d.symbol,
+                        held.market_value,
                     )
                     continue
                 # Mirror ExecutionStage's exact share rounding so the cash
@@ -180,7 +182,8 @@ class RiskGate:
                 # any future caller that has not.
                 gross_ceiling=gross_ceiling,
                 pending_gross_investment=pending_gross_investment,
-                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),)
+                cash_park_symbol=(sweeper.symbol if sweeper is not None else None),
+            )
             hard_violations = [v for v in violations if v.rule in HARD_BLOCK_RULES]
             if hard_violations:
                 messages = [v.message for v in hard_violations]
@@ -193,25 +196,21 @@ class RiskGate:
                 # that an unresolved sector must never go quiet, and the
                 # loop `continue`s past the ordinary remaining_violations
                 # .extend below for a blocked decision.
-                remaining_violations.extend(
-                    v for v in violations if v.rule.startswith("sector_unresolved")
-                )
+                remaining_violations.extend(v for v in violations if v.rule.startswith("sector_unresolved"))
                 continue
 
             remaining_violations.extend(violations)
             allowed_decisions.append(decision)
 
             from src.risk.rules import _effective_multiplier, _gross_multiplier
+
             raw_investment = total_value * (decision.allocation_pct / 100)
             is_short = decision.action == "SHORT"
             # Total exposure accumulates SIGNED contribution (hedges net
             # out). A SHORT moves it the OPPOSITE way a BUY of the same
             # symbol would — the matching flip lives in
             # RiskRuleEngine.check.
-            signed_investment = (
-                raw_investment * _effective_multiplier(decision.symbol)
-                * (-1.0 if is_short else 1.0)
-            )
+            signed_investment = raw_investment * _effective_multiplier(decision.symbol) * (-1.0 if is_short else 1.0)
             # Sector exposure accumulates GROSS (direction-agnostic magnitude).
             gross_investment = raw_investment * _gross_multiplier(decision.symbol)
             pending_investment += signed_investment
@@ -238,9 +237,12 @@ class RiskGate:
             # would actually land in, so a pending SHORT never consumes the
             # long budget the next BUY in that sector is measured against.
             from src.risk.rules import accumulate_pending_sector
+
             accumulate_pending_sector(
-                pending_sector_investment, _get_sector(decision.symbol),
-                decision.action, gross_investment,
+                pending_sector_investment,
+                _get_sector(decision.symbol),
+                decision.action,
+                gross_investment,
             )
 
         # Advisory check: projected capital at work vs the invested target
@@ -252,8 +254,11 @@ class RiskGate:
         # already capped, and enforced, by the §11.2 gross ceiling.
         if invested_target_pct is not None and total_value > 0:
             from src.risk.rules import (
-                book_exposure, deployment_gap_band_pct, RiskViolation,
+                book_exposure,
+                deployment_gap_band_pct,
+                RiskViolation,
             )
+
             # Read through `book_exposure` — the SAME function that produces
             # PM's `invested_pct`. Before this, the two seats were judged
             # against one target using two definitions with opposite signs
@@ -264,7 +269,8 @@ class RiskGate:
             # deployment counts every approved order's raw notional (a SHORT
             # commits capital too), direction counts them signed.
             projected = book_exposure(
-                positions, total_value,
+                positions,
+                total_value,
                 pending_deployed_usd=pending_raw_investment,
                 pending_net_usd=pending_investment,
             )
@@ -280,20 +286,22 @@ class RiskGate:
             # owner ruled out.
             band = deployment_gap_band_pct(getattr(self, "config", None))
             if deviation < -band:
-                remaining_violations.append(RiskViolation(
-                    rule="deployment_gap",
-                    message=(
-                        f"Projected invested {projected_invested_pct:.0f}% (capital at "
-                        f"work; net direction {projected.net_pct:+.0f}%) is "
-                        f"{-deviation:.0f}pp UNDER the fully-invested mandate "
-                        f"({invested_target_pct:.0f}%) (advisory — do NOT scale "
-                        f"down BUYs or SHORTs for exposure reasons; idle cash is "
-                        f"the cost here. If cutting anything, name a risk "
-                        f"specific to the trade, not the gap.)"
-                    ),
-                    value=projected_invested_pct,
-                    limit=invested_target_pct,
-                ))
+                remaining_violations.append(
+                    RiskViolation(
+                        rule="deployment_gap",
+                        message=(
+                            f"Projected invested {projected_invested_pct:.0f}% (capital at "
+                            f"work; net direction {projected.net_pct:+.0f}%) is "
+                            f"{-deviation:.0f}pp UNDER the fully-invested mandate "
+                            f"({invested_target_pct:.0f}%) (advisory — do NOT scale "
+                            f"down BUYs or SHORTs for exposure reasons; idle cash is "
+                            f"the cost here. If cutting anything, name a risk "
+                            f"specific to the trade, not the gap.)"
+                        ),
+                        value=projected_invested_pct,
+                        limit=invested_target_pct,
+                    )
+                )
 
         return allowed_decisions, remaining_violations, blocked_reasons
 
@@ -329,13 +337,17 @@ class RiskGate:
         """
         try:
             self.db.insert_agent_log(
-                agent_name="risk_gate", run_id=ctx.run_id,
+                agent_name="risk_gate",
+                run_id=ctx.run_id,
                 input_summary=f"deterministic hard-risk gate blocked all candidates ({stage})",
                 input_message="",
                 output_summary=f"HARD_RISK_BLOCK: {reasons}",
                 full_response=reasons,
                 model="deterministic",
-                tokens_used=0, input_tokens=0, output_tokens=0, cost_usd=0.0,
+                tokens_used=0,
+                input_tokens=0,
+                output_tokens=0,
+                cost_usd=0.0,
                 provider_requests=0,
                 decision_id=ctx.decision_id,
                 status="hard_risk_block",
@@ -345,7 +357,8 @@ class RiskGate:
             record_guarded_pass(self, "risk_gate.persist_hard_risk_block", exc, log=logger)
             logger.warning(
                 "hard_risk_block: failed to persist forensic record for run %s: %s",
-                ctx.run_id, exc,
+                ctx.run_id,
+                exc,
             )
 
     _FIELD_ALIASES = {
@@ -456,27 +469,28 @@ class RiskGate:
             if mod.field not in modifiable_fields:
                 logger.warning("Risk mod ignored: unknown field '%s'", mod.field)
                 if unapplied is not None:
-                    unapplied.append({
-                        "symbol": mod.symbol, "field": mod.field,
-                        "outcome": "modification_not_applied",
-                        "gate": "rm_modification_unknown_field",
-                        "requested": mod.new_value,
-                        "seat_reason": mod.reason,
-                        "reason": (
-                            f"RM modification NOT APPLIED: {mod.symbol}.{mod.field} "
-                            f"-> {mod.new_value} names a field the desk cannot "
-                            f"modify (modifiable: "
-                            f"{', '.join(sorted(modifiable_fields))}). The "
-                            f"decision is unchanged. RM reason given: "
-                            f"{mod.reason!r}"
-                        ),
-                    })
+                    unapplied.append(
+                        {
+                            "symbol": mod.symbol,
+                            "field": mod.field,
+                            "outcome": "modification_not_applied",
+                            "gate": "rm_modification_unknown_field",
+                            "requested": mod.new_value,
+                            "seat_reason": mod.reason,
+                            "reason": (
+                                f"RM modification NOT APPLIED: {mod.symbol}.{mod.field} "
+                                f"-> {mod.new_value} names a field the desk cannot "
+                                f"modify (modifiable: "
+                                f"{', '.join(sorted(modifiable_fields))}). The "
+                                f"decision is unchanged. RM reason given: "
+                                f"{mod.reason!r}"
+                            ),
+                        }
+                    )
                 continue
 
             for idx, decision in enumerate(updated_decisions):
-                if decision is None or (
-                    decision.symbol.strip().upper() != mod.symbol.strip().upper()
-                ):
+                if decision is None or (decision.symbol.strip().upper() != mod.symbol.strip().upper()):
                     continue
 
                 # Guard 1 — the seat may NEVER shrink a protective exit.
@@ -505,11 +519,13 @@ class RiskGate:
                         f"its intended size. RM reason given: {mod.reason!r}"
                     )
                     logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
-                    rejected_mods.append({
-                        "symbol": mod.symbol,
-                        "field": mod.field,
-                        "reason": reason,
-                    })
+                    rejected_mods.append(
+                        {
+                            "symbol": mod.symbol,
+                            "field": mod.field,
+                            "reason": reason,
+                        }
+                    )
                     # updated_decisions[idx] already holds the unmodified
                     # decision — nothing to change, the exit still ships.
                     break
@@ -522,32 +538,38 @@ class RiskGate:
                     logger.warning(
                         "Risk mod rejected for %s.%s %.4f -> %.4f: %s — "
                         "DROPPING decision (RM intended a protection we cannot apply)",
-                        mod.symbol, mod.field, mod.original_value, mod.new_value, exc,
+                        mod.symbol,
+                        mod.field,
+                        mod.original_value,
+                        mod.new_value,
+                        exc,
                     )
                     if unapplied is not None:
                         errors = "; ".join(
-                            f"{'.'.join(str(p) for p in err.get('loc', ()))}: "
-                            f"{err.get('msg', '')}"
+                            f"{'.'.join(str(p) for p in err.get('loc', ()))}: {err.get('msg', '')}"
                             for err in exc.errors()
                         )
-                        unapplied.append({
-                            "symbol": decision.symbol, "field": mod.field,
-                            "outcome": "dropped",
-                            "gate": "rm_modification_schema_invalid",
-                            "action": decision.action,
-                            "before": getattr(decision, mod.field, None),
-                            "requested": mod.new_value,
-                            "seat_reason": mod.reason,
-                            "reason": (
-                                f"{decision.action} {decision.symbol} DROPPED: "
-                                f"the RM edit {mod.field} "
-                                f"{getattr(decision, mod.field, None)} -> "
-                                f"{mod.new_value} fails the order schema "
-                                f"({errors}), and a protection the seat asked "
-                                f"for that cannot be applied is not assumed "
-                                f"safe to skip. RM reason given: {mod.reason!r}"
-                            ),
-                        })
+                        unapplied.append(
+                            {
+                                "symbol": decision.symbol,
+                                "field": mod.field,
+                                "outcome": "dropped",
+                                "gate": "rm_modification_schema_invalid",
+                                "action": decision.action,
+                                "before": getattr(decision, mod.field, None),
+                                "requested": mod.new_value,
+                                "seat_reason": mod.reason,
+                                "reason": (
+                                    f"{decision.action} {decision.symbol} DROPPED: "
+                                    f"the RM edit {mod.field} "
+                                    f"{getattr(decision, mod.field, None)} -> "
+                                    f"{mod.new_value} fails the order schema "
+                                    f"({errors}), and a protection the seat asked "
+                                    f"for that cannot be applied is not assumed "
+                                    f"safe to skip. RM reason given: {mod.reason!r}"
+                                ),
+                            }
+                        )
                     updated_decisions[idx] = None
                     break
 
@@ -593,11 +615,13 @@ class RiskGate:
                         f"reads. RM reason given: {mod.reason!r}"
                     )
                     logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
-                    rejected_mods.append({
-                        "symbol": mod.symbol,
-                        "field": mod.field,
-                        "reason": reason,
-                    })
+                    rejected_mods.append(
+                        {
+                            "symbol": mod.symbol,
+                            "field": mod.field,
+                            "reason": reason,
+                        }
+                    )
                     # updated_decisions[idx] already holds the unmodified
                     # decision — the BUY ships at the constructor's size.
                     break
@@ -606,20 +630,28 @@ class RiskGate:
                 # a reward:risk the constructor would have refused, or (when
                 # verifiable) a stop inside the ATR noise band.
                 if decision.action in ("BUY", "SHORT") and mod.field in (
-                    "stop_loss", "take_profit",
+                    "stop_loss",
+                    "take_profit",
                 ):
                     floor_reason = self._risk_mod_floor_breach(
-                        decision, updated_decision, mod, symbols_bars,
+                        decision,
+                        updated_decision,
+                        mod,
+                        symbols_bars,
                     )
                     if floor_reason is not None:
                         logger.warning(
-                            "Risk mod REJECTED for %s: %s", mod.symbol, floor_reason,
+                            "Risk mod REJECTED for %s: %s",
+                            mod.symbol,
+                            floor_reason,
                         )
-                        rejected_mods.append({
-                            "symbol": mod.symbol,
-                            "field": mod.field,
-                            "reason": floor_reason,
-                        })
+                        rejected_mods.append(
+                            {
+                                "symbol": mod.symbol,
+                                "field": mod.field,
+                                "reason": floor_reason,
+                            }
+                        )
                         break
 
                 # Guard 3 (board item 134) — a `stop_loss` or `entry_price`
@@ -643,21 +675,22 @@ class RiskGate:
                 # smaller size — so the reconciliation takes the SMALLER of the
                 # original and the recomputed allocation.
                 if decision.action in ("BUY", "SHORT") and mod.field in (
-                    "stop_loss", "entry_price",
+                    "stop_loss",
+                    "entry_price",
                 ):
                     reconciled_alloc = self._reconcile_size_to_risk_budget(
-                        decision, updated_decision,
+                        decision,
+                        updated_decision,
                     )
-                    if (
-                        reconciled_alloc is not None
-                        and reconciled_alloc < updated_decision.allocation_pct
-                    ):
+                    if reconciled_alloc is not None and reconciled_alloc < updated_decision.allocation_pct:
                         logger.info(
                             "Risk mod size reconciled for %s: %s edit widened "
                             "risk-per-share, allocation_pct %.2f -> %.2f to hold "
                             "dollar risk within the granted budget",
-                            mod.symbol, mod.field,
-                            updated_decision.allocation_pct, reconciled_alloc,
+                            mod.symbol,
+                            mod.field,
+                            updated_decision.allocation_pct,
+                            reconciled_alloc,
                         )
                         updated_decision = updated_decision.model_copy(
                             update={"allocation_pct": reconciled_alloc},
@@ -665,26 +698,33 @@ class RiskGate:
 
                 logger.info(
                     "Risk mod applied: %s.%s %.4f -> %.4f (%s)",
-                    mod.symbol, mod.field, mod.original_value, mod.new_value, mod.reason,
+                    mod.symbol,
+                    mod.field,
+                    mod.original_value,
+                    mod.new_value,
+                    mod.reason,
                 )
                 updated_decisions[idx] = updated_decision
                 break
             else:
                 logger.warning("Risk mod ignored: no matching decision for '%s'", mod.symbol)
                 if unapplied is not None:
-                    unapplied.append({
-                        "symbol": mod.symbol, "field": mod.field,
-                        "outcome": "modification_not_applied",
-                        "gate": "rm_modification_no_matching_decision",
-                        "requested": mod.new_value,
-                        "seat_reason": mod.reason,
-                        "reason": (
-                            f"RM modification NOT APPLIED: {mod.symbol} has no "
-                            f"decision left in the plan to edit ({mod.field} -> "
-                            f"{mod.new_value}), so nothing changed. RM reason "
-                            f"given: {mod.reason!r}"
-                        ),
-                    })
+                    unapplied.append(
+                        {
+                            "symbol": mod.symbol,
+                            "field": mod.field,
+                            "outcome": "modification_not_applied",
+                            "gate": "rm_modification_no_matching_decision",
+                            "requested": mod.new_value,
+                            "seat_reason": mod.reason,
+                            "reason": (
+                                f"RM modification NOT APPLIED: {mod.symbol} has no "
+                                f"decision left in the plan to edit ({mod.field} -> "
+                                f"{mod.new_value}), so nothing changed. RM reason "
+                                f"given: {mod.reason!r}"
+                            ),
+                        }
+                    )
 
         return [d for d in updated_decisions if d is not None], rejected_mods
 
@@ -719,7 +759,8 @@ class RiskGate:
             record_guarded_pass(self, "risk_gate.risk_mod_floor_atr", exc, log=logger)
             logger.warning(
                 "Risk mod noise-band check skipped for %s: ATR unavailable (%s)",
-                original.symbol, exc,
+                original.symbol,
+                exc,
             )
             return None
         if atr14 is None or not math.isfinite(atr14) or atr14 <= 0:
@@ -731,9 +772,7 @@ class RiskGate:
         # real config means the floor cannot be verified — skip rather than
         # crash or guess at a multiple nobody configured.
         risk_cfg = getattr(getattr(self, "config", None), "risk", None)
-        floor_multiple = _optional_risk_number(
-            getattr(risk_cfg, "absolute_min_stop_atr_multiple", None)
-        )
+        floor_multiple = _optional_risk_number(getattr(risk_cfg, "absolute_min_stop_atr_multiple", None))
         if floor_multiple is None:
             return None
 
@@ -832,7 +871,11 @@ class RiskGate:
 
     @staticmethod
     def _has_actionable_signal_fn(
-        indicators, symbol: str, bars, positions, live_price: float | None = None,
+        indicators,
+        symbol: str,
+        bars,
+        positions,
+        live_price: float | None = None,
     ) -> bool:
         """Pre-filter: only send symbols with interesting signals to the LLM.
 
@@ -852,11 +895,7 @@ class RiskGate:
         if indicators.rsi_14 is not None and (indicators.rsi_14 < 35 or indicators.rsi_14 > 65):
             return True
         if indicators.bb_upper and indicators.bb_lower and bars:
-            last_close = (
-                live_price
-                if isinstance(live_price, (int, float)) and live_price > 0
-                else bars[-1].close
-            )
+            last_close = live_price if isinstance(live_price, (int, float)) and live_price > 0 else bars[-1].close
             band_width = indicators.bb_upper - indicators.bb_lower
             if band_width > 0:
                 if abs(last_close - indicators.bb_upper) / band_width < 0.1:
@@ -877,8 +916,7 @@ class RiskGate:
                 record_guarded_pass(NO_LEDGER, "risk_gate.signal_prefilter_prior_macd", exc, log=logger)
                 previous_hist = None
             if previous_hist is not None and (
-                (previous_hist < 0 < indicators.macd_hist)
-                or (previous_hist > 0 > indicators.macd_hist)
+                (previous_hist < 0 < indicators.macd_hist) or (previous_hist > 0 > indicators.macd_hist)
             ):
                 return True
         if indicators.volume_change_pct is not None and abs(indicators.volume_change_pct) > 50:

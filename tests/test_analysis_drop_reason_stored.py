@@ -9,6 +9,7 @@ alongside the stock it was dropped for, not only in the log.
 These tests prove the reason is now (a) carried through the telemetry keyed by
 symbol and (b) persisted to `specialist_evidence`, queryable by symbol + run.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,8 +36,7 @@ RUN_ID = "run-drop-158"
 
 def _drop_rows(db: Database, symbol: str) -> list[dict]:
     cur = db.conn.execute(
-        "SELECT symbol, run_id, evidence_json FROM specialist_evidence "
-        "WHERE kind = ? AND symbol = ?",
+        "SELECT symbol, run_id, evidence_json FROM specialist_evidence WHERE kind = ? AND symbol = ?",
         (ANALYSIS_DROP_KIND, symbol),
     )
     return [dict(r) for r in cur.fetchall()]
@@ -46,10 +46,13 @@ def _drop_rows(db: Database, symbol: str) -> list[dict]:
 # telemetry: the reason travels with the symbol, not just a count
 # --------------------------------------------------------------------------
 
+
 def test_telemetry_captures_reason_keyed_by_symbol():
     tel = AnalysisParseTelemetry()
     tel.record_dropped_item(
-        "TechAnalysisResult", "AAPL", reason="failed validation on rating",
+        "TechAnalysisResult",
+        "AAPL",
+        reason="failed validation on rating",
     )
     assert tel.dropped_snapshot() == {("TechAnalysisResult", "AAPL"): 1}
     assert tel.dropped_reasons_snapshot() == {
@@ -62,9 +65,7 @@ def test_telemetry_first_reason_wins_and_reset_clears():
     tel.record_dropped_item("TechAnalysisResult", "NVDA", reason="malformed: x")
     tel.record_dropped_item("TechAnalysisResult", "NVDA", reason="second try")
     # First concrete reason is kept, not clobbered by a later retry's drop.
-    assert tel.dropped_reasons_snapshot()[("TechAnalysisResult", "NVDA")] == (
-        "malformed: x"
-    )
+    assert tel.dropped_reasons_snapshot()[("TechAnalysisResult", "NVDA")] == ("malformed: x")
     tel.reset()
     assert tel.dropped_reasons_snapshot() == {}
     assert tel.dropped_snapshot() == {}
@@ -81,12 +82,14 @@ def test_reason_optional_leaves_other_seats_unchanged():
 # persistence: the reason is stored beside the stock, queryable by symbol
 # --------------------------------------------------------------------------
 
+
 def test_dropped_reason_is_stored_and_queryable_per_symbol(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
     written = _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", "AAPL"): 1},
         reasons={("TechAnalysisResult", "AAPL"): "failed validation on rating"},
         book_symbols=set(),
@@ -109,7 +112,8 @@ def test_recovered_symbol_marked_recovered(tmp_path):
     db.initialize()
 
     _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", "META"): 1},
         reasons={("TechAnalysisResult", "META"): "malformed: bad json"},
         book_symbols={"META"},  # dropped but the retry put it back in the book
@@ -125,7 +129,8 @@ def test_unidentified_drop_not_persisted(tmp_path):
     db.initialize()
 
     written = _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", UNIDENTIFIED_DROP_KEY): 1},
         reasons={},
         book_symbols=set(),
@@ -145,7 +150,8 @@ def test_persist_never_raises_on_db_failure():
     # Observability only: a write failure must never propagate into the risk
     # decision it is recording.
     written = _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", "AAPL"): 1},
         reasons={("TechAnalysisResult", "AAPL"): "failed validation on rating"},
         book_symbols=set(),
@@ -157,6 +163,7 @@ def test_persist_never_raises_on_db_failure():
 # --------------------------------------------------------------------------
 # advisory: the reason now appears beside the symbol the RM is shown
 # --------------------------------------------------------------------------
+
 
 def test_advisory_names_the_reason_for_lost_rows():
     out = _parse_loss_advisories(
@@ -173,10 +180,13 @@ def test_advisory_names_the_reason_for_lost_rows():
 # the reason is MACHINE-READABLE, not prose only
 # --------------------------------------------------------------------------
 
+
 def test_telemetry_carries_a_stable_code_beside_the_prose():
     tel = AnalysisParseTelemetry()
     tel.record_dropped_item(
-        "TechAnalysisResult", "AAPL", reason="failed validation on rating",
+        "TechAnalysisResult",
+        "AAPL",
+        reason="failed validation on rating",
         reason_code=DROP_CODE_SCHEMA_INVALID,
     )
     assert tel.dropped_reason_codes_snapshot() == {
@@ -191,11 +201,15 @@ def test_code_and_prose_are_written_as_one_pair():
     """First-wins must apply to BOTH or the two can name different causes."""
     tel = AnalysisParseTelemetry()
     tel.record_dropped_item(
-        "TechAnalysisResult", "NVDA", reason="malformed: x",
+        "TechAnalysisResult",
+        "NVDA",
+        reason="malformed: x",
         reason_code=DROP_CODE_MALFORMED_ROW,
     )
     tel.record_dropped_item(
-        "TechAnalysisResult", "NVDA", reason="failed validation on rating",
+        "TechAnalysisResult",
+        "NVDA",
+        reason="failed validation on rating",
         reason_code=DROP_CODE_SCHEMA_INVALID,
     )
     key = ("TechAnalysisResult", "NVDA")
@@ -215,7 +229,8 @@ def test_persisted_row_carries_the_code_and_it_is_a_known_one(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", "AAPL"): 1},
         reasons={("TechAnalysisResult", "AAPL"): "malformed: bad json"},
         book_symbols=set(),
@@ -231,7 +246,8 @@ def test_persisted_row_defaults_the_code_when_none_was_recorded(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("StockNewsItem", "TSLA"): 1},
         reasons={},
         book_symbols=set(),
@@ -245,11 +261,13 @@ def test_persisted_row_defaults_the_code_when_none_was_recorded(tmp_path):
 # a kept stock has no row, and the count cannot disagree with the rows
 # --------------------------------------------------------------------------
 
+
 def test_kept_stock_has_no_drop_row(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     _persist_dropped_reasons(
-        db, RUN_ID,
+        db,
+        RUN_ID,
         dropped={("TechAnalysisResult", "AAPL"): 1},
         reasons={("TechAnalysisResult", "AAPL"): "malformed: bad json"},
         book_symbols=set(),
@@ -264,19 +282,27 @@ def test_count_and_per_row_reasons_cannot_disagree(tmp_path):
     same numbers: one telemetry snapshot, read once, in one pass."""
     tel = AnalysisParseTelemetry()
     tel.record_dropped_item(
-        "TechAnalysisResult", "AAPL", reason="malformed: a",
+        "TechAnalysisResult",
+        "AAPL",
+        reason="malformed: a",
         reason_code=DROP_CODE_MALFORMED_ROW,
     )
     tel.record_dropped_item(
-        "TechAnalysisResult", "AAPL", reason="malformed: a again",
+        "TechAnalysisResult",
+        "AAPL",
+        reason="malformed: a again",
         reason_code=DROP_CODE_MALFORMED_ROW,
     )
     tel.record_dropped_item(
-        "TechAnalysisResult", "META", reason="failed validation on rating",
+        "TechAnalysisResult",
+        "META",
+        reason="failed validation on rating",
         reason_code=DROP_CODE_SCHEMA_INVALID,
     )
     tel.record_dropped_item(
-        "TechAnalysisResult", UNIDENTIFIED_DROP_KEY, reason="malformed: no symbol",
+        "TechAnalysisResult",
+        UNIDENTIFIED_DROP_KEY,
+        reason="malformed: no symbol",
         reason_code=DROP_CODE_MALFORMED_ROW,
     )
 
@@ -284,14 +310,15 @@ def test_count_and_per_row_reasons_cannot_disagree(tmp_path):
     db.initialize()
     dropped = tel.dropped_snapshot()
     written = _persist_dropped_reasons(
-        db, RUN_ID, dropped, tel.dropped_reasons_snapshot(),
-        book_symbols=set(), codes=tel.dropped_reason_codes_snapshot(),
+        db,
+        RUN_ID,
+        dropped,
+        tel.dropped_reasons_snapshot(),
+        book_symbols=set(),
+        codes=tel.dropped_reason_codes_snapshot(),
     )
 
-    identifiable = {
-        key: n for key, n in dropped.items()
-        if key[1] != UNIDENTIFIED_DROP_KEY
-    }
+    identifiable = {key: n for key, n in dropped.items() if key[1] != UNIDENTIFIED_DROP_KEY}
     assert written == len(identifiable) == 2
 
     cur = db.conn.execute(
@@ -306,6 +333,4 @@ def test_count_and_per_row_reasons_cannot_disagree(tmp_path):
         assert per_row[sym]["count"] == n
     # And the rows account for the whole tally bar the unidentifiable one.
     accounted = sum(p["count"] for p in per_row.values())
-    assert accounted + dropped[("TechAnalysisResult", UNIDENTIFIED_DROP_KEY)] == (
-        tel.total_dropped()
-    )
+    assert accounted + dropped[("TechAnalysisResult", UNIDENTIFIED_DROP_KEY)] == (tel.total_dropped())

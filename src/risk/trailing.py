@@ -231,7 +231,7 @@ class TrailProposal:
     symbol: str
     new_stop: float
     previous_stop: float
-    source: str          # "structure" | "chandelier"
+    source: str  # "structure" | "chandelier"
     reason: str
 
 
@@ -307,4 +307,5 @@ def __getattr__(name: str):
     except KeyError:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
     import importlib
+
     return getattr(importlib.import_module(module), name)

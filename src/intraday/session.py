@@ -30,7 +30,8 @@ class IntradaySession:
     """
 
     def __init__(
-        self, *,
+        self,
+        *,
         db=None,
         broker=None,
         is_trading_day=None,
@@ -114,10 +115,7 @@ class IntradaySession:
         # The intraday scan buys through the same execution step as the
         # morning, so a wrapper kill between its buys and their stops leaves
         # a buy naked. Same unwind as the morning: add owed stops first.
-        prior = (
-            self._install_sigterm_unwind("intra_check")
-            if self._install_sigterm_unwind is not None else None
-        )
+        prior = self._install_sigterm_unwind("intra_check") if self._install_sigterm_unwind is not None else None
         try:
             return self._run_intra_check_recorded()
         except SessionTerminated:
@@ -149,7 +147,9 @@ class IntradaySession:
             return
         try:
             self.db.save_intra_check_report(
-                run_id=run_id, date=session_date_key(), payload=result,
+                run_id=run_id,
+                date=session_date_key(),
+                payload=result,
             )
         except Exception as exc:  # noqa: BLE001 — never break the push
             _site(self, "report_persist", exc)
@@ -212,8 +212,7 @@ class IntradaySession:
             positions = self.broker.get_positions()
         except Exception as e:
             _site(self, "broker_query", e, log=logger)
-            return {"status": "broker_error", "run_id": run_id, "error": str(e),
-                    "stop_coverage_gaps": coverage_gaps}
+            return {"status": "broker_error", "run_id": run_id, "error": str(e), "stop_coverage_gaps": coverage_gaps}
 
         total_value = account["portfolio_value"]
         last_equity = account.get("last_equity", total_value)
@@ -228,12 +227,14 @@ class IntradaySession:
         ctx.daily_pnl = daily_pnl
         self._sync_positions_from_broker(positions)
         daily_return_pct = (daily_pnl / last_equity * 100) if last_equity > 0 else 0
-        total_pnl, total_return_pct, total_pnl_since = (
-            self._total_pnl_since_reset(total_value)
-        )
+        total_pnl, total_return_pct, total_pnl_since = self._total_pnl_since_reset(total_value)
         logger.info(
             "Intra snapshot: equity=$%.2f, last_close=$%.2f, pnl=$%.2f (%.2f%%), positions=%d",
-            total_value, last_equity, daily_pnl, daily_return_pct, len(positions),
+            total_value,
+            last_equity,
+            daily_pnl,
+            daily_return_pct,
+            len(positions),
         )
 
         result = {
@@ -251,7 +252,9 @@ class IntradaySession:
         # only at midday/close; before the scan, so protection moves first.
         # Free and deterministic; see src/intraday/tick_trail.py.
         result["tick_trail"] = trail_on_tick(
-            positions=positions, run_id=run_id, preamble_deferred=preamble_deferred,
+            positions=positions,
+            run_id=run_id,
+            preamble_deferred=preamble_deferred,
             **self._tick_trail_collaborators(),
         )
         # 2026-08-19 intraday opportunity-discovery fix: bounded new-

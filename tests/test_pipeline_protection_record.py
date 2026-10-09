@@ -1,4 +1,5 @@
 """Protection catch-alls are loud: fault, clean pass, never-reached, no handle."""
+
 import logging
 from unittest import mock
 

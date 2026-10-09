@@ -1,4 +1,5 @@
 """The no-ATR structural stop recording: rows land, and nothing moves."""
+
 from __future__ import annotations
 
 import logging
@@ -94,10 +95,13 @@ def test_summarise_holds_no_state_and_invents_no_number():
     assert empty["narrowest_halfwidth_seen"] is None
     assert empty["mean_buffer_in_halfwidths"] is None
     rows = [
-        {"outcome": rec.OUTCOME_LEVEL, "level_zone_halfwidth": 0.5,
-         "level_zone_halfwidth_measured": True, "buffer_in_level_halfwidths": 0.9},
-        {"outcome": rec.OUTCOME_NONE, "level_zone_halfwidth": None,
-         "level_zone_halfwidth_measured": False},
+        {
+            "outcome": rec.OUTCOME_LEVEL,
+            "level_zone_halfwidth": 0.5,
+            "level_zone_halfwidth_measured": True,
+            "buffer_in_level_halfwidths": 0.9,
+        },
+        {"outcome": rec.OUTCOME_NONE, "level_zone_halfwidth": None, "level_zone_halfwidth_measured": False},
     ]
     out = rec.summarise(rows)
     assert out["branch_entries"] == 2

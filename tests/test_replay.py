@@ -6,6 +6,7 @@ live re-run isn't tested (it calls the LLM); these pin the pure pieces: the DB
 loader, the PM structural diff, the JSON-target parser, and that `_execute` runs
 the full loop on a given message WITHOUT calling build_user_message.
 """
+
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -28,7 +29,7 @@ def _mk_agent_logs_db():
         ("portfolio_manager", "run-1", "2026-06-01 13:00", "gpt-5.5", "INPUT A", "RESP A"),
         ("portfolio_manager", "run-2", "2026-06-02 13:00", "gpt-5.5", "INPUT B", "RESP B"),
         ("portfolio_manager", "run-3", "2026-06-03 13:00", "gpt-5.5", "", "RESP C"),  # empty input → skip
-        ("tech_analyst",      "run-2", "2026-06-02 09:30", "gpt-5.5", "TECH IN", "TECH RESP"),
+        ("tech_analyst", "run-2", "2026-06-02 09:30", "gpt-5.5", "TECH IN", "TECH RESP"),
     ]
     conn.executemany("INSERT INTO agent_logs VALUES (?,?,?,?,?,?)", rows)
     return conn
@@ -59,10 +60,14 @@ def test_parse_targets_handles_fenced_json_and_non_pm():
 
 
 def test_diff_pm_targets_detects_add_remove_resize():
-    old = '{"targets": [{"symbol": "NVDA", "target_weight_pct": 8.0, "conviction": "high"}, ' \
-          '{"symbol": "AAPL", "target_weight_pct": 5.0, "conviction": "medium"}]}'
-    new = '{"targets": [{"symbol": "NVDA", "target_weight_pct": 12.0, "conviction": "high"}, ' \
-          '{"symbol": "TSM", "target_weight_pct": 5.0, "conviction": "high"}]}'
+    old = (
+        '{"targets": [{"symbol": "NVDA", "target_weight_pct": 8.0, "conviction": "high"}, '
+        '{"symbol": "AAPL", "target_weight_pct": 5.0, "conviction": "medium"}]}'
+    )
+    new = (
+        '{"targets": [{"symbol": "NVDA", "target_weight_pct": 12.0, "conviction": "high"}, '
+        '{"symbol": "TSM", "target_weight_pct": 5.0, "conviction": "high"}]}'
+    )
     diff = diff_pm_targets(old, new)
     assert [a["symbol"] for a in diff["added"]] == ["TSM"]
     assert [r["symbol"] for r in diff["removed"]] == ["AAPL"]
@@ -97,6 +102,7 @@ def test_execute_seam_runs_loop_without_build_user_message():
     class _Agent(BaseAgent):
         name = "t"
         system_prompt = "sys"
+
         def build_user_message(self, **kwargs):  # must NOT be hit by _execute
             raise AssertionError("_execute must not call build_user_message")
 

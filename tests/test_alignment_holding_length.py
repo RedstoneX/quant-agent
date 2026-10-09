@@ -1,4 +1,5 @@
 """The holding-length research harness counts holds and censoring correctly."""
+
 from __future__ import annotations
 
 import importlib.util

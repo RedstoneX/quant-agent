@@ -17,9 +17,15 @@ from src.execution.scale_in_loud import record_scale_in
 #: Terminal statuses that mean the protective sell is gone and did not
 #: sell shares. `filled` is deliberately NOT here: a stop that fires
 #: during cancel is a real exit and the BUY add must not proceed.
-_CANCEL_CONFIRMED = frozenset({
-    "canceled", "cancelled", "expired", "rejected", "replaced",
-})
+_CANCEL_CONFIRMED = frozenset(
+    {
+        "canceled",
+        "cancelled",
+        "expired",
+        "rejected",
+        "replaced",
+    }
+)
 _STOP_FILLED = frozenset({"filled"})
 
 
@@ -63,12 +69,8 @@ def _confirm_cancels_status(broker: Any, specs: list[dict]) -> tuple[str, str]:
         status = str(status or "").lower()
         if status in _STOP_FILLED:
             return "filled", (
-                f"protective stop {order_id} FILLED during cancel — "
-                "the add is aborted rather than adding into an exit"
+                f"protective stop {order_id} FILLED during cancel — the add is aborted rather than adding into an exit"
             )
         if status not in _CANCEL_CONFIRMED:
-            return "unconfirmed", (
-                f"protective stop {order_id} not confirmed cancelled "
-                f"(status={status or 'unknown'})"
-            )
+            return "unconfirmed", (f"protective stop {order_id} not confirmed cancelled (status={status or 'unknown'})")
     return "confirmed", ""

@@ -13,6 +13,7 @@ reads whole record too). It is read-only (`mode=ro`) and nothing in the
 trading path reads it; a failure here returns an explicit "could not be
 read" note, never an empty list that looks like "nothing happened".
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -24,14 +25,8 @@ from src.api.db_reads import _connect
 
 router = APIRouter()
 
-_UNREADABLE = (
-    "The model-fallback record could not be read, which is not the same as "
-    "no fallback having happened."
-)
-_NONE = (
-    "The model-fallback record has no entries. Nothing has been written "
-    "to it yet."
-)
+_UNREADABLE = "The model-fallback record could not be read, which is not the same as no fallback having happened."
+_NONE = "The model-fallback record has no entries. Nothing has been written to it yet."
 _NOTE = (
     "Each line is something the desk's model routing did, newest first. "
     "'Free' means the model costs nothing per million words and its answers "
@@ -72,12 +67,14 @@ def describe(row: dict) -> RouteEvent:
     wait = row.get("wait_s")
     if wait:
         what += f", waited {wait} seconds"
-    extra = " - ".join(
-        str(row[k]) for k in ("error_shape", "detail") if row.get(k))
+    extra = " - ".join(str(row[k]) for k in ("error_shape", "detail") if row.get(k))
     return RouteEvent(
-        when=row.get("timestamp"), seat=seat, what=what,
+        when=row.get("timestamp"),
+        seat=seat,
+        what=what,
         cost=_cost(row.get("input_usd_per_mtok"), row.get("output_usd_per_mtok")),
-        detail=extra)
+        detail=extra,
+    )
 
 
 def build(rows: list[dict]) -> RouteEventsResponse:
@@ -93,8 +90,7 @@ def get_route_events() -> RouteEventsResponse:
     except Exception:  # noqa: BLE001
         return RouteEventsResponse(note=_UNREADABLE, events=[])
     try:
-        rows = conn.execute(
-            "SELECT * FROM llm_route_events ORDER BY id DESC").fetchall()
+        rows = conn.execute("SELECT * FROM llm_route_events ORDER BY id DESC").fetchall()
         return build([dict(r) for r in rows])
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):

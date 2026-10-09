@@ -35,11 +35,7 @@ def _find_status_board_script() -> Path:
     canary below fails loudly if it ever matches nothing or more than one.
     """
     skip = {".git", ".venv", "venv", "node_modules", "tests", "__pycache__"}
-    hits = [
-        path
-        for path in sorted(_REPO.rglob("status_board.py"))
-        if not (set(path.relative_to(_REPO).parts) & skip)
-    ]
+    hits = [path for path in sorted(_REPO.rglob("status_board.py")) if not (set(path.relative_to(_REPO).parts) & skip)]
     assert hits, (
         "no status_board.py anywhere in the repo: the board generator these "
         "tests guard has been renamed or deleted, and every test here would "
@@ -56,9 +52,7 @@ def test_the_status_board_script_was_found_and_is_the_real_generator():
     """Canary: a resolution that silently found the wrong file is worse than none."""
     assert _SCRIPT.is_file()
     text = _SCRIPT.read_text()
-    assert "def check_rule" in text, (
-        f"resolved {_SCRIPT} as the board generator but it has no check_rule()"
-    )
+    assert "def check_rule" in text, f"resolved {_SCRIPT} as the board generator but it has no check_rule()"
 
 
 def _load():
@@ -141,27 +135,22 @@ def test_a_manual_rule_is_unknown_never_pass():
 # settings rules
 # --------------------------------------------------------------------------
 
+
 def test_setting_equals_reads_nested_keys():
     cfg = {"risk": {"max_position_pct": 20}}
-    r = sb.check_rule(
-        {"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, cfg
-    )
+    r = sb.check_rule({"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, cfg)
     assert r.verdict == sb.PASS
 
 
 def test_setting_equals_fails_on_a_changed_value():
     cfg = {"risk": {"max_position_pct": 35}}
-    r = sb.check_rule(
-        {"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, cfg
-    )
+    r = sb.check_rule({"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, cfg)
     assert r.verdict == sb.FAIL
     assert "35" in r.detail
 
 
 def test_setting_equals_fails_when_the_key_is_gone():
-    r = sb.check_rule(
-        {"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, {}
-    )
+    r = sb.check_rule({"kind": "setting_equals", "key": "risk.max_position_pct", "value": 20}, {})
     assert r.verdict == sb.FAIL
 
 
@@ -171,16 +160,16 @@ def test_setting_present_passes_when_the_key_exists_regardless_of_value():
     be re-tuned over time without that re-tuning reading as rot."""
     cfg = {"llm_cost_circuit": {"max_free_failure_sessions_per_mode": 40}}
     r = sb.check_rule(
-        {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, cfg,
+        {"kind": "setting_present", "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"},
+        cfg,
     )
     assert r.verdict == sb.PASS
 
 
 def test_setting_present_fails_when_the_key_is_gone():
     r = sb.check_rule(
-        {"kind": "setting_present",
-         "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"}, {},
+        {"kind": "setting_present", "key": "llm_cost_circuit.max_free_failure_sessions_per_mode"},
+        {},
     )
     assert r.verdict == sb.FAIL
 
@@ -194,9 +183,9 @@ def test_missing_file_fails_rather_than_erroring():
 # the verdict, which is the whole point
 # --------------------------------------------------------------------------
 
+
 def _phase(results):
-    p = sb.PhaseView(id="x", title="t", summary="s", recorded="DONE AND LIVE",
-                     confidence="high")
+    p = sb.PhaseView(id="x", title="t", summary="s", recorded="DONE AND LIVE", confidence="high")
     p.results = results
     return p
 
@@ -204,29 +193,35 @@ def _phase(results):
 def test_one_failing_rule_contradicts_the_whole_phase():
     """A phase is only as good as its weakest proof. One broken check is
     enough — the board must not average rot away."""
-    p = _phase([
-        sb.RuleResult("file_exists", sb.PASS, ""),
-        sb.RuleResult("file_exists", sb.PASS, ""),
-        sb.RuleResult("file_exists", sb.FAIL, ""),
-    ])
+    p = _phase(
+        [
+            sb.RuleResult("file_exists", sb.PASS, ""),
+            sb.RuleResult("file_exists", sb.PASS, ""),
+            sb.RuleResult("file_exists", sb.FAIL, ""),
+        ]
+    )
     assert p.verdict == "CONTRADICTED"
 
 
 def test_a_phase_with_nothing_checkable_is_unverified_not_confirmed():
     """The dangerous case: a phase whose evidence is entirely `manual`. It must
     never read as confirmed just because nothing disproved it."""
-    p = _phase([
-        sb.RuleResult("manual", sb.UNKNOWN, ""),
-        sb.RuleResult("manual", sb.UNKNOWN, ""),
-    ])
+    p = _phase(
+        [
+            sb.RuleResult("manual", sb.UNKNOWN, ""),
+            sb.RuleResult("manual", sb.UNKNOWN, ""),
+        ]
+    )
     assert p.verdict == "UNVERIFIED"
 
 
 def test_unknowns_alongside_passes_do_not_block_confirmation():
-    p = _phase([
-        sb.RuleResult("file_exists", sb.PASS, ""),
-        sb.RuleResult("manual", sb.UNKNOWN, ""),
-    ])
+    p = _phase(
+        [
+            sb.RuleResult("file_exists", sb.PASS, ""),
+            sb.RuleResult("manual", sb.UNKNOWN, ""),
+        ]
+    )
     assert p.verdict == "CONFIRMED"
     assert p.unknown == 1
 
@@ -234,6 +229,7 @@ def test_unknowns_alongside_passes_do_not_block_confirmation():
 # --------------------------------------------------------------------------
 # the shipped manifest must actually be evaluable
 # --------------------------------------------------------------------------
+
 
 def test_the_real_manifest_parses_and_every_rule_is_well_formed():
     """Guards the manifest itself. Every rule must be one the board understands
@@ -247,8 +243,16 @@ def test_the_real_manifest_parses_and_every_rule_is_well_formed():
     phases = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
     assert phases, "manifest carries no phases"
 
-    known = {"commit_in_main", "pr_merged", "file_exists", "symbol_in_file",
-             "test_exists", "setting_equals", "setting_present", "manual"}
+    known = {
+        "commit_in_main",
+        "pr_merged",
+        "file_exists",
+        "symbol_in_file",
+        "test_exists",
+        "setting_equals",
+        "setting_present",
+        "manual",
+    }
     malformed = []
     for entry in phases:
         assert entry.get("id"), "every phase needs an id"
@@ -286,9 +290,7 @@ def _assert_mechanical_rule_unless_open(entry: dict) -> None:
         return
     rules = entry.get("evidence") or []
     mechanical = [r for r in rules if r.get("kind") != "manual"]
-    assert mechanical, (
-        f"{entry.get('id')} has only manual evidence — it can never be verified"
-    )
+    assert mechanical, f"{entry.get('id')} has only manual evidence — it can never be verified"
 
 
 def test_every_phase_has_at_least_one_mechanical_rule():
@@ -330,7 +332,9 @@ def test_the_open_exemption_does_not_silently_widen():
     open_entry = {"id": "fake_open", "status": "OPEN", "evidence": manual_only}
     partial_entry = {"id": "fake_partial", "status": "PARTIAL", "evidence": manual_only}
     not_started_entry = {
-        "id": "fake_not_started", "status": "NOT STARTED", "evidence": manual_only,
+        "id": "fake_not_started",
+        "status": "NOT STARTED",
+        "evidence": manual_only,
     }
 
     _assert_mechanical_rule_unless_open(open_entry)  # must not raise
@@ -345,28 +349,60 @@ def test_the_open_exemption_does_not_silently_widen():
 def test_the_template_carries_every_placeholder_the_renderer_fills():
     """A renamed placeholder would silently ship a page with `{{SPEND}}` printed
     on it. Cheap to catch here."""
-    template = (Path(__file__).resolve().parents[1]
-                / "scripts" / "status_board_template.html").read_text()
-    for key in ("{{STAMP}}", "{{BUILT_SHA}}", "{{DEPLOY}}", "{{CIRCUIT}}", "{{SPEND}}",
-                "{{SPEND_PCT}}", "{{SPEND_NOTE}}", "{{SESSIONS}}", "{{ROWS}}", "{{ALARM}}",
-                "{{RULES_TOTAL}}", "{{RULES_PASS}}", "{{RULES_FAIL}}",
-                "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}", "{{JARGON_BANNER}}",
-                "{{RIGHT_NOW}}", "{{DECISIONS}}", "{{QUEUE}}", "{{PAUSED}}",
-                "{{FINISHED_UNMARKED}}", "{{FINISHED_UNMARKED_COUNT}}",
-                "{{REVIEW_OWED}}", "{{REVIEW_OWED_COUNT}}",
-                "{{IN_HAND}}", "{{IN_HAND_COUNT}}",
-                "{{NO_ACTION}}", "{{NO_ACTION_COUNT}}",
-                "{{RESOLVED}}", "{{QUEUE_OPEN}}",
-                "{{QUEUE_TOTAL}}", "{{PAUSED_COUNT}}", "{{RESOLVED_COUNT}}",
-                "{{UNEXPLAINED_NOTE}}", "{{PM_GATE}}",
-                "{{PM_GATE_DONE}}", "{{PM_GATE_LEDE}}"):
+    template = (Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html").read_text()
+    for key in (
+        "{{STAMP}}",
+        "{{BUILT_SHA}}",
+        "{{DEPLOY}}",
+        "{{CIRCUIT}}",
+        "{{SPEND}}",
+        "{{SPEND_PCT}}",
+        "{{SPEND_NOTE}}",
+        "{{SESSIONS}}",
+        "{{ROWS}}",
+        "{{ALARM}}",
+        "{{RULES_TOTAL}}",
+        "{{RULES_PASS}}",
+        "{{RULES_FAIL}}",
+        "{{RULES_UNKNOWN}}",
+        "{{BOX_SHA}}",
+        "{{MAIN_SHA}}",
+        "{{JARGON_BANNER}}",
+        "{{RIGHT_NOW}}",
+        "{{DECISIONS}}",
+        "{{QUEUE}}",
+        "{{PAUSED}}",
+        "{{FINISHED_UNMARKED}}",
+        "{{FINISHED_UNMARKED_COUNT}}",
+        "{{REVIEW_OWED}}",
+        "{{REVIEW_OWED_COUNT}}",
+        "{{IN_HAND}}",
+        "{{IN_HAND_COUNT}}",
+        "{{NO_ACTION}}",
+        "{{NO_ACTION_COUNT}}",
+        "{{RESOLVED}}",
+        "{{QUEUE_OPEN}}",
+        "{{QUEUE_TOTAL}}",
+        "{{PAUSED_COUNT}}",
+        "{{RESOLVED_COUNT}}",
+        "{{UNEXPLAINED_NOTE}}",
+        "{{PM_GATE}}",
+        "{{PM_GATE_DONE}}",
+        "{{PM_GATE_LEDE}}",
+    ):
         assert key in template, f"template is missing {key}"
 
 
 def test_rendered_output_leaves_no_placeholder_behind(tmp_path):
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.66,
-             "sessions_today": 14, "box_sha": "abc123", "main_sha": "abc123"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.66,
+        "sessions_today": 14,
+        "box_sha": "abc123",
+        "main_sha": "abc123",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template)
     assert "{{" not in out, "an unfilled placeholder reached the rendered page"
@@ -376,8 +412,14 @@ def test_unknown_live_values_render_as_unknown_not_as_zero():
     """If the box cannot be read, the page must say so. A silent 0 would be a
     lie of exactly the kind this board exists to stop."""
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": None, "circuit": None, "spend_today": None,
-             "sessions_today": None, "box_sha": None, "main_sha": None}
+    state = {
+        "in_sync": None,
+        "circuit": None,
+        "spend_today": None,
+        "sessions_today": None,
+        "box_sha": None,
+        "main_sha": None,
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template)
     assert "unknown" in out
@@ -386,11 +428,12 @@ def test_unknown_live_values_render_as_unknown_not_as_zero():
 
 def _git(repo: Path, *args: str) -> None:
     env = {
-        "GIT_AUTHOR_NAME": "board-test", "GIT_AUTHOR_EMAIL": "board-test@example.com",
-        "GIT_COMMITTER_NAME": "board-test", "GIT_COMMITTER_EMAIL": "board-test@example.com",
+        "GIT_AUTHOR_NAME": "board-test",
+        "GIT_AUTHOR_EMAIL": "board-test@example.com",
+        "GIT_COMMITTER_NAME": "board-test",
+        "GIT_COMMITTER_EMAIL": "board-test@example.com",
     }
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True,
-                    text=True, env=env)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, env=env)
 
 
 def _repo_with_merged_pr(tmp_path: Path, number: int) -> Path:
@@ -416,8 +459,7 @@ def _repo_with_merged_pr(tmp_path: Path, number: int) -> Path:
     (repo / "f.txt").write_text("feature\n")
     _git(repo, "commit", "-q", "-am", "feature work")
     _git(repo, "checkout", "-q", "main")
-    _git(repo, "merge", "-q", "--no-ff",
-         "-m", f"Merge pull request #{number} from redstone-hq/feature", "feature")
+    _git(repo, "merge", "-q", "--no-ff", "-m", f"Merge pull request #{number} from redstone-hq/feature", "feature")
     # `check_rule` looks up `origin/main` by name; give this throwaway repo a
     # ref with that name rather than an actual remote, which it doesn't need.
     _git(repo, "branch", "origin/main", "main")
@@ -463,6 +505,7 @@ def test_an_unmerged_pr_is_not_reported_as_merged_from_git_alone():
 # at a time, if it is ever eroded again — the same rot this file's other
 # tests already guard against, applied to the documents instead of the code.
 # --------------------------------------------------------------------------
+
 
 def test_phases_manifest_carries_no_correction_clauses():
     """`docs/phases.yaml` used to correct itself in place: a later editor
@@ -511,9 +554,7 @@ def test_no_plain_summary_exceeds_two_thousand_characters():
     raw = yaml.safe_load(manifest.read_text())
     phases = raw["phases"] if isinstance(raw, dict) and "phases" in raw else raw
     too_long = [
-        (e.get("id"), len(e.get("plain_summary", "")))
-        for e in phases
-        if len(e.get("plain_summary", "")) > 2000
+        (e.get("id"), len(e.get("plain_summary", ""))) for e in phases if len(e.get("plain_summary", "")) > 2000
     ]
     assert not too_long, f"plain_summary over 2000 characters: {too_long}"
 
@@ -547,9 +588,7 @@ def test_open_defects_is_a_ranked_list_not_a_paragraph():
     assert isinstance(defects, list), "open_defects.defects must be a list"
     for d in defects:
         for field in ("id", "title", "rank", "status"):
-            assert d.get(field) not in (None, ""), (
-                f"defect {d.get('id', d)!r} is missing required field {field!r}"
-            )
+            assert d.get(field) not in (None, ""), f"defect {d.get('id', d)!r} is missing required field {field!r}"
 
 
 def _work_md_base_ref():
@@ -589,7 +628,9 @@ def _work_md_base_ref():
     def git(*args):
         return subprocess.run(
             ["git", "-C", str(repo), *args],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     if os.environ.get("GITHUB_ACTIONS"):
@@ -597,8 +638,7 @@ def _work_md_base_ref():
             head = git("rev-parse", "HEAD")
             if head.returncode == 0:
                 sha = head.stdout.strip()
-                git("fetch", "-q", "--depth=2", "origin",
-                    f"+{sha}:refs/ci-work-md-base-probe")
+                git("fetch", "-q", "--depth=2", "origin", f"+{sha}:refs/ci-work-md-base-probe")
         r = git("rev-parse", "--verify", "-q", "HEAD^1")
         return r.stdout.strip() if r.returncode == 0 else None
     git("fetch", "-q", "origin", "main")
@@ -633,10 +673,13 @@ def test_no_board_item_disappears_without_being_retired():
         if os.environ.get("GITHUB_ACTIONS"):
             raise AssertionError("cannot read main-before-this-change to compare items against")
         import pytest
+
         pytest.skip("no reachable origin to compare WORK.md items against")
     r = subprocess.run(
         ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if r.returncode != 0:
         return
@@ -685,7 +728,9 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
         pytest.skip("no reachable origin to compare retired lines against")
     r = subprocess.run(
         ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if r.returncode != 0:
         return
@@ -704,10 +749,7 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     queue_items, _ = sb.load_funnel_queue(work_md)
     gate_items, _ = sb.load_pm_gate(work_md)
     live = {i.rank for i in queue_items} | {i.rank for i in gate_items}
-    unexplained = [
-        line for line in changed
-        if not (set(re.findall(r"\d+", line)) & {str(n) for n in live})
-    ]
+    unexplained = [line for line in changed if not (set(re.findall(r"\d+", line)) & {str(n) for n in live})]
     assert not unexplained, (
         "these retired-numbers bullet line(s) existed before this change and "
         "are now gone or edited: " + "; ".join(unexplained) + " — a closure may "
@@ -763,14 +805,15 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
     if base is None:
         if os.environ.get("GITHUB_ACTIONS"):
             raise AssertionError(
-                "cannot read main-before-this-change to measure docs/WORK.md "
-                "against, even after deepening the clone"
+                "cannot read main-before-this-change to measure docs/WORK.md against, even after deepening the clone"
             )
         import pytest
+
         pytest.skip("no reachable origin to measure docs/WORK.md against")
     r = subprocess.run(
         ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
-        capture_output=True, check=False,
+        capture_output=True,
+        check=False,
     )
     if r.returncode != 0:
         return  # WORK.md did not exist at the base; nothing to compare
@@ -810,7 +853,8 @@ def _work_md_base_size():
         return None
     r = subprocess.run(
         ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
-        capture_output=True, check=False,
+        capture_output=True,
+        check=False,
     )
     if r.returncode != 0:
         return None
@@ -878,9 +922,9 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
 # relevance ordering: unfinished on top, finished collapsed, rot never hidden
 # --------------------------------------------------------------------------
 
+
 def _phase_with(verdict_results, recorded="DONE AND LIVE", title="t", id_="x"):
-    p = sb.PhaseView(id=id_, title=title, summary="s", recorded=recorded,
-                     confidence="high")
+    p = sb.PhaseView(id=id_, title=title, summary="s", recorded=recorded, confidence="high")
     p.results = verdict_results
     return p
 
@@ -911,14 +955,23 @@ def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(t
     holds only the fully-verified, recorded-done phases; a CONTRADICTED
     phase's row must never appear inside it, and must render outside any
     <details> at all."""
-    done = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")],
-                        recorded="DONE AND LIVE", title="Finished thing", id_="done")
-    partial = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")],
-                           recorded="PARTIAL", title="Partial thing", id_="partial")
-    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
-                          recorded="DONE AND LIVE", title="Rotten thing", id_="rotten")
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    done = _phase_with(
+        [sb.RuleResult("file_exists", sb.PASS, "")], recorded="DONE AND LIVE", title="Finished thing", id_="done"
+    )
+    partial = _phase_with(
+        [sb.RuleResult("file_exists", sb.PASS, "")], recorded="PARTIAL", title="Partial thing", id_="partial"
+    )
+    rotten = _phase_with(
+        [sb.RuleResult("file_exists", sb.FAIL, "")], recorded="DONE AND LIVE", title="Rotten thing", id_="rotten"
+    )
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([done, partial, rotten], state, template)
 
@@ -933,8 +986,8 @@ def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(t
     # The summary reports exactly one settled phase, and <details> is closed
     # by default (no `open` attribute).
     assert "1 finished and verified" in out
-    assert "<details class=\"finished\" open>" not in out
-    assert "<details open class=\"finished\">" not in out
+    assert '<details class="finished" open>' not in out
+    assert '<details open class="finished">' not in out
 
     # Rotten and partial both render before the <details> block (attention
     # section), and the contradicted one appears first among them.
@@ -958,15 +1011,22 @@ def test_render_collapses_only_settled_phases_and_never_collapses_contradicted(t
 # decides whether a banner is shown — lives in `src/api/server.py` and is
 # exercised there.
 
+
 def test_render_stamps_the_untruncated_sha_for_machine_comparison():
     """The machine-readable stamp must carry the FULL commit, not the 9-char
     prefix used for the human-facing footer. A short prefix is a needless
     collision risk for an equality check with nothing else moderating it."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     full = "abc1234567890abc1234567890abc1234567890"
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": full[:9], "box_sha_full": full,
-             "main_sha": full[:9]}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": full[:9],
+        "box_sha_full": full,
+        "main_sha": full[:9],
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
     assert f'content="{full}"' in out, "the stamp must hold the untruncated SHA"
@@ -980,9 +1040,15 @@ def test_render_leaves_the_stamp_empty_when_the_box_sha_is_unreadable():
     a fabricated value. Empty is what src/api/server.py treats as "no
     stamp" -> reported as UNKNOWN, never as a silent match."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
-    state = {"in_sync": None, "circuit": None, "spend_today": None,
-             "sessions_today": None, "box_sha": None, "box_sha_full": None,
-             "main_sha": None}
+    state = {
+        "in_sync": None,
+        "circuit": None,
+        "spend_today": None,
+        "sessions_today": None,
+        "box_sha": None,
+        "box_sha_full": None,
+        "main_sha": None,
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
     assert 'name="qamc-board-built-sha" content=""' in out
@@ -994,20 +1060,39 @@ def test_board_shows_when_it_was_generated():
     timestamp contains a real date/time (not a placeholder), and the hash
     contains hex characters from the commit."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc123", "box_sha_full": "abc1234567",
-             "main_sha": "abc123"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": "abc123",
+        "box_sha_full": "abc1234567",
+        "main_sha": "abc123",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
 
     # The timestamp should contain day-of-week and month names (human readable)
-    assert any(day in out for day in ("Monday", "Tuesday", "Wednesday", "Thursday",
-                                      "Friday", "Saturday", "Sunday")), \
+    assert any(day in out for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")), (
         "timestamp should contain day of week"
-    assert any(month in out for month in ("January", "February", "March", "April",
-                                          "May", "June", "July", "August",
-                                          "September", "October", "November", "December")), \
-        "timestamp should contain month name"
+    )
+    assert any(
+        month in out
+        for month in (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        )
+    ), "timestamp should contain month name"
 
     # The timezone indicator should be present
     assert " ET" in out, "timestamp should explicitly state the timezone (ET)"
@@ -1015,8 +1100,9 @@ def test_board_shows_when_it_was_generated():
     # The commit hash should be shown in the generated-at stamp
     assert "built from" in out, "stamp should indicate it was built from a commit"
     # The hash itself should appear in the output
-    assert any(sha_part in out for sha_part in ("abc1234", "abc12", "abc")), \
+    assert any(sha_part in out for sha_part in ("abc1234", "abc12", "abc")), (
         "short commit hash should appear in the rendered output"
+    )
 
 
 def test_stale_banner_mechanism_is_gone():
@@ -1026,10 +1112,9 @@ def test_stale_banner_mechanism_is_gone():
     assert not hasattr(sb, "_staleness_banner")
     assert not hasattr(sb, "STALE_AFTER_HOURS")
     assert not hasattr(sb, "_age_words")
-    template = (Path(__file__).resolve().parents[1]
-                / "scripts" / "status_board_template.html").read_text()
+    template = (Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html").read_text()
     assert "{{STALE_BANNER}}" not in template
-    assert "id=\"stale\"" not in template
+    assert 'id="stale"' not in template
 
 
 # --------------------------------------------------------------------------
@@ -1040,6 +1125,7 @@ def test_stale_banner_mechanism_is_gone():
 # it runs on every request, comparing the commit this page was built from
 # against the commit the box is running right now. Pure string-in,
 # string-out — no server, no filesystem — so it is pinned directly here.
+
 
 def test_matching_built_and_live_sha_produce_no_banner():
     sha = "abc1234567890abc1234567890abc1234567890"
@@ -1086,18 +1172,15 @@ def test_undeterminable_version_reports_unknown_not_a_false_all_clear(built, liv
 # on ordinary English, so that gets tested for deliberately, not just the
 # positive cases.
 
+
 def test_plain_english_summaries_are_never_flagged():
     """Genuinely plain-English summaries, including ones that use ordinary
     slash and parenthesis constructions a naive detector could trip on."""
     plain = [
-        "The system now checks stop-losses before every trade and blocks "
-        "anything too risky.",
-        "We fixed the bug where the desk sold winners too early. It now "
-        "holds until the target price.",
-        "The cost/benefit of each trade is weighed against the risk/reward "
-        "before it is sized.",
-        "Reported 3/15/2026 as the date the change went live, twenty-six "
-        "checks passed in a row.",
+        "The system now checks stop-losses before every trade and blocks anything too risky.",
+        "We fixed the bug where the desk sold winners too early. It now holds until the target price.",
+        "The cost/benefit of each trade is weighed against the risk/reward before it is sized.",
+        "Reported 3/15/2026 as the date the change went live, twenty-six checks passed in a row.",
     ]
     for summary in plain:
         flagged, reason = sb.summary_is_engineer_facing(summary)
@@ -1115,19 +1198,21 @@ def test_missing_or_empty_summary_is_flagged_with_its_own_reason():
         assert "no plain-english description" in reason.lower()
 
 
-@pytest.mark.parametrize("summary,expected_marker", [
-    ("See docs/phases.yaml for the manifest.", "a file path"),
-    ("STATE.md still names a commit three deploys behind.", "a file path"),
-    ("The backtester lives in src/backtest/ and has its own CLI.", "a file path"),
-    ("Confirmed via sudo -n -u qamc git -C /home/qamc/quant-agent log "
-     "--oneline -1", "a file path"),
-    ("Fixes issue #42 where stops did not trail correctly.", "a PR or issue number"),
-    ("Landed in PR #150 and deployed the same day.", "a PR or issue number"),
-    ("Commit a1b2c3d fixed the regression.", "a commit hash"),
-    ("The `event_risk` field is now populated from real data.", "a code identifier"),
-    ("afternoon_reserve_pct now walls off part of the budget.", "a code identifier"),
-    ("refresh_openrouter_pricing() is only called from two places.", "a code identifier"),
-])
+@pytest.mark.parametrize(
+    "summary,expected_marker",
+    [
+        ("See docs/phases.yaml for the manifest.", "a file path"),
+        ("STATE.md still names a commit three deploys behind.", "a file path"),
+        ("The backtester lives in src/backtest/ and has its own CLI.", "a file path"),
+        ("Confirmed via sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1", "a file path"),
+        ("Fixes issue #42 where stops did not trail correctly.", "a PR or issue number"),
+        ("Landed in PR #150 and deployed the same day.", "a PR or issue number"),
+        ("Commit a1b2c3d fixed the regression.", "a commit hash"),
+        ("The `event_risk` field is now populated from real data.", "a code identifier"),
+        ("afternoon_reserve_pct now walls off part of the budget.", "a code identifier"),
+        ("refresh_openrouter_pricing() is only called from two places.", "a code identifier"),
+    ],
+)
 def test_each_marker_type_is_detected(summary, expected_marker):
     flagged, reason = sb.summary_is_engineer_facing(summary)
     assert flagged is True, f"expected a flag on: {summary!r}"
@@ -1136,20 +1221,18 @@ def test_each_marker_type_is_detected(summary, expected_marker):
 
 
 def test_ordinary_pluralisation_is_not_read_as_a_function_call():
-    """"trade(s)" is ordinary English shorthand, not `word(...)` call syntax
+    """ "trade(s)" is ordinary English shorthand, not `word(...)` call syntax
     — the parenthesis check must not treat every (s)/(es) as code."""
-    flagged, _ = sb.summary_is_engineer_facing(
-        "Every open trade(s) now carries its own stop-loss.")
+    flagged, _ = sb.summary_is_engineer_facing("Every open trade(s) now carries its own stop-loss.")
     assert flagged is False
 
 
 def test_a_bare_directory_word_pair_is_not_a_path():
-    """"data/info" and similar two-word slash pairings are ordinary English
+    """ "data/info" and similar two-word slash pairings are ordinary English
     shorthand, not a path — a path check anchored only on known directory
     names would still catch this without a second path segment or an
     extension, so this pins that it doesn't."""
-    flagged, _ = sb.summary_is_engineer_facing(
-        "The data/info from the news feed is combined before deciding.")
+    flagged, _ = sb.summary_is_engineer_facing("The data/info from the news feed is combined before deciding.")
     assert flagged is False
 
 
@@ -1160,8 +1243,14 @@ def test_render_shows_a_top_of_page_count_when_something_is_flagged():
     flagged_summary = "See docs/phases.yaml for the manifest."
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     p.summary = flagged_summary
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
     # Search for the rendered element (`class="jargon-banner"`), not the CSS
@@ -1176,8 +1265,14 @@ def test_render_shows_a_top_of_page_count_when_something_is_flagged():
 def test_render_shows_no_jargon_banner_when_nothing_is_flagged():
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     p.summary = "A plain-English summary with nothing mechanical in it."
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
     # The CSS rule itself is always present (it's part of the static
@@ -1190,8 +1285,14 @@ def test_flagged_summary_still_renders_in_full_underneath_the_marker():
     description is still more useful to him than no description."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     p.summary = "See docs/phases.yaml and PR #150 for the detail."
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
-             "sessions_today": 3, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.5,
+        "sessions_today": 3,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render([p], state, template)
     assert "jargon-flag" in out
@@ -1254,7 +1355,7 @@ def test_no_pending_decision_is_overdue():
         "docs/WORK.md has overdue pending decisions:\n  "
         + "\n  ".join(overdue)
         + "\n\nDecide them and remove the line in the same commit that records "
-          "the decision. Do NOT delete the line to make this pass."
+        "the decision. Do NOT delete the line to make this pass."
     )
 
 
@@ -1268,6 +1369,7 @@ def test_no_pending_decision_is_overdue():
 # exactly like "no work outstanding", which is the most misleading thing this
 # page could say.
 # ---------------------------------------------------------------------------
+
 
 def _funnel_openers(text: str) -> list[int]:
     """Every `**N.` item opener inside the funnel-queue section, counted off
@@ -1283,7 +1385,8 @@ def _funnel_openers(text: str) -> list[int]:
 def _whole_board(text: str) -> str:
     return (
         "# board\n\n## PM TEST GATE\n\n**The gate is EMPTY** -- every gate item closed.\n\n"
-        "## THE FUNNEL QUEUE\n\n" + text
+        "## THE FUNNEL QUEUE\n\n"
+        + text
         + "\n\n**Retired item numbers -- never reuse.**\n- retired queue: 1\n\n## Next\n"
     )
 
@@ -1337,7 +1440,8 @@ def test_the_real_backlog_still_parses():
     # its work indistinguishable from one the parser could not read.
     assert [i.rank for i in items] == sorted(_funnel_openers(work.read_text())), (
         "the parser yields a different set of items than the queue's own bold "
-        "`**N.` openers -- some item heading no longer parses")
+        "`**N.` openers -- some item heading no longer parses"
+    )
     assert [i.rank for i in items] == sorted(i.rank for i in items)
     assert all(i.title for i in items)
     # Funnel items 1 and 4 (invented R/R refuse / 1.2 belt) were retired
@@ -1401,8 +1505,7 @@ def test_a_finished_item_reads_as_done():
 def test_pending_decisions_show_time_remaining_and_overdue(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text(
-        "- [ ] DECIDE BY 2026-09-09 — Level quality bar\n"
-        "- [ ] DECIDE BY 2026-08-01 — Something long forgotten\n"
+        "- [ ] DECIDE BY 2026-09-09 — Level quality bar\n- [ ] DECIDE BY 2026-08-01 — Something long forgotten\n"
     )
     got = sb.load_pending_decisions(p, today=dt.date(2026, 9, 2))
     assert [d.due for d in got] == [dt.date(2026, 8, 1), dt.date(2026, 9, 9)]
@@ -1436,6 +1539,7 @@ def test_nothing_waiting_says_so_rather_than_showing_a_blank(tmp_path):
 # pins the check that replaces the memory with a build failure.
 # ---------------------------------------------------------------------------
 
+
 def test_the_real_backlog_has_no_item_contradicting_its_own_title():
     """The real docs/WORK.md, not a fixture — the failure mode is real items
     drifting out of sync with their own `~~done~~` marker over time."""
@@ -1444,8 +1548,7 @@ def test_the_real_backlog_has_no_item_contradicting_its_own_title():
     assert not flagged, (
         "these backlog items claim to be finished in their own title but are "
         "not struck through, so the status board still shows them as open "
-        "work:\n  " + "\n  ".join(flagged) +
-        "\n\nEither wrap the title in ~~...~~ (it is actually done) or "
+        "work:\n  " + "\n  ".join(flagged) + "\n\nEither wrap the title in ~~...~~ (it is actually done) or "
         "reword the title so it no longer claims a closure it hasn't reached."
     )
 
@@ -1453,9 +1556,7 @@ def test_the_real_backlog_has_no_item_contradicting_its_own_title():
 def test_a_title_claiming_closure_without_strikethrough_is_flagged(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**1. Real bug — FIXED 2026-09-04.**\n\n"
-        "**2. Another one — MERGED, PR #999.**\n"
+        "## THE FUNNEL QUEUE\n\n**1. Real bug — FIXED 2026-09-04.**\n\n**2. Another one — MERGED, PR #999.**\n"
     )
     flagged = sb.find_closed_items_not_marked_done(p)
     assert len(flagged) == 2
@@ -1465,10 +1566,7 @@ def test_a_title_claiming_closure_without_strikethrough_is_flagged(tmp_path):
 
 def test_a_struck_through_title_is_not_flagged(tmp_path):
     p = tmp_path / "WORK.md"
-    p.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**~~1. Real bug — FIXED 2026-09-04.~~**\n"
-    )
+    p.write_text("## THE FUNNEL QUEUE\n\n**~~1. Real bug — FIXED 2026-09-04.~~**\n")
     assert sb.find_closed_items_not_marked_done(p) == []
 
 
@@ -1482,16 +1580,14 @@ def test_a_struck_through_title_is_not_flagged(tmp_path):
 # items that happen to discuss the same area of the desk.
 # ---------------------------------------------------------------------------
 
+
 def test_the_real_backlog_has_no_near_duplicate_open_items():
     """The real docs/WORK.md, not a fixture -- the guard exists to catch a
     duplicate filing landing on the live board, so it has to run clean
     against the live board first."""
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     flagged = sb.find_near_duplicate_open_items(work)
-    assert not flagged, (
-        "these open backlog items look like the same finding filed twice:\n  "
-        + "\n  ".join(flagged)
-    )
+    assert not flagged, "these open backlog items look like the same finding filed twice:\n  " + "\n  ".join(flagged)
 
 
 def test_an_exact_retitled_duplicate_is_flagged(tmp_path):
@@ -1567,9 +1663,7 @@ def test_short_generic_titles_do_not_match_by_coincidence(tmp_path):
     this case."""
     p = tmp_path / "WORK.md"
     p.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**1. Fix it — 1 of 5 (20%). DEFECT.**\n\n"
-        "**2. Fix them — 1 of 5 (20%). DEFECT.**\n"
+        "## THE FUNNEL QUEUE\n\n**1. Fix it — 1 of 5 (20%). DEFECT.**\n\n**2. Fix them — 1 of 5 (20%). DEFECT.**\n"
     )
     assert sb.find_near_duplicate_open_items(p) == []
 
@@ -1590,6 +1684,7 @@ def test_an_unparseable_board_reports_nothing_here(tmp_path):
 # The marker must NAME the item it claims distinctness from; a bare "not a
 # duplicate" claim with no number does not suppress anything.
 # ---------------------------------------------------------------------------
+
 
 def test_near_neighbour_marker_suppresses_a_would_be_flag(tmp_path):
     p = tmp_path / "WORK.md"
@@ -1638,14 +1733,11 @@ def test_a_bare_not_a_duplicate_claim_with_no_item_number_does_not_suppress():
     """A marker with no number attached is not accountable to anything and
     must not be honoured -- otherwise any flagged pair could opt out by
     writing "not a duplicate" with nothing behind it."""
-    assert sb._explicit_distinct_targets(
-        "This is not a duplicate, it is a near-neighbour of something else."
-    ) == set()
-
+    assert sb._explicit_distinct_targets("This is not a duplicate, it is a near-neighbour of something else.") == set()
 
 
 def test_a_partial_or_pending_closure_is_not_flagged():
-    """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
+    """ "MOSTLY FIXED, one real judgment call left" and "FIXED, pending
     review" are honest about not being finished yet — they must stay open,
     not get swept into a false-done state just because they contain a
     closure word."""
@@ -1654,8 +1746,11 @@ def test_a_partial_or_pending_closure_is_not_flagged():
     for line in (p_partial, p_pending):
         text = f"## THE FUNNEL QUEUE\n\n{line}\n"
         import tempfile
+
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False,
+            mode="w",
+            suffix=".md",
+            delete=False,
         ) as f:
             f.write(text)
             path = Path(f.name)
@@ -1686,6 +1781,7 @@ def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
 # honoured) and fails when an item's own words say it is done.
 # ---------------------------------------------------------------------------
 
+
 def _board_notes(tmp_path, text=""):
     p = tmp_path / "BOARD_NOTES.md"
     p.write_text(text)
@@ -1694,10 +1790,7 @@ def _board_notes(tmp_path, text=""):
 
 def test_a_synthetic_finished_item_trips_the_check(tmp_path):
     work = tmp_path / "WORK.md"
-    work.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**9. A made-up bug — 3 of 68 (4%). FIXED 2026-09-04 (PR #999).**\n"
-    )
+    work.write_text("## THE FUNNEL QUEUE\n\n**9. A made-up bug — 3 of 68 (4%). FIXED 2026-09-04 (PR #999).**\n")
     notes = _board_notes(tmp_path)
     flagged = sb.find_finished_items_still_on_board(work, notes)
     assert len(flagged) == 1
@@ -1705,8 +1798,7 @@ def test_a_synthetic_finished_item_trips_the_check(tmp_path):
     # The message must tell a reader the whole procedure, not just that
     # something is wrong — this is the one check nobody will know how to
     # act on without being told.
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
-                 "retired"):
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/", "retired"):
         assert step in flagged[0]
 
 
@@ -1728,11 +1820,7 @@ def test_a_deferred_owner_decision_does_not_trip_it(tmp_path):
     """Item 17's real shape: no due date, explicitly deferred. A closure
     word never appears, but this pins the paused/deferred exemption too."""
     work = tmp_path / "WORK.md"
-    work.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**9. Backup alert channel — OWNER DECISION, deferred, no due "
-        "date.**\n"
-    )
+    work.write_text("## THE FUNNEL QUEUE\n\n**9. Backup alert channel — OWNER DECISION, deferred, no due date.**\n")
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
 
@@ -1772,8 +1860,7 @@ def test_a_bare_open_marker_suppresses_a_stray_closure_word_in_the_tail(tmp_path
 
 def test_a_missing_backlog_flags_nothing_for_the_finished_check(tmp_path):
     notes = _board_notes(tmp_path)
-    assert sb.find_finished_items_still_on_board(
-        tmp_path / "nope.md", notes) == []
+    assert sb.find_finished_items_still_on_board(tmp_path / "nope.md", notes) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1784,6 +1871,7 @@ def test_a_missing_backlog_flags_nothing_for_the_finished_check(tmp_path):
 # headline-only reading left open. See `_all_done_when_boxes_checked` and
 # the docstring of `find_finished_items_still_on_board` itself.
 # ---------------------------------------------------------------------------
+
 
 def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
     work = tmp_path / "WORK.md"
@@ -1801,13 +1889,11 @@ def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
     assert len(flagged) == 1
     assert "item 9" in flagged[0]
     assert "DONE WHEN" in flagged[0]
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
-                 "retired"):
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/", "retired"):
         assert step in flagged[0]
 
 
-def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
-        tmp_path):
+def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(tmp_path):
     work = tmp_path / "WORK.md"
     work.write_text(
         "## THE FUNNEL QUEUE\n\n"
@@ -1821,8 +1907,7 @@ def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
     assert sb.find_finished_items_still_on_board(work, notes) == []
 
 
-def test_an_item_with_no_done_when_block_does_not_trip_the_checkbox_check(
-        tmp_path):
+def test_an_item_with_no_done_when_block_does_not_trip_the_checkbox_check(tmp_path):
     """A separate, already-known gap (22 open items on the real board carry
     no DONE WHEN block at all) — not this function's job to flag or fix."""
     work = tmp_path / "WORK.md"
@@ -1835,8 +1920,7 @@ def test_an_item_with_no_done_when_block_does_not_trip_the_checkbox_check(
     assert sb.find_finished_items_still_on_board(work, notes) == []
 
 
-def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
-        tmp_path):
+def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(tmp_path):
     """The genuine exception the board relies on: every listed criterion is
     met, but closing the item still needs a real fill, a real provider
     fault or real capital moving — none of which a check can manufacture.
@@ -1869,6 +1953,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
 # owner can find "what's blocking the PM test" as its own line items instead
 # of hunting through paragraphs.
 # ---------------------------------------------------------------------------
+
 
 def test_the_real_pm_gate_parses_clear_or_declares_at_least_one_open_item():
     """The shipped docs/WORK.md must actually yield the gate, in one of the
@@ -1903,9 +1988,7 @@ def test_pm_gate_declared_empty_returns_no_items_no_problem(tmp_path):
     of numbered items — see test_pm_gate_zero_items_without_marker_is_still_a_problem."""
     p = tmp_path / "WORK.md"
     p.write_text(
-        "## PM TEST GATE\n\n"
-        "**The gate is EMPTY as of 2026-09-14. Every item closed.**\n\n"
-        "<!-- END PM TEST GATE -->\n"
+        "## PM TEST GATE\n\n**The gate is EMPTY as of 2026-09-14. Every item closed.**\n\n<!-- END PM TEST GATE -->\n"
     )
     items, problem = sb.load_pm_gate(p)
     assert items == []
@@ -1929,10 +2012,7 @@ def test_pm_gate_marker_plus_items_is_an_inconsistency(tmp_path):
     parser silently picking a side."""
     p = tmp_path / "WORK.md"
     p.write_text(
-        "## PM TEST GATE\n\n"
-        "**The gate is EMPTY.**\n\n"
-        "**1. Still here somehow — OPEN.**\n\n"
-        "<!-- END PM TEST GATE -->\n"
+        "## PM TEST GATE\n\n**The gate is EMPTY.**\n\n**1. Still here somehow — OPEN.**\n\n<!-- END PM TEST GATE -->\n"
     )
     items, problem = sb.load_pm_gate(p)
     assert items == []
@@ -1974,8 +2054,7 @@ def test_render_open_queue_empty_gate_uses_gate_specific_wording():
     """A declared-empty gate must not render as the generic 'Nothing is
     queued.' — in the gate section that reads as a blank box / parse
     failure, not as the deliberate 'gate clear' state it is."""
-    rendered = sb._render_open_queue(
-        [], None, empty_message="Gate clear — nothing is blocking the model test.")
+    rendered = sb._render_open_queue([], None, empty_message="Gate clear — nothing is blocking the model test.")
     assert "Gate clear" in rendered
     assert "Nothing is queued" not in rendered
 
@@ -2060,8 +2139,7 @@ def _notes(tmp_path, text):
 
 def test_an_item_carries_its_plain_language_example_and_recommendation(tmp_path):
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
-                                     notes=notes)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1], notes=notes)
     assert len(items) == 1
     p = items[0].prose
     assert p.plain.startswith("The desk refuses a trade")
@@ -2075,16 +2153,14 @@ def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed(tmp_pat
     commentary, not a labelled field. If it leaked into the recommendation
     the owner would be shown text nobody wrote as one."""
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
-                                     notes=notes)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1], notes=notes)
     assert "ATR floor" not in items[0].prose.recommendation
     assert "ATR floor" not in items[0].prose.plain
 
 
 def test_wrapped_prose_lines_are_joined_not_truncated(tmp_path):
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
-                                     notes=notes)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1], notes=notes)
     # The second physical line of the plain-language block must be present.
     assert "one and a half times" in items[0].prose.plain
 
@@ -2095,9 +2171,7 @@ def test_prose_no_longer_comes_from_work_mds_own_body():
     heading in docs/board_notes/ does. Without that, this file's own cap
     would be pointless: the prose it was moved to avoid could just come back
     in through the body text instead."""
-    body = ("**3. A thing — DEFECT.**\n\n"
-            "**Plain language —** this text is typed into the wrong file "
-            "now.\n")
+    body = "**3. A thing — DEFECT.**\n\n**Plain language —** this text is typed into the wrong file now.\n"
     items = sb._parse_numbered_items(body)  # no notes: nothing to look up
     assert items[0].prose.plain == ""
     assert not items[0].prose.has_any
@@ -2113,15 +2187,19 @@ def test_prose_no_longer_comes_from_work_mds_own_body():
 # docs/WORK.md can never silently orphan the note written for it.
 # ---------------------------------------------------------------------------
 
+
 def test_board_notes_keys_by_number_and_section_not_title(tmp_path):
-    notes = _notes(tmp_path, (
-        "## item 7\n\n"
-        "**Plain language —** it is a queue thing.\n\n"
-        "## gate item 3\n\n"
-        "**Plain language —** it is a gate thing.\n\n"
-        "## decision due 2026-09-16\n\n"
-        "**Recommendation —** Yes.\n"
-    ))
+    notes = _notes(
+        tmp_path,
+        (
+            "## item 7\n\n"
+            "**Plain language —** it is a queue thing.\n\n"
+            "## gate item 3\n\n"
+            "**Plain language —** it is a gate thing.\n\n"
+            "## decision due 2026-09-16\n\n"
+            "**Recommendation —** Yes.\n"
+        ),
+    )
     assert notes["item 7"].plain == "it is a queue thing."
     assert notes["gate item 3"].plain == "it is a gate thing."
     assert notes["decision due 2026-09-16"].recommendation == "Yes."
@@ -2173,27 +2251,32 @@ def test_render_reads_prose_from_board_notes_not_work_md(tmp_path):
         "**Plain language —** typed into the wrong file, must not render.\n"
     )
     notes = tmp_path / "BOARD_NOTES.md"
-    notes.write_text(
-        "## item 1\n\n"
-        "**Plain language —** the desk explanation lives here now.\n"
-    )
+    notes.write_text("## item 1\n\n**Plain language —** the desk explanation lives here now.\n")
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
-    template = (Path(__file__).resolve().parents[1] / "scripts"
-                / "status_board_template.html")
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work_md=work, board_notes=notes)
     assert "the desk explanation lives here now" in out
     assert "typed into the wrong file, must not render" not in out
 
 
-@pytest.mark.parametrize("line,field", [
-    ("**Plain language —** a", "plain"),
-    ("Plain English: a", "plain"),
-    ("  **Example -** a", "example"),
-    ("DECISION — a", "decision"),
-    ("**My recommendation —** a", "recommendation"),
-])
+@pytest.mark.parametrize(
+    "line,field",
+    [
+        ("**Plain language —** a", "plain"),
+        ("Plain English: a", "plain"),
+        ("  **Example -** a", "example"),
+        ("DECISION — a", "decision"),
+        ("**My recommendation —** a", "recommendation"),
+    ],
+)
 def test_every_accepted_label_spelling_parses(line, field):
     """The labels are typed by hand. A near-miss spelling must land in the
     right block rather than being silently ignored, because silently ignored
@@ -2213,9 +2296,9 @@ def test_an_item_with_no_prose_renders_honestly_and_is_not_dropped():
     the item is still on the page, and the page says nobody has explained it."""
     bare = sb.QueueItem(7, "Some unexplained thing", "DEFECT", "", None, False)
     out = sb._render_open_queue([bare], None)
-    assert "Some unexplained thing" in out          # not dropped
-    assert "Nobody has written" in out              # stated, not papered over
-    assert "no plain-English version yet" in out    # and flagged on the line
+    assert "Some unexplained thing" in out  # not dropped
+    assert "Nobody has written" in out  # stated, not papered over
+    assert "no plain-English version yet" in out  # and flagged on the line
 
 
 def test_nothing_is_invented_for_an_unexplained_item():
@@ -2228,10 +2311,12 @@ def test_nothing_is_invented_for_an_unexplained_item():
     wrote: so every word of the notes shown here has to be a verbatim slice of
     the source, and none of it may be laid out as a plain-language block.
     """
-    body = ("## THE FUNNEL QUEUE\n\n"
-            "**3. A thing — DEFECT.**\n\n"
-            "The real cause is a recursion fault in the bar fetch, traced to\n"
-            "a delisted warrant reaching the data layer.\n")
+    body = (
+        "## THE FUNNEL QUEUE\n\n"
+        "**3. A thing — DEFECT.**\n\n"
+        "The real cause is a recursion fault in the bar fetch, traced to\n"
+        "a delisted warrant reaching the data layer.\n"
+    )
     items = sb._parse_numbered_items(body.split("## THE FUNNEL QUEUE")[1])
     out = sb._render_open_queue(items, None)
     assert not items[0].prose.has_any
@@ -2250,15 +2335,17 @@ def test_nothing_is_invented_for_an_unexplained_item():
     assert "pb-eg" not in out
 
 
-@pytest.mark.parametrize("raw,expect_in,expect_out", [
-    # Single-asterisk emphasis, which the real backlog uses and which used to
-    # reach the page as two stray asterisks inside the notes block.
-    ("*Owner clarification, 2026-09-10: not re-measured yet.*",
-     "Owner clarification", "*"),
-    # Arithmetic must survive verbatim. A lone asterisk between two word
-    # characters is multiplication, not emphasis.
-    ("the stop sits at entry - 2*atr on every fill", "2*atr", None),
-])
+@pytest.mark.parametrize(
+    "raw,expect_in,expect_out",
+    [
+        # Single-asterisk emphasis, which the real backlog uses and which used to
+        # reach the page as two stray asterisks inside the notes block.
+        ("*Owner clarification, 2026-09-10: not re-measured yet.*", "Owner clarification", "*"),
+        # Arithmetic must survive verbatim. A lone asterisk between two word
+        # characters is multiplication, not emphasis.
+        ("the stop sits at entry - 2*atr on every fill", "2*atr", None),
+    ],
+)
 def test_stray_markdown_never_reaches_the_notes_block(raw, expect_in, expect_out):
     out = sb._render_prose(sb.Prose(), raw_source=sb._strip_markdown(raw))
     assert expect_in in out
@@ -2298,9 +2385,15 @@ def test_the_top_card_with_no_prose_is_compact_and_contained(tmp_path):
     """Complaint 2, end to end: the prominent card for an item nobody has
     written up is short, says why, and keeps the raw notes behind a label."""
     it = sb.QueueItem(
-        7, "A thing with a developer-written name", "DEFECT", "", None, False,
+        7,
+        "A thing with a developer-written name",
+        "DEFECT",
+        "",
+        None,
+        False,
         headline="A thing — DEFECT.",
-        raw_body="Traced to a recursion fault in `bar_fetch` for a delisted warrant.")
+        raw_body="Traced to a recursion fault in `bar_fetch` for a delisted warrant.",
+    )
     out = sb._render_right_now([], [], [it])
     assert out.count('class="rn"') == 1
     assert "No plain-English version yet" in out
@@ -2315,12 +2408,13 @@ def test_a_long_headline_on_the_top_card_is_stepped_down_not_rewritten():
     """A whole sentence set at display size reads as a mess. The card calms
     the type; it must never invent a shorter title, which would be a second
     name that drifts from the real one."""
-    long_title = ("Order-fill detection was a fixed-interval REST poll from "
-                  "1992, not the real-time mechanism Alpaca offers")
+    long_title = (
+        "Order-fill detection was a fixed-interval REST poll from 1992, not the real-time mechanism Alpaca offers"
+    )
     it = sb.QueueItem(42, long_title, "", "", None, False)
     out = sb._render_right_now([], [], [it])
     assert "rn-h-long" in out
-    assert long_title in out            # shown in full, unshortened
+    assert long_title in out  # shown in full, unshortened
 
     short = sb.QueueItem(1, "The reward:risk floor", "", "", None, False)
     assert "rn-h-long" not in sb._render_right_now([], [], [short])
@@ -2343,18 +2437,20 @@ def test_prose_written_for_a_developer_is_marked_not_accepted_silently():
 # for that reason alone.
 # ---------------------------------------------------------------------------
 
+
 def test_body_text_on_the_headline_line_does_not_hide_the_item():
-    body = ("\n**41. A persistently broken ticker could fail silently — "
-            "FIXED 2026-09-10.** The earlier fix stopped one bad symbol from "
-            "crashing the whole scan.\n")
+    body = (
+        "\n**41. A persistently broken ticker could fail silently — "
+        "FIXED 2026-09-10.** The earlier fix stopped one bad symbol from "
+        "crashing the whole scan.\n"
+    )
     items = sb._parse_numbered_items(body)
     assert [i.rank for i in items] == [41]
     assert items[0].title.startswith("A persistently broken ticker")
 
 
 def test_a_headline_wrapped_onto_a_second_line_does_not_hide_the_item():
-    body = ("\n**30. The sizing path still owes the same amendment the ranking\n"
-            "path just got — FIXED.**\n\nSome body.\n")
+    body = "\n**30. The sizing path still owes the same amendment the ranking\npath just got — FIXED.**\n\nSome body.\n"
     items = sb._parse_numbered_items(body)
     assert [i.rank for i in items] == [30]
     assert "ranking path just got" in items[0].title
@@ -2367,7 +2463,7 @@ def test_body_text_after_the_headline_on_the_same_line_still_lands_in_raw_body()
     so it is not treated as prose at all — but it must still be captured as
     engineering body text rather than silently dropped, same as any other
     body content on that line."""
-    body = ("\n**5. A thing — DEFECT.** **Plain language —** it is a thing.\n")
+    body = "\n**5. A thing — DEFECT.** **Plain language —** it is a thing.\n"
     items = sb._parse_numbered_items(body)
     assert items[0].prose.plain == ""
     assert "it is a thing" in items[0].raw_body
@@ -2391,6 +2487,7 @@ def test_the_real_backlog_shows_more_items_than_the_strict_shape_would():
 # ---------------------------------------------------------------------------
 # The closure check must not regress
 # ---------------------------------------------------------------------------
+
 
 def test_body_prose_saying_fixed_is_not_read_as_the_items_own_claim(tmp_path):
     """The exact historical false positive: an item whose BODY mentions that
@@ -2417,9 +2514,16 @@ def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
     own words say finished while the backlog has not struck it off is shown to
     him as FINISHED, with the untidy line stated, rather than being filed as
     live work (which is the déjà vu) or silently as signed off."""
-    it = sb.QueueItem(25, "A protected-position rule", "", "", None, False,
-                      headline="A protected-position rule — DONE 2026-09-04.",
-                      raw_body="DONE WHEN: - [x] the rule ships")
+    it = sb.QueueItem(
+        25,
+        "A protected-position rule",
+        "",
+        "",
+        None,
+        False,
+        headline="A protected-position rule — DONE 2026-09-04.",
+        raw_body="DONE WHEN: - [x] the rule ships",
+    )
     assert it.claims_closure is True
     assert it.bucket == "finished_unmarked"
     out = sb._render_finished_unmarked([it])
@@ -2429,8 +2533,7 @@ def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
 
 
 def test_a_partial_claim_stays_open_not_contradictory():
-    it = sb.QueueItem(2, "A thing", "", "", None, False,
-                      headline="A thing — PARTIALLY FIXED, one gap open.")
+    it = sb.QueueItem(2, "A thing", "", "", None, False, headline="A thing — PARTIALLY FIXED, one gap open.")
     assert it.claims_closure is False
     assert it.bucket == "open"
 
@@ -2447,53 +2550,59 @@ def test_a_partial_claim_stays_open_not_contradictory():
 # pin that widening the renderer did not widen the build check.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("tail,expected", [
-    # The words the owner reported, as they appear in his own backlog.
-    ("A thing — SHIPPED 2026-09-04.", "finished"),
-    ("A thing — REPLACED 2026-09-10.", "finished"),
-    ("A thing — REDESIGNED 2026-09-11, owner call.", "finished"),
-    ("A thing — LANDED 2026-09-04.", "finished"),
-    ("A thing — SUPERSEDED by the rewrite.", "finished"),
-    ("A thing — CLOSED 2026-09-04.", "finished"),
-    ("A thing — DELIVERED.", "finished"),
-    ("A thing — COMPLETE.", "finished"),
-    ("A thing — COMPLETED 2026-09-04.", "finished"),
-    # Still recognised from before the widening.
-    ("A thing — FIXED 2026-09-10.", "finished"),
-    ("A thing — DONE 2026-09-04.", "finished"),
-    ("A thing — item WITHDRAWN 2026-09-03.", "finished"),
-    # Work done, review owed — its own answer, never collapsed into "done".
-    ("A thing — FIXED, pending review.", "review_owed"),
-    ("A thing — SHIPPED, awaiting review.", "review_owed"),
-    ("A thing — REPLACED, pending sign-off.", "review_owed"),
-    # Work still outstanding — stays in the running order.
-    ("A thing — MOSTLY FIXED, one real judgment call left.", "part_done"),
-    ("A thing — PARTIALLY FIXED, one gap open.", "part_done"),
-    ("A thing — PARTIALLY CLOSED, re-measured.", "part_done"),
-    # No claim at all.
-    ("A thing — TOO STRICT. IN FLIGHT.", ""),
-    ("A thing — DEFECT. Observed, not theorised.", ""),
-])
+
+@pytest.mark.parametrize(
+    "tail,expected",
+    [
+        # The words the owner reported, as they appear in his own backlog.
+        ("A thing — SHIPPED 2026-09-04.", "finished"),
+        ("A thing — REPLACED 2026-09-10.", "finished"),
+        ("A thing — REDESIGNED 2026-09-11, owner call.", "finished"),
+        ("A thing — LANDED 2026-09-04.", "finished"),
+        ("A thing — SUPERSEDED by the rewrite.", "finished"),
+        ("A thing — CLOSED 2026-09-04.", "finished"),
+        ("A thing — DELIVERED.", "finished"),
+        ("A thing — COMPLETE.", "finished"),
+        ("A thing — COMPLETED 2026-09-04.", "finished"),
+        # Still recognised from before the widening.
+        ("A thing — FIXED 2026-09-10.", "finished"),
+        ("A thing — DONE 2026-09-04.", "finished"),
+        ("A thing — item WITHDRAWN 2026-09-03.", "finished"),
+        # Work done, review owed — its own answer, never collapsed into "done".
+        ("A thing — FIXED, pending review.", "review_owed"),
+        ("A thing — SHIPPED, awaiting review.", "review_owed"),
+        ("A thing — REPLACED, pending sign-off.", "review_owed"),
+        # Work still outstanding — stays in the running order.
+        ("A thing — MOSTLY FIXED, one real judgment call left.", "part_done"),
+        ("A thing — PARTIALLY FIXED, one gap open.", "part_done"),
+        ("A thing — PARTIALLY CLOSED, re-measured.", "part_done"),
+        # No claim at all.
+        ("A thing — TOO STRICT. IN FLIGHT.", ""),
+        ("A thing — DEFECT. Observed, not theorised.", ""),
+    ],
+)
 def test_the_widened_vocabulary_reads_the_three_states_apart(tail, expected):
     it = sb.QueueItem(1, "t", "", "", None, False, headline=tail)
     assert it.closure_claim == expected
 
 
-@pytest.mark.parametrize("headline", [
-    # The three real false positives this logic was built to survive. Every
-    # one of them is a line from the live backlog.
-    "Order-fill detection was a fixed-interval REST poll from 1992 — DEFECT.",
-    "The sizing path still owes the same amendment — deliberately NOT done yet.",
-    "An acceptance test is broken on main — STILL BROKEN, this file's own "
-    "FIXED claim was wrong.",
-    # And the same shapes built out of the NEWLY recognised words, which is
-    # where a widened list would break first.
-    "A fixed-interval poll — NOT YET SHIPPED.",
-    "The stream rewrite — STILL OPEN, the REPLACED claim was premature.",
-    "The prompt rewrite — TO BE REDESIGNED once item 18 lands.",
-    "The ranking change — WILL BE SHIPPED after the re-measure.",
-    "The sizing amendment — INCOMPLETE.",
-])
+@pytest.mark.parametrize(
+    "headline",
+    [
+        # The three real false positives this logic was built to survive. Every
+        # one of them is a line from the live backlog.
+        "Order-fill detection was a fixed-interval REST poll from 1992 — DEFECT.",
+        "The sizing path still owes the same amendment — deliberately NOT done yet.",
+        "An acceptance test is broken on main — STILL BROKEN, this file's own FIXED claim was wrong.",
+        # And the same shapes built out of the NEWLY recognised words, which is
+        # where a widened list would break first.
+        "A fixed-interval poll — NOT YET SHIPPED.",
+        "The stream rewrite — STILL OPEN, the REPLACED claim was premature.",
+        "The prompt rewrite — TO BE REDESIGNED once item 18 lands.",
+        "The ranking change — WILL BE SHIPPED after the re-measure.",
+        "The sizing amendment — INCOMPLETE.",
+    ],
+)
 def test_a_negated_or_future_status_is_not_a_closure_claim(headline):
     """A marker that cries wolf gets ignored, which costs more than not having
     the marker. Every one of the new words is a past participle, and a past
@@ -2505,14 +2614,17 @@ def test_a_negated_or_future_status_is_not_a_closure_claim(headline):
     assert it.bucket in ("open", "paused")
 
 
-@pytest.mark.parametrize("headline", [
-    # The word appears in the item's BODY half, describing something else. Only
-    # the status half of a headline — after the last em dash — is a claim.
-    "Slots burned re-proposing names that never get shipped — DEFECT.",
-    "The budget guard we shipped in August is the wrong shape — TOO STRICT.",
-    "A poll that was replaced everywhere else is still here — DEFECT.",
-    "The scorecard was redesigned upstream and we never took it — NO RECORD.",
-])
+@pytest.mark.parametrize(
+    "headline",
+    [
+        # The word appears in the item's BODY half, describing something else. Only
+        # the status half of a headline — after the last em dash — is a claim.
+        "Slots burned re-proposing names that never get shipped — DEFECT.",
+        "The budget guard we shipped in August is the wrong shape — TOO STRICT.",
+        "A poll that was replaced everywhere else is still here — DEFECT.",
+        "The scorecard was redesigned upstream and we never took it — NO RECORD.",
+    ],
+)
 def test_an_incidental_use_of_a_new_word_is_not_a_closure_claim(headline):
     it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
     assert it.closure_claim == ""
@@ -2538,18 +2650,20 @@ def test_a_reference_to_another_prs_status_is_not_a_claim_about_this_item():
     `closure_claim` returned "finished" and `bucket` was
     `finished_unmarked`, hiding a live, undecided owner-call item as
     already-done."""
-    it = sb.QueueItem(60, "t", "", "", None, False,
-                      headline=_ITEM_60_REAL_HEADLINE)
+    it = sb.QueueItem(60, "t", "", "", None, False, headline=_ITEM_60_REAL_HEADLINE)
     assert it.closure_claim == ""
     assert it.claims_closure is False
     assert it.bucket != "finished_unmarked"
 
 
-@pytest.mark.parametrize("tail,removed", [
-    ("OPEN, deferred while PR #343 (merged) repaired part of it.", "MERGED"),
-    ("OPEN, deferred while #343 (merged) repaired part of it.", "MERGED"),
-    ("OPEN, see item 12 (fixed) for the related repair.", "FIXED"),
-])
+@pytest.mark.parametrize(
+    "tail,removed",
+    [
+        ("OPEN, deferred while PR #343 (merged) repaired part of it.", "MERGED"),
+        ("OPEN, deferred while #343 (merged) repaired part of it.", "MERGED"),
+        ("OPEN, see item 12 (fixed) for the related repair.", "FIXED"),
+    ],
+)
 def test_strip_cross_references_removes_only_the_referenced_status(tail, removed):
     """The stripped text still contains the item's OWN status word ("OPEN")
     — this only removes the parenthetical describing something else."""
@@ -2562,9 +2676,16 @@ def test_a_bare_closure_word_is_still_read_when_it_is_not_a_cross_reference():
     """The fix must not go blind to a real closure word just because a
     number appears nearby — only a number IMMEDIATELY followed by its own
     parenthetical status is a cross-reference."""
-    it = sb.QueueItem(1, "t", "", "", None, False,
-                      headline="A thing — FIXED, see item 12 for detail.",
-                      raw_body="DONE WHEN: - [x] done")
+    it = sb.QueueItem(
+        1,
+        "t",
+        "",
+        "",
+        None,
+        False,
+        headline="A thing — FIXED, see item 12 for detail.",
+        raw_body="DONE WHEN: - [x] done",
+    )
     assert it.closure_claim == "finished"
     assert it.claims_closure is True
 
@@ -2573,9 +2694,11 @@ def test_a_word_that_merely_contains_a_closure_word_is_not_one():
     """Substring matching is what makes a growing vocabulary dangerous:
     INCOMPLETE contains COMPLETE, UNRESOLVED contains RESOLVED, and MERGE
     ORDER nearly contains MERGED. Matching is on word boundaries."""
-    for tail in ("A thing — UNRESOLVED.",
-                 "A thing — merge ORDER matters, see the incident history.",
-                 "A thing — UNDONE by the next change."):
+    for tail in (
+        "A thing — UNRESOLVED.",
+        "A thing — merge ORDER matters, see the incident history.",
+        "A thing — UNDONE by the next change.",
+    ):
         it = sb.QueueItem(1, "t", "", "", None, False, headline=tail)
         assert it.closure_claim == "", tail
 
@@ -2595,8 +2718,7 @@ def test_widening_the_renderer_did_not_widen_the_build_failing_check(tmp_path):
 
     # A newly-recognised word does NOT fail the build...
     p = tmp_path / "WORK.md"
-    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n"
-                 "\nDONE WHEN: - [x] it ships\n")
+    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n\nDONE WHEN: - [x] it ships\n")
     assert sb.find_closed_items_not_marked_done(p) == []
     # ...while the page still shows it as finished rather than as live work.
     items = sb._parse_numbered_items(p.read_text().split(sb._QUEUE_HEADING, 1)[1])
@@ -2627,8 +2749,7 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # rungs, written up in docs/INCIDENT_HISTORY.md, and deleted.
     for rank in (1, 4, 14, 28, 30, 33, 34, 36, 41, 42, 43, 47, 51, 54, 57):
         assert rank not in by_rank, (
-            f"item {rank} is retired and was deleted from docs/WORK.md; "
-            "it must not reappear in the funnel queue"
+            f"item {rank} is retired and was deleted from docs/WORK.md; it must not reappear in the funnel queue"
         )
     # No item should be in the "resolved" bucket at all any more. Owner
     # doctrine 2026-09-12: once an item is resolved AND written up in
@@ -2653,9 +2774,7 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # retired it by removing the mechanism rather than answering its
     # question (docs/INCIDENT_HISTORY.md). It is gone from the queue, so
     # the assertion is that it is gone — not a relabelled bucket.
-    assert 32 not in by_rank, (
-        "item 32 was retired 2026-09-20; it must not be back in the queue"
-    )
+    assert 32 not in by_rank, "item 32 was retired 2026-09-20; it must not be back in the queue"
 
 
 # ---------------------------------------------------------------------------
@@ -2672,6 +2791,7 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
 # fails the build the moment the line and the live items disagree, so this
 # cannot recur silently a third time.
 # ---------------------------------------------------------------------------
+
 
 #: As of 2026-09-30 the retired list is APPEND-ONLY: `- retired queue: ...` /
 #: `- retired gate: ...` bullet lines, one per closure, never a single shared
@@ -2698,12 +2818,10 @@ def _parse_retired_numbers(work_md_text: str) -> tuple[list[int], list[int]]:
         "'- retired queue: N, N, ...' / '- retired gate: N, N, ...' shape"
     )
     assert len(result.queue) == len(set(result.queue)), (
-        "the funnel-queue retired-number list repeats a number across its "
-        "bullet lines"
+        "the funnel-queue retired-number list repeats a number across its bullet lines"
     )
     assert len(result.gate) == len(set(result.gate)), (
-        "the PM-gate retired-number list repeats a number across its "
-        "bullet lines"
+        "the PM-gate retired-number list repeats a number across its bullet lines"
     )
     return result.queue, result.gate
 
@@ -2759,9 +2877,15 @@ def test_no_retired_number_names_an_item_that_is_still_live():
 def test_a_mostly_finished_item_is_labelled_rather_than_hidden():
     """Moving partly-finished work out of the running order would hide live
     work, which is worse than the problem being fixed. It is labelled."""
-    it = sb.QueueItem(32, "The risk envelope", "", "", None, False,
-                      headline="The risk envelope — MOSTLY FIXED, one real "
-                               "judgment call left.")
+    it = sb.QueueItem(
+        32,
+        "The risk envelope",
+        "",
+        "",
+        None,
+        False,
+        headline="The risk envelope — MOSTLY FIXED, one real judgment call left.",
+    )
     assert it.bucket == "open"
     out = sb._render_open_queue([it], None)
     assert "partly done" in out
@@ -2769,8 +2893,9 @@ def test_a_mostly_finished_item_is_labelled_rather_than_hidden():
 
 
 def test_review_owed_is_neither_live_work_nor_signed_off():
-    it = sb.QueueItem(33, "The two risk checks", "", "", None, False,
-                      headline="The two risk checks — FIXED, pending review.")
+    it = sb.QueueItem(
+        33, "The two risk checks", "", "", None, False, headline="The two risk checks — FIXED, pending review."
+    )
     assert it.bucket == "review_owed"
     out = sb._render_review_owed([it])
     assert "the work is done" in out
@@ -2793,14 +2918,13 @@ def test_empty_finished_and_review_sections_say_so_rather_than_render_blank():
 # has to disambiguate as well as identify.
 # ---------------------------------------------------------------------------
 
+
 def test_two_numbered_sequences_do_not_share_an_identifier():
     """The funnel queue counts 1..43 and the PM TEST GATE counts 1..8,
     independently. A bare number names two different things, so each sequence
     carries its own prefix and the prefix is part of what he quotes."""
-    queue_item = sb.QueueItem(4, "A queue thing", "", "", None, False,
-                              source="backlog")
-    gate_item = sb.QueueItem(4, "A gate thing", "", "", None, False,
-                             source="pm-gate")
+    queue_item = sb.QueueItem(4, "A queue thing", "", "", None, False, source="backlog")
+    gate_item = sb.QueueItem(4, "A gate thing", "", "", None, False, source="pm-gate")
     assert queue_item.ref == "item 4"
     assert gate_item.ref == "gate item 4"
     assert queue_item.ref != gate_item.ref
@@ -2820,17 +2944,16 @@ def test_the_real_backlog_gives_every_item_a_unique_quotable_identifier():
 def test_every_rendered_item_carries_its_identifier():
     """Every list he reads: the running order, the parked list, the finished
     list, the finished-but-untidy list and the review list."""
-    it = sb.QueueItem(32, "A thing", "DEFECT", "", None, False,
-                      headline="A thing — DEFECT.")
+    it = sb.QueueItem(32, "A thing", "DEFECT", "", None, False, headline="A thing — DEFECT.")
     assert "item 32" in sb._render_open_queue([it], None)
     assert "item 32" in sb._render_one_liners([it], "nothing")
     assert "item 32" in sb._render_one_liners([it], "nothing", struck=True)
 
-    fin = sb.QueueItem(42, "A finished thing", "", "", None, False,
-                       headline="A finished thing — REPLACED 2026-09-10.")
+    fin = sb.QueueItem(42, "A finished thing", "", "", None, False, headline="A finished thing — REPLACED 2026-09-10.")
     assert "item 42" in sb._render_finished_unmarked([fin])
-    rev = sb.QueueItem(33, "A reviewed thing", "", "", None, False,
-                       headline="A reviewed thing — FIXED, pending review.")
+    rev = sb.QueueItem(
+        33, "A reviewed thing", "", "", None, False, headline="A reviewed thing — FIXED, pending review."
+    )
     assert "item 33" in sb._render_review_owed([rev])
 
 
@@ -2854,10 +2977,8 @@ def test_only_references_actually_present_in_the_source_are_shown():
     exists to prevent, wearing a tracking number."""
     assert sb.extract_refs("A plain item with no references at all.") == ()
     assert "PR #252" in sb.extract_refs("core cause MERGED 2026-09-04 (PR #252)")
-    assert "incident history" in sb.extract_refs(
-        "Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.")
-    assert "branch feat/replace-budget-reservation" in sb.extract_refs(
-        "SHIPPED on `feat/replace-budget-reservation`.")
+    assert "incident history" in sb.extract_refs("Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.")
+    assert "branch feat/replace-budget-reservation" in sb.extract_refs("SHIPPED on `feat/replace-budget-reservation`.")
 
 
 def test_a_documentation_path_is_not_announced_as_a_branch():
@@ -2871,20 +2992,20 @@ def test_a_documentation_path_is_not_announced_as_a_branch():
 def test_a_long_list_of_prs_is_counted_not_recited():
     """One real item names eleven PRs. Eleven chips is a list, not a
     reference."""
-    refs = sb.extract_refs("Eleven PRs open at once (#249, #250, #251, #252, "
-                           "#253, #254, #255, #256, #257, #261, #262).")
+    refs = sb.extract_refs(
+        "Eleven PRs open at once (#249, #250, #251, #252, #253, #254, #255, #256, #257, #261, #262)."
+    )
     assert refs == ("11 pull requests named in the backlog",)
 
 
 def test_the_identifier_is_readable_but_does_not_dominate_the_card():
     """It has to be quotable on a phone without becoming the loudest thing on
     the card. Carried by a small monospace tag, not by heading type."""
-    template = (Path(__file__).resolve().parents[1]
-                / "scripts" / "status_board_template.html").read_text()
+    template = (Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html").read_text()
     assert ".ref{" in template
     ref_rule = template.split(".ref{", 1)[1].split("}", 1)[0]
     assert "JetBrains Mono" in ref_rule
-    assert "user-select:all" in ref_rule   # tap-and-copy on a phone
+    assert "user-select:all" in ref_rule  # tap-and-copy on a phone
     # And it is not set at heading weight/size.
     assert "font-size:11.5px" in ref_rule
 
@@ -2893,14 +3014,18 @@ def test_the_identifier_is_readable_but_does_not_dominate_the_card():
 # Buckets: one item, one section
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("headline,expected", [
-    ("A thing — DEFERRED, not investigated further.", "paused"),
-    ("A thing — MOOT, deleted with item 14.", "paused"),
-    # Being built is not paused — and, since 2026-09-12, not "open" either:
-    # it is in hand. See the IN HAND block below.
-    ("A thing — TOO STRICT. IN FLIGHT.", "in_hand"),
-    ("A thing — TOO STRICT. DEFECT.", "open"),
-])
+
+@pytest.mark.parametrize(
+    "headline,expected",
+    [
+        ("A thing — DEFERRED, not investigated further.", "paused"),
+        ("A thing — MOOT, deleted with item 14.", "paused"),
+        # Being built is not paused — and, since 2026-09-12, not "open" either:
+        # it is in hand. See the IN HAND block below.
+        ("A thing — TOO STRICT. IN FLIGHT.", "in_hand"),
+        ("A thing — TOO STRICT. DEFECT.", "open"),
+    ],
+)
 def test_paused_items_are_separated_from_live_work(headline, expected):
     it = sb.QueueItem(1, "A thing", "", "", None, False, headline=headline)
     assert it.bucket == expected
@@ -2916,36 +3041,42 @@ def test_paused_items_are_separated_from_live_work(headline, expected):
 # had ruled on, or one already being built, was queued back at him.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("headline,expected", [
-    ("A thing — TOO STRICT. IN FLIGHT.", "being built"),
-    ("A thing — DEFECT. IN PROGRESS.", "being built"),
-    ("A thing — BEING BUILT, lands this week.", "being built"),
-    ("A thing — DECIDED 2026-09-12, rank-ordered.", "decided, not yet built"),
-    ("A thing — RATIFIED 2026-09-03.", "decided, not yet built"),
-    ("A thing — owner-requested.", "decided, not yet built"),
-    # Item 20's real tail: a ruling, followed by an instruction containing
-    # the word NOT. The blanket "NOT anywhere" rule would have un-ruled it.
-    ("Gate the decision — owner's design, 2026-09-02. Do not trade on "
-     "partial evidence.", "decided, not yet built"),
-    # No claim.
-    ("A thing — DEFECT. Observed, not theorised.", ""),
-    ("A thing — OPEN, found 2026-09-11 by audit.", ""),
-])
+
+@pytest.mark.parametrize(
+    "headline,expected",
+    [
+        ("A thing — TOO STRICT. IN FLIGHT.", "being built"),
+        ("A thing — DEFECT. IN PROGRESS.", "being built"),
+        ("A thing — BEING BUILT, lands this week.", "being built"),
+        ("A thing — DECIDED 2026-09-12, rank-ordered.", "decided, not yet built"),
+        ("A thing — RATIFIED 2026-09-03.", "decided, not yet built"),
+        ("A thing — owner-requested.", "decided, not yet built"),
+        # Item 20's real tail: a ruling, followed by an instruction containing
+        # the word NOT. The blanket "NOT anywhere" rule would have un-ruled it.
+        ("Gate the decision — owner's design, 2026-09-02. Do not trade on partial evidence.", "decided, not yet built"),
+        # No claim.
+        ("A thing — DEFECT. Observed, not theorised.", ""),
+        ("A thing — OPEN, found 2026-09-11 by audit.", ""),
+    ],
+)
 def test_decided_and_in_progress_are_read_apart(headline, expected):
     it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
     assert it.in_hand_state == expected
     assert it.bucket == ("in_hand" if expected else "open")
 
 
-@pytest.mark.parametrize("headline", [
-    "A thing — NOT DECIDED, do not act.",
-    "A thing — NOT YET APPROVED.",
-    "A thing — TO BE DECIDED after the re-measure.",
-    "A thing — AWAITING APPROVAL.",
-    "A thing — UNDECIDED.",
-    # "OWNER CALL" on its own means a call is NEEDED, not that one was made.
-    "A thing — STILL OPEN, OWNER CALL.",
-])
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "A thing — NOT DECIDED, do not act.",
+        "A thing — NOT YET APPROVED.",
+        "A thing — TO BE DECIDED after the re-measure.",
+        "A thing — AWAITING APPROVAL.",
+        "A thing — UNDECIDED.",
+        # "OWNER CALL" on its own means a call is NEEDED, not that one was made.
+        "A thing — STILL OPEN, OWNER CALL.",
+    ],
+)
 def test_a_negated_ruling_is_not_a_ruling(headline):
     it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
     assert it.in_hand_state == ""
@@ -2971,14 +3102,17 @@ def test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling():
     assert it.bucket == "in_hand"
 
 
-@pytest.mark.parametrize("paragraph", [
-    # An ordinary bold sentence: no date, so not a status paragraph.
-    "**Three distinct defects, and they compound:**",
-    # A status word that is not the opening word.
-    "**Conviction-band question — DECIDED 2026-09-11, owner call:** restore",
-    # Dated, but negated.
-    "**NOT DECIDED 2026-09-12.** Do not act on the existing numbers.",
-])
+@pytest.mark.parametrize(
+    "paragraph",
+    [
+        # An ordinary bold sentence: no date, so not a status paragraph.
+        "**Three distinct defects, and they compound:**",
+        # A status word that is not the opening word.
+        "**Conviction-band question — DECIDED 2026-09-11, owner call:** restore",
+        # Dated, but negated.
+        "**NOT DECIDED 2026-09-12.** Do not act on the existing numbers.",
+    ],
+)
 def test_ordinary_bold_prose_is_not_a_status_paragraph(paragraph):
     body = f"\n**7. A thing — DEFECT.**\n\n{paragraph}\n"
     it = sb._parse_numbered_items(body)[0]
@@ -2990,21 +3124,30 @@ def test_finished_and_partly_done_both_outrank_in_hand():
     """A ruling on a finished item is history, not a live state; and real
     outstanding work on a mostly-finished item stays in the running order,
     labelled — the existing tests pin that and this one must not undo it."""
-    shipped = sb.QueueItem(1, "t", "", "", None, False,
-                           headline="A thing — SHIPPED 2026-09-04, owner-requested.",
-                           raw_body="DONE WHEN: - [x] shipped")
+    shipped = sb.QueueItem(
+        1,
+        "t",
+        "",
+        "",
+        None,
+        False,
+        headline="A thing — SHIPPED 2026-09-04, owner-requested.",
+        raw_body="DONE WHEN: - [x] shipped",
+    )
     assert shipped.bucket == "finished_unmarked"
-    partial = sb.QueueItem(1, "t", "", "", None, False,
-                           headline="A thing — PARTIALLY FIXED, rest IN FLIGHT.")
+    partial = sb.QueueItem(1, "t", "", "", None, False, headline="A thing — PARTIALLY FIXED, rest IN FLIGHT.")
     assert partial.bucket == "open"
     assert partial.part_done is True
 
 
-@pytest.mark.parametrize("headline", [
-    "Accepted by the broker, never filled — 6 of 68 (9%). WORKING AS INTENDED.",
-    "A second floor — 4 of 68 (6%). WORKING AS INTENDED, BUT.",
-    "Stop on the wrong side — 2 of 68 (3%). CHECKED, NOT A DEFECT.",
-])
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Accepted by the broker, never filled — 6 of 68 (9%). WORKING AS INTENDED.",
+        "A second floor — 4 of 68 (6%). WORKING AS INTENDED, BUT.",
+        "Stop on the wrong side — 2 of 68 (3%). CHECKED, NOT A DEFECT.",
+    ],
+)
 def test_a_cause_that_is_by_design_is_listed_but_never_queued(headline):
     it = sb.QueueItem(3, "t", "", "", None, False, headline=headline)
     assert it.bucket == "no_action"
@@ -3084,8 +3227,14 @@ def test_the_top_card_never_shows_an_item_already_in_hand(tmp_path):
         "### Re-measure gate\n"
     )
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.0,
-             "sessions_today": 0, "box_sha": "a", "main_sha": "a"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.0,
+        "sessions_today": 0,
+        "box_sha": "a",
+        "main_sha": "a",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work, tmp_path / "none.md")
     top = out.split('class="rn"', 1)[1].split("</article>", 1)[0]
@@ -3111,23 +3260,21 @@ def test_a_struck_through_item_is_resolved_not_open():
 # RIGHT NOW — exactly one thing
 # ---------------------------------------------------------------------------
 
+
 def _decision(days_left, question="A question", prose=None):
-    return sb.PendingDecision(dt.date.today() + dt.timedelta(days=days_left),
-                              question, days_left, prose or sb.Prose())
+    return sb.PendingDecision(dt.date.today() + dt.timedelta(days=days_left), question, days_left, prose or sb.Prose())
 
 
 def test_right_now_shows_exactly_one_thing():
-    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
-                         recorded="DONE AND LIVE", title="Rotten")
+    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")], recorded="DONE AND LIVE", title="Rotten")
     out = sb._render_right_now(
-        [rotten], [_decision(-3), _decision(2)],
-        [sb.QueueItem(1, "Top item", "", "", None, False)])
+        [rotten], [_decision(-3), _decision(2)], [sb.QueueItem(1, "Top item", "", "", None, False)]
+    )
     assert out.count('class="rn"') == 1
 
 
 def test_rot_outranks_a_decision_which_outranks_the_running_order():
-    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
-                         recorded="DONE AND LIVE", title="Rotten")
+    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")], recorded="DONE AND LIVE", title="Rotten")
     top = sb.QueueItem(1, "Top item", "", "", None, False)
     d = _decision(-3, "Overdue question")
 
@@ -3159,22 +3306,24 @@ def test_nothing_to_do_says_so_rather_than_inventing_urgency():
 # A decision carries its own explanation and recommendation
 # ---------------------------------------------------------------------------
 
+
 def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
     """The decision's own line in docs/WORK.md carries only the question now
     — its prose comes from docs/board_notes/, keyed by the decision's due
     date (`PendingDecision.ref`), because a decision has no number of its
     own to key on."""
     p = tmp_path / "WORK.md"
-    p.write_text(
-        "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
+    p.write_text("- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n")
+    notes = _notes(
+        tmp_path,
+        (
+            "## decision due 2099-01-01\n\n"
+            "**Plain language —** Which AI does the desk's final trade call.\n"
+            "**Example —** Same shortlist, two models: one buys three names,\n"
+            "the other buys one.\n"
+            "**Recommendation —** Re-measure first, then decide.\n"
+        ),
     )
-    notes = _notes(tmp_path, (
-        "## decision due 2099-01-01\n\n"
-        "**Plain language —** Which AI does the desk's final trade call.\n"
-        "**Example —** Same shortlist, two models: one buys three names,\n"
-        "the other buys one.\n"
-        "**Recommendation —** Re-measure first, then decide.\n"
-    ))
     got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1), notes=notes)
     assert len(got) == 1
     assert got[0].prose.plain.startswith("Which AI does")
@@ -3200,8 +3349,7 @@ def test_a_decisions_indented_body_no_longer_carries_prose(tmp_path):
 def test_a_wrapped_question_is_not_truncated_to_a_fragment(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text(
-        "- [ ] DECIDE BY 2099-01-01 — What should the freshness bar be,\n"
-        "  given the real lag on the economic data?\n"
+        "- [ ] DECIDE BY 2099-01-01 — What should the freshness bar be,\n  given the real lag on the economic data?\n"
     )
     got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
     assert got[0].question.endswith("economic data?")
@@ -3226,16 +3374,19 @@ def test_a_decision_with_no_recommendation_says_so(tmp_path):
 # up to the same section, and removed from wherever it would otherwise show.
 # ---------------------------------------------------------------------------
 
+
 def test_why_only_you_label_parses():
-    assert sb.parse_prose(["Why only you — real money is at risk."]).why_him == (
-        "real money is at risk.")
+    assert sb.parse_prose(["Why only you — real money is at risk."]).why_him == ("real money is at risk.")
 
 
-@pytest.mark.parametrize("line", [
-    "Why only you — a",
-    "**Why only him —** a",
-    "Why him: a",
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Why only you — a",
+        "**Why only him —** a",
+        "Why him: a",
+    ],
+)
 def test_every_why_only_you_spelling_parses(line):
     assert sb.parse_prose([line]).why_him == "a"
 
@@ -3244,14 +3395,17 @@ def _prose(decision="", why_him=""):
     return sb.Prose(decision=decision, why_him=why_him)
 
 
-@pytest.mark.parametrize("decision,why_him,live", [
-    ("Should we sell the position?", "It risks real money.", True),
-    ("Should we sell the position?", "", False),          # no reason given
-    ("", "It risks real money.", False),                  # no decision at all
-    ("None for you.", "It risks real money.", False),     # a research question
-    ("Not yet. The gate has to clear first.", "It risks real money.", False),
-    ("Possibly yours later, but not yet.", "It risks real money.", False),
-])
+@pytest.mark.parametrize(
+    "decision,why_him,live",
+    [
+        ("Should we sell the position?", "It risks real money.", True),
+        ("Should we sell the position?", "", False),  # no reason given
+        ("", "It risks real money.", False),  # no decision at all
+        ("None for you.", "It risks real money.", False),  # a research question
+        ("Not yet. The gate has to clear first.", "It risks real money.", False),
+        ("Possibly yours later, but not yet.", "It risks real money.", False),
+    ],
+)
 def test_owner_call_needs_a_live_decision_and_a_reason(decision, why_him, live):
     """`_is_live_owner_ask` requires BOTH fields, and a decision that reads
     as already-settled or not-yet-his (the backlog's own "None for you" /
@@ -3264,10 +3418,16 @@ def test_owner_call_headline_is_the_first_sentence_only():
     """The card's headline is one line, even when the authored decision text
     runs to several sentences — the full text still renders in the body."""
     it = sb.QueueItem(
-        53, "t", "", "", None, False,
+        53,
+        "t",
+        "",
+        "",
+        None,
+        False,
         prose=sb.Prose(
             decision="Should the fraction be sold? Three real options exist.",
-            why_him="Real money is uncovered right now."),
+            why_him="Real money is uncovered right now.",
+        ),
     )
     assert sb.owner_call_items([it]) == [it]
     out = sb._render_owner_call_cards([it])
@@ -3296,10 +3456,15 @@ def test_owner_call_item_moves_out_of_the_general_queue(tmp_path):
         "**Why only you —** it risks real money.\n"
     )
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
-    template = (Path(__file__).resolve().parents[1] / "scripts"
-                / "status_board_template.html")
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work_md=work, board_notes=notes)
 
     yours = out.split('<section id="yours">', 1)[1].split("</section>", 1)[0]
@@ -3316,10 +3481,7 @@ def test_a_market_structure_number_never_reaches_waiting_on_you(tmp_path):
     this desk's own data, not by his say-so. Without an authored
     `Why only you`, it stays in the running order."""
     work = tmp_path / "WORK.md"
-    work.write_text(
-        "## THE FUNNEL QUEUE\n\n"
-        "**9. A pivot-window question — 1 of 2 (50%). OPEN.**\n"
-    )
+    work.write_text("## THE FUNNEL QUEUE\n\n**9. A pivot-window question — 1 of 2 (50%). OPEN.**\n")
     notes = tmp_path / "BOARD_NOTES.md"
     notes.write_text(
         "## item 9\n\n"
@@ -3327,10 +3489,15 @@ def test_a_market_structure_number_never_reaches_waiting_on_you(tmp_path):
         "**The decision —** None for you. It is a chart-structure question.\n"
     )
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
-    template = (Path(__file__).resolve().parents[1] / "scripts"
-                / "status_board_template.html")
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work_md=work, board_notes=notes)
     yours = out.split('<section id="yours">', 1)[1].split("</section>", 1)[0]
     order = out.split('<section id="order">', 1)[1].split('<section id="inhand">', 1)[0]
@@ -3358,21 +3525,31 @@ def test_render_decisions_still_takes_a_single_argument():
 # It must never 500 his phone
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("content", [
-    "",
-    "\x00\x01\x02 not markdown at all",
-    "## THE FUNNEL QUEUE\n" + ("**1. " * 400) + "\n",
-    "## THE FUNNEL QUEUE\n\n**notanumber. A thing — DEFECT.**\n",
-    "- [ ] DECIDE BY 9999-99-99 — an impossible date\n",
-])
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "\x00\x01\x02 not markdown at all",
+        "## THE FUNNEL QUEUE\n" + ("**1. " * 400) + "\n",
+        "## THE FUNNEL QUEUE\n\n**notanumber. A thing — DEFECT.**\n",
+        "- [ ] DECIDE BY 9999-99-99 — an impossible date\n",
+    ],
+)
 def test_a_malformed_backlog_still_renders_a_page(tmp_path, content):
     """A board that fails to load is a board he stops opening. Whatever the
     backlog looks like, a page comes out and it does not pretend."""
     p = tmp_path / "WORK.md"
     p.write_text(content)
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work_md=p)
     assert "{{" not in out
@@ -3381,8 +3558,14 @@ def test_a_malformed_backlog_still_renders_a_page(tmp_path, content):
 
 def test_a_missing_backlog_file_does_not_break_the_page(tmp_path):
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": None, "circuit": None, "spend_today": None,
-             "sessions_today": None, "box_sha": None, "main_sha": None}
+    state = {
+        "in_sync": None,
+        "circuit": None,
+        "spend_today": None,
+        "sessions_today": None,
+        "box_sha": None,
+        "main_sha": None,
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work_md=tmp_path / "gone.md")
     assert "{{" not in out
@@ -3392,6 +3575,7 @@ def test_a_missing_backlog_file_does_not_break_the_page(tmp_path):
 # ---------------------------------------------------------------------------
 # Accessibility and the rebuild trigger
 # ---------------------------------------------------------------------------
+
 
 def test_no_status_on_the_page_depends_on_colour_alone():
     """Every verdict has to survive all colour being stripped out, so each
@@ -3405,22 +3589,21 @@ def test_no_status_on_the_page_depends_on_colour_alone():
 
 
 def _css_tokens(block: str) -> dict[str, str]:
-    return {m.group(1): m.group(2).upper()
-            for m in re.finditer(r"--([a-z-]+):(#[0-9A-Fa-f]{6})", block)}
+    return {m.group(1): m.group(2).upper() for m in re.finditer(r"--([a-z-]+):(#[0-9A-Fa-f]{6})", block)}
 
 
 def _contrast(a: str, b: str) -> float:
     def lum(h):
-        r, g, b_ = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        r, g, b_ = (int(h[i : i + 2], 16) / 255 for i in (1, 3, 5))
         f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
         return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b_)
+
     hi, lo = sorted((lum(a), lum(b)), reverse=True)
     return (hi + 0.05) / (lo + 0.05)
 
 
 def _palettes():
-    css = (Path(__file__).resolve().parents[1] / "scripts"
-           / "status_board_template.html").read_text()
+    css = (Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html").read_text()
     light = _css_tokens(css.split(":root{", 1)[1].split("}", 1)[0])
     dark = _css_tokens(css.split('[data-theme="dark"]{', 1)[1].split("}", 1)[0])
     return {"light": light, "dark": dark}
@@ -3429,13 +3612,21 @@ def _palettes():
 #: Every text-on-background pairing the stylesheet draws, and the WCAG
 #: minimum it must clear: 4.5:1 for text, 3:1 for a border or a dot.
 _CONTRAST_PAIRS = [
-    ("ink", "card", 4.5), ("ink", "paper", 4.5),
-    ("muted", "card", 4.5), ("muted", "paper", 4.5), ("muted", "quiet-bg", 4.5),
-    ("faint", "card", 4.5), ("faint", "paper", 4.5),
-    ("accent", "card", 4.5), ("accent", "paper", 4.5),
-    ("strong", "strong-bg", 4.5), ("strong", "card", 4.5),
-    ("flag", "flag-bg", 4.5), ("flag", "card", 4.5),
-    ("strong-edge", "card", 3.0), ("flag-edge", "card", 3.0),
+    ("ink", "card", 4.5),
+    ("ink", "paper", 4.5),
+    ("muted", "card", 4.5),
+    ("muted", "paper", 4.5),
+    ("muted", "quiet-bg", 4.5),
+    ("faint", "card", 4.5),
+    ("faint", "paper", 4.5),
+    ("accent", "card", 4.5),
+    ("accent", "paper", 4.5),
+    ("strong", "strong-bg", 4.5),
+    ("strong", "card", 4.5),
+    ("flag", "flag-bg", 4.5),
+    ("flag", "card", 4.5),
+    ("strong-edge", "card", 3.0),
+    ("flag-edge", "card", 3.0),
     ("accent", "card", 3.0),
 ]
 
@@ -3460,8 +3651,9 @@ def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
     pins is his two stated dislikes: nothing pink, and nothing washed out.
     Meaning is carried by text and edge shape rather than hue anyway — see
     the sibling tests — so the palette is free to be a preference."""
+
     def hue(h):
-        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        r, g, b = (int(h[i : i + 2], 16) / 255 for i in (1, 3, 5))
         mx, mn = max(r, g, b), min(r, g, b)
         if mx == mn:
             return None  # grey
@@ -3473,6 +3665,7 @@ def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
         else:
             deg = (r - g) / d + 4
         return (deg * 60) % 360
+
     pal = _palettes()[theme]
     for name in ("accent", "strong", "strong-edge"):
         assert 248 <= hue(pal[name]) <= 268, f"{theme}: {name} is not violet"
@@ -3499,8 +3692,7 @@ def test_every_nothing_needed_state_has_its_own_edge_shape():
     drawn with a different border STYLE so they stay apart with colour
     stripped out: solid for a review owed, double for in hand, dashed for a
     gap. A colour swap alone would be invisible to him."""
-    css = (Path(__file__).resolve().parents[1] / "scripts"
-           / "status_board_template.html").read_text()
+    css = (Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html").read_text()
     assert re.search(r"\.ol-review\{border-left:\d+px solid", css)
     assert re.search(r"\.ol-inhand\{border-left:\d+px double", css)
     assert re.search(r"\.pb-gap,\.pb-jargon\{border-left-style:dashed", css)
@@ -3509,8 +3701,7 @@ def test_every_nothing_needed_state_has_its_own_edge_shape():
 def test_the_rebuild_trigger_watches_the_backlog():
     """The board's core defect before this change: the file it is made of was
     not watched, so editing the backlog did not update the owner's page."""
-    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
-            / "quant-agent-status-board.path").read_text()
+    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd" / "quant-agent-status-board.path").read_text()
     assert "docs/WORK.md" in unit
     assert "PathChanged=/home/qamc/quant-agent/docs/WORK.md" in unit
 
@@ -3521,8 +3712,7 @@ def test_the_rebuild_trigger_also_watches_the_board_notes_file():
     as an edit to the backlog does, so it must fire the same rebuild — the
     same defect the WORK.md watch above exists to prevent, on the other
     half of the page's source material."""
-    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
-            / "quant-agent-status-board.path").read_text()
+    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd" / "quant-agent-status-board.path").read_text()
     assert "PathChanged=/home/qamc/quant-agent/docs/board_notes" in unit
 
 
@@ -3530,16 +3720,16 @@ def test_the_board_service_does_not_point_at_the_retired_timer():
     """A .timer unit used to drive this and was replaced by the .path unit.
     Install instructions naming the timer would have an operator enable a unit
     that no longer exists."""
-    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
-           / "quant-agent-status-board.service").read_text()
-    enable_lines = [l for l in svc.splitlines()
-                    if "systemctl" in l and "enable" in l]
+    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd" / "quant-agent-status-board.service").read_text()
+    enable_lines = [l for l in svc.splitlines() if "systemctl" in l and "enable" in l]
     assert enable_lines
     assert all("status-board.timer" not in l for l in enable_lines)
 
 
 def test_main_exits_zero_when_html_write_succeeds_even_if_contradicted(
-    tmp_path, monkeypatch, capsys,
+    tmp_path,
+    monkeypatch,
+    capsys,
 ):
     """A contradicted phase is a finding on the page, not a failed systemd
     unit. The HTML write succeeding is the process success condition."""
@@ -3554,17 +3744,31 @@ def test_main_exits_zero_when_html_write_succeeds_even_if_contradicted(
     html = "<html>CONTRADICTED Phase 9</html>"
     monkeypatch.setattr(sb, "read_settings", lambda: {})
     monkeypatch.setattr(sb, "load_phases", lambda *_a, **_k: [contradicted])
-    monkeypatch.setattr(sb, "live_state", lambda: {
-        "in_sync": True, "circuit": "clear", "spend_today": 0,
-        "sessions_today": 0, "box_sha": "abc", "main_sha": "abc",
-    })
+    monkeypatch.setattr(
+        sb,
+        "live_state",
+        lambda: {
+            "in_sync": True,
+            "circuit": "clear",
+            "spend_today": 0,
+            "sessions_today": 0,
+            "box_sha": "abc",
+            "main_sha": "abc",
+        },
+    )
     monkeypatch.setattr(sb, "render", lambda *_a, **_k: html)
-    monkeypatch.setattr(sys, "argv", [
-        "status_board.py",
-        "--out", str(out),
-        "--manifest", str(manifest),
-        "--no-github",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "status_board.py",
+            "--out",
+            str(out),
+            "--manifest",
+            str(manifest),
+            "--no-github",
+        ],
+    )
     assert sb.main() == 0
     assert out.read_text() == html
     captured = capsys.readouterr()
@@ -3579,46 +3783,59 @@ def test_main_exits_nonzero_when_html_write_fails(tmp_path, monkeypatch):
     manifest.write_text("phases: []\n")
     monkeypatch.setattr(sb, "read_settings", lambda: {})
     monkeypatch.setattr(sb, "load_phases", lambda *_a, **_k: [])
-    monkeypatch.setattr(sb, "live_state", lambda: {
-        "in_sync": True, "circuit": "clear", "spend_today": 0,
-        "sessions_today": 0, "box_sha": "abc", "main_sha": "abc",
-    })
+    monkeypatch.setattr(
+        sb,
+        "live_state",
+        lambda: {
+            "in_sync": True,
+            "circuit": "clear",
+            "spend_today": 0,
+            "sessions_today": 0,
+            "box_sha": "abc",
+            "main_sha": "abc",
+        },
+    )
     monkeypatch.setattr(sb, "render", lambda *_a, **_k: "<html></html>")
-    monkeypatch.setattr(sys, "argv", [
-        "status_board.py",
-        "--out", str(out_dir),
-        "--manifest", str(manifest),
-        "--no-github",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "status_board.py",
+            "--out",
+            str(out_dir),
+            "--manifest",
+            str(manifest),
+            "--no-github",
+        ],
+    )
     assert sb.main() == 2
 
 
 def test_the_board_service_does_not_treat_contradiction_as_unit_failure():
-    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
-           / "quant-agent-status-board.service").read_text()
+    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd" / "quant-agent-status-board.service").read_text()
     assert "Exit 1 means a phase recorded as finished" not in svc
     assert "HTML write succeeded" in svc
 
 
-@pytest.mark.parametrize("headline,expected", [
-    # Real lines from the live backlog that a plain word search got wrong.
-    # "a fixed-interval poll" DESCRIBES a mechanism; only the status half of a
-    # headline is a claim, which is why this one is still False despite the
-    # word "fixed" appearing in it.
-    ("Order-fill detection was a fixed-interval REST poll — DEFECT.", False),
-    ("The sizing path still owes an amendment — deliberately NOT done yet.",
-     False),
-    ("An acceptance test is broken on main — STILL BROKEN, this file's own "
-     "FIXED claim was wrong.", False),
-    # And the ones that genuinely do claim to be finished. "REPLACED" moved
-    # from False to True deliberately: the owner reported it as a real
-    # closure word his board was drawing as live work. See the widened
-    # vocabulary tests above.
-    ("Order-fill detection was a fixed-interval REST poll — REPLACED "
-     "2026-09-10.", True),
-    ("A protected-position rule — DONE 2026-09-04.", True),
-    ("A broken ticker could fail silently forever — FIXED 2026-09-10.", True),
-])
+@pytest.mark.parametrize(
+    "headline,expected",
+    [
+        # Real lines from the live backlog that a plain word search got wrong.
+        # "a fixed-interval poll" DESCRIBES a mechanism; only the status half of a
+        # headline is a claim, which is why this one is still False despite the
+        # word "fixed" appearing in it.
+        ("Order-fill detection was a fixed-interval REST poll — DEFECT.", False),
+        ("The sizing path still owes an amendment — deliberately NOT done yet.", False),
+        ("An acceptance test is broken on main — STILL BROKEN, this file's own FIXED claim was wrong.", False),
+        # And the ones that genuinely do claim to be finished. "REPLACED" moved
+        # from False to True deliberately: the owner reported it as a real
+        # closure word his board was drawing as live work. See the widened
+        # vocabulary tests above.
+        ("Order-fill detection was a fixed-interval REST poll — REPLACED 2026-09-10.", True),
+        ("A protected-position rule — DONE 2026-09-04.", True),
+        ("A broken ticker could fail silently forever — FIXED 2026-09-10.", True),
+    ],
+)
 def test_a_description_is_not_read_as_a_closure_claim(headline, expected):
     """A marker that cries wolf gets ignored, which is worse than no marker.
     Only the STATUS half of a headline — after the last em dash — is a claim
@@ -3661,6 +3878,7 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
 # depending on a session remembering to read the docstring.
 # ---------------------------------------------------------------------------
 
+
 def _strip_tags(html: str) -> str:
     """Card markup reduced to the words the owner actually reads. The jargon
     detector must not see tag names or class attributes — those are markup,
@@ -3670,9 +3888,14 @@ def _strip_tags(html: str) -> str:
 
 def _right_now_card_html():
     rotten = _phase_with(
-        [sb.RuleResult("setting_equals", sb.FAIL, "the single-name ceiling",
-                       "risk.max_position_pct = 100 (expected 20)")],
-        recorded="DONE AND LIVE", title="Risk-based sizing")
+        [
+            sb.RuleResult(
+                "setting_equals", sb.FAIL, "the single-name ceiling", "risk.max_position_pct = 100 (expected 20)"
+            )
+        ],
+        recorded="DONE AND LIVE",
+        title="Risk-based sizing",
+    )
     return sb._render_right_now([rotten], [], [])
 
 
@@ -3707,8 +3930,7 @@ def test_the_failed_proof_card_does_not_assert_breakage():
 
 def test_a_humanised_identifier_keeps_a_date_readable():
     """2026_08_28 becoming "2026 08 28" reads as three unrelated numbers."""
-    assert "2026-08-28" in sb._humanise_identifier(
-        "test_the_estimator_reproduces_the_2026_08_28_block")
+    assert "2026-08-28" in sb._humanise_identifier("test_the_estimator_reproduces_the_2026_08_28_block")
 
 
 def test_no_board_note_is_orphaned_in_the_real_repository():
@@ -3731,8 +3953,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     decisions = sb.load_pending_decisions(work, notes=notes)
     real = {x.ref for x in (*queue, *gate, *decisions)}
 
-    orphans = sorted(k for k in notes if k not in real
-                     and not k.lower().startswith("item n"))
+    orphans = sorted(k for k in notes if k not in real and not k.lower().startswith("item n"))
     assert orphans == [], (
         "docs/board_notes/ explains items that no longer exist under those "
         f"keys in docs/WORK.md: {orphans}. Either the item was renumbered "
@@ -3761,8 +3982,9 @@ def test_every_rendered_entry_carries_a_reference_handle():
 
     entries = [*queue, *gate, *decisions]
     assert entries, "no entries parsed — the fixture, not the rule, is wrong"
-    missing = [getattr(e, "title", None) or getattr(e, "question", "?")
-               for e in entries if not getattr(e, "ref", "").strip()]
+    missing = [
+        getattr(e, "title", None) or getattr(e, "question", "?") for e in entries if not getattr(e, "ref", "").strip()
+    ]
     assert missing == [], (
         f"{len(missing)} board entries would render with no reference handle, "
         f"so the owner could not name them: {missing[:3]}"
@@ -3802,16 +4024,19 @@ def _gh(answers: dict[str, object], *, status: int = 200, etag: str | None = Non
 import json  # noqa: E402
 
 
-def _pr(number, title, sha="deadbeefcafe", draft=False,
-        created="2026-09-12T16:00:02Z", updated=None):
-    return {"number": number, "title": title, "draft": draft,
-            "created_at": created, "updated_at": updated or created,
-            "head": {"sha": sha}}
+def _pr(number, title, sha="deadbeefcafe", draft=False, created="2026-09-12T16:00:02Z", updated=None):
+    return {
+        "number": number,
+        "title": title,
+        "draft": draft,
+        "created_at": created,
+        "updated_at": updated or created,
+        "head": {"sha": sha},
+    }
 
 
 def _checks(*runs):
-    return {"check_runs": [{"name": n, "status": s, "conclusion": c}
-                           for n, s, c in runs]}
+    return {"check_runs": [{"name": n, "status": s, "conclusion": c} for n, s, c in runs]}
 
 
 @pytest.fixture(autouse=True)
@@ -3822,14 +4047,18 @@ def _no_etag_cache():
 
 
 def test_in_flight_lists_open_pull_requests_with_a_plain_stage():
-    fetch = _gh({
-        "/pulls?state=open": [_pr(326, "A data fault is not a trade refusal"),
-                              _pr(319, "Fix invisible markers", sha="0000000")],
-        "/pulls/326": {"mergeable_state": "dirty"},
-        "/pulls/319": {"mergeable_state": "clean"},
-        "commits/deadbeefcafe/check-runs": _checks(("pytest", "completed", "success")),
-        "commits/0000000/check-runs": _checks(("pytest", "completed", "success")),
-    })
+    fetch = _gh(
+        {
+            "/pulls?state=open": [
+                _pr(326, "A data fault is not a trade refusal"),
+                _pr(319, "Fix invisible markers", sha="0000000"),
+            ],
+            "/pulls/326": {"mergeable_state": "dirty"},
+            "/pulls/319": {"mergeable_state": "clean"},
+            "commits/deadbeefcafe/check-runs": _checks(("pytest", "completed", "success")),
+            "commits/0000000/check-runs": _checks(("pytest", "completed", "success")),
+        }
+    )
     got = inflight.read_in_flight(fetch=fetch)
     assert got.readable and got.read_at is not None
     assert [i.number for i in got.items] == [326, 319]
@@ -3849,34 +4078,49 @@ def test_in_flight_lists_open_pull_requests_with_a_plain_stage():
     assert inflight.START_MARK in out and inflight.END_MARK in out
 
 
-@pytest.mark.parametrize("draft,state,checks,expect", [
-    (True, "clean", (("pytest", "completed", "success"),), "still being written"),
-    (False, "clean", (("pytest", "in_progress", None),), "being tested now"),
-    (False, "clean", (("pytest", "completed", "failure"),), "tests failed"),
-    (False, "dirty", (("pytest", "completed", "success"),), "clashes with work already merged"),
-    (False, "blocked", (("pytest", "completed", "success"),), "waiting on a review"),
-    (False, "behind", (("pytest", "completed", "success"),), "latest changes pulled in"),
-    (False, "clean", (), "no tests have run"),
-    (False, "unknown", (("pytest", "completed", "success"),), "still being worked out"),
-    (False, None, None, "could not be read"),
-])
+@pytest.mark.parametrize(
+    "draft,state,checks,expect",
+    [
+        (True, "clean", (("pytest", "completed", "success"),), "still being written"),
+        (False, "clean", (("pytest", "in_progress", None),), "being tested now"),
+        (False, "clean", (("pytest", "completed", "failure"),), "tests failed"),
+        (False, "dirty", (("pytest", "completed", "success"),), "clashes with work already merged"),
+        (False, "blocked", (("pytest", "completed", "success"),), "waiting on a review"),
+        (False, "behind", (("pytest", "completed", "success"),), "latest changes pulled in"),
+        (False, "clean", (), "no tests have run"),
+        (False, "unknown", (("pytest", "completed", "success"),), "still being worked out"),
+        (False, None, None, "could not be read"),
+    ],
+)
 def test_every_stage_is_words_not_a_github_token(draft, state, checks, expect):
-    it = inflight.InFlightItem(1, "t", dt.datetime.now(dt.timezone.utc),
-                               dt.datetime.now(dt.timezone.utc), draft=draft,
-                               mergeable_state=state, checks=checks)
+    it = inflight.InFlightItem(
+        1,
+        "t",
+        dt.datetime.now(dt.timezone.utc),
+        dt.datetime.now(dt.timezone.utc),
+        draft=draft,
+        mergeable_state=state,
+        checks=checks,
+    )
     assert expect in it.stage
-    assert not any(tok in it.stage for tok in ("dirty", "clean", "blocked:", "unstable")
-                   if tok != "blocked:")  # "blocked:" is the plain word; the others are GitHub's
+    assert not any(
+        tok in it.stage for tok in ("dirty", "clean", "blocked:", "unstable") if tok != "blocked:"
+    )  # "blocked:" is the plain word; the others are GitHub's
 
 
 def test_unreachable_github_reads_as_could_not_read_never_as_nothing_in_flight():
     """The failure class this desk keeps finding: an empty list that really
     means "I could not look". Every failure shape must say so in words."""
+
     def down(url, headers):
         raise OSError("no route to host")
-    for fetch in (down, _gh({"/pulls?state=open": []}, status=403),
-                  _gh({"/pulls?state=open": []}, status=500),
-                  _gh({"/pulls?state=open": {"not": "a list"}})):
+
+    for fetch in (
+        down,
+        _gh({"/pulls?state=open": []}, status=403),
+        _gh({"/pulls?state=open": []}, status=500),
+        _gh({"/pulls?state=open": {"not": "a list"}}),
+    ):
         got = inflight.read_in_flight(fetch=fetch)
         assert not got.readable, "a failed read must not look like a clean one"
         assert got.items == []
@@ -3889,10 +4133,18 @@ def test_unreachable_github_reads_as_could_not_read_never_as_nothing_in_flight()
 
 def test_a_failed_read_can_show_the_last_good_read_dated_but_never_undated():
     good = inflight.InFlight(
-        items=[inflight.InFlightItem(7, "Old but real", dt.datetime.now(dt.timezone.utc),
-                                     dt.datetime.now(dt.timezone.utc),
-                                     mergeable_state="clean", checks=())],
-        read_at=dt.datetime(2026, 9, 12, 14, 0, tzinfo=dt.timezone.utc))
+        items=[
+            inflight.InFlightItem(
+                7,
+                "Old but real",
+                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.timezone.utc),
+                mergeable_state="clean",
+                checks=(),
+            )
+        ],
+        read_at=dt.datetime(2026, 9, 12, 14, 0, tzinfo=dt.timezone.utc),
+    )
     bad = inflight.InFlight(problem="GitHub could not be reached (OSError)")
     out = inflight.render_in_flight(bad, last_good=good)
     text = re.sub(r"<[^>]+>", " ", out)
@@ -3917,6 +4169,7 @@ def test_an_item_whose_own_status_fails_is_still_listed_as_unreadable():
         if "/pulls?state=open" in url:
             return 200, {}, json.dumps([_pr(5, "Exists")]).encode()
         raise OSError("boom")
+
     got = inflight.read_in_flight(fetch=fetch)
     assert got.readable and [i.number for i in got.items] == [5]
     assert got.items[0].detail_problem
@@ -3926,15 +4179,21 @@ def test_an_item_whose_own_status_fails_is_still_listed_as_unreadable():
 def test_the_etag_is_sent_back_and_a_304_reuses_the_held_answer():
     """Unauthenticated reads are rate-limited; a 304 is free. So the second
     read must send If-None-Match and accept the cached body on 304."""
-    first = _gh({"/pulls?state=open": [_pr(9, "Nine", sha="abc")],
-                 "/pulls/9": {"mergeable_state": "clean"},
-                 "commits/abc/check-runs": _checks()}, etag='W/"e1"')
+    first = _gh(
+        {
+            "/pulls?state=open": [_pr(9, "Nine", sha="abc")],
+            "/pulls/9": {"mergeable_state": "clean"},
+            "commits/abc/check-runs": _checks(),
+        },
+        etag='W/"e1"',
+    )
     got1 = inflight.read_in_flight(fetch=first)
     assert [i.number for i in got1.items] == [9]
 
     def second(url, headers):
         assert headers.get("If-None-Match") == 'W/"e1"', url
         return 304, {}, b""
+
     got2 = inflight.read_in_flight(fetch=second)
     assert got2.readable and [i.number for i in got2.items] == [9]
 
@@ -3943,8 +4202,14 @@ def test_render_without_asking_github_says_so_rather_than_rendering_empty(tmp_pa
     """`render`'s default is the explicit "nobody asked" state: a preview or
     a test must not reach for the network, and must not print an empty list."""
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template)
     assert "Could not read what is in flight" in out
@@ -3957,14 +4222,28 @@ def test_in_flight_sits_below_the_decisions_and_inside_the_in_hand_section(tmp_p
     """Nothing may push "waiting on you" down. In-flight work is part of the
     one "nothing needed from you" section, not a second visual language."""
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
-             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.1,
+        "sessions_today": 1,
+        "box_sha": "abc",
+        "main_sha": "abc",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     got = inflight.InFlight(
-        items=[inflight.InFlightItem(3, "Built thing", dt.datetime.now(dt.timezone.utc),
-                                     dt.datetime.now(dt.timezone.utc),
-                                     mergeable_state="clean", checks=())],
-        read_at=dt.datetime.now(dt.timezone.utc))
+        items=[
+            inflight.InFlightItem(
+                3,
+                "Built thing",
+                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.timezone.utc),
+                mergeable_state="clean",
+                checks=(),
+            )
+        ],
+        read_at=dt.datetime.now(dt.timezone.utc),
+    )
     out = sb.render(phases, state, template, in_flight=got)
     assert out.index('id="yours"') < out.index('id="order"') < out.index('id="inhand"')
     inhand = out.split('id="inhand"', 1)[1].split("</section>", 1)[0]
@@ -3992,15 +4271,20 @@ def test_finished_and_parked_work_is_behind_one_closed_disclosure_with_counts(tm
         "### Re-measure gate\n"
     )
     phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
-    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.0,
-             "sessions_today": 0, "box_sha": "a", "main_sha": "a"}
+    state = {
+        "in_sync": True,
+        "circuit": "clear",
+        "spend_today": 0.0,
+        "sessions_today": 0,
+        "box_sha": "a",
+        "main_sha": "a",
+    }
     template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
     out = sb.render(phases, state, template, work, tmp_path / "none.md")
     start = out.index('<details class="finished rest">')
     end = out.index("</details>", start)
     inside = re.sub(r"\s+", " ", out[start:end])
-    for name in ("Parked thing", "By-design thing", "Reviewed thing",
-                 "Signed off thing", "Shipped thing"):
+    for name in ("Parked thing", "By-design thing", "Reviewed thing", "Signed off thing", "Shipped thing"):
         assert name in inside, name
         assert name not in out[:start] + out[end:], f"{name} rendered outside the disclosure"
     assert "Live thing" not in inside
@@ -4016,14 +4300,21 @@ def test_finished_and_parked_work_is_behind_one_closed_disclosure_with_counts(tm
 def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
     """A pull request changing touches nothing the path unit watches, so the
     server swaps a fresh read into the fenced section at request time."""
-    stale = inflight.render_in_flight(
-        inflight.InFlight(problem="this page was built without asking GitHub"))
+    stale = inflight.render_in_flight(inflight.InFlight(problem="this page was built without asking GitHub"))
     page = f'<div class="wrap">{stale}</div>'
     fresh = inflight.InFlight(
-        items=[inflight.InFlightItem(11, "Fresh thing", dt.datetime.now(dt.timezone.utc),
-                                     dt.datetime.now(dt.timezone.utc),
-                                     mergeable_state="clean", checks=())],
-        read_at=dt.datetime.now(dt.timezone.utc))
+        items=[
+            inflight.InFlightItem(
+                11,
+                "Fresh thing",
+                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.timezone.utc),
+                mergeable_state="clean",
+                checks=(),
+            )
+        ],
+        read_at=dt.datetime.now(dt.timezone.utc),
+    )
     monkeypatch.setattr(api_server, "_last_good_in_flight", None)
     monkeypatch.setattr(inflight, "read_in_flight", lambda: fresh)
     out = api_server._refresh_in_flight(page)
@@ -4032,8 +4323,9 @@ def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
     assert api_server._last_good_in_flight is fresh
 
     # A failed re-read: could-not-read, with the last good read shown dated.
-    monkeypatch.setattr(inflight, "read_in_flight",
-                        lambda: inflight.InFlight(problem="GitHub could not be reached (OSError)"))
+    monkeypatch.setattr(
+        inflight, "read_in_flight", lambda: inflight.InFlight(problem="GitHub could not be reached (OSError)")
+    )
     out2 = api_server._refresh_in_flight(page)
     assert "Could not read what is in flight" in out2
     assert "Fresh thing" in out2 and "last successful read" in out2
@@ -4044,6 +4336,7 @@ def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
     # And a crash inside the read serves the page as built, never a 500.
     def boom():
         raise RuntimeError("unexpected")
+
     monkeypatch.setattr(inflight, "read_in_flight", boom)
     assert api_server._refresh_in_flight(page) == page
 
@@ -4058,50 +4351,48 @@ def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
 #: "...with ed reason (no_order_built)". The work-queue Stop hook renders
 #: item titles into the message it uses to hand work back, so this was not
 #: cosmetic: the hook was describing an item by a name that is not its name.
-_REAL_MANGLED_TITLE = (
-    "Most ideas die inside the machinery with no recorded reason "
-    "(no_order_built)."
-)
+_REAL_MANGLED_TITLE = "Most ideas die inside the machinery with no recorded reason (no_order_built)."
 
 
 def test_a_class_name_inside_an_english_word_is_not_stripped_from_a_title():
     """Regression, with the exact title that produced the mangling."""
     got = sb._tidy_title(_REAL_MANGLED_TITLE)
-    assert got == (
-        "Most ideas die inside the machinery with no recorded reason "
-        "(no_order_built)"
-    )
+    assert got == ("Most ideas die inside the machinery with no recorded reason (no_order_built)")
     # The specific corruption, named so a re-break is unmistakable.
     assert "ed reason" not in got.replace("recorded reason", "")
     assert "no recorded reason" in got
 
 
-@pytest.mark.parametrize("title, expect", [
-    # Every queue class, embedded in a longer word that must survive whole.
-    ("a defective stop", "a defective stop"),
-    ("counts the defects", "counts the defects"),
-    ("with no recorded reason", "with no recorded reason"),
-    ("no records were kept", "no records were kept"),
-    ("sized too strictly", "sized too strictly"),
-    # An undiagnosed thing contains no class token at all, but guards the
-    # near-miss: only the exact phrase is a label.
-    ("not yet diagnosable", "not yet diagnosable"),
-])
+@pytest.mark.parametrize(
+    "title, expect",
+    [
+        # Every queue class, embedded in a longer word that must survive whole.
+        ("a defective stop", "a defective stop"),
+        ("counts the defects", "counts the defects"),
+        ("with no recorded reason", "with no recorded reason"),
+        ("no records were kept", "no records were kept"),
+        ("sized too strictly", "sized too strictly"),
+        # An undiagnosed thing contains no class token at all, but guards the
+        # near-miss: only the exact phrase is a label.
+        ("not yet diagnosable", "not yet diagnosable"),
+    ],
+)
 def test_ordinary_words_containing_a_class_token_survive(title, expect):
     assert sb._tidy_title(title) == expect
 
 
-@pytest.mark.parametrize("title, expect", [
-    # The label itself still goes, wherever in the line it sits.
-    ("DEFECT. Constructor misattributes vetoes",
-     "Constructor misattributes vetoes"),
-    ("Stops refuse level-backed exits TOO STRICT",
-     "Stops refuse level-backed exits"),
-    ("NO RECORD of why an idea died", "of why an idea died"),
-    ("Ranking is NOT YET DIAGNOSED", "Ranking is"),
-    ("Brake is WORKING AS INTENDED", "Brake is"),
-    ("Item TOO NEW TO CLASSIFY", "Item"),
-])
+@pytest.mark.parametrize(
+    "title, expect",
+    [
+        # The label itself still goes, wherever in the line it sits.
+        ("DEFECT. Constructor misattributes vetoes", "Constructor misattributes vetoes"),
+        ("Stops refuse level-backed exits TOO STRICT", "Stops refuse level-backed exits"),
+        ("NO RECORD of why an idea died", "of why an idea died"),
+        ("Ranking is NOT YET DIAGNOSED", "Ranking is"),
+        ("Brake is WORKING AS INTENDED", "Brake is"),
+        ("Item TOO NEW TO CLASSIFY", "Item"),
+    ],
+)
 def test_an_inline_classification_label_is_still_stripped(title, expect):
     assert sb._tidy_title(title) == expect
 
@@ -4110,8 +4401,7 @@ def test_an_inline_classification_label_is_still_stripped(title, expect):
 # The retired line takes numbers, not reasons
 # ---------------------------------------------------------------------------
 
-_RETIRED_REASON_SENTENCE = re.compile(
-    r"(?<=\. )\*?\*?Items? \d+[^.]{0,400}?\bretired\b", re.S)
+_RETIRED_REASON_SENTENCE = re.compile(r"(?<=\. )\*?\*?Items? \d+[^.]{0,400}?\bretired\b", re.S)
 
 
 def test_the_retired_line_carries_no_per_item_reason():
@@ -4141,16 +4431,21 @@ def test_the_retired_line_carries_no_per_item_reason():
     `scripts/resolve_doc_conflict.py::parse_retired_lines`).
     """
     line = next(
-        (l for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()
-         if l.startswith("**Retired item numbers")), "")
+        (
+            l
+            for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()
+            if l.startswith("**Retired item numbers")
+        ),
+        "",
+    )
     assert line, "the retired-item-numbers line is missing from docs/WORK.md"
     offenders = _RETIRED_REASON_SENTENCE.findall(line)
     assert not offenders, (
         "the retired-item-numbers line has grown a per-item reason again:\n"
         + "\n".join(f"  - {o[:120]}..." for o in offenders)
         + "\n\nPut the reason in docs/INCIDENT_HISTORY.md as its own dated "
-          "### entry and leave only the number here. Every retirement that "
-          "writes prose on this line blocks every other retirement in flight."
+        "### entry and leave only the number here. Every retirement that "
+        "writes prose on this line blocks every other retirement in flight."
     )
 
 
@@ -4168,8 +4463,7 @@ _ITEM_187_REAL_HEADLINE = (
 def test_another_items_closure_cited_in_prose_is_not_this_items_status():
     """Regression for the real item 187: the closure words sit in a clause
     whose SUBJECT is item 175, not this item."""
-    it = sb.QueueItem(187, "t", "", "", None, False,
-                      headline=_ITEM_187_REAL_HEADLINE)
+    it = sb.QueueItem(187, "t", "", "", None, False, headline=_ITEM_187_REAL_HEADLINE)
     assert it.closure_claim == ""
     assert it.claims_closure is False
     assert it.bucket != "finished_unmarked"
@@ -4178,9 +4472,9 @@ def test_another_items_closure_cited_in_prose_is_not_this_items_status():
 def test_a_half_shipped_item_is_part_done_not_finished():
     """Regression for the real item 90: "HALF SHIPPED ... ITEM STAYS OPEN"
     is a partial statement, read as full closure before the fix."""
-    it = sb.QueueItem(90, "t", "", "", None, False,
-                      headline="Unsourced numbers — TIER 1, half shipped "
-                               "2026-09-18, item stays OPEN.")
+    it = sb.QueueItem(
+        90, "t", "", "", None, False, headline="Unsourced numbers — TIER 1, half shipped 2026-09-18, item stays OPEN."
+    )
     assert it.closure_claim == "part_done"
     assert it.claims_closure is False
 
@@ -4188,9 +4482,7 @@ def test_a_half_shipped_item_is_part_done_not_finished():
 def test_a_self_closure_still_flags_even_when_another_item_is_named():
     """The guard must not go silent: a real self-closure whose clause
     happens to end by naming another item is still a closure claim."""
-    it = sb.QueueItem(5, "t", "", "", None, False,
-                      headline="A thing — SHIPPED 2026-09-04, superseding "
-                               "item 12.")
+    it = sb.QueueItem(5, "t", "", "", None, False, headline="A thing — SHIPPED 2026-09-04, superseding item 12.")
     assert it.closure_claim == "finished"
     # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
     # prose closure is a HINT and no longer classifies on its own. The
@@ -4201,8 +4493,7 @@ def test_a_self_closure_still_flags_even_when_another_item_is_named():
 
 def test_an_item_quoting_its_own_number_still_claims_closure():
     """A reference to the item's OWN number is not a cross-reference."""
-    it = sb.QueueItem(42, "t", "", "", None, False,
-                      headline="A thing — item 42 SHIPPED 2026-09-04.")
+    it = sb.QueueItem(42, "t", "", "", None, False, headline="A thing — item 42 SHIPPED 2026-09-04.")
     assert it.closure_claim == "finished"
     # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
     # prose closure is a HINT and no longer classifies on its own. The
@@ -4213,8 +4504,7 @@ def test_an_item_quoting_its_own_number_still_claims_closure():
 
 def test_a_plain_self_closure_still_flags():
     """The case the marker exists for must keep firing."""
-    it = sb.QueueItem(7, "t", "", "", None, False,
-                      headline="A thing — SHIPPED 2026-09-04.")
+    it = sb.QueueItem(7, "t", "", "", None, False, headline="A thing — SHIPPED 2026-09-04.")
     assert it.closure_claim == "finished"
     # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
     # prose closure is a HINT and no longer classifies on its own. The
@@ -4232,14 +4522,12 @@ def test_a_plain_self_closure_still_flags():
 
 
 def _boxed(headline, body, rank=1):
-    return sb.QueueItem(rank, "t", "", "", None, False,
-                        headline=headline, raw_body=body)
+    return sb.QueueItem(rank, "t", "", "", None, False, headline=headline, raw_body=body)
 
 
 def test_every_box_ticked_and_still_listed_is_flagged():
     """The signal must still fire, or it is useless."""
-    it = _boxed("A thing — DEFECT, nobody rewrote the headline.",
-                "DONE WHEN: - [x] one - [x] two")
+    it = _boxed("A thing — DEFECT, nobody rewrote the headline.", "DONE WHEN: - [x] one - [x] two")
     assert it.box_state == "finished"
     assert it.claims_closure is True
     assert it.bucket == "finished_unmarked"
@@ -4247,8 +4535,7 @@ def test_every_box_ticked_and_still_listed_is_flagged():
 
 def test_an_outstanding_box_is_never_finished_whatever_the_prose_says():
     """The exact false alarm: prose says finished, the boxes say otherwise."""
-    it = _boxed("A thing — FIXED 2026-09-30, see the history.",
-                "DONE WHEN: - [x] one - [ ] two")
+    it = _boxed("A thing — FIXED 2026-09-30, see the history.", "DONE WHEN: - [x] one - [ ] two")
     assert it.box_state == "outstanding"
     assert it.claims_closure is False
     assert it.bucket != "finished_unmarked"
@@ -4265,8 +4552,7 @@ def test_an_item_with_no_boxes_is_not_finished_the_empty_set_trap():
 
 
 def test_prose_disagreeing_with_the_boxes_is_surfaced_both_ways():
-    disputed = _boxed("A thing — FIXED 2026-09-30.",
-                      "DONE WHEN: - [x] one - [ ] two")
+    disputed = _boxed("A thing — FIXED 2026-09-30.", "DONE WHEN: - [x] one - [ ] two")
     assert disputed.closure_disputed is True
     assert "boxes are still open" in disputed.closure_disagreement
     silent = _boxed("A thing — DEFECT.", "DONE WHEN: - [x] one")
@@ -4277,8 +4563,7 @@ def test_prose_disagreeing_with_the_boxes_is_surfaced_both_ways():
 
 
 def test_a_struck_through_item_is_never_flagged_however_its_boxes_read():
-    it = sb.QueueItem(1, "t", "", "", None, True, headline="A thing — FIXED.",
-                      raw_body="DONE WHEN: - [x] one")
+    it = sb.QueueItem(1, "t", "", "", None, True, headline="A thing — FIXED.", raw_body="DONE WHEN: - [x] one")
     assert it.claims_closure is False
     assert it.closure_disagreement == ""
     assert it.bucket == "resolved"

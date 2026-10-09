@@ -5,6 +5,7 @@ trail (`_apply_deterministic_trails`) through the tick wrapper against a mocked
 broker, so tightening, mirroring and never-loosening are the trail's own
 behaviour, not a re-implementation.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -33,7 +34,9 @@ def _desk(*, short=False, stop=None):
     """A pipeline whose broker remembers the stop it was last moved to."""
     p = _pipeline()
     p.db.get_symbol_last_buy.return_value = {
-        "setup_type": "breakout", "take_profit": None, "timestamp": "2026-08-01 14:00:00",
+        "setup_type": "breakout",
+        "take_profit": None,
+        "timestamp": "2026-08-01 14:00:00",
     }
     live = {"stop": stop if stop is not None else (105.0 if short else 95.0)}
     p.broker.get_current_stop_price.side_effect = lambda *a, **k: live["stop"]
@@ -58,10 +61,14 @@ def _lock(held=True):
 
 def _tick(p, positions, **overrides):
     kwargs = dict(
-        positions=positions, run_id="intra_check_t", preamble_deferred="",
+        positions=positions,
+        run_id="intra_check_t",
+        preamble_deferred="",
         apply_deterministic_trails=p._apply_deterministic_trails,
-        atr_for_symbol=p._atr_for_symbol, process_lock=_lock,
-        blocking_owner_session=lambda: None, split_positions=None,
+        atr_for_symbol=p._atr_for_symbol,
+        process_lock=_lock,
+        blocking_owner_session=lambda: None,
+        split_positions=None,
     )
     kwargs.update(overrides)
     return trail_on_tick(**kwargs)
@@ -117,8 +124,7 @@ def test_unreadable_price_is_skipped_loudly_never_zero(caplog):
     trail = MagicMock(return_value=[])
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
         unreadable = [MagicMock(symbol="AAA", current_price=v) for v in (None, math.nan, 0.0, "n/a")]
-        out = _tick(p, unreadable,
-                    apply_deterministic_trails=trail)
+        out = _tick(p, unreadable, apply_deterministic_trails=trail)
     trail.assert_not_called()
     assert [s["reason"] for s in out["skipped"]] == ["price_unreadable"] * 4
     assert "price_unreadable" in caplog.text
@@ -135,10 +141,10 @@ def test_unreadable_atr_is_skipped_and_a_raised_read_keeps_its_traceback(caplog)
 
     good = _long()
     with caplog.at_level(logging.WARNING, logger="src.pipeline"):
-        out = _tick(p, [_position("RAISE"), _position("NONE"), good],
-                    apply_deterministic_trails=trail, atr_for_symbol=_atr)
-    assert {s["symbol"]: s["reason"] for s in out["skipped"]} == {
-        "RAISE": "atr_read_raised", "NONE": "atr_unreadable"}
+        out = _tick(
+            p, [_position("RAISE"), _position("NONE"), good], apply_deterministic_trails=trail, atr_for_symbol=_atr
+        )
+    assert {s["symbol"]: s["reason"] for s in out["skipped"]} == {"RAISE": "atr_read_raised", "NONE": "atr_unreadable"}
     trail.assert_called_once()
     assert trail.call_args[0][0] == [good]
     assert any(r.exc_info for r in caplog.records), "the swallowed exception lost its traceback"
@@ -164,8 +170,14 @@ def test_session_reads_the_trail_off_the_host_and_reports_unwired_honestly():
         def get(self, name):
             return getattr(self.host, name)
 
-    host = MagicMock(spec=["_apply_deterministic_trails", "_atr_for_symbol",
-                           "_intraday_scan_process_lock", "_blocking_owner_session"])
+    host = MagicMock(
+        spec=[
+            "_apply_deterministic_trails",
+            "_atr_for_symbol",
+            "_intraday_scan_process_lock",
+            "_blocking_owner_session",
+        ]
+    )
     wired = IntradaySession(state=_State(host))._tick_trail_collaborators()
     assert wired["apply_deterministic_trails"] is host._apply_deterministic_trails
     assert wired["split_positions"]([1]) == ([1], None)  # no sweeper -> passthrough

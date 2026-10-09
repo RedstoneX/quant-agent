@@ -61,7 +61,7 @@ def _detail(db, where: str) -> str:
 
 def test_a_swallowed_programming_error_in_the_order_desk_is_loud(tmp_path, caplog):
     def _duplicate_argument(order_id):
-        return dict(a=1, **{"a": 2})          # a real duplicate-argument TypeError
+        return dict(a=1, **{"a": 2})  # a real duplicate-argument TypeError
 
     desk, db = _desk(tmp_path, _duplicate_argument)
     assert _status(db, "get_order_fill_info") == NOT_RUN
@@ -96,10 +96,11 @@ def test_a_clean_order_desk_pass_writes_its_own_row(tmp_path):
 
 def test_an_order_desk_without_a_lent_ledger_still_logs_the_traceback(caplog):
     """An isolated construction lends nothing; the traceback must survive that."""
+
     def _duplicate_argument(order_id):
         return dict(a=1, **{"a": 2})
 
-    client = _Client(_duplicate_argument)          # no attach_reconciliation_db
+    client = _Client(_duplicate_argument)  # no attach_reconciliation_db
     desk = OrderDesk(
         client=client,
         kill_switch_active=lambda: False,
@@ -119,6 +120,7 @@ def test_an_order_desk_without_a_lent_ledger_still_logs_the_traceback(caplog):
 
 def test_the_observer_never_breaks_the_order_desk(tmp_path, caplog):
     """A ledger that raises on read must not abort the handler it observes."""
+
     def _duplicate_argument(order_id):
         return dict(a=1, **{"a": 2})
 
@@ -139,7 +141,7 @@ def test_the_observer_never_breaks_the_order_desk(tmp_path, caplog):
         max_replacement_hops=3,
     )
     with caplog.at_level(logging.ERROR):
-        assert desk.get_order_fill_info("ORD-1") is None      # must not raise
+        assert desk.get_order_fill_info("ORD-1") is None  # must not raise
 
 
 def test_a_broker_refusal_on_submit_writes_a_row_and_still_returns_rejected(tmp_path, caplog, monkeypatch):

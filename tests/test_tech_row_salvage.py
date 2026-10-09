@@ -11,6 +11,7 @@ The shared fragment parser kept ONE row of each (ZS, then MTZ), so ORCL and
 ETN were lost from that decision although both answers carried them
 well-formed, and the log called all of them "missing-from-response".
 """
+
 import json
 import logging
 from datetime import date
@@ -35,13 +36,8 @@ def _result(text: str) -> AgentResult:
 
 
 def _symbols_data(symbols):
-    bars = [OHLCV(date=date(2026, 9, 16), open=1.0, high=2.0, low=0.5,
-                  close=1.5, volume=1_000)]
-    return [
-        {"symbol": s, "bars": bars,
-         "indicators": TechnicalIndicators(symbol=s, atr_14=1.0)}
-        for s in symbols
-    ]
+    bars = [OHLCV(date=date(2026, 9, 16), open=1.0, high=2.0, low=0.5, close=1.5, volume=1_000)]
+    return [{"symbol": s, "bars": bars, "indicators": TechnicalIndicators(symbol=s, atr_14=1.0)} for s in symbols]
 
 
 def _replay(answers, asked):
@@ -64,6 +60,7 @@ def _replay(answers, asked):
 
 
 # --- the parser --------------------------------------------------------------
+
 
 def test_the_shared_parser_still_keeps_one_fragment_for_other_seats():
     """The defect's mechanism, left in place on purpose: `parse_json` is used
@@ -93,11 +90,11 @@ def test_a_broken_quote_corrupts_only_its_own_row():
     """A string missing its closing quote would, without the newline reset,
     swallow every row after it into one unparseable blob."""
     text = (
-        '[\n'
+        "[\n"
         '  {\n    "symbol": "AAA",\n    "reasoning": "unterminated,\n  },\n'
         '  {\n    "symbol": "BBB",\n    "reasoning": "fine"\n  },\n'
         '  {\n    "symbol": "CCC",\n    "reasoning": "fine"\n  }\n'
-        ']'
+        "]"
     )
     salvage = _result(text).parse_json_rows()
     assert [r["symbol"] for r in salvage.rows] == ["BBB", "CCC"]
@@ -122,6 +119,7 @@ def test_a_single_object_answer_falls_back_to_the_shared_parser():
 
 
 # --- the seat, end to end ------------------------------------------------------
+
 
 @patch("anthropic.Anthropic")
 def test_the_2026_09_17_decision_no_longer_loses_orcl_and_etn(mock_cls, caplog):
@@ -166,12 +164,15 @@ def test_an_omitted_row_and_a_malformed_row_are_named_apart(mock_cls, caplog):
     assert results["ORCL"] is not None and results["ETN"] is not None
 
 
-@pytest.mark.parametrize("line", [
-    "Tech answer carried 1 malformed row(s) — dropped individually, the 4 "
-    "well-formed row(s) beside them kept: SQQQ: Expecting property name",
-    "Tech batch incomplete: submitted=5, parsed=4, validation-failed=[], "
-    "malformed-in-response=['SQQQ'], missing-from-response=[] — retrying",
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Tech answer carried 1 malformed row(s) — dropped individually, the 4 "
+        "well-formed row(s) beside them kept: SQQQ: Expecting property name",
+        "Tech batch incomplete: submitted=5, parsed=4, validation-failed=[], "
+        "malformed-in-response=['SQQQ'], missing-from-response=[] — retrying",
+    ],
+)
 def test_the_health_report_treats_a_recoverable_broken_row_as_handled(line):
     """The loss, if any, is the later `unresolved after retry` line."""
     family = L.classify(line, "WARNING")
