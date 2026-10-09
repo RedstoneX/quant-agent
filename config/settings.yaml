@@ -1134,6 +1134,11 @@ universe_screen:
   # session, and the Form 4 / nomination side doors keep their old gates.
   # Thresholds and their sources: src/config/__init__.py::UniverseScreenConfig and
   # config/number_ledger.yaml.
+  # Separately, src/universe_daily.py (owner ruling 2026-10-09, step A) runs the
+  # same checks over every listed name once per trading day after the close and
+  # RECORDS each verdict under <data_dir>/daily/. Record-only: it admits and
+  # removes nothing and does not read 'enabled'. It reuses data_dir,
+  # screen_deadline_s and bars_batch_size (Alpaca symbols per bar request).
   enabled: false
   data_dir: "data/universe"
   min_price_usd: 5
