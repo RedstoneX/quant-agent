@@ -46,6 +46,22 @@ def list_open_entry_order_ids(
     return ids
 
 
+def list_open_orders_checked(desk) -> tuple[bool, list]:
+    """`(ok, orders)` for every working order, flat (nested=False) so each
+    bracket leg is its own row; ``ok`` is FALSE when the listing FAILED
+    (vs a genuine empty list). The freeze sweep touches nothing on FALSE.
+    """
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+
+        orders = desk.client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=False))
+        ok(desk, "list_open_orders_checked")
+    except Exception as exc:  # noqa: BLE001
+        mark(desk, "list_open_orders_checked", exc)
+        return False, []
+    return True, list(orders or [])
+
+
 def list_open_entry_orders_checked(
     desk,
     symbol: str,

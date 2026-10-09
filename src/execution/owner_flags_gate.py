@@ -82,6 +82,7 @@ _REFUSALS = {
     "place_entry_protection": lambda why: None,
     "shift_stops_down": lambda why: None,
     "replace_stop_loss": lambda why: None,
+    "replace_order_qty": lambda why: (False, why),
 }
 
 
