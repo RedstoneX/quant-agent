@@ -202,6 +202,7 @@ INCONCLUSIVE = frozenset(
         "asset_lookup_failed",
         "market_data_unavailable",
         "profile_unavailable",
+        "fund_category_not_listed",
         "takeover_lookup_failed",
         "screen_deadline",
     }
@@ -219,6 +220,7 @@ PLAIN_REASON = {
     "not_us_equity": "not a US stock",
     "unsupported_exchange": "not on a main US exchange",
     "not_common_stock": "a warrant, unit, right, preferred, receipt or non-ETF fund",
+    "fund_category_not_listed": "a fund whose category the daily source does not list (re-read next run)",
     "fund_category_unknown": "a fund with no category on record",
     "leveraged_or_inverse_fund": "a leveraged or inverse fund",
     "not_equity_fund": "a bond, cash or other non-stock fund",
@@ -495,6 +497,8 @@ def check_profile(profile, th: ScreenThresholds, name: str = "") -> tuple[list[s
         profile = {}
     quote_type = str(profile.get("quote_type") or "").strip().upper()
     if quote_type == ETF_QUOTE_TYPE:
+        if profile.get("fund_category_not_listed"):
+            return ["fund_category_not_listed"], {}
         return check_fund(profile.get("category"))
     if (quote_type and quote_type != EQUITY_QUOTE_TYPE) or is_fund_name(name):
         return ["not_common_stock"], {}
