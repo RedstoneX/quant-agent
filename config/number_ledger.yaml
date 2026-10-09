@@ -770,6 +770,22 @@ numbers:
     note: >-
       The measured move claimed when no structural level stands in the way, in
       sqrt(session)-scaled ATRs (src/config/__init__.py::RiskConfig).
+  - id: src.execution.order_gates.ORDER_QTY_DECIMALS
+    value: 9
+    status: instrument
+    site: src/execution/order_gates.py
+    source: >-
+      Alpaca fractional trading documentation, "Both notional and qty fields can
+      take up to 9 decimal point values."
+      https://docs.alpaca.markets/docs/fractional-trading (fetched and confirmed
+      2026-10-09). It is the BROKER'S quantity precision -- the desk does not choose
+      it, exactly as it does not choose a tick size. The order gate refuses a
+      quantity finer than it, and src/execution/sell_quantity.py floors every SELL
+      onto it at submission.
+    note: >-
+      Named constant shared by the quantity gate and the sell-quantity floor so the
+      two can never disagree (live defect 2026-10-09: ETN and META partial sells
+      rejected for carrying 10 decimals).
   - id: src.agents.llm_retry._INSUFFICIENT_CREDIT_STATUS
     value: 402
     status: instrument
