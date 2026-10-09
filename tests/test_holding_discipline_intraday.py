@@ -177,13 +177,20 @@ def test_the_morning_path_is_not_the_only_importer_any_more():
     """Pins the defect's shape directly: the fact-checker used to be reachable
     from `pipeline_stages` alone. The midday/close executor — moved to
     `src/pipeline_exits.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md — must
-    now reach it too."""
+    now reach it too. The executor's fact-check phase was lifted verbatim into
+    `src/exits_parts/midday_holding_discipline.py` (2026-10-09), so the scan
+    reads that module and pins that the executor still calls it."""
     import inspect
 
-    import src.pipeline_exits as pipeline_module
+    import src.exits_parts.midday_holding_discipline as phase_module
+    from src.pipeline_exits import ExitEngineMixin
 
-    source = inspect.getsource(pipeline_module)
+    source = inspect.getsource(phase_module)
     assert "holding_discipline_claim_check" in source
+    assert "self._holding_discipline_check_for_exit(" in source
+    assert "midday_holding_discipline(" in inspect.getsource(
+        ExitEngineMixin._midday_execute_llm_actions
+    )
 
 
 def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
