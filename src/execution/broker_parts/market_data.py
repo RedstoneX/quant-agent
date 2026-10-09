@@ -167,9 +167,10 @@ class MarketData:
     def get_bars(self, symbol: str, lookback_days: int = 120) -> list:
         """Fetch daily OHLCV bars from Alpaca as a list[OHLCV].
 
-        Used by MarketDataProvider as a fallback when yfinance returns empty.
-        Same shape as MarketDataProvider.get_ohlcv so the caller is oblivious
-        to which source answered. Returns [] on any error.
+        The desk's PRIMARY daily history since 2026-10-09:
+        `MarketDataProvider.get_ohlcv` calls this and nothing else. Same
+        shape as `get_ohlcv`; may include today's still-forming bar, which
+        the provider drops. Returns [] on any error (counted).
         """
         from datetime import timedelta as _td
         from src.models import OHLCV
@@ -182,6 +183,7 @@ class MarketData:
                 self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
                 _install_http_timeout(self._data_client)
 
+            from alpaca.data.enums import Adjustment, DataFeed
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame
 
@@ -195,6 +197,13 @@ class MarketData:
                     timeframe=TimeFrame.Day,
                     start=range_start,
                     end=range_end,
+                    # Split AND dividend adjusted: this read replaced Yahoo's
+                    # default (yfinance auto_adjust=True) as the desk's daily
+                    # history on 2026-10-09, so indicators see the same
+                    # adjusted series they always did. Feed named explicitly:
+                    # this account is entitled to IEX, not SIP (docs/STATE.md).
+                    adjustment=Adjustment.ALL,
+                    feed=DataFeed.IEX,
                 )
                 raw = self._data_client.get_stock_bars(req)
                 # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
@@ -567,9 +576,12 @@ class MarketData:
             timeframe=TimeFrame.Day,
             start=end - _td(days=int(lookback_days)),
             end=end,
-            # Split-adjusted only, matching the Yahoo auto_adjust=False bars
-            # this replaced. Feed left unset: this account is entitled to IEX,
-            # not SIP (docs/STATE.md), so SIP would be rejected.
+            # Split-adjusted only (NOT dividend-adjusted — this differs from
+            # the single-symbol `get_bars`, which asks for Adjustment.ALL).
+            # The universe screen only ranks on recent price and volume, so
+            # dividend adjustment does not change its answer. Feed left
+            # unset: this account is entitled to IEX, not SIP
+            # (docs/STATE.md), so SIP would be rejected.
             adjustment=Adjustment.SPLIT,
         )
         fields = req.to_request_fields()

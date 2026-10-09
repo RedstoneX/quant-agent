@@ -55,47 +55,35 @@ def _completed_only(bars: list, cutoff, symbol: str, source: str) -> list:
 
 
 class MarketDataProvider:
-    def __init__(self, fallback_bars=None):
+    def __init__(self, bars_source=None, fallback_bars=None):
         """
-        fallback_bars: optional callable `(symbol, lookback_days) -> list[OHLCV]`
-        Used when yfinance returns empty (rate limit, outage, transient gap).
-        Pipeline typically wires this to `broker.get_bars` so Alpaca data
-        keeps TA alive when yfinance flakes.
+        bars_source: callable `(symbol, lookback_days) -> list[OHLCV]` that
+        answers `get_ohlcv`. The live desk wires it to the broker's daily-bar
+        read (`AlpacaBroker.get_bars`), so history comes from the same source
+        the desk trades on (owner, 2026-10-09: stock data from Alpaca, not
+        Yahoo). Yahoo is NOT a fallback here: an Alpaca failure is reported
+        for that one symbol and the read returns [], which every caller
+        already treats as "skip this name" (never "halt the desk").
+
+        `fallback_bars` is the pre-2026-10-09 name of the same hook, kept so
+        the pipeline's existing wiring (`set_fallback_bars(broker.get_bars)`)
+        still lands on the primary source.
         """
-        self._fallback_bars = fallback_bars
+        self._bars_source = bars_source if bars_source is not None else fallback_bars
 
-    def set_fallback_bars(self, fn) -> None:
-        self._fallback_bars = fn
+    def set_bars_source(self, fn) -> None:
+        self._bars_source = fn
 
-    def _try_fallback(self, symbol: str, lookback_days: int, reason: str) -> list:
-        """Route through the Alpaca fallback source; [] when unavailable."""
-        if self._fallback_bars is None:
-            return []
-        try:
-            bars = self._fallback_bars(symbol, lookback_days) or []
-            if bars:
-                logger.info("%s for %s, fallback source returned %d bars", reason, symbol, len(bars))
-            if not bars:
-                # audit round 2: an ALL-NaN frame passed the `df.empty` gate
-                # (it isn't empty) and only died at the dropna scrub below it —
-                # returning [] without ever trying the Alpaca fallback that the
-                # truly-empty path uses. Same degraded feed, different route.
-                return self._try_fallback(symbol, lookback_days, reason="yfinance all-NaN")
-            return bars
-        except Exception as e:  # noqa: BLE001
-            record_swallowed("data.market.fallback_bars", e, log=logger, symbol=symbol)
-            return []
+    # Pre-2026-10-09 name of `set_bars_source`; the pipeline still calls it.
+    set_fallback_bars = set_bars_source
 
     def get_ohlcv(self, symbol: str, lookback_days: int = 120) -> list[OHLCV]:
-        """COMPLETED daily bars only, oldest first.
+        """COMPLETED daily bars only, oldest first, from the broker's data feed.
 
         Contract (2026-09-14, docs/INCIDENT_HISTORY.md): the series ends at
         the latest session whose daily bar is finished —
         `trading_calendar.last_completed_bar_date()`. During regular hours
         that is the PREVIOUS session; after the 16:00 ET close it is today.
-        Before this, `end` was always `et_today()` passed to yfinance's
-        EXCLUSIVE `end`, so even the evening session never saw the day that
-        had just closed.
 
         This series is for smoothed indicators and structure (ATR, MAs,
         pivots, levels). It is never "the current price" during market
@@ -103,65 +91,27 @@ class MarketDataProvider:
         breakout while the session is open must use a live price
         (`AlpacaBroker.get_intraday_snapshots` / `get_latest_price`) and
         label it as in-progress. A still-forming bar for today is dropped
-        here from every source (yfinance or the Alpaca fallback, which can
-        return one), so it can never be silently mixed into the series.
+        here (Alpaca does return one mid-session), so it can never be
+        silently mixed into the series.
+
+        Failure shape: no source wired, or the source raising, is logged and
+        COUNTED for that symbol (`record_swallowed`) and returns [] — the
+        same shape a Yahoo outage produced before, which callers handle by
+        skipping that one name.
         """
         cutoff = last_completed_bar_date()
-        end = cutoff + timedelta(days=1)  # yfinance `end` is exclusive
-        start = et_today() - timedelta(days=lookback_days)
-
-        def _download():
-            return yf.download(symbol, start=str(start), end=str(end), progress=False)
-
-        df = None
+        if self._bars_source is None:
+            logger.warning("get_ohlcv %s: no bars source wired (broker daily bars); returning []", symbol)
+            return []
         try:
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                df = ex.submit(_download).result(timeout=_DOWNLOAD_TIMEOUT_S)
-        except FuturesTimeout:
-            logger.warning("yfinance download timed out for %s after %ds", symbol, _DOWNLOAD_TIMEOUT_S)
-        except Exception as e:
-            logger.warning("yfinance download crashed for %s: %s", symbol, e)
-        if df is None or df.empty:
-            # yfinance returned nothing — try fallback before giving up.
-            return _completed_only(
-                self._try_fallback(symbol, lookback_days, reason="yfinance empty"),
-                cutoff,
-                symbol,
-                "fallback",
-            )
-        # yfinance may return MultiIndex columns for single ticker
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        # Drop NaN rows BEFORE constructing OHLCV records. yfinance batch
-        # downloads (and single-symbol calls during halts / pre-IPO dates /
-        # transient outages) can return rows where one or more OHLCV cells
-        # are NaN. `int(NaN)` raises ValueError and `float(NaN)` silently
-        # propagates `nan` into downstream TA indicators (RSI / Bollinger /
-        # MACD all accept NaN and return NaN-tainted values that the LLM
-        # then treats as real signal). Filter at the boundary so callers
-        # always see clean bars or an empty list.
-        required_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
-        clean_df = df.dropna(subset=required_cols) if required_cols else df
-        if len(clean_df) < len(df):
-            logger.warning(
-                "yfinance returned %d row(s) with NaN OHLCV for %s — dropped; %d clean rows remain",
-                len(df) - len(clean_df),
-                symbol,
-                len(clean_df),
-            )
-        bars = []
-        for idx, row in clean_df.iterrows():
-            bars.append(
-                OHLCV(
-                    date=idx.date(),
-                    open=float(row["Open"]),
-                    high=float(row["High"]),
-                    low=float(row["Low"]),
-                    close=float(row["Close"]),
-                    volume=int(row["Volume"]),
-                )
-            )
-        return _completed_only(bars, cutoff, symbol, "yfinance")
+            bars = list(self._bars_source(symbol, lookback_days) or [])
+        except Exception as e:  # noqa: BLE001 — counted, per-symbol; a feed error must not halt the desk
+            record_swallowed("data.market.bars_source", e, log=logger, symbol=symbol)
+            return []
+        if not bars:
+            logger.warning("get_ohlcv %s: broker daily bars returned nothing", symbol)
+            return []
+        return _completed_only(bars, cutoff, symbol, "broker")
 
     def get_ohlcv_batch(self, symbols: list[str], lookback_days: int) -> dict[str, list[OHLCV]]:
         """COMPLETED daily bars for many symbols in ONE yfinance request.
