@@ -203,7 +203,7 @@ def test_constructor_long_only_behaviour_unchanged_beside_a_short():
         total_value=100_000,
         price_map={"NVDA": 100.0},
     )
-    assert len(long_only) == 1 and long_only[0].action == "SELL"
+    assert len(long_only) == 1 and long_only[0].action == "HOLD"
     assert [(d.symbol, d.action, d.allocation_pct) for d in mixed] == [
         (d.symbol, d.action, d.allocation_pct) for d in long_only
     ]

@@ -1285,8 +1285,8 @@ def test_fractional_sell_helpers_preserve_position_size():
     pipeline = build_pipeline()
 
     assert pipeline._full_sell_qty(0.4) == pytest.approx(0.4)
-    assert pipeline._reduce_sell_qty(0.4) == pytest.approx(0.2)
-    assert pipeline._reduce_sell_qty(5.0) == pytest.approx(2.0)
+    # The 50% REDUCE sizing was deleted 2026-10-09 (whole exits only).
+    assert not hasattr(type(pipeline), "_reduce_sell_qty")
 
 
 def test_evening_return_pct_handles_zero_last_equity():

@@ -140,9 +140,7 @@ def test_full_sell_qty_and_reduce_sell_qty_unchanged_still_refuse_a_short():
     to refuse a short. This PR adds a second, forced-close-only gate; it
     does not loosen the original one."""
     assert TradingPipeline._full_sell_qty(-40.0) is None
-    assert TradingPipeline._reduce_sell_qty(-40.0) is None
     assert TradingPipeline._full_sell_qty(40.0) == 40.0
-    assert TradingPipeline._reduce_sell_qty(40.0) == 20.0
 
 
 # ==========================================================================

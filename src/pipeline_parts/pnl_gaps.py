@@ -66,9 +66,9 @@ def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
     """Direction-aware sizing for a FORCED close — the §11.2
     de-levering ladder's forced trim, or an operator kill. NOT the
     normal decision
-    path: SELL/REDUCE decisions and the portfolio constructor keep
-    refusing a negative qty exactly as before (see _full_sell_qty /
-    _reduce_sell_qty and the Stage 1 guard in portfolio_constructor.py
+    path: SELL decisions and the portfolio constructor keep
+    refusing a negative qty exactly as before (see _full_sell_qty
+    and the Stage 1 guard in portfolio_constructor.py
     — shorts still cannot be opened or covered through that path).
 
     Returns ``(side, qty)`` where ``side`` is ``'sell'`` to flatten a

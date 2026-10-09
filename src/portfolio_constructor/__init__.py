@@ -88,6 +88,7 @@ from src.portfolio_constructor.config import (
     CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA,
     CONSTRUCTOR_TARGET_WEIGHT_ZERO_NOTHING_HELD,
     CONSTRUCTOR_SHORT_ALREADY_AT_TARGET,
+    CONSTRUCTOR_HELD_PARTIAL_TRIM_REFUSED,
     _NO_REAL_WEIGHT_DELTA_PCT,
     TRIM_REFUSAL_NO_USABLE_LIVE_STOP,
     STOP_REFUSAL_STOP_NOT_FINITE,
@@ -492,6 +493,33 @@ class PortfolioConstructor:
                     plan_for_sym.risk_pct,
                 )
                 signed_target = current_pct
+
+            # Owner ruling 2026-10-09: never sell PART of a held position.
+            # A same-side target smaller than what is held is kept at its
+            # size; a full close (signed_target == 0) is untouched. The
+            # planner never partly cuts a holding — not even when the risk
+            # budget granted less than asked, because the budget funds
+            # better-ranked ideas first and would sell part of a held winner
+            # to pay for a new one. The only partial cut of a holding is the
+            # gross-ceiling de-lever, which has its own order path.
+            shrinks_held = (
+                signed_target != 0
+                and (current_pct > 0) == (signed_target > 0)
+                and abs(current_pct) - abs(signed_target) >= _NO_REAL_WEIGHT_DELTA_PCT
+            )
+            if current_pct != 0 and shrinks_held:
+                self._note_refusal(
+                    sym,
+                    target.direction,
+                    CONSTRUCTOR_HELD_PARTIAL_TRIM_REFUSED,
+                    "the desk asked for a smaller position in a stock it "
+                    "already holds, but a held position is either kept "
+                    "whole or sold whole (owner ruling 2026-10-09). The "
+                    "position was kept at its current size; nothing was sold.",
+                )
+                if current_pct > 0:
+                    buys.append(self._hold_decision(target))
+                continue
 
             delta_pct = signed_target - current_pct
 

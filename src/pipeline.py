@@ -767,14 +767,6 @@ class TradingPipeline(
             return None
         return float(position_qty)
 
-    @staticmethod
-    def _reduce_sell_qty(position_qty: float) -> float | None:
-        if position_qty <= 0:
-            return None
-        if float(position_qty).is_integer():
-            return max(1.0, float(int(position_qty) // 2))
-        return float(position_qty) / 2
-
     # Cushion used by BOTH sides of a forced/emergency close so they can
     # never drift apart: a long's exit is a SELL, whose limit needs to sit
     # BELOW the reference price to have room to fill on the way down; a

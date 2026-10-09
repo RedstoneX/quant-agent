@@ -198,7 +198,6 @@ def _exec_pipeline() -> MagicMock:
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._full_sell_qty = TradingPipeline._full_sell_qty
-    pipeline._reduce_sell_qty = TradingPipeline._reduce_sell_qty
     pipeline._refresh_account_state.return_value = (
         {"cash": 50_000.0, "portfolio_value": 100_000.0},
         [],

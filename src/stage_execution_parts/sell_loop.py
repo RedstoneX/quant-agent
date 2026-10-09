@@ -162,7 +162,14 @@ def alert_rotation_close_outcome(pipeline, ctx, prot, status) -> None:
         logger.error("rotation close outcome alert failed: %s", exc)
 
 
-def sell_qty_and_label(pipeline, decision, existing):
+#: Refusal reason for a partial SELL. Owner ruling 2026-10-09: a held
+#: position is kept whole or sold whole; the only partial cut of a holding is
+#: the gross-ceiling de-lever, which has its own order path and never reaches
+#: this loop.
+PARTIAL_SELL_REFUSED = "partial_sell_refused_whole_exits_only"
+
+
+def sell_qty_and_label(pipeline, decision, existing, ctx):
     """Resolve the SELL quantity and label; `SKIP` where the loop skipped."""
     if decision.allocation_pct == 0:
         logger.warning(
@@ -183,7 +190,24 @@ def sell_qty_and_label(pipeline, decision, existing):
                 return SKIP
             action_label = "SELL"
         else:
-            action_label = f"PARTIAL_SELL({decision.allocation_pct:.0f}%)"
+            logger.error(
+                "Refusing PARTIAL_SELL %s (%.0f%%): a held position is kept whole or sold whole",
+                decision.symbol,
+                decision.allocation_pct,
+            )
+            try:
+                _record_pipeline_event(
+                    pipeline,
+                    ctx,
+                    decision.symbol,
+                    "order",
+                    "refused",
+                    PARTIAL_SELL_REFUSED,
+                    allocation_pct=decision.allocation_pct,
+                )
+            except Exception as exc:  # noqa: BLE001 — a record write never changes the refusal
+                logger.error("partial-sell refusal record failed for %s: %s", decision.symbol, exc)
+            return SKIP
     else:
         qty = pipeline._full_sell_qty(existing[0].qty)
         if qty is None:

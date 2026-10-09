@@ -802,7 +802,6 @@ def test_full_sell_qty_refuses_a_short():
     from src.pipeline import TradingPipeline
 
     assert TradingPipeline._full_sell_qty(-40.0) is None
-    assert TradingPipeline._reduce_sell_qty(-40.0) is None
     # Long-only unchanged.
     assert TradingPipeline._full_sell_qty(40.0) == 40.0
 

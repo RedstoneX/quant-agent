@@ -362,7 +362,7 @@ class _ReviewChain:
 class _Review:
     overall_assessment = "mixed"
     reasoning_chain = _ReviewChain()
-    actions = [_ReviewAction("DIS", "REDUCE", "thesis broken"), _ReviewAction("V", "SELL", "stop proximity")]
+    actions = [_ReviewAction("DIS", "SELL", "thesis broken"), _ReviewAction("V", "SELL", "stop proximity")]
 
 
 def test_call_site_declares_exit_review_mode_and_passes_the_evidence():
