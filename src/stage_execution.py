@@ -20,7 +20,9 @@ from src.entry_slippage_bound import entry_bound
 from src.price_feed_preflight import preflight_price_feed, price_feed_session_start
 from src.sizing_refusal import classified_no_price, sizing_price_or_refusal
 from src.stage_entry_preflight import entry_viability_preflight
+from src.stage_execution_parts.cover_loop import await_cover_and_finalize, cover_qty_and_label
 from src.stage_execution_parts.protect_entry_stops import protect_pending_entry_stops
+from src.stage_execution_parts.state import SKIP
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -375,31 +377,10 @@ class ExecutionStage:
                 if not existing or existing[0].qty >= 0:
                     continue  # nothing short held — COVER on a long/flat is refused
                 held_qty = abs(existing[0].qty)
-                if decision.allocation_pct == 0:
-                    logger.warning(
-                        "Skipping COVER %s with allocation_pct=0 (ambiguous — use 100 for full exit)",
-                        decision.symbol,
-                    )
+                resolved = cover_qty_and_label(pipeline, decision, held_qty)
+                if resolved is SKIP:
                     continue
-                if 0 < decision.allocation_pct < 100:
-                    cover_fraction = decision.allocation_pct / 100
-                    qty = held_qty * cover_fraction
-                    if float(held_qty).is_integer():
-                        qty = max(1.0, float(int(qty)))
-                    if qty <= 0:
-                        continue
-                    if qty >= held_qty:
-                        qty = pipeline._full_sell_qty(held_qty)
-                        if qty is None:
-                            continue
-                        action_label = "COVER"
-                    else:
-                        action_label = f"PARTIAL_COVER({decision.allocation_pct:.0f}%)"
-                else:
-                    qty = pipeline._full_sell_qty(held_qty)
-                    if qty is None:
-                        continue
-                    action_label = "COVER"
+                qty, action_label = resolved
                 cover_price = existing[0].current_price
                 # Buy-to-cover needs headroom ABOVE the reference to fill on
                 # the way up — the mirror of the SELL loop's limit sitting
@@ -436,26 +417,7 @@ class ExecutionStage:
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
             if prot is None:
                 continue
-            # Same per-name discipline as the SELL loop above: this short's
-            # BUY-stop coverage is rebuilt before the next short's is touched.
-            order_id = prot["order_id"]
-            try:
-                status = pipeline.broker.wait_for_order_terminal(order_id)
-            except Exception as e:
-                logger.warning(
-                    "ExecutionStage: wait_for_order_terminal failed for %s: %s "
-                    "— treating as unknown status so finalize still runs",
-                    order_id, e,
-                )
-                status = None
-            if status != "filled":
-                logger.warning(
-                    "Cover order %s did not fill before buy phase (status=%s)",
-                    order_id, status or "unknown",
-                )
-            pipeline._finalize_pending_protections(
-                [prot], context="ExecutionStage-Cover", wait=False,
-            )
+            await_cover_and_finalize(pipeline, prot)
 
         if sell_decisions or cover_decisions:
             account, positions, price_map = pipeline._refresh_account_state()

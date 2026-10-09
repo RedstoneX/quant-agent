@@ -11,6 +11,9 @@ import pytest
 
 MODULES = [
     ("src.stage_execution_parts.protect_entry_stops", "protect_pending_entry_stops"),
+    ("src.stage_execution_parts.cover_loop", "cover_qty_and_label"),
+    ("src.stage_execution_parts.cover_loop", "await_cover_and_finalize"),
+    ("src.stage_execution_parts.state", "EntryLeg"),
 ]
 
 
