@@ -132,7 +132,9 @@ def test_a_mirrored_constant_is_one_number_not_two() -> None:
     """
     ledger = load_ledger()
     mirrors = {
-        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple": "src.config.RiskConfig.min_stop_atr_multiple",
+        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple": (
+            "src.config.RiskConfig.min_stop_atr_multiple"
+        ),
         "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS": "src.config.ExecutionConfig.max_entry_slippage_bps",
         "src.data.levels.MAX_REACH_ATR_MULTIPLE": "src.config.RiskConfig.max_target_reach_atr_multiple",
     }

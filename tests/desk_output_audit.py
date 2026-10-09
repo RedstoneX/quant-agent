@@ -34,8 +34,12 @@ from tests.desk_output_guard import PROJECT_ROOT, Finding, allow_list, read_text
 SCAN_BYTE_CAP = 4_000_000
 
 LARGE_BLOBS: dict[str, str] = {
-    "ops/model_policy/fixtures/sec_10q10k_pm_public_day_2026-09-14.json.gz": "SEC 10-Q/10-K HTML corpus fetched from data.sec.gov; public filings, not desk output",
-    "ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz": "Yahoo daily OHLCV bars for the screen universe; public market data, not desk output",
+    "ops/model_policy/fixtures/sec_10q10k_pm_public_day_2026-09-14.json.gz": (
+        "SEC 10-Q/10-K HTML corpus fetched from data.sec.gov; public filings, not desk output"
+    ),
+    "ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz": (
+        "Yahoo daily OHLCV bars for the screen universe; public market data, not desk output"
+    ),
 }
 
 

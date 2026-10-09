@@ -103,26 +103,50 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # therefore fails too, which a stored count could never see.
 ALLOWED: dict[str, str] = {
     # --- tests/fixtures: desk output copied into the test suite ---
-    "tests/fixtures/constructor_drop_paths_archive.json": "frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)",
-    "tests/fixtures/holding_why_rsg_20260917.json": "a real RSG holding with its real stop and the real broker order id of its fill",
-    "tests/fixtures/log_health_production_excerpt.txt": "production log lines copied verbatim off the desk host, as its own header states",
-    "tests/fixtures/pm_response_11_targets_20260817.txt": "a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning",
-    "tests/fixtures/pm_response_17_targets_20260820.txt": "a second verbatim portfolio-manager answer from a different session",
-    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt": "a verbatim tech-analyst answer with real entries, stops and support/resistance levels",
+    "tests/fixtures/constructor_drop_paths_archive.json": (
+        "frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)"
+    ),
+    "tests/fixtures/holding_why_rsg_20260917.json": (
+        "a real RSG holding with its real stop and the real broker order id of its fill"
+    ),
+    "tests/fixtures/log_health_production_excerpt.txt": (
+        "production log lines copied verbatim off the desk host, as its own header states"
+    ),
+    "tests/fixtures/pm_response_11_targets_20260817.txt": (
+        "a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning"
+    ),
+    "tests/fixtures/pm_response_17_targets_20260820.txt": (
+        "a second verbatim portfolio-manager answer from a different session"
+    ),
+    "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt": (
+        "a verbatim tech-analyst answer with real entries, stops and support/resistance levels"
+    ),
     "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt": "the retry of that same real intraday check",
     # --- tests and scripts built around the real 2026-08-28 ONDS/CCJ stop-out ---
-    "tests/test_stop_out_reconciliation.py": "reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills",
+    "tests/test_stop_out_reconciliation.py": (
+        "reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills"
+    ),
     "tests/test_broker.py": "reuses the same real broker order ids as list_filled_sell_orders test input",
-    "scripts/backfill_stop_out_fills.py": "one-off backfill whose docstring names the two real broker order ids it repaired",
+    "scripts/backfill_stop_out_fills.py": (
+        "one-off backfill whose docstring names the two real broker order ids it repaired"
+    ),
     # --- ops/model_policy fixtures: benchmark inputs taken off a real day ---
-    "ops/model_policy/fixtures/run_64290730_pm_input.json": "a real portfolio-manager input snapshot; already quarantined by fixture_policy",
-    "ops/model_policy/fixtures/run_bba4d4f3_pm_input.json": "a second real portfolio-manager input snapshot; already quarantined by fixture_policy",
-    "ops/model_policy/fixtures/pm_public_day_pm_input.json": "a PM input rebuilt for a public day, but it still carries the real candidate book",
+    "ops/model_policy/fixtures/run_64290730_pm_input.json": (
+        "a real portfolio-manager input snapshot; already quarantined by fixture_policy"
+    ),
+    "ops/model_policy/fixtures/run_bba4d4f3_pm_input.json": (
+        "a second real portfolio-manager input snapshot; already quarantined by fixture_policy"
+    ),
+    "ops/model_policy/fixtures/pm_public_day_pm_input.json": (
+        "a PM input rebuilt for a public day, but it still carries the real candidate book"
+    ),
     # --- docs that record what the desk actually did ---
     "docs/INCIDENT_HISTORY.md": "the incident record; naming the real trade is the point of an incident record",
     "docs/AGENT_ROLE_AUDIT.md": "audit findings quoted from real runs, kept as the evidence trail for those findings",
     # --- prompt templates whose worked examples came from real sessions ---
-    "config/prompts/news_analyst.md": "its worked example is a real news-analyst briefing, cited to the model as doctrine",
+    "config/prompts/news_analyst.md": (
+        "its worked example is a real news-analyst briefing, cited to the model as doctrine"
+    ),
 }
 
 # The model-benchmark results. Every one of these replays a real desk input
