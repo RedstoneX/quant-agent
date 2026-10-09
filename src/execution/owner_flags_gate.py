@@ -23,6 +23,14 @@ repair and cancels go through. An order whose side, size or position cannot
 be read is treated as an ENTRY (refused): when the door cannot tell, it opens
 nothing.
 
+OVERSELL (always, frozen or not, whenever the door is aimed): a plain `sell`
+whose quantity exceeds the long freshly read from the broker is refused with a
+per-symbol `oversell_refused` reason. A short is only ever opened with
+`sell_short`, so a plain sell bigger than the long is never legitimate -- it is
+an exit sized from a stale read (e.g. the resting stop filled in between) and
+would open a short. The comparison is exact Decimal, as for the freeze; a failed
+position read refuses the sell as `positions_unreadable`, the freeze's rule.
+
 If the flag cannot be read the state is UNKNOWN: "cannot tell whether the owner
 froze". UNKNOWN behaves exactly like frozen -- entries blocked, exits allowed --
 and the owner is alerted once when the flag becomes unreadable and once when it
@@ -192,6 +200,25 @@ def is_entry(broker, name, args, kwargs) -> bool:
     return not (held < 0 and qty <= -held)
 
 
+def oversell_reason(broker, name, args, kwargs):
+    """Named refusal when a plain `sell` exceeds the long held, else None.
+
+    Raises PositionsUnreadable when the fresh position read fails.
+    """
+    if name not in FREEZE_JUDGES:
+        return None
+    terms = _order_terms(args, kwargs or {})
+    if terms is None or terms[2] != "sell":
+        return None
+    symbol, qty, _side = terms
+    held = _held_qty(broker, symbol)
+    if qty <= held:
+        return None
+    return (
+        f"oversell_refused: {symbol} sell of {qty} exceeds the {max(held, Decimal(0))} long held; it would open a short"
+    )
+
+
 def _verdict(name, broker=None, args=(), kwargs=None):
     """Return a refusal reason, or None to let the call through."""
     global unknown_flag_state_calls
@@ -199,6 +226,14 @@ def _verdict(name, broker=None, args=(), kwargs=None):
         return None
     flags = owner_flags.read_flags(_db_path)
     _note_state(flags.unknown, name)
+    try:
+        over = oversell_reason(broker, name, args, kwargs)
+    except PositionsUnreadable as exc:
+        logger.error("oversell gate refused %s: positions_unreadable (%s)", name, exc)
+        return "positions_unreadable: a plain sell cannot be checked against the long held"
+    if over is not None:
+        logger.error("broker door refused %s: %s", name, over)
+        return over
     if flags.unknown:
         unknown_flag_state_calls += 1
         logger.error("desk running on an UNKNOWN owner-flag state (%s)", name)

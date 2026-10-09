@@ -16,6 +16,7 @@ short exposure caps, the cover-cash exemption), and
 order submission, and the protection-failure escalation).
 """
 
+from tests.fakes.held_book import hold
 from unittest.mock import MagicMock
 
 import pytest
@@ -1371,6 +1372,7 @@ def test_midday_reviewer_covers_a_short_end_to_end():
         "setup, bullish reversal confirmed above the defended level.",
     )
 
+    hold(pipeline.broker, {position.symbol: position.qty})  # what the broker holds when the exit is re-sized
     orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
 
     assert len(orders) == 1
@@ -1418,6 +1420,7 @@ def test_midday_cover_not_blocked_by_negative_cash():
         "thesis_invalid_if condition satisfied — guidance cut reversed the setup.",
     )
 
+    hold(pipeline.broker, {position.symbol: position.qty})  # what the broker holds when the exit is re-sized
     orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
 
     assert len(orders) == 1
@@ -1468,6 +1471,7 @@ def test_long_only_midday_actions_unchanged_with_no_shorts_anywhere():
         "thesis_invalid_if condition satisfied — thesis broken on filing.",
     )
 
+    hold(pipeline.broker, {position.symbol: position.qty})  # what the broker holds when the exit is re-sized
     orders = pipeline._midday_execute_llm_actions([position], review, run_id="r1")
 
     assert len(orders) == 1

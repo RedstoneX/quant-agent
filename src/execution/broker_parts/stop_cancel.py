@@ -132,6 +132,63 @@ def snapshot_protective_stops(
     return True, specs
 
 
+#: `StopCancelOutcome.detail` prefix: a cancel failed and the fresh position
+#: read shows nothing held, so the stop filled and nothing was rolled back.
+POSITION_GONE = "position_gone"
+
+
+def _held_now(broker, symbol: str) -> float | None:
+    """Signed qty held in `symbol` from a fresh broker read; None if unreadable."""
+    want = symbol.strip().upper().replace("/", "")
+    try:
+        positions = list(broker.get_positions())
+        held = sum(float(p.qty) for p in positions if str(p.symbol).strip().upper().replace("/", "") == want)
+        record_guarded_pass(broker, "cancel_snapshotted_stops.position_read", context={"symbol": symbol})
+    except Exception as exc:  # noqa: BLE001 - unreadable keeps the existing rollback
+        record_guarded_pass(
+            broker,
+            "cancel_snapshotted_stops.position_read",
+            exc,
+            log=logger,
+            context={"symbol": symbol, "effect": "position unknown; the rollback runs as before"},
+        )
+        return None
+    return 0 if abs(held) < 1e-9 else held
+
+
+def _restore_at_held(broker, held: float):
+    """A rollback that restores the cancelled legs only up to the shares HELD now.
+
+    A failed cancel can be a stop that filled in part: restoring the old full
+    size would rest more stop than shares (refused as held_for_orders, or an
+    opening order once the book is short of it). Legs are kept in order and
+    the last one kept is cut to fit; a leg that no held share needs is dropped,
+    not reported as lost coverage. Failures map back to the original specs.
+    """
+
+    def restore(symbol, cancelled):
+        sized, origin, room = [], [], held
+        for spec in cancelled:
+            q = abs(float(spec.get("qty", 0) or 0))
+            if room <= 1e-9:
+                break
+            take = min(q, room)
+            sized.append(spec if take == q else {**spec, "qty": take})
+            origin.append(spec)
+            room -= take
+        if len(sized) < len(cancelled) or any(a is not b for a, b in zip(sized, cancelled, strict=False)):
+            logger.warning(
+                "cancel_snapshotted_stops: %s rollback sized to the %s share(s) held now, not the snapshot",
+                symbol,
+                held,
+            )
+        n, failed = broker._restore_stop_orders(symbol, sized)
+        lost = {id(s) for s in failed}
+        return n, [o for s, o in zip(sized, origin, strict=True) if id(s) in lost]
+
+    return restore
+
+
 def cancel_snapshotted_stops(
     broker,
     symbol: str,
@@ -173,13 +230,31 @@ def cancel_snapshotted_stops(
                 context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"},
             )
             cancel_failed.append(spec)
+    held = _held_now(broker, symbol) if cancel_failed else None
+    if cancel_failed and held == 0:
+        # A cancel failed AND the fresh read shows nothing held: the stop
+        # FILLED (a filled order cannot be cancelled). Rolling the cancelled
+        # legs back would rest closing stops on a position that no longer
+        # exists — on the opposite side of an empty book that is an opening
+        # order. Nothing is restored; the outcome says why, by name.
+        logger.error(
+            "cancel_snapshotted_stops: %s cancel failed and the position is gone (stop filled) — "
+            "nothing is rolled back onto an empty position",
+            symbol,
+        )
+        return StopCancelOutcome(
+            symbol=symbol,
+            requested=tuple(specs),
+            still_resting=tuple(cancel_failed) + tuple(untouched),
+            detail=f"{POSITION_GONE}: {len(cancel_failed)}/{len(specs)} cancel(s) failed and nothing is held",
+        )
     return settle_cancel(
         symbol,
         specs,
         cancelled,
         untouched,
         cancel_failed,
-        broker._restore_stop_orders,
+        broker._restore_stop_orders if held is None else _restore_at_held(broker, abs(held)),
         logger,
     )
 

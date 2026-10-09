@@ -148,7 +148,8 @@ class ProtectedSell:
             # knows whether a stop is resting; the cancel rolling back
             # means one verifiably is. Only the second supports the
             # held_for_orders claim, and this said it for both.
-            why = refusal_reason(getattr(self, "_last_stop_clear_refusal", "") or "unknown", side)
+            refusal = getattr(self, "_last_stop_clear_refusal", "") or "unknown"
+            why = _OWN_REASONS.get(refusal) or refusal_reason(refusal, side)
             logger.warning("%s: skipping %s — %s", label, symbol, why)
             # A skipped exit reaches the owner BY SYMBOL, on the same path
             # and the same once-per-symbol-per-day claim as the unreadable
@@ -172,6 +173,16 @@ class ProtectedSell:
                 )
             if kept_leg is not None:
                 trim_book_call(self, "settle_trim_book", symbol, side)
+
+        # The caller sized `qty` from a position read taken BEFORE the stops
+        # were cleared. A resting stop can fill (fully or partly) in between,
+        # so the order is re-sized against a FRESH read taken now that no stop
+        # can fill any more: selling the old size would open a short (and a
+        # cover would open a long). Nothing held -> no order at all.
+        sized = self._size_to_held(label, symbol, side, qty, position_qty_before_sell, wal_row_id, _put_back_protection)
+        if sized is None:
+            return None
+        qty, position_qty_before_sell = sized
 
         try:
             order = self.broker.submit_order(
@@ -387,7 +398,81 @@ class ProtectedSell:
             # the SELL on held_for_orders" is an evidenced statement here —
             # measured live 2026-04-25 on AMZN, where a REDUCE was rejected
             # with the trail stop holding all 51 shares.
-            self._last_stop_clear_refusal = "cancel_rolled_back"
+            detail = getattr(cancel, "detail", "")
+            gone = isinstance(detail, str) and detail.startswith("position_gone")
+            # A failed cancel on an empty position is a stop that FILLED: say
+            # so, rather than claim a stop is still resting (nothing was rolled back).
+            self._last_stop_clear_refusal = "stop_fired" if gone else "cancel_rolled_back"
             return False, [], None
         self._last_stop_clear_refusal = ""
         return True, specs, wal_row_id
+
+    def _size_to_held(self, label, symbol, side, qty, position_qty_before_sell, wal_row_id, put_back):
+        """``(qty, position_qty_before_sell)`` re-sized to a fresh read, or None when no order goes."""
+        held = self._closable_now(symbol, side)
+        if held is None:
+            put_back()
+            self._last_stop_clear_refusal = "position_unreadable"
+            why = _OWN_REASONS["position_unreadable"]
+            logger.warning("%s: skipping %s — %s", label, symbol, why)
+            self._alert_owner_exit_declined(symbol, side=side, why=why)
+            return None
+        if held <= 0:
+            self._discharge_wal(symbol, wal_row_id)
+            self._last_stop_clear_refusal = "stop_fired"
+            why = _OWN_REASONS["stop_fired"]
+            logger.warning("%s: no order for %s — %s", label, symbol, why)
+            self._alert_owner_exit_declined(symbol, side=side, why=why)
+            return None
+        if held < abs(float(qty)):
+            logger.warning(
+                "%s: %s holds %s now, not the %s the exit was sized from (stop filled in part) — order re-sized",
+                label,
+                symbol,
+                held,
+                qty,
+            )
+            qty = held
+        position_qty_before_sell = held if held < position_qty_before_sell else position_qty_before_sell
+        return qty, position_qty_before_sell
+
+    def _closable_now(self, symbol: str, side: str) -> float | None:
+        """What a `side` order can close right now, from a fresh broker read:
+        the long for a 'sell', the short for a 'buy'. 0 when nothing is held on
+        that side; None when the read fails."""
+        want = symbol.strip().upper().replace("/", "")
+        try:
+            positions = list(self.broker.get_positions())
+            signed = sum(float(p.qty) for p in positions if str(p.symbol).strip().upper().replace("/", "") == want)
+            record_guarded_pass((self.broker, self.db), "protected_sell.position_reread", context={"symbol": symbol})
+        except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(
+                (self.broker, self.db), "protected_sell.position_reread", exc, context={"symbol": symbol}
+            )
+            return None
+        closable = signed if side == "sell" else -signed
+        return closable if closable > 1e-9 else 0.0
+
+    def _discharge_wal(self, symbol: str, wal_row_id) -> None:
+        """Nothing is held, so the cancelled stops must NOT be restored: drop the recovery row."""
+        if wal_row_id is None:
+            return
+        try:
+            self.db.delete_pending_protection_restore(wal_row_id)
+            record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge", context={"symbol": symbol})
+        except Exception as exc:  # noqa: BLE001
+            record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge", exc, context={"symbol": symbol})
+            logger.warning("WAL: failed to discharge row %d for flat %s: %s", wal_row_id, symbol, exc)
+
+
+#: Owner-alert wording for the refusals this step records itself.
+_OWN_REASONS = {
+    "stop_fired": (
+        "its protective stop FILLED before the exit was sent, so the position is already "
+        "exiting through the stop and no order was sent"
+    ),
+    "position_unreadable": (
+        "the broker position read failed after the stops were cleared, so the exit could not be "
+        "sized to what is held; the stops were put back and no order was sent"
+    ),
+}

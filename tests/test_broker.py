@@ -1,3 +1,4 @@
+from tests.fakes.held_book import hold
 import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
 from alpaca.trading.enums import TimeInForce
@@ -888,6 +889,7 @@ def test_cancel_snapshotted_stops_partial_failure_rolls_back(mock_tc_cls):
         {"id": "stop-a", "qty": 51.0, "stop_price": 248.5, "limit_price": 240.0},
         {"id": "stop-b", "qty": 51.0, "stop_price": 246.0, "limit_price": 238.0},
     ]
+    hold(broker, {"AMZN": 51.0})  # shares still held, so the rollback runs
     assert broker.cancel_snapshotted_stops("AMZN", specs).coverage_shrank is False
     broker._restore_stop_orders.assert_called_once()
     restored_arg = broker._restore_stop_orders.call_args[0][1]
