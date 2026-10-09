@@ -332,6 +332,7 @@ def test_execution_stage_skips_buy_when_entry_price_more_than_5pct_off_market():
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0  # live market
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     # Pre-BUY daily-loss re-check (fix for P1 #1) refreshes account state
@@ -381,6 +382,7 @@ def test_execution_stage_allows_buy_when_entry_price_within_5pct():
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline.broker.submit_order.return_value = {
         "id": "order-1",
         "status": "accepted",
@@ -439,6 +441,7 @@ def test_execution_stage_logs_when_finalize_cannot_confirm_coverage(caplog):
     specs = [{"id": "stop-1", "qty": 10, "stop_price": 280.0, "limit_price": 275.0}]
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 320.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 320.0, "ask_price": 320.0}
     _mock_stop_seam(pipeline.broker, specs=specs)
     _mock_stage_seam(pipeline, specs=specs)
     # finalize couldn't rebuild coverage → (False, specs).
@@ -702,6 +705,7 @@ def test_execution_stage_submits_buys_after_the_account_state_refresh():
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     _mock_stop_seam(pipeline.broker)
     pipeline.broker.submit_order.return_value = {
         "id": "buy-1",
@@ -754,6 +758,7 @@ def test_execution_stage_skips_buy_when_entry_price_above_market_by_more_than_5p
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
@@ -4839,6 +4844,7 @@ def test_new_buy_records_entry_atr_from_the_analysis():
 
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": 100.0, "ask_price": 100.0}
     pipeline.broker.submit_order.return_value = {
         "id": "order-1",
         "status": "accepted",

@@ -62,6 +62,7 @@ def _pipeline(live_price=100.0, cash=50_000.0, *, fractional=False, min_order_us
     values, because a MagicMock leaf silently reads as "not a number"."""
     pipeline = MagicMock()
     pipeline.broker.get_latest_price.return_value = live_price
+    pipeline.broker.get_latest_quote.return_value = {"bid_price": live_price, "ask_price": live_price}
     pipeline._format_qty = lambda q: str(q)
     pipeline._order_accepted.return_value = True
     pipeline._refresh_account_state.return_value = (
