@@ -444,7 +444,7 @@ def _append_no_trade_reason(
         )
 
 
-def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> None:
+def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float, mode: str = "") -> None:
     """Duration and AI spend only — the owner-facing footer. Used to also
     print `run {run_id}` and the raw provider-request count ("LLM
     $0.10/2 provider requests"); both are engineering detail with no
@@ -471,6 +471,13 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> No
     bits.append(describe_ai_cost(cost, label="AI cost"))
     bits.append(f"took {_fmt_elapsed(elapsed)}")
     lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
+    if mode in ("morning", "once"):
+        # Morning only (midday/evening also end here): the one credit line,
+        # and the one-shot alert when the state turns low/unknown.
+        from src.llm_balance_runway import alert_on_state_change, balance_line
+
+        lines.append("\U0001f50b " + balance_line())
+        alert_on_state_change()
 
 
 def format_coverage_gap_line(row: dict, profiles: dict | None = None) -> str:
@@ -820,7 +827,7 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
         protected_lines,
     )
 
-    _new_block(lines, _append_footer, snap, elapsed)
+    _new_block(lines, _append_footer, snap, elapsed, mode)
     return "\n".join(lines)
 
 

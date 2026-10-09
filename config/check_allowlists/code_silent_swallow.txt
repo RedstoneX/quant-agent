@@ -33,7 +33,6 @@
 ["src/evolution/quarterly_digest.py","_iter_agent_logs_in_window","except Exception as exc:\n    logger.warning('agent_signal_activity: logs fetch failed for %s: %s', agent_name, exc)\n    return"]
 ["src/notifier/costs.py","_daily_cost_limit","except Exception:\n    return None"]
 ["src/notifier/costs.py","_day_cost_line","except Exception as exc:\n    logger.warning('daily cost lookup failed: %s', exc)\n    return None"]
-["src/notifier/costs.py","_openrouter_balance_line","except Exception as exc:\n    logger.warning('OpenRouter balance lookup failed: %s', exc)\n    return None"]
 ["src/notifier/costs.py","_read_margin_interest_daily_all","except Exception as exc:\n    logger.warning('margin interest daily read failed: %s', exc)\n    return []"]
 ["src/notifier/costs.py","_session_cost_line","except Exception as exc:\n    logger.warning('session cost lookup failed for %s: %s', run_id, exc)\n    return None"]
 ["src/notifier/parts.py","_lookup_company_profiles","except Exception as e:\n    logger.warning('notifier: company profiles unavailable: %s', e)\n    return {}"]

@@ -194,7 +194,6 @@ _LAZY_NAME_OWNERS = {
     "_session_cost_line": "src.notifier.costs",
     "_day_cost_line": "src.notifier.costs",
     "_daily_cost_limit": "src.notifier.costs",
-    "_openrouter_balance_line": "src.notifier.costs",
     "_persist_margin_interest_daily": "src.notifier.costs",
     "_read_margin_interest_daily_all": "src.notifier.costs",
     "_margin_interest_lines": "src.notifier.costs",

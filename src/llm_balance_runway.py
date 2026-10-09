@@ -30,12 +30,16 @@ now must pay for the day in progress AND leave one more full session.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 
 from src.openrouter_balance import OPENROUTER_BALANCE_PATH as SNAPSHOT_PATH
+
+logger = logging.getLogger(__name__)
 
 
 def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
@@ -45,63 +49,95 @@ def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
     }
 
 
+#: The pricing-refresh timer (scripts/systemd/quant-agent-pricing-refresh.timer)
+#: fires at 06:30 and 18:30 ET, so a healthy snapshot is never more than 12h
+#: old. Older than that means a refresh was missed.
+REFRESH_INTERVAL_HOURS = 12.0
+#: Window for the average: the last N days on which the desk actually spent.
+AVG_WINDOW_DAYS = 7
+
+
+def _snapshot_age_hours(snapshot: dict | None, now: datetime | None) -> float | None:
+    try:
+        fetched = datetime.fromisoformat(str(snapshot["fetched_at"]))
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        return max((now or datetime.now(timezone.utc)) - fetched, timedelta(0)).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _age_text(hours: float) -> str:
+    return f"{hours:.0f}h" if hours < 48 else f"{hours / 24:.0f}d"
+
+
 def compute_state(
     day_costs: dict[str, float],
     *,
     snapshot: dict | None,
     topup_usd: float | None,
     topup_date: str | None,
+    now: datetime | None = None,
 ) -> dict:
-    """Pure: spend record + balance source in, plain-English state out."""
+    """Pure: spend record + balance source in, plain-English state out.
+
+    The average is over the last AVG_WINDOW_DAYS days the desk actually spent
+    (zero-spend and shutdown days are skipped, so they cannot flatter the
+    runway); the line says how many days that was."""
     spend_days = {d: c for d, c in day_costs.items() if c > 0}
     if not spend_days:
         return {
             "status": "unknown",
-            "message": "No paid-model spend recorded yet, so the remaining credit cannot be timed.",
+            "message": "AI credit UNKNOWN: no paid-model spend recorded yet, so the remaining credit cannot be timed.",
         }
     worst = max(spend_days.values())
-    mean = sum(spend_days.values()) / len(spend_days)
+    window = [spend_days[d] for d in sorted(spend_days)[-AVG_WINDOW_DAYS:]]
+    mean = sum(window) / len(window)
 
+    age_hours = None
     if snapshot and snapshot.get("remaining_usd") is not None:
         source = "provider"
         since = str(snapshot["as_of_day"])
         remaining = float(snapshot["remaining_usd"]) - sum(c for d, c in day_costs.items() if d > since)
+        age_hours = _snapshot_age_hours(snapshot, now)
     elif topup_usd is not None and topup_date:
         source = "derived"
         remaining = float(topup_usd) - sum(c for d, c in day_costs.items() if d >= topup_date)
     else:
         return {
             "status": "unknown",
-            "message": "The remaining paid-model credit is not known: the provider gave no balance and no top-up is recorded.",
+            "message": "AI credit UNKNOWN: the provider gave no balance and no top-up is recorded.",
         }
 
     remaining = max(remaining, 0.0)
     trigger = 2 * worst
     days_left = remaining / mean if mean else None
-    how = "from the provider" if source == "provider" else "estimated from your last top-up minus recorded spend"
-    if remaining < trigger:
-        status = "low"
-        message = (
-            f"Paid-model credit is low: about ${remaining:.2f} left ({how}), "
-            f"roughly {days_left:.1f} trading days at the usual pace and "
-            f"{remaining / worst:.1f} of the most expensive day on record. "
-            "Top up OpenRouter now, or the decision seats lose their paid routes."
-        )
+    stale = source == "provider" and (age_hours is None or age_hours > REFRESH_INTERVAL_HOURS)
+    if source == "derived":
+        tail = " · estimated from last top-up minus recorded spend"
+    elif age_hours is None:
+        tail = " · balance snapshot age UNKNOWN, STALE"
     else:
-        status = "ok"
-        message = (
-            f"Paid-model credit: about ${remaining:.2f} left ({how}), "
-            f"roughly {days_left:.0f} trading days at the usual pace."
-        )
+        tail = f" · balance {_age_text(age_hours)} old" + (", STALE (refresh missed)" if stale else "")
+    low = remaining < trigger
+    line = (
+        f"AI credit: ${remaining:.2f} left · avg ${mean:.2f}/day over last {len(window)} trading days run"
+        f" · ~{days_left:.0f} days{tail}"
+    )
+    if low:
+        line = "LOW " + line + ". Top up OpenRouter now."
     return {
-        "status": status,
+        "status": "low" if low else "ok",
         "source": source,
-        "message": message,
+        "message": line,
         "remaining_usd": round(remaining, 2),
         "worst_day_usd": round(worst, 3),
         "mean_day_usd": round(mean, 3),
+        "avg_window_days": len(window),
         "warn_below_usd": round(trigger, 2),
         "days_left": round(days_left, 1) if days_left is not None else None,
+        "snapshot_age_hours": round(age_hours, 1) if age_hours is not None else None,
+        "stale": stale,
     }
 
 
@@ -114,7 +150,7 @@ def read_state(db_path: str, *, topup_usd, topup_date, snapshot_path: Path = SNA
             except (OSError, ValueError) as exc:
                 return {
                     "status": "unknown",
-                    "message": f"The provider balance snapshot {snapshot_path} exists but cannot be read, so the remaining credit is not known.",
+                    "message": f"AI credit UNKNOWN: the provider balance snapshot {snapshot_path} exists but cannot be read.",
                     "error": str(exc),
                 }
         else:
@@ -126,10 +162,10 @@ def read_state(db_path: str, *, topup_usd, topup_date, snapshot_path: Path = SNA
             conn.close()
         return compute_state(costs, snapshot=snapshot, topup_usd=topup_usd, topup_date=topup_date)
     except Exception as exc:  # noqa: BLE001
-        return {"status": "unknown", "message": "The credit check could not run.", "error": str(exc)}
+        return {"status": "unknown", "message": "AI credit UNKNOWN: the credit check could not run.", "error": str(exc)}
 
 
-UNKNOWN_LINE = "Paid-model credit left: balance unknown."
+UNKNOWN_LINE = "AI credit UNKNOWN: the balance could not be read."
 
 
 def balance_line() -> str:
@@ -147,8 +183,48 @@ def balance_line() -> str:
             topup_usd=cc.get("openrouter_topup_usd"),
             topup_date=cc.get("openrouter_topup_date"),
         )
-        if state.get("status") == "unknown":
-            return UNKNOWN_LINE
         return state["message"]
     except Exception:  # noqa: BLE001
         return UNKNOWN_LINE
+
+
+ALERT_STATE_PATH = Path("data/llm_balance_alert_state.json")
+
+
+def alert_on_state_change(state: dict | None = None, *, path: Path = ALERT_STATE_PATH, send=None) -> bool:
+    """Send ONE Telegram alert when the state turns low or unknown; stay quiet
+    while it stays there. The last-alerted state is persisted, and cleared when
+    the state recovers to ok so the next drop alerts again. Returns whether an
+    alert went out. Never raises."""
+    try:
+        if state is None:
+            raw = yaml.safe_load(Path("config/settings.yaml").read_text()) or {}
+            cc = raw.get("llm_cost_circuit") or {}
+            state = read_state(
+                raw["storage"]["db_path"],
+                topup_usd=cc.get("openrouter_topup_usd"),
+                topup_date=cc.get("openrouter_topup_date"),
+            )
+        status = state.get("status", "unknown")
+        try:
+            last = json.loads(path.read_text()).get("status")
+        except (OSError, ValueError, AttributeError):
+            last = None
+        if status == last:
+            return False
+        sent = False
+        if status in ("low", "unknown"):
+            if send is None:
+                from src.notifier.owner_alert import send_owner_alert as send
+            sent = bool(send(state.get("message", UNKNOWN_LINE)))
+            if not sent:
+                return False  # not recorded: try again next morning
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"status": status}))
+        return sent
+    except Exception:  # noqa: BLE001
+        from src.sentinel.counted import record_swallowed_here
+
+        record_swallowed_here("llm_balance_runway.alert_on_state_change", log=logger)
+        logger.exception("AI-credit state alert failed")
+        return False

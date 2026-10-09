@@ -876,7 +876,7 @@ def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypat
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr(n, "_session_cost_line", lambda run_id: "🧠 AI cost: $0.12")
     monkeypatch.setattr(n, "_day_cost_line", lambda: "📅 today: $0.34")
-    monkeypatch.setattr(n, "_openrouter_balance_line", lambda: "🔋 OpenRouter: $7.10 left")
+    monkeypatch.setattr("src.notifier.session.balance_line", lambda: "AI credit: $7.10 left")
     monkeypatch.setattr(
         n,
         "_margin_interest_lines",
@@ -884,7 +884,7 @@ def test_margin_interest_is_its_own_section_not_part_of_the_cost_block(monkeypat
     )
     msg = n.format_session_result("morning", {"status": "ok", "run_id": "r"}, 5.0)
     lines = msg.split("\n")
-    balance_at = next(i for i, ln in enumerate(lines) if "OpenRouter" in ln)
+    balance_at = next(i for i, ln in enumerate(lines) if "AI credit" in ln)
     margin_at = next(i for i, ln in enumerate(lines) if "margin interest" in ln)
     assert margin_at > balance_at
     assert any(not lines[i].strip() for i in range(balance_at + 1, margin_at)), (
