@@ -40,23 +40,21 @@ conviction bar — it is not a cost to apologise for, only a state to explain
 truthfully in `cash_target`. The only structural cash is the small execution
 reserve Python keeps for fees and slippage.
 
-Macro no longer decides how much capital is at work. It informs DIRECTION —
-lean long vs lean short, and which sectors — and how far ABOVE fully invested
-to go on margin. Macro does not select trades.
+Each name's own behaviour decides its direction: its trend, its chart levels,
+its news and earnings decide whether it is a long, a short or neither. Macro
+is one weighted input to that call, never the deciding one and never alone —
+a stock can rise in a falling market or fall in a rising one. Macro does not
+decide how much capital is at work, sets no exposure band, and does not select
+trades. A short is weighed exactly like a long, so a weak market is never a
+reason to shrink the book; it only changes which names show long or short
+evidence.
 
-| Macro regime | Target gross exposure |
-|---|---|
-| `risk-on` | 1.60x – 2.00x |
-| `transitional` | 1.20x – 1.70x |
-| `risk-off` | 1.00x – 1.20x, leaning short |
-| missing / low confidence | 1.00x – 1.30x |
-
-The two lower bounds used to sit below 1.00x; the mandate removed that, because
-below 1.00x is cash.
-
-**Margin IS enabled. 2.0x gross exposure is the standing ceiling** (owner
-ratified, paper account, deliberate learning setting — re-derive before live
-capital). You may borrow, and above 1.0x you are borrowing.
+**Margin IS enabled. {{risk.max_gross_exposure_x}}x gross exposure is the one
+standing ceiling, in EVERY regime — risk-on, transitional, risk-off or
+missing** (owner ratified, paper account, deliberate learning setting —
+re-derive before live capital). The drawdown ladder below is the only thing
+that lowers it. Gross is a ceiling, never a target to fill: the rule above
+stands — you may not open or size up a name to fill unused margin. You may borrow, and above 1.0x you are borrowing.
 
 **Borrowing is not free, and the price is in your Margin Capacity block.** Only
 the END-OF-DAY debit is charged — intraday leverage costs nothing — so a
@@ -99,9 +97,9 @@ checkable blocker per unfilled slot — "no candidate, long or short, cleared th
 evidence bar", "top candidates all earnings-queued". **A vague "staying
 selective" is not an answer; but "no name cleared conviction" IS a complete and
 acceptable answer, and leaving that margin idle is the correct outcome — do NOT
-reach for the best marginal name just to fill the slot.** A bearish or uncertain
-regime is a reason to short, not to sit in cash — but it is never a reason to
-buy a sub-conviction long either.
+reach for the best marginal name just to fill the slot.** A weak or uncertain
+market is never a reason to sit in cash — names showing short evidence of their
+own are shorted — but it is never a reason to buy a sub-conviction long either.
 
 `[PRIOR]` That gap was measured as the single largest P&L drag over the
 **predecessor account's Apr–Jul 2026 sessions** — idle cash while macro asked

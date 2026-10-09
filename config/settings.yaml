@@ -926,14 +926,11 @@ risk:
   # This is important. Remember, it's still paper trading. We're not even in
   # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and
   # the de-levering ladder were merged and verified, which was the ratified
-  # sequencing. The PM prompt's exposure table moved to 2.0x in the same
-  # commit — the two must never diverge. That table lives in
-  # `config/prompts/portfolio_manager.md` ("Target gross exposure", plus the
-  # de-levering-ladder table under it), NOT in `src/agents/
-  # portfolio_manager.py` — which has never held one, and where looking for
-  # it has already produced a false "the table was deleted" report
-  # (2026-09-18). Verified still present and still stating 2.0x as of
-  # 2026-09-18; it is prose, so nothing mechanical pins it to this value.
+  # sequencing. The PM prompt renders this ceiling from
+  # {{risk.max_gross_exposure_x}} and applies it in every regime (per-regime
+  # exposure bands deleted 2026-10-09 under the owner mandate: macro sets only
+  # the long/short lean). Its de-levering-ladder table is in
+  # `config/prompts/portfolio_manager.md`, not `src/agents/portfolio_manager.py`.
   allow_margin: true
   # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
   # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
