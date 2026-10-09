@@ -854,6 +854,44 @@ _STATUS_PARAGRAPH_RE = re.compile(r"^\*\*([A-Z][A-Z'-]*(?:\s+[A-Z][A-Z'-]*)*),?\
 #: order, and it must never be the RIGHT NOW card.
 _NO_ACTION_WORDS = ("WORKING AS INTENDED", "NOT A DEFECT")
 
+# ---------------------------------------------------------------------------
+# BLOCKED — one marker, parsed, never inferred from prose.
+#
+# Measured 2026-10-09: eleven items said in prose that they were blocked
+# ("production-blocked (desk OFF)", "do not dispatch build work") and the
+# work queue, which cannot read prose, ranked every one of them as the next
+# thing to build. A block now has exactly one written form, in the item's
+# bold headline:
+#
+#     BLOCKED ON A LIVE EVENT: <what has to happen in production>
+#     BLOCKED ON THE OWNER: <what only he can decide>
+#
+# and `find_prose_blocks` fails the build on any headline that says
+# "blocked" (or cites the desk being off) in any other words.
+# ---------------------------------------------------------------------------
+
+BLOCKED_ON_LIVE_EVENT = "A LIVE EVENT"
+BLOCKED_ON_OWNER = "THE OWNER"
+_BLOCKED_MARKER_HEAD_RE = re.compile(r"\bBLOCKED ON (A LIVE EVENT|THE OWNER):")
+_BLOCKED_MARKER_RE = re.compile(r"\bBLOCKED ON (A LIVE EVENT|THE OWNER):\s*([^\]]*)")
+#: Blocking prose written without the marker. Read AFTER the marker's own
+#: words are removed, so a marked headline never trips it; its reason text is
+#: still read, so "BLOCKED ON A LIVE EVENT: desk OFF" fails too.
+_PROSE_BLOCK_RE = re.compile(r"\bBLOCKED\b|\bDESK(?:-| IS | )OFF\b", re.IGNORECASE)
+
+#: The desk's running state, one line in docs/WORK.md, e.g.
+#: `**Desk: ON (restarted 2026-10-09 by the owner).**`
+_DESK_LINE_RE = re.compile(r"^\*\*Desk: (ON|OFF)\b", re.MULTILINE)
+
+
+def load_desk_state(work_md: Path) -> str | None:
+    """Return "ON", "OFF", or None when the line is missing or there is more than one."""
+    try:
+        hits = _DESK_LINE_RE.findall(work_md.read_text())
+    except OSError:
+        return None
+    return hits[0] if len(hits) == 1 else None
+
 
 def _status_hit(text: str, words: tuple[str, ...]) -> bool:
     """Whether any of `words` appears in `text` as a whole word AND is not
@@ -1141,9 +1179,28 @@ class QueueItem:
         return not self.done and self.closure_claim == "part_done"
 
     @property
+    def blocked(self) -> tuple[str, str] | None:
+        """``(kind, reason)`` from the one blocked marker, or None. Kind is
+        `BLOCKED_ON_LIVE_EVENT` or `BLOCKED_ON_OWNER`."""
+        m = _BLOCKED_MARKER_RE.search(self.headline)
+        if not m:
+            return None
+        return m.group(1), m.group(2).strip().rstrip(".;").strip()
+
+    @property
+    def prose_block(self) -> str:
+        """Blocking prose in the headline that is not the marker, or ``""``."""
+        if self.done:
+            return ""
+        m = _PROSE_BLOCK_RE.search(_BLOCKED_MARKER_HEAD_RE.sub("", self.headline))
+        return m.group(0) if m else ""
+
+    @property
     def paused(self) -> bool:
         if self.done or self.claims_closure or self.review_owed:
             return False
+        if self.blocked and self.blocked[0] == BLOCKED_ON_OWNER:
+            return True
         return any(w in self.status_tail for w in _PAUSED_WORDS)
 
     @property
@@ -1161,6 +1218,8 @@ class QueueItem:
         """
         if self.done or self.claims_closure or self.review_owed or self.paused:
             return ""
+        if self.blocked and self.blocked[0] == BLOCKED_ON_LIVE_EVENT:
+            return f"waiting on a live event: {self.blocked[1]}"
         if self.part_done:
             return ""
         texts = (self.status_tail, *self.status_leads)
@@ -2052,6 +2111,26 @@ def find_finished_items_still_on_board(work_md: Path, board_notes: Path) -> list
                 "docs/WORK.md."
             )
     return flagged
+
+
+def find_prose_blocks(work_md: Path, board_notes: Path) -> list[str]:
+    """Open items whose headline says they are blocked in prose instead of
+    the one parsed marker, plus a missing or ambiguous desk line. Prose is
+    invisible to the work queue, so a prose block is ranked as work to do."""
+    notes = load_board_notes(board_notes)
+    problems: list[str] = []
+    if load_desk_state(work_md) is None:
+        problems.append("docs/WORK.md needs exactly one `**Desk: ON ...` or `**Desk: OFF ...` line.")
+    for items, _problem in (load_funnel_queue(work_md, notes=notes), load_pm_gate(work_md, notes=notes)):
+        for item in items:
+            hit = item.prose_block
+            if hit:
+                problems.append(
+                    f"{item.ref} says {hit!r} in prose. Write the block as "
+                    "`BLOCKED ON A LIVE EVENT: <reason>` or `BLOCKED ON THE OWNER: <reason>`, "
+                    "or remove the word if it is no longer blocked."
+                )
+    return problems
 
 
 #: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape

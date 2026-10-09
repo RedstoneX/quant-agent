@@ -47,6 +47,7 @@
 ["scripts.work_queue.AGENT_IDLE_SECONDS"]
 ["scripts.work_queue.BLOCK_EXIT"]
 ["scripts.work_queue.MAX_HANDBACKS"]
+["scripts.work_queue.SESSION_HANDBACK_CAP"]
 ["scripts.work_queue_adversary.MIN_ADVERSARY_WORDS"]
 ["src.alert_watchdog.ROW_LIMIT"]
 ["src.alert_watchdog.STALE_AFTER_HOURS"]

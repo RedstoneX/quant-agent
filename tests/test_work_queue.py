@@ -21,6 +21,8 @@ from src.inflight import OpenPR, read_open_pull_requests
 
 
 BACKLOG = """\
+**Desk: ON (test fixture).**
+
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
 
 **7. Something nobody has started — 3 of 68 (4%). DEFECT.**
@@ -240,6 +242,66 @@ def test_the_brake_is_per_item_not_per_session(state_path):
     work_queue.decide(three, "sess", True, **kw)
     assert not work_queue.decide(three, "sess", True, **kw).block
     assert work_queue.decide(_queue([_item(4, "Four — DEFECT.")]), "sess", True, **kw).block
+
+
+def test_an_item_at_its_cap_falls_through_to_the_next_actionable_item(state_path):
+    """Two hand-backs of item 3 must move the hook on to item 4, not silence it."""
+    kw = dict(state_path=state_path, projects_root=Path("/nonexistent"))
+    q = _queue([_item(3, "Three — DEFECT."), _item(4, "Four — DEFECT.")])
+    assert "item 3" in work_queue.decide(q, "sess", False, **kw).reason
+    assert "item 3" in work_queue.decide(q, "sess", True, **kw).reason
+    third = work_queue.decide(q, "sess", True, **kw)
+    assert third.block
+    assert "item 4" in third.reason
+
+
+def test_the_session_wide_cap_ends_the_hand_backs(state_path):
+    kw = dict(state_path=state_path, projects_root=Path("/nonexistent"))
+    q = _queue([_item(n, f"Item {n} — DEFECT.") for n in range(1, 20)])
+    for _ in range(work_queue.SESSION_HANDBACK_CAP):
+        assert work_queue.decide(q, "sess", True, **kw).block
+    last = work_queue.decide(q, "sess", True, **kw)
+    assert not last.block
+    assert str(work_queue.SESSION_HANDBACK_CAP) in last.reason
+
+
+_DESK_BACKLOG = """\
+**Desk: {desk} (test).**
+
+## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
+
+**10. Needs production proof — OPEN. [BLOCKED ON A LIVE EVENT: one observed session.]**
+
+Body text.
+
+**11. Needs his call — OPEN. [BLOCKED ON THE OWNER: a spend cap.]**
+
+Body text.
+
+**12. Plain work — OPEN.**
+
+Body text.
+"""
+
+
+@pytest.mark.parametrize("desk", ["ON", "OFF"])
+def test_the_desk_line_and_block_markers_are_read(tmp_path, desk):
+    p = tmp_path / "WORK.md"
+    p.write_text(_DESK_BACKLOG.format(desk=desk))
+    q = work_queue._build_queue_from(p, tmp_path / "no_notes")
+    assert q.desk == desk
+    assert [i.ref for i in q.actionable] == ["item 12"]
+    live = "waiting_external" if desk == "ON" else "blocked_on_owner"
+    assert "item 10" in [i.ref for i in getattr(q, live)]
+    assert "item 11" in [i.ref for i in q.blocked_on_owner]
+
+
+def test_a_missing_desk_line_is_reported_unreadable(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(_DESK_BACKLOG.split("\n", 2)[2])
+    q = work_queue._build_queue_from(p, tmp_path / "no_notes")
+    assert q.desk is None
+    assert any("Desk" in u for u in q.unreadable)
 
 
 def test_a_state_file_that_cannot_be_written_still_allows_progress(tmp_path):

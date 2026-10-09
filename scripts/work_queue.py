@@ -81,10 +81,17 @@ all three of these must hold:
     the harness's own subagent transcripts and treats recent write
     activity as alive, because being wrong in that direction costs a stop
     that should have blocked, and being wrong the other way costs money.
-  * This same item has not already been handed back `--max-handbacks`
-    times (default 2). If two attempts have not moved an item, a third
-    inside the same session is a loop, not diligence. The count lives in
-    a state file keyed by session, so it survives the turns it has to.
+  * Some actionable item has been handed back fewer than `--max-handbacks`
+    times (default 2). An item at its cap is SKIPPED and the next actionable
+    item is handed back instead; the hook goes quiet only when every
+    actionable item is at its cap, or when the session as a whole has hit
+    `SESSION_HANDBACK_CAP`. The counts live in a state file keyed by
+    session, so they survive the turns they have to.
+
+What counts as actionable is parsed, never read from prose: an item is
+blocked only by the one headline marker `BLOCKED ON A LIVE EVENT: <reason>`
+or `BLOCKED ON THE OWNER: <reason>`, and the desk's state only by the one
+`**Desk: ON|OFF` line in `docs/WORK.md` (see `scripts/status_board.py`).
 
 The oldest-first rule
 ---------------------
@@ -156,9 +163,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.status_board import (  # noqa: E402
+    BLOCKED_ON_LIVE_EVENT,
     PendingDecision,
     QueueItem,
     load_board_notes,
+    load_desk_state,
     load_funnel_queue,
     load_pending_decisions,
     load_pm_gate,
@@ -184,6 +193,11 @@ AGENT_IDLE_SECONDS = 180
 
 #: A third attempt at the same item inside one session is a loop.
 MAX_HANDBACKS = 2
+
+#: Hand-backs across ALL items in one session before the hook goes quiet.
+#: 8 is the harness's own consecutive-block cap (see `record_handback`): past
+#: it the harness already treats the session as looping, so this matches it.
+SESSION_HANDBACK_CAP = 8
 
 #: Where the per-session hand-back counts live. Under the harness's own
 #: scratch root when it is present, so the file dies with the session
@@ -220,6 +234,8 @@ class Queue:
     actionable: list[QueueItem] = field(default_factory=list)
     waiting_external: list[QueueItem] = field(default_factory=list)
     blocked_on_owner: list[QueueItem] = field(default_factory=list)
+    #: "ON" / "OFF" from the backlog's one `**Desk:` line; None if unreadable.
+    desk: str | None = None
     #: Plain-English sentences, one per section that could not be read.
     unreadable: list[str] = field(default_factory=list)
     #: Decisions the owner owes an answer on. Never actionable by me, and
@@ -244,13 +260,19 @@ class Queue:
             "waiting_external": [{"ref": i.ref, "title": i.title} for i in self.waiting_external],
             "blocked_on_owner": [{"ref": i.ref, "title": i.title} for i in self.blocked_on_owner],
             "source": self.source,
+            "desk": self.desk,
             "unreadable": list(self.unreadable),
             "decisions": [{"ref": d.ref, "question": d.question, "days_left": d.days_left} for d in self.decisions],
         }
 
 
-def classify(items: list[QueueItem]) -> dict[str, list[QueueItem]]:
+def classify(items: list[QueueItem], desk: str | None = "ON") -> dict[str, list[QueueItem]]:
     """Sort parsed backlog items by whose move is next.
+
+    An item marked `BLOCKED ON A LIVE EVENT` waits on production. With the
+    desk ON, production will deliver it (WAITING_EXTERNAL); with the desk OFF
+    or unreadable, nothing will happen until the owner restarts it
+    (BLOCKED_ON_OWNER). Either way it is never ACTIONABLE.
 
     An unknown bucket is an ACTIONABLE-side error on purpose: a board that
     grows a new bucket should surface here as something to look at, not be
@@ -263,6 +285,9 @@ def classify(items: list[QueueItem]) -> dict[str, list[QueueItem]]:
     }
     for item in items:
         owner = BUCKET_OWNERSHIP.get(item.bucket, "ACTIONABLE")
+        blocked = item.blocked
+        if owner == "WAITING_EXTERNAL" and blocked and blocked[0] == BLOCKED_ON_LIVE_EVENT and desk != "ON":
+            owner = "BLOCKED_ON_OWNER"
         if owner == "NONE":
             continue
         out[owner].append(item)
@@ -356,6 +381,10 @@ def _build_queue_from(work_md: Path, board_notes: Path) -> Queue:
     except Exception:  # noqa: BLE001 - prose is decoration here, never a blocker
         notes = {}
 
+    queue.desk = load_desk_state(work_md)
+    if queue.desk is None:
+        queue.unreadable.append("The backlog's one `**Desk: ON/OFF` line could not be read.")
+
     for loader, label in ((load_funnel_queue, "the running order"), (load_pm_gate, "the model-test gate")):
         try:
             items, problem = loader(work_md, notes=notes)
@@ -365,7 +394,7 @@ def _build_queue_from(work_md: Path, board_notes: Path) -> Queue:
         if problem:
             queue.unreadable.append(problem)
             continue
-        sorted_items = classify(items)
+        sorted_items = classify(items, queue.desk)
         queue.actionable.extend(sorted_items["ACTIONABLE"])
         queue.waiting_external.extend(sorted_items["WAITING_EXTERNAL"])
         queue.blocked_on_owner.extend(sorted_items["BLOCKED_ON_OWNER"])
@@ -445,6 +474,12 @@ def handback_count(session_id: str, ref: str, path: Path | None = None) -> int:
     """How many times this session has already been handed this same item."""
     state = _load_state(path or _state_path())
     return int(state.get(session_id, {}).get(ref, 0))
+
+
+def session_handbacks(session_id: str, path: Path | None = None) -> int:
+    """Hand-backs of every item in this session, summed."""
+    state = _load_state(path or _state_path())
+    return sum(int(v) for v in state.get(session_id, {}).values())
 
 
 def record_handback(session_id: str, ref: str, path: Path | None = None) -> int:
@@ -552,14 +587,22 @@ def decide(
     item = queue.next_item
     assert item is not None  # non-empty actionable, checked above
     if session_id:
-        already = handback_count(session_id, item.ref, state_path)
-        if already >= max_handbacks:
+        total = session_handbacks(session_id, state_path)
+        if total >= SESSION_HANDBACK_CAP:
             return HookDecision(
                 False,
-                f"{item.ref} has already been handed "
-                f"back {already} times this session; "
-                "a third pass is a loop, not diligence",
+                f"{total} hand-backs already this session, the cap of {SESSION_HANDBACK_CAP}; more is a loop",
             )
+        # An item at its own cap is skipped, never a reason to go quiet: the
+        # next actionable item is still work.
+        fresh = [i for i in queue.actionable if handback_count(session_id, i.ref, state_path) < max_handbacks]
+        if not fresh:
+            return HookDecision(
+                False,
+                f"every actionable item has been handed back {max_handbacks} times "
+                "this session; another pass is a loop, not diligence",
+            )
+        item = fresh[0]
         record_handback(session_id, item.ref, state_path)
 
     return HookDecision(True, f"{item.ref} is actionable and nothing is waiting on anyone else: {item.title}")

@@ -2766,8 +2766,13 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # three unrelated residuals were carried forward as item 208, so the pin
     # moves to 208 rather than being dropped -- the residual work must still
     # be visible on the board.
+    # 2026-10-09: both of 208's open boxes are the owner's (a provider spend
+    # cap, a paid run he forbade), now written as the parsed
+    # `BLOCKED ON THE OWNER:` marker, so it is still on the board -- in the
+    # parked section, not the running order.
     for rank in (208,):
-        assert by_rank[rank].bucket == "open", rank
+        assert by_rank[rank].bucket == "paused", rank
+        assert by_rank[rank].blocked[0] == sb.BLOCKED_ON_OWNER, rank
     # And the negated lines stay open, as they always did. (28 was the other
     # one; it is retired above.)
     # 32 was pinned here from 2026-09-13 until 2026-09-20, when the owner
@@ -4567,3 +4572,50 @@ def test_a_struck_through_item_is_never_flagged_however_its_boxes_read():
     assert it.claims_closure is False
     assert it.closure_disagreement == ""
     assert it.bucket == "resolved"
+
+
+# --------------------------------------------------------------------------
+# a block is a parsed marker, never prose (2026-10-09: eleven prose-blocked
+# items were ranked as work to do because the queue cannot read prose)
+# --------------------------------------------------------------------------
+
+_BLOCK_FIXTURE = """\
+**Desk: ON (test).**
+
+## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
+
+**10. Needs proof — OPEN. [2 of 3 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF.]**
+
+Body text.
+
+**11. Needs proof — OPEN. [BLOCKED ON A LIVE EVENT: one observed session.]**
+
+Body text.
+"""
+
+
+def test_a_prose_only_block_fails_the_board(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(_BLOCK_FIXTURE)
+    problems = sb.find_prose_blocks(p, tmp_path / "no_notes")
+    assert len(problems) == 1 and problems[0].startswith("item 10 ")
+
+
+def test_the_block_marker_is_parsed_into_kind_and_reason(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(_BLOCK_FIXTURE)
+    items, _ = sb.load_funnel_queue(p)
+    marked = next(i for i in items if i.rank == 11)
+    assert marked.blocked == (sb.BLOCKED_ON_LIVE_EVENT, "one observed session")
+    assert marked.bucket == "in_hand"
+
+
+def test_a_board_with_no_desk_line_fails(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(_BLOCK_FIXTURE.replace("**Desk: ON (test).**", ""))
+    assert any("Desk" in m for m in sb.find_prose_blocks(p, tmp_path / "no_notes"))
+
+
+def test_the_real_board_writes_every_block_as_the_marker():
+    root = _SCRIPT.parent.parent
+    assert sb.find_prose_blocks(root / "docs" / "WORK.md", root / "docs" / "board_notes") == []
