@@ -13,6 +13,30 @@ from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.execution.broker")
 
 
+def read_borrow(record) -> tuple[bool, str | None]:
+    """The ONE easy-to-borrow reader. Returns (easy, missing_field_reason).
+
+    Alpaca's `borrow_status` ("easy_to_borrow" / "hard_to_borrow") is the
+    current field; the boolean `easy_to_borrow` is deprecated. Use
+    `borrow_status` when present, fall back to the boolean only when it is
+    absent. Neither present = not easy (fail closed) with a reason naming
+    what was missing.
+    """
+
+    def _get(name):
+        if isinstance(record, dict):
+            return record.get(name)
+        return getattr(record, name, None)
+
+    status = str(_get("borrow_status") or "").strip().lower()
+    if status:
+        return status == "easy_to_borrow", None
+    legacy = _get("easy_to_borrow")
+    if legacy is not None:
+        return bool(legacy), None
+    return False, "borrow_status_and_easy_to_borrow_missing"
+
+
 class AssetEligibilityReads:
     def get_shortability(self, symbol: str) -> dict:
         """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
@@ -39,7 +63,10 @@ class AssetEligibilityReads:
 
         alpaca_symbol = _alpaca_symbol(canonical)
         try:
-            asset = self.client.get_asset(alpaca_symbol)
+            # Raw payload: the pinned alpaca-py Asset model has no borrow_status.
+            asset = self.get_asset_record(alpaca_symbol)
+            if asset is None:
+                raise LookupError(f"asset {alpaca_symbol} not found")
             record_guarded_pass(self, "account_reads.shortability", context={"symbol": canonical})
         except Exception as exc:
             record_guarded_pass(
@@ -64,9 +91,11 @@ class AssetEligibilityReads:
             return getattr(asset, name, default)
 
         shortable = bool(_field("shortable", False))
-        easy_to_borrow = bool(_field("easy_to_borrow", False))
+        easy_to_borrow, missing = read_borrow(asset)
         if shortable and easy_to_borrow:
             reason = "eligible"
+        elif shortable and missing:
+            reason = missing
         elif not shortable and not easy_to_borrow:
             reason = "not_shortable"  # the more specific/common of the two
         elif not shortable:
