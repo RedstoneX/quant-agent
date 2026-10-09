@@ -1089,12 +1089,14 @@ def test_emergency_cover_source_guards_its_submit_result():
 
     import src.pipeline_stages as stages_mod
     import src.stage_execution as stage_execution_mod
+    import src.stage_execution_parts.protect_entry_stops as protect_mod
 
     # item 210 step 10 moved ExecutionStage (which owns the D7 block) into
-    # src/stage_execution.py. Scan both modules so the guard still has to
-    # be found somewhere in the executable product code.
+    # src/stage_execution.py, and the 2026-10-09 split moved the D7 block
+    # itself into src/stage_execution_parts/protect_entry_stops.py. Scan all
+    # three so the guard still has to be found in executable product code.
     blocks = []
-    for mod in (stages_mod, stage_execution_mod):
+    for mod in (stages_mod, stage_execution_mod, protect_mod):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(src)
         for node in ast.walk(tree):
