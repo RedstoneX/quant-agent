@@ -1,4 +1,4 @@
-"""Refuse queued BUYs on names with earnings inside the hold window, lifted out
+"""Refuse queued BUYs on names whose filed report went unanalysed, lifted out
 of ``pipeline_risk_gate.py`` (at its size ratchet) so that module's catch-alls
 could be made LOUD. A pure rule over the decisions and the earnings results it
 is handed; ``RiskGate`` re-exports it as a staticmethod under its old name.

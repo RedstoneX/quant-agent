@@ -635,7 +635,7 @@ unless noted, single match for `signal_fidelity`:
 | `rr_fail` | Read TA R/R literally on RANGE setups and prefer better-paying candidates; never apply it to a breakout |
 | `concentration` | Over-concentrated: SHRINK or SKIP into the crowded sector — trim base size or drop the marginal name; NEVER open or add a name to "diversify" or balance the book. Concentration can shed weight, it cannot buy it. |
 | `correlation_risk` | At most 1 name per highly-correlated cluster |
-| `event_risk` | Check earnings / FOMC windows before sizing up |
+| `event_risk` | Next earnings date is information only; earnings never resize or block a trade. Check FOMC / macro releases |
 | `signal_fidelity` (1+) | Read TA ratings more carefully; explain every override |
 | `clean` dominant | Calibrated — no change needed |
 

@@ -165,7 +165,7 @@ def test_the_fetched_earnings_date_reaches_the_risk_managers_input_text():
     )
 
     assert "NVDA: next earnings ~2 sessions away (fetched)" in message
-    assert "INSIDE THE 3-SESSION EVENT WINDOW" in message
+    assert "EVENT WINDOW" not in message
     assert "JPM: next earnings ~30 sessions away (fetched)" in message
     assert "do NOT answer this from memory" in message
 
@@ -794,7 +794,7 @@ def test_risk_stage_block_fetches_earnings_for_exactly_the_symbols_under_review(
     )
     assert market.calls == ["NVDA", "JPM"]
     assert "NVDA: next earnings ~1 session away (fetched)" in block
-    assert "INSIDE THE 3-SESSION EVENT WINDOW" in block
+    assert "EVENT WINDOW" not in block
     assert "JPM" in block and "unavailable_no_fetched_date" in block
 
 
