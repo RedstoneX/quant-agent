@@ -513,3 +513,21 @@ def test_name_specific_opposition_culls_regardless_of_structure_or_capital():
         held={"HELD"},
     )
     assert holdings_below_entry_bar(blocked, {"HELD"}) == ("HELD",)
+
+
+def test_sector_macro_is_one_vote_outweighed_by_two_name_level_supporters():
+    """Owner mandate 2026-10-09: a sector-specific bearish macro stance is ONE
+    opposing vote, not a veto. Two name-level seats backing the trade outnumber
+    it, so the name clears both the ENTRY bar and the STAY test."""
+    verdicts = [_v("technical", "NEW"), _v("news", "NEW"), _v("earnings", "NEW"), _macro("NEW", sector_specific=True)]
+    assert own_bar_block_reason(verdicts, direction="bullish") is None
+    assert own_bar_opposition_reason(verdicts, direction="bullish") is None
+
+
+def test_sector_macro_vote_still_blocks_when_not_outweighed():
+    """One supporter against one sector-macro vote is a tie: not outweighed, so
+    it still blocks — and a name-level opposed seat remains an outright block."""
+    tie = [_v("technical"), _v("news"), _macro(sector_specific=True)]
+    assert "macro opposed" in (own_bar_block_reason(tie, direction="bullish") or "")
+    name_opposed = [_v("technical"), _v("news"), _v("earnings"), _v("smart_money", direction="bearish")]
+    assert "opposed" in (own_bar_block_reason(name_opposed, direction="bullish") or "")
