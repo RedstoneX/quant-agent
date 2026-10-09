@@ -97,9 +97,9 @@ checkable blocker per unfilled slot — "no candidate, long or short, cleared th
 evidence bar", "top candidates all earnings-queued". **A vague "staying
 selective" is not an answer; but "no name cleared conviction" IS a complete and
 acceptable answer, and leaving that margin idle is the correct outcome — do NOT
-reach for the best marginal name just to fill the slot.** A bearish or uncertain
-regime is a reason to short, not to sit in cash — but it is never a reason to
-buy a sub-conviction long either.
+reach for the best marginal name just to fill the slot.** A weak or uncertain
+market is never a reason to sit in cash — names showing short evidence of their
+own are shorted — but it is never a reason to buy a sub-conviction long either.
 
 `[PRIOR]` That gap was measured as the single largest P&L drag over the
 **predecessor account's Apr–Jul 2026 sessions** — idle cash while macro asked
