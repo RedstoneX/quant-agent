@@ -679,9 +679,10 @@ risk:
   # trade, which is what removes the incentive to squeeze stops. The previous
   # 0.5% ceiling lived in a constructor dataclass default nobody chose.
   max_position_risk_pct: 5
-  # Under this an idea is not worth trading: a token position pays full
-  # commission and full attention for an immaterial payoff. A request
-  # rationed below the floor is denied outright rather than shrunk.
+  # The owner's own minimum risk per trade (OUTCOME.md risk table,
+  # 2026-08-27). With the 25% total-risk ceiling it also caps the book at
+  # about 50 names. Alpaca charges no commission, so cost is NOT the reason.
+  # A request rationed below the floor is denied outright rather than shrunk.
   min_position_risk_pct: 0.5
   # Spec §2.2 — the most of the total ceiling any ONE correlated cluster may
   # take. Without it, "total risk is under 25%" says nothing about
