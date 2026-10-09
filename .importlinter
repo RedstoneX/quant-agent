@@ -1,0 +1,38 @@
+[importlinter]
+root_packages =
+    src
+    ops
+    scripts
+include_external_packages = True
+
+[importlinter:contract:broker-gateway]
+name = Only gateway modules may import the broker SDK (alpaca)
+type = forbidden
+source_modules =
+    src
+    ops
+    scripts
+forbidden_modules =
+    alpaca
+allow_indirect_imports = true
+# FIXED allow-list of gateway modules; adding a line is a reviewed decision.
+ignore_imports =
+    ops.rehearsal.broker_cassette_recording -> alpaca
+    ops.rehearsal.conformance -> alpaca
+    ops.rehearsal.conformance_sequence -> alpaca
+    ops.rehearsal.primary_identity_assertion -> alpaca
+    ops.rehearsal.secondary_preflight -> alpaca
+    scripts.desk_reset -> alpaca
+    scripts.export_alpaca_trades -> alpaca
+    scripts.money_modules -> alpaca
+    src.api.broker_reads -> alpaca
+    src.execution.broker -> alpaca
+    src.execution.broker_parts.account_reads -> alpaca
+    src.execution.broker_parts.market_data -> alpaca
+    src.execution.broker_parts.order_desk -> alpaca
+    src.execution.broker_parts.order_desk_reads -> alpaca
+    src.execution.broker_parts.stop_amend -> alpaca
+    src.execution.broker_parts.stop_place -> alpaca
+    src.execution.broker_parts.trade_stream -> alpaca
+    src.execution.order_gates -> alpaca
+    src.execution.stop_read -> alpaca
