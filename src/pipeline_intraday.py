@@ -24,7 +24,7 @@ import logging
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.technical import compute_indicators
-from src.intraday.candidates import IntradayCandidates
+from src.intraday.candidates import IntradayCandidates, record_dropped_name
 from src.intraday.gating import IntradayGating
 from src.intraday.safety import IntradaySafety
 from src.intraday.session import IntradaySession
@@ -150,6 +150,12 @@ class IntradayScanBody:
     def broker(self, value) -> None:
         self._state.set("broker", value)
 
+    def _record_over_cap_drops(self, ctx, candidates, cap: int) -> None:
+        """Every mover past the per-scan name cap gets a recorded reason and its rank."""
+        for rank, (symbol, move_pct) in enumerate(candidates, start=1):
+            if rank > cap:
+                record_dropped_name(self, ctx, symbol, "over_name_cap", rank=rank, cap=cap, move_pct=move_pct)
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -202,6 +208,7 @@ class IntradayScanBody:
         # the movers — never sleep the scan away, never drop them silently.
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
         mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
+        self._record_over_cap_drops(ctx, candidates, cfg.max_candidates_per_scan)
         if self._await_paid_scan_slot(ctx.run_id):
             if getattr(self, "_paid_scan_waited_for", None) == "morning":
                 return self._intraday_open_overlap_skip(ctx, mover_names)
@@ -224,6 +231,7 @@ class IntradayScanBody:
                 _site(self, "post_wait_refresh", exc, log=logger)
                 return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
             candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
+            self._record_over_cap_drops(ctx, candidates, cfg.max_candidates_per_scan)
 
         if not snapshots:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
