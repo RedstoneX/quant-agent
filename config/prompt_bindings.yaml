@@ -18,35 +18,6 @@
 # is the same trade the deletion-site check already accepts.
 
 bindings:
-  - name: position_drift_flag
-    why: >
-      A holding is flagged as "drifted" when its weight has grown past a
-      threshold AND it is up past a second one — concentration that arrived
-      by winning. The flag is informational: it decorates the position
-      lines the Portfolio Manager and the Position Reviewer read, and no
-      Python trims on it. Both thresholds now have ONE definition
-      (`src.risk.metrics.DRIFT_WEIGHT_PCT` / `DRIFT_PNL_PCT`) and the two
-      sheets render them rather than typing them, so a value change cannot
-      produce a lying sheet. What a rendered number CANNOT catch is the
-      sentence around it — "trim is reasonable", "escalate to SELL" — so
-      the shape of the rule is bound here.
-    code:
-      - file: src/risk/metrics.py
-        symbol: drift_flag
-      - file: src/agents/portfolio_manager/__init__.py
-        symbol: PortfolioManagerAgent._fmt_position
-    prose:
-      - file: config/prompts/position_reviewer.md
-        contains:
-          - "`⚠️ DRIFT` — weight >"
-          - "would still leave `weight_pct >"
-      - file: config/prompts/portfolio_manager.md
-        contains:
-          - "| R5 | Drift trim >"
-          - "`positions_drift_flagged` — holdings with Weight >"
-    code_digest: "3d00e740d9b3d2f0"
-    prose_digest: "40e0cfecc3bdebab"
-
   - name: constructor_stop_widening
     why: >
       The technical seat is told, in four figures, what the portfolio

@@ -7,9 +7,8 @@ Three separate guarantees, tested separately because they fail separately:
   * every one of the ten standing sheets is covered by the limits check,
     not the two that happened to be wired up
     (`src/agents/prompt_limits.audit_prompt_coverage`);
-  * the drift flag's weight threshold has one definition site, and the one
-    site that still types it is named here rather than being quietly
-    tolerated.
+  * (the drift flag's definition-site checks were retired 2026-10-09 with
+    the flag itself, on the owner's ruling to never part-sell a winner).
 
 No test here makes a model call.
 """
@@ -32,7 +31,6 @@ from src.agents.prompt_limits import (
     placeholders_in,
     render_prompt_limits,
 )
-from src.risk.metrics import DRIFT_PNL_PCT, DRIFT_WEIGHT_PCT, drift_flag
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_DIR = REPO_ROOT / "config" / "prompts"
@@ -68,7 +66,7 @@ def test_the_code_digest_does_not_depend_on_the_interpreter():
     `f"entry {d or 'unknown'}"` as `f'entry {d or 'unknown'}'` and 3.11
     cannot. [measured 2026-09-30, `ast.unparse(ast.parse(...))` on
     CPython 3.12.3, against the 3.11 digest CI printed] the binding
-    `position_drift_flag` digested to `56f62680e3d044a9` on 3.12 and
+    the former drift binding digested to `56f62680e3d044a9` on 3.12 and
     `481483fae6983cd9` on 3.11 with neither bound function touched since
     the pin — because `PortfolioManagerAgent._fmt_position` contains
     exactly that f-string. The old sample here had no f-string at all, so
@@ -112,9 +110,8 @@ def test_the_registry_is_not_empty():
     """An empty registry passes while checking nothing — the failure mode
     that makes a green build a lie."""
     bindings = prompt_bindings.load_registry()
-    assert len(bindings) >= 2
+    assert len(bindings) >= 1
     names = {b.name for b in bindings}
-    assert "position_drift_flag" in names
     assert "constructor_stop_widening" in names
 
 
@@ -313,9 +310,9 @@ def test_a_placeholder_in_a_namespace_the_sheet_is_not_registered_for_fails(tmp_
 
 
 def test_a_typo_in_a_resolvable_placeholder_fails_the_audit(tmp_path):
-    (tmp_path / "position_reviewer.md").write_text("{{flags.drift_wieght_pct}}\n")
+    (tmp_path / "position_reviewer.md").write_text("{{flags.no_such_threshold}}\n")
     problems = audit_prompt_coverage(tmp_path)
-    assert any("drift_wieght_pct" in p for p in problems)
+    assert any("no_such_threshold" in p for p in problems)
 
 
 def test_no_sheet_ships_an_unrendered_placeholder_to_a_model():
@@ -332,91 +329,16 @@ def test_no_sheet_ships_an_unrendered_placeholder_to_a_model():
 
 def test_the_position_reviewer_sheet_is_actually_rendered():
     """It was read raw until item 107. Now it carries placeholders, so
-    reading it raw would ship `{{flags.drift_weight_pct}}` to the seat."""
+    reading it raw would ship any `{{...}}` placeholder to the seat."""
     from src.agents.position_reviewer import PositionReviewerAgent
 
     agent = PositionReviewerAgent.__new__(PositionReviewerAgent)
     rendered = agent.system_prompt
     assert "{{" not in rendered
-    assert f"weight > {DRIFT_WEIGHT_PCT:g}%" in rendered
 
 
 def test_the_flags_namespace_renders_and_refuses():
-    assert render_prompt_limits("{{flags.drift_weight_pct}}", None) == "12"
-    assert render_prompt_limits("{{flags.drift_pnl_pct}}", None) == "10"
     with pytest.raises(PromptPlaceholderError):
         render_prompt_limits("{{flags.no_such_threshold}}", None)
     with pytest.raises(PromptPlaceholderError):
         render_prompt_limits("{{execution.slippage_pct}}", None)
-
-
-# ---------------------------------------------------------------------------
-# (b) the 12 has one definition site
-# ---------------------------------------------------------------------------
-
-#: The one site that still types the pair as bare literals. `src/pipeline.py`
-#: was owned by another change when item 107 shipped and could not be edited
-#: in the same pass. It is named here rather than tolerated silently, so the
-#: count can only go down: a second entry cannot appear without this test
-#: failing. Item 107 stays open on exactly this line.
-KNOWN_UNCONVERTED: set[str] = set()
-
-_WEIGHT_LITERAL = re.compile(r"weight_pct\s*[><]=?\s*12\b")
-_PROSE_LITERAL = re.compile(r"[Ww]eight\s*>\s*12%|weight\s*>\s*12\b|>12% weight")
-
-
-def test_the_drift_threshold_has_exactly_one_definition_site():
-    definitions = []
-    for path in sorted((REPO_ROOT / "src").rglob("*.py")):
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
-            if re.match(r"\s*DRIFT_WEIGHT_PCT\s*=", line):
-                definitions.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
-    assert definitions == ["src/risk/metrics.py:" + str(_line_of_definition())], (
-        f"the drift weight threshold must have exactly one definition; found {definitions}"
-    )
-    assert DRIFT_WEIGHT_PCT == 12.0
-    assert DRIFT_PNL_PCT == 10.0
-
-
-def _line_of_definition() -> int:
-    text = (REPO_ROOT / "src" / "risk" / "metrics.py").read_text().splitlines()
-    for lineno, line in enumerate(text, 1):
-        if line.startswith("DRIFT_WEIGHT_PCT"):
-            return lineno
-    raise AssertionError("DRIFT_WEIGHT_PCT is not defined in src/risk/metrics.py")
-
-
-def test_no_new_site_types_the_drift_threshold():
-    offenders = set()
-    for path in sorted((REPO_ROOT / "src").rglob("*.py")):
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        if rel == "src/risk/metrics.py":
-            continue
-        if _WEIGHT_LITERAL.search(path.read_text()):
-            offenders.add(rel)
-    assert offenders == KNOWN_UNCONVERTED, (
-        f"drift-threshold literals outside the one definition: "
-        f"unexpected {sorted(offenders - KNOWN_UNCONVERTED)}; "
-        f"already fixed (remove from KNOWN_UNCONVERTED): "
-        f"{sorted(KNOWN_UNCONVERTED - offenders)}"
-    )
-
-
-def test_no_prompt_sheet_types_the_drift_threshold():
-    offenders = []
-    for path in sorted(PROMPT_DIR.glob("*.md")):
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
-            if _PROSE_LITERAL.search(line):
-                offenders.append(f"{path.name}:{lineno}: {line.strip()[:90]}")
-    assert offenders == [], (
-        "a prompt sheet types the drift threshold instead of rendering it "
-        "from `flags.drift_weight_pct`:\n" + "\n".join(offenders)
-    )
-
-
-def test_drift_flag_treats_unknowable_as_not_flagged():
-    assert drift_flag(20.0, 20.0) is True
-    assert drift_flag(12.0, 20.0) is False  # strict, not >=
-    assert drift_flag(20.0, 10.0) is False
-    assert drift_flag(None, 20.0) is False  # never a silent zero
-    assert drift_flag(20.0, None) is False

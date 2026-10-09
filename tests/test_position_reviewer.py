@@ -170,8 +170,6 @@ def test_thesis_progress_pct_beyond_target():
         total_value=10_000.0,
     )
     assert facts["CCC"]["thesis_progress_pct"] == 200.0
-    # And target_breach flag should fire
-    assert facts["CCC"]["target_breach_flag"] is True
 
 
 def test_distance_to_stop_and_target():
@@ -260,8 +258,6 @@ def test_good_stock_long_hold_has_no_flags_firing():
     assert good["thesis_progress_pct"] == 50.0
     # NO flags firing — this is the key assertion
     assert good["parabolic_flag"] is False, "parabolic must not fire on 10-day winner"
-    assert good["drift_flag"] is False, "drift must not fire on 8% weight"
-    assert good["target_breach_flag"] is False, "target_breach must not fire at 50% progress"
     # Weight should be ~8%
     assert 7.5 < good["weight_pct"] < 8.5
 
@@ -300,8 +296,8 @@ def test_parabolic_flag_fires_on_recent_big_winner():
     assert facts["FAST"]["parabolic_flag"] is True
 
 
-def test_drift_flag_fires_on_oversized_winner():
-    """Weight > 12% + PnL > 10% → drift_flag (concentration scrutiny)."""
+def test_weight_pct_reported_for_oversized_winner():
+    """An oversized winner reports its weight (the drift flag was deleted 2026-10-09)."""
     p = Position(
         symbol="BIG",
         qty=100,
@@ -331,7 +327,6 @@ def test_drift_flag_fires_on_oversized_winner():
         morning_trades=morning,
         total_value=50_000.0,  # BIG is 23% of book
     )
-    assert facts["BIG"]["drift_flag"] is True
     assert facts["BIG"]["weight_pct"] > 12
 
 
@@ -397,8 +392,6 @@ def test_prompt_embeds_position_metrics():
                     "distance_to_target_pct": 5.0,
                     "weight_pct": 11.5,
                     "parabolic_flag": False,
-                    "drift_flag": False,
-                    "target_breach_flag": False,
                 },
             },
         )

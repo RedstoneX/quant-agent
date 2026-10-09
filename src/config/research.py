@@ -84,6 +84,10 @@ class UniverseScreenConfig(BaseModel):
     `risk.min_stop_atr_multiple` (see the module docstring), and the cap on
     screened names per session is `nominations.max_per_seat_per_run` — the
     screen is one more source of candidates, capped like one seat.
+
+    The daily record-only run (`src/universe_daily.py`, owner ruling
+    2026-10-09, step A) reads `data_dir`, `screen_deadline_s` and
+    `bars_batch_size` too, but never `enabled`: it records, it never admits.
     """
 
     enabled: bool = False

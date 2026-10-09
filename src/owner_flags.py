@@ -19,8 +19,8 @@ PAUSE, RESUME = "PAUSE", "RESUME"
 @dataclass(frozen=True)
 class Flags:
     paused: bool = False
-    unknown: bool = False  # could not read, no last known set
-    stale: bool = False  # read failed; this is the last known set
+    unknown: bool = False  # cannot tell whether the owner paused: treated as paused
+    stale: bool = False  # read failed; `paused` is the last saved copy (still UNKNOWN)
 
 
 def current_flags(conn) -> Flags:
@@ -80,12 +80,16 @@ def _read_once(db_path) -> Flags:
 def read_flags(db_path, attempts=3, retry_pause_s=0.2) -> Flags:
     """Flags for the broker door, escalating when the database cannot be read.
 
-    1. retry; 2. the last flag set read (memory, then the durable copy),
-    marked `stale`; 3. `unknown=True`, which the door answers by refusing new
-    exposure while protection continues.
+    1. retry; 2. on failure the state is UNKNOWN (owner ruling 2026-10-09):
+    the last saved copy is reported (`stale`, its `paused` kept for the log)
+    but never trusted as "not paused" -- a pause raised after that copy was
+    written would otherwise be missed. A desk with no database path cannot
+    read the flag at all, so it is UNKNOWN too. The door answers UNKNOWN
+    exactly as it answers a pause.
     """
     if not db_path:
-        return Flags()
+        logger.error("owner flags: no intent database path: UNKNOWN")
+        return Flags(unknown=True)
     last = None
     for attempt in range(attempts):
         try:
@@ -98,7 +102,7 @@ def read_flags(db_path, attempts=3, retry_pause_s=0.2) -> Flags:
                 time.sleep(retry_pause_s)
     cached = _recall(db_path)
     if cached is not None:
-        logger.error("owner flags unreadable (%s); using last known set", last)
-        return replace(cached, stale=True)
+        logger.error("owner flags unreadable (%s); last saved copy paused=%s, state UNKNOWN", last, cached.paused)
+        return replace(cached, stale=True, unknown=True)
     logger.error("owner flags unreadable (%s) and no last known set: UNKNOWN", last)
     return Flags(unknown=True)

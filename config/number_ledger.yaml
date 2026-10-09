@@ -8504,37 +8504,6 @@ numbers:
       between the first and last bar, and this only has to reach past a
       year. It never decides a verdict unless set BELOW a year, which would
       fail every symbol's history test visibly.
-  - id: src.risk.metrics.DRIFT_WEIGHT_PCT
-    value: 12.0
-    status: not-trade-governing
-    site: src/risk/metrics.py
-    note: >-
-      Board item 107. One of the drift flag's two thresholds (weight percent
-      of book). Consolidates three bare inline literals (src/pipeline.py's
-      `_build_position_facts`, src/agents/portfolio_manager/__init__.py's
-      `_fmt_position`, src/agents/position_reviewer.py's label string) that
-      already existed on main before this change and were never a ledger
-      site because a bare comparison literal inside a function body matches
-      none of this scanner's five structural shapes. Naming the constant
-      does not source it: it is still hand-chosen and unmeasured. `drift_flag`
-      only sets a `⚠️DRIFT`/`positions_drift_flagged` decoration read by the
-      Portfolio Manager and Position Reviewer prompts; no Python path sizes,
-      prices, stops or exits a position from it, so it is informational, not
-      trade-governing, exactly like the seats' other contextual read-outs
-      (news, technicals). Not reclassified as `arbitrary`: that status is
-      for a number a debt-tracked owner appetite call still has to settle,
-      and this one decides nothing to settle.
-  - id: src.risk.metrics.DRIFT_PNL_PCT
-    value: 10.0
-    status: not-trade-governing
-    site: src/risk/metrics.py
-    note: >-
-      Board item 107. The drift flag's other threshold (unrealized P&L
-      percent). Same consolidation and the same reasoning as
-      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file: pre-existing bare
-      inline literal, newly named, still unsourced, informational-only (see
-      that entry for the full reasoning; not repeated to avoid two owners of
-      one explanation).
   - id: src.data.levels.STOP_LEVEL_BASIS_VERSION
     value: 1
     status: not-trade-governing
@@ -8834,8 +8803,7 @@ numbers:
       (`src/trader_feed/evening.py`). No Python path sizes, prices, stops,
       buys or sells a position from it; the gates that actually refuse a
       trade around an event live in `EventRiskConfig`, which is separately in
-      scope. Same shape and same classification as
-      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file. HONEST CAVEAT, not
+      scope. Informational, not trade-governing. HONEST CAVEAT, not
       softened: the value 3 itself has no measurement behind it, and because
       an LLM seat reads the phrase it can still colour a verdict. It is
       recorded here as informational rather than `arbitrary` only because

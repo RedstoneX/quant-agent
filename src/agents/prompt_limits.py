@@ -77,10 +77,11 @@ def _flags_values() -> dict[str, float]:
     """Imported lazily: `src.risk.metrics` must not import this module back."""
     from src.risk import metrics
 
-    return {
-        "drift_weight_pct": metrics.DRIFT_WEIGHT_PCT,
-        "drift_pnl_pct": metrics.DRIFT_PNL_PCT,
-    }
+    # Empty since 2026-10-09: the drift flag's two thresholds were deleted
+    # with the rule they served. Register a constant here only if real code
+    # reads it at run time.
+    _ = metrics
+    return {}
 
 
 #: Every prompt sheet on disk, and what is responsible for its placeholders.

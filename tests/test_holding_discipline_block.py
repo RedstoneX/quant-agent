@@ -68,17 +68,35 @@ def test_contradicted_regime_claim_is_verdict_false_and_blocks():
     )
     assert check.verdict == "false"
     assert check.blocks is True
-    assert "risk-on" in (check.finding or "")
+    assert "market mood" in (check.finding or "")
     assert "BLOCKED" in (check.finding or "")
     assert len(check.reasons) == 1
 
 
-def test_uncheckable_regime_claim_is_verdict_unverifiable_and_does_not_block():
-    """The macro seat failed this run. The identical sentence is now
-    unverifiable, NOT false — this is the distinction the veto rests on."""
+def test_regime_claim_on_market_mood_alone_blocks_even_when_macro_unreadable():
+    """Owner mandate 2026-10-09: with the macro seat failed and no name-level
+    evidence cited, the sell still rests on market mood alone and is refused."""
     check = holding_discipline_claim_check(
         action="SELL",
         reason="Cutting ACME — the macro regime flipped to risk-off today.",
+        symbol="ACME",
+        protected=True,
+        macro_regime_today=None,
+        macro_status="failed",
+        active_state_changes="",
+    )
+    assert check.verdict == "false"
+    assert check.blocks is True
+    assert "market mood" in (check.finding or "")
+
+
+def test_uncheckable_regime_claim_is_verdict_unverifiable_and_does_not_block():
+    """The macro seat failed this run. With stock evidence cited the identical
+    sentence is unverifiable, NOT false — this is the distinction the veto
+    rests on."""
+    check = holding_discipline_claim_check(
+        action="SELL",
+        reason="Cutting ACME — the macro regime flipped to risk-off today; thesis invalidated.",
         symbol="ACME",
         protected=True,
         macro_regime_today=None,
@@ -128,7 +146,7 @@ def test_confirmed_claim_is_verdict_ok():
     """Macro really did flip to risk-off. Nothing to say at all."""
     check = holding_discipline_claim_check(
         action="SELL",
-        reason="Regime flipped to risk-off today per Macro; cutting risk.",
+        reason="Regime flipped to risk-off today per Macro; cutting risk; thesis invalidated.",
         symbol="ACME",
         protected=True,
         macro_regime_today="risk-off",
@@ -176,7 +194,7 @@ def test_legacy_wrapper_still_returns_only_proven_false_findings():
     assert (
         holding_discipline_false_claim(
             action="SELL",
-            reason="Regime flipped to risk-off today.",
+            reason="Regime flipped to risk-off today; thesis invalidated.",
             symbol="ACME",
             protected=True,
             macro_regime_today=None,
@@ -344,13 +362,13 @@ def test_proven_false_claim_blocks_the_sell_and_alerts_the_owner():
     body = alert.call_args.args[0]
     assert "ACME" in body
     assert "BLOCKED" in body
-    assert "risk-off" in body and "risk-on" in body
+    assert "risk-off" in body and "market mood" in body
     assert alert.call_args.kwargs["symbols"] == ["ACME"]
 
 
 def test_unverifiable_claim_is_logged_but_never_blocked_or_alerted():
-    """Same sentence, macro seat failed. Old behaviour, unchanged."""
-    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting.")]
+    """Same sentence plus stock evidence, macro seat failed. Old behaviour, unchanged."""
+    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting; thesis invalidated.")]
     pipeline = _stage_pipeline(decisions=decisions)
     ctx = _ctx(decisions, macro_regime=None, macro_status="failed")
 
@@ -366,8 +384,8 @@ def test_unverifiable_claim_is_logged_but_never_blocked_or_alerted():
 
 
 def test_a_true_claim_passes_through_with_no_event_and_no_alert():
-    """Macro really did flip. Nothing unusual happens at all."""
-    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting.")]
+    """Macro really did flip and the stock's own evidence is cited. Nothing unusual happens at all."""
+    decisions = [_sell("ACME", "Regime flipped to risk-off today; cutting; thesis invalidated.")]
     pipeline = _stage_pipeline(decisions=decisions)
     ctx = _ctx(decisions, macro_regime="risk-off")
 

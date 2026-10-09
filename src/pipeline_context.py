@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Literal
 
 from src.models import parse_telemetry
 from src.soft_exit_restore_buffer import open_restore_run
-from src.risk.metrics import DRIFT_PNL_PCT, DRIFT_WEIGHT_PCT
 
 if TYPE_CHECKING:
     from src.data.event_calendar import EventCalendarCoverage, FOMCCoverage

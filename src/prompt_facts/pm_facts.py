@@ -8,7 +8,6 @@ constructor argument, so this builds and runs with no pipeline behind it.
 import logging
 
 from src.pipeline_context import PMFacts
-from src.risk.metrics import drift_flag as _drift_flag_check
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import position_weight_pct
 from src.trading_calendar import session_date_key
@@ -170,16 +169,6 @@ class PromptPMFacts:
                 f.positions_5_to_15d += 1
             else:
                 f.positions_over_15d += 1
-            # Drift check — SAME weight and SAME P&L% the PM's own position
-            # line renders (`position_weight_pct` / `unrealized_pnl_pct`).
-            # This block used to carry raw, un-leveraged weight and a
-            # `cost_basis > 0` P&L, so a line reading `Weight: 18.0% DRIFT`
-            # sat three lines above `drift-flagged: 0` in one prompt.
-            if total_value > 0:
-                weight = position_weight_pct(p, total_value)
-                pnl_pct = unrealized_pnl_pct(p)
-                if _drift_flag_check(weight, pnl_pct):
-                    f.positions_drift_flagged += 1
 
         # Signal freshness
         ages = [a.signal_age_days for a in analyses if a.signal_age_days is not None]

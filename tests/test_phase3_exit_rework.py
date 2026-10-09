@@ -257,7 +257,6 @@ def test_a_target_inside_one_sessions_range_disables_progress_and_pace():
     assert facts["thesis_progress_pct"] is None
     assert facts["pace"] is None
     assert facts["pace_status"] == "n/a_target_inside_noise"
-    assert facts["target_breach_flag"] is False
 
 
 def test_a_target_clearing_one_sessions_range_still_measures_progress():
