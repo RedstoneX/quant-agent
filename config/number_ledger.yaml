@@ -88,6 +88,27 @@
 # NO VALUE WAS CHANGED -- changing a live trade-governing number is the
 # owner's call and several are ratified-but-unsourced.
 numbers:
+  - id: src.llm_balance_runway.AVG_WINDOW_DAYS
+    value: 7
+    status: not-trade-governing
+    site: src/llm_balance_runway.py
+    note: >-
+      Number of most recent spend days averaged for the days-left wording on the
+      AI-credit line. Display only; it cannot reach an order.
+  - id: src.llm_balance_runway.REFRESH_INTERVAL_HOURS
+    value: 12.0
+    status: not-trade-governing
+    site: src/llm_balance_runway.py
+    note: >-
+      Age in hours after which the AI-credit line labels the provider balance
+      STALE. Display only; it cannot reach an order.
+  - id: src.llm_balance_runway.LOW_CREDIT_ALERT_USD
+    value: 3.0
+    status: owner-ruled
+    ruled_on: '2026-10-09'
+    ruling_summary: "Owner ruled on 2026-10-09 (\"Yes, $3, and that is that.\") that the low-AI-credit alert fires once when the OpenRouter balance is at or below a fixed $3 left, replacing the old twice-the-worst-day trigger."
+    ruling_record: owner message 2026-10-09, "Yes, $3, and that is that."
+    site: src/llm_balance_runway.py
   - id: src.config.INTRA_CHECK_TICK_MINUTES
     value: 30
     status: sourced

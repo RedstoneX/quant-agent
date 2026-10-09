@@ -27,6 +27,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/rotation_parts/reporting.py",
     "src/rotation_parts/reporting_lines.py",
     "src/infra_retry_policy.py",
+    # 2026-10-09: the fixed $3 low-AI-credit alert (owner ruling) lives here.
+    "src/llm_balance_runway.py",
     "src/nominations.py",
     "src/evidence_gate.py",
     "src/verdicts.py",

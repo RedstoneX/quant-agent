@@ -12,11 +12,11 @@ from src.trading_calendar import et_today
 DAYS = {"2026-09-21": 2.648, "2026-09-24": 2.422, "2026-09-30": 4.0, "2026-10-01": 1.0}
 
 
-def test_low_when_under_two_worst_days():
+def test_low_at_or_below_three_dollars_fixed():
     s = compute_state(DAYS, snapshot=None, topup_usd=10.0, topup_date="2026-10-01")
     assert s["source"] == "derived" and s["remaining_usd"] == 9.0
-    assert s["warn_below_usd"] == 8.0 and s["status"] == "ok"
-    s = compute_state({**DAYS, "2026-10-02": 2.0}, snapshot=None, topup_usd=10.0, topup_date="2026-10-01")
+    assert s["warn_below_usd"] == 3.0 and s["status"] == "ok"
+    s = compute_state({**DAYS, "2026-10-02": 6.0}, snapshot=None, topup_usd=10.0, topup_date="2026-10-01")
     assert s["status"] == "low" and "Top up OpenRouter" in s["message"]
 
 
@@ -152,7 +152,7 @@ def test_unknown_states_why_and_is_loud():
 
 
 def test_low_line_is_loud():
-    s = compute_state(DAYS, snapshot=_snap(1, 5.0), topup_usd=None, topup_date=None, now=NOW)
+    s = compute_state(DAYS, snapshot=_snap(1, 2.0), topup_usd=None, topup_date=None, now=NOW)
     assert s["status"] == "low" and s["message"].startswith("LOW AI credit:")
 
 

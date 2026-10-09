@@ -60,6 +60,9 @@ def send(
     -- and a False here means every attempt failed AND a durable undelivered
     row was written. Never raises.
     """
+    from src.llm_balance_runway import check_balance_on_send
+
+    check_balance_on_send()  # owner ruling 2026-10-09: $3 credit alert, checked on every send
     delivered, suppressed = deliver_with_outcome(
         self,
         text,
