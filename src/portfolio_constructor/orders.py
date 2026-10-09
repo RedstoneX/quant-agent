@@ -71,7 +71,6 @@ _ORDER_BUILDER_COLLABORATORS = (
     ("cfg", "cfg"),
     ("derive_target", "_derive_target"),
     ("resolve_entry_and_stop", "_resolve_entry_and_stop"),
-    ("apply_sector_dial", "_apply_sector_dial"),
     ("note_refusal", "_note_refusal"),
     ("shipped_stop_rule", "shipped_stop_rule"),
     ("shipped_stop_level_basis", "shipped_stop_level_basis"),

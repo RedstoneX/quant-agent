@@ -624,46 +624,6 @@ risk:
   # instruction. See docs/INCIDENT_HISTORY.md, retired item 32. The §11.2
   # peak-to-trough de-levering ladder below is a different mechanism and is
   # untouched. Do not reintroduce an account-level halt here.
-  # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration
-  # TARGET, not a veto. A sector at or over it no longer refuses the next
-  # trade in it; the constructor SHRINKS that trade instead, progressively,
-  # so a high-conviction idea in a crowded sector is taken smaller rather
-  # than dropped. "Each trade opportunity is an opportunity on its own."
-  #
-  # Spec §12.3 (owner-ratified 2026-09-01) raised it 40 -> 75. The owner
-  # chose 75 over the recommended 60. 40 was a retirement-portfolio number
-  # and does not survive docs/OUTCOME.md: "This is a trading desk, not a
-  # long-term retirement desk." Sector diversification is not a goal here;
-  # this limit's ONLY remaining job is bounding correlated blow-up risk.
-  #
-  # THE COST, STATED PLAINLY: at 75% of equity in one sector, an ordinary
-  # 20% sector-wide drawdown costs 15% of equity, and it will trip the
-  # de-levering ladder. That is the accepted price of a concentrated
-  # trading desk, not an oversight. This used to add "several times the
-  # daily circuit breaker above" — there is no daily circuit breaker above
-  # or anywhere else since 2026-09-20 (retired item 32), so the comparison
-  # is gone rather than left pointing at a deleted block. The ladder is now
-  # the only account-level response a sector drawdown of that size meets.
-  #
-  # Spec §12.2: LONG and SHORT exposure in a sector are measured against
-  # this limit INDEPENDENTLY. Neither offsets the other, and neither
-  # consumes the other's budget — a long and a short in the same sector are
-  # two opportunities that share a label, not a hedge.
-  max_sector_pct: 75
-  # ...and this is where the shrinking stops and the answer is still no.
-  # Without an absolute ceiling a sector could grow without limit through an
-  # infinite series of ever-smaller additions: a dial with no terminal bound
-  # bounds nothing.
-  #
-  # NOT IN THE RATIFIED §12.3 TEXT — the spec set the target and left the
-  # terminal bound unstated. 90 was chosen when §12.3 was built: the 1.5x
-  # multiple that gave 60 from 40 gives a meaningless 112.5 from 75, so the
-  # ceiling is now an absolute number rather than a multiple. 90 keeps a real
-  # ceiling while leaving 15 points of scaling range. OPEN FOR THE OWNER TO
-  # MOVE.
-  # A trade shrunk below cash_sweep.min_order_usd is refused outright rather
-  # than placed as a token position (see portfolio_constructor).
-  max_sector_hard_pct: 90
   # Owner-ratified total at-risk ceiling: sum of (shares x distance from entry
   # to stop) across the book, as a % of equity. NOT a notional cap — full
   # deployment is intended; risk is what gets rationed. ENFORCED as of

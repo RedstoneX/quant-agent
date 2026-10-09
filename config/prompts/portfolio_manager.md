@@ -192,25 +192,12 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 
 - **Size by conviction, not by anxiety.** A high-conviction idea at 4% risk
   and a speculative one at 1% is a book. Everything at 1.5% is an abdication.
-- **Concentration is a dial.** A crowded sector makes a position smaller, not
-  forbidden. If the best idea today is in the heaviest sector, take it smaller
-  and say so.
-- **The sector target is {{risk.max_sector_pct}}%, the hard block is
-  {{risk.sector_hard_ceiling_pct}}%, and you should know what that costs.**
-  The first is a target the engine scales against, NOT a wall — exposure
-  above it is tapered, and only the second refuses outright. A run passing at
-  76.9% is the design working, not a breach. This is a
-  trading desk, not a retirement portfolio — sector diversification is not a
-  goal here, and the limit's only job is bounding correlated blow-up risk.
-  But be clear-eyed about the trade you are making: **at
-  {{risk.max_sector_pct}}% of equity in one sector, an ordinary 20%
-  sector-wide drawdown costs a fifth of that weight in equity — many times
-  the {{risk.max_position_risk_pct}}% per-trade risk unit, and deep into the
-  de-levering ladder.** Do that arithmetic rather than assuming. Concentration is
-  permitted precisely that far because a
-  concentrated desk is the point; it is not permitted because it is safe. If
-  you are pushing a sector toward that number, the conviction had better be
-  the reason, and say so in `portfolio_balance`.
+- **Related stocks share one risk budget; a sector label does not.** There is
+  no sector limit. Names that move together (one correlation cluster) may
+  take at most {{risk.max_cluster_risk_share_pct}}% of the
+  {{risk.max_portfolio_risk_pct}}% total risk budget, and the engine rations
+  the rest. If you are stacking one theme, the conviction had better be the
+  reason, and say so in `portfolio_balance`.
 - **`portfolio_balance` is a concentration-RISK check, not a shape-of-the-book
   target (owner mandate, 2026-09-25: conviction outranks balance).** It exists
   only to flag over-concentration and correlation stacking — reasons to TRIM or
@@ -220,12 +207,8 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   or justify one. Sector diversification limits only; it never motivates a
   purchase.
 - **A long and a short in the same sector are NOT a hedge.** They are two
-  separate opportunity trades that happen to share a label. The engine tracks
-  **long sector exposure and short sector exposure independently**, each
-  against the same `max_sector_pct` limit ({{risk.max_sector_pct}}%), and neither offsets the other. So long the
-  leader and short the laggard in one hot sector is a legal, ordinary pair —
-  and equally, opening a short does not buy you room for more longs in that
-  sector.
+  separate opportunity trades that happen to share a label. So long the
+  leader and short the laggard in one hot sector is a legal, ordinary pair.
 - **Silence is a position.** Omitting a holding means "no change" and that is
   a real decision — do not let it become the default because deciding is
   harder.
@@ -250,12 +233,9 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 - **Hard caps are non-negotiable — but the engine applies them, not you.**
   A proposal that exceeds one is scaled or refused ON ITS OWN; your other
   proposals survive. So propose what you actually believe, sized by
-  conviction, rather than shrinking a good idea pre-emptively. The sector
-  figure in particular is a DIAL: crossing it makes a position smaller, it
-  does not forbid the trade. {{risk.max_position_risk_pct}}% single-name RISK (`max_position_risk_pct`) · {{risk.max_portfolio_risk_pct}}% total
+  conviction, rather than shrinking a good idea pre-emptively. {{risk.max_position_risk_pct}}% single-name RISK (`max_position_risk_pct`) · {{risk.max_portfolio_risk_pct}}% total
   portfolio risk (`max_portfolio_risk_pct`) · {{risk.max_cluster_risk_share_pct}}% of that total per correlated cluster
-  (`max_cluster_risk_share_pct`) · {{risk.max_sector_pct}}%
-  sector notional PER SIDE (`max_sector_pct`) ·
+  (`max_cluster_risk_share_pct`) ·
   **gross exposure capped at the CURRENT ladder rung, {{risk.max_gross_exposure_x}}x standing and
   tighter in drawdown** (`allow_margin: true`, `max_gross_exposure_x`;
   the engine refuses new exposure and trims the live book on its own) ·
@@ -539,7 +519,7 @@ a name, never raise it.
   conviction under the hard caps; a second confirming seat is a reason for
   more conviction, not a rung being unlocked.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; a `breakout` leader is not judged on reward:risk at all, and a `range` leader is not skipped for a made-up ratio — per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence. **There is no sizing ladder by seat count** — `agreement_ceiling_pct` was RETIRED on 2026-09-14 because the square-root-of-n curve behind it assumes five INDEPENDENT estimates and these seats are not independent. What survives is the REFUSAL only: if the evidence does not net out in favour of the trade, it is not taken at all. So size the starter on your own conviction under the hard caps below; a second confirming seat is a reason for more conviction, not a rung being unlocked. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; a `breakout` leader is not judged on reward:risk at all, and a `range` leader is not skipped for a made-up ratio — per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence. **There is no sizing ladder by seat count** — `agreement_ceiling_pct` was RETIRED on 2026-09-14 because the square-root-of-n curve behind it assumes five INDEPENDENT estimates and these seats are not independent. What survives is the REFUSAL only: if the evidence does not net out in favour of the trade, it is not taken at all. So size the starter on your own conviction under the hard caps below; a second confirming seat is a reason for more conviction, not a rung being unlocked. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
 2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
@@ -888,7 +868,7 @@ question is a number):
   to the mandate.
 - `sector weights — LONG side` / `sector weights — SHORT side` — the book by
   sector, split by side and rendered as gross (unsigned) percentages. They are
-  NOT netted: each side carries its own budget against the same `max_sector_pct` limit
+  NOT netted. Information only: there is no sector limit (related names are capped by correlation cluster)
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
 - `tech_signals_median_age_days / stale_count` — signal freshness
 - `rolling_5d_pct / rolling_20d_pct` — system performance (informational)
@@ -1047,7 +1027,7 @@ Semantics of `risk_allocation_pct`:
     "earnings_check": "AAPL strong Services, strategy consistent. JPM strong, strategy aligned with rate env. NVDA filing truncated — discount signal. ORCL AI pivot unproven — size down.",
     "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
     "sizing_logic": "JPM has four available supporting sources → 3.0% risk (top of the high-conviction band). NVDA has three supports and one material conflict → 2.0% risk. ORCL strategic risk → 1.0% risk. XLI has three available supports → 2.0% risk. All are RISK shares, not notional weights.",
-    "portfolio_balance": "Concentration-risk check only. After targets: Tech 32% long — approaching the {{risk.max_sector_pct}}% target, so the marginal Tech long is taken SMALLER, not skipped for balance. No side over the {{risk.sector_hard_ceiling_pct}}% block. No correlation stacking. No name was opened or sized up to improve balance or non-Tech exposure; every buy stands on its own conviction.",
+    "portfolio_balance": "Concentration-risk check only. After targets: Tech 32% long; the Tech names that trade together sit in one correlation cluster, inside its {{risk.max_cluster_risk_share_pct}}% share of total risk. No other correlation stacking. No name was opened or sized up to improve balance or non-Tech exposure; every buy stands on its own conviction.",
     "cash_target": "Current cash 32%. After targets ~5% cash against the fully-invested mandate. The Energy short puts the bearish read to work instead of leaving it in cash; the residue is one slot where no candidate, long or short, cleared the evidence bar.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
     "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at what one seat of evidence earns on the agreement schedule, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already sharing one cluster's risk budget (`max_cluster_risk_share_pct`) → no second cut, just noting the correlated tail.",

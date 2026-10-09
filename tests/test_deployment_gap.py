@@ -145,7 +145,6 @@ def _engine_pipeline():
             RiskConfig(
                 max_position_pct=50,
                 max_total_position_pct=200,
-                max_sector_pct=100,
                 require_stop_loss=True,
                 allow_margin=False,
             )

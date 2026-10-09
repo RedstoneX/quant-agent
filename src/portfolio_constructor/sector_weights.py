@@ -43,8 +43,7 @@ def _current_sector_weights(
 
     Sector is read off the POSITION's own `sector` field rather than
     `_get_sector(symbol)` — the engine sums held positions the first way
-    and resolves only the CANDIDATE symbol the second way, so
-    `_apply_sector_dial` does the same.
+    and resolves only the CANDIDATE symbol the second way.
     """
     from src.risk.rules import sector_side_weights
 

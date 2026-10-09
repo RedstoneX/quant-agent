@@ -3556,7 +3556,6 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
             RiskConfig(
                 max_position_pct=20,
                 max_total_position_pct=90,
-                max_sector_pct=40,
                 allow_margin=False,
                 require_stop_loss=True,
             )

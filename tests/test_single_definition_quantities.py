@@ -134,7 +134,6 @@ def _pipeline() -> TradingPipeline:
         risk=RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
             allow_margin=False,
         ),
@@ -228,7 +227,6 @@ def _rule_two_percentage() -> float:
         RiskConfig(
             max_position_pct=20,
             max_total_position_pct=0.0001,  # trip it so the value is reported
-            max_sector_pct=40,
             require_stop_loss=False,
             allow_margin=False,
         )

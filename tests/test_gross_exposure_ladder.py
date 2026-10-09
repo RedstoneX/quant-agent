@@ -67,7 +67,6 @@ def _risk_config(**overrides) -> RiskConfig:
     fields = dict(
         max_position_pct=100,
         max_total_position_pct=400,
-        max_sector_pct=100,
         require_stop_loss=False,
         allow_margin=True,
         max_gross_exposure_x=BASE_X,

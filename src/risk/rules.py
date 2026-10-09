@@ -152,23 +152,12 @@ GROSS_EXPOSURE_RULE = "max_gross_exposure"
 #: still resolves.
 #:
 #: Membership is the WHOLE distinction, and it is never derivable from a
-#: rule's NAME: `max_sector_pct` and `max_sector_hard_pct` differ by one
-#: word and sit on opposite sides of it.
+#: rule's NAME.
 
 HARD_BLOCK_RULES = {
     "max_total_position_pct",
     "max_position_pct",
     "require_stop_loss",
-    # Spec §10.3 (owner-ratified 2026-09-01): `max_sector_pct` is NO LONGER
-    # a hard block and is deliberately absent from this set. It is now the
-    # diversification TARGET — breaching it emits an ADVISORY violation the
-    # AI Risk Manager and the audit trail see, while the constructor shrinks
-    # the order for crowding instead of the pipeline dropping it. The hard
-    # gate moved to `max_sector_hard_pct` below, which fires only past the
-    # absolute ceiling or on an order that never went through that sizing.
-    # Removing it from here is the whole of "concentration is a dial, not a
-    # gate" at the pipeline level; putting it back reinstates the veto.
-    "max_sector_hard_pct",
     "cash_only",
     # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
     # value plus absolute short market value — may not exceed the ladder-
@@ -671,7 +660,7 @@ class RiskRuleEngine:
         # Pre-fix the early return was `[]` which has the same shape as
         # "all checks passed" — so an Alpaca portfolio_value=0 blip during
         # market-open silently approved every BUY, bypassing cash_only /
-        # max_position_pct / max_sector_pct. Emit a
+        # max_position_pct. Emit a
         # synthetic violation in HARD_BLOCK_RULES so the pipeline filter
         # blocks the BUY instead. The empty list reserved exclusively for
         # "checked, found no violations" semantics.
@@ -967,42 +956,21 @@ class RiskRuleEngine:
                     )
                 )
 
-        # 5. Sector concentration — GROSS (unsigned) and SIDE-SPLIT (spec §12.2).
+        # 5. Unresolved-sector alert (no sector LIMIT any more).
         #
-        # The long book and the short book carry SEPARATE budgets in each
-        # sector, and neither offsets the other. Before §12.2 this summed
-        # SIGNED `market_value`, so a held short made its sector look smaller
-        # and a long book could over-concentrate behind it. `sector_side_gross`
-        # is the single definition; the constructor sizes against the same one.
-        #
-        # THE DEFECT (2026-09-01 audit): "Unknown" used to mean EXEMPT here —
-        # `new_sector != "Unknown"` skipped this entire block, so a symbol
-        # whose sector lookup failed (or timed out) paid NEITHER the soft
-        # advisory NOR the 90%-hard-ceiling that borrowed money now sits
-        # behind. 80 of 101 universe symbols depend on a live network lookup
-        # with no offline fallback (only ~21 ETFs have a static table — see
-        # `_ETF_SECTORS`), so a network blip silently switched the sector
-        # cap OFF for most of the book — on a leveraged (2.0x) book, in
-        # effect no concentration limit at all. Symmetrically, a HELD
-        # position stamped sector="Unknown" the same way was invisible to
-        # `sector_side_gross`'s default (`include_unknown=False`, "matches
-        # the gate" — see its docstring) and vanished from every sector's
-        # exposure.
-        #
-        # FIX: pass `include_unknown=True` so a held "Unknown" position
-        # counts, pool "Unknown" as its own `(sector, side)` bucket exactly
-        # like a real sector name, and run the SAME soft-advisory /
-        # hard-block pair against it — conservative (every unresolved
-        # symbol, new or held, competes for one shared budget), not exempt.
-        # This deliberately does NOT touch `sector_side_gross`'s DEFAULT
-        # (still `include_unknown=False` for the constructor's sizing pass
-        # — a separate, unrelated design choice about how orders are
-        # pre-shrunk, not about whether the gate can be silently switched
-        # off) — only this call site, the deterministic gate, is changed.
+        # The 75% sector target / 90% sector ceiling that lived here was
+        # deleted 2026-10-09: it counted sector LABELS on notional, a number
+        # nothing measured. Related-stock concentration is bounded by the
+        # correlation cluster cap (`src/risk/budget.py`, 40% of the total
+        # risk ceiling), and every order — sector resolved or not — is still
+        # bounded by `max_position_pct`, `max_gross_exposure`,
+        # `max_total_position_pct` and the total risk budget, none of which
+        # reads the sector. What stays is the loud-failure alert below: a
+        # failed sector lookup is a data fault the desk must see.
         from src.sector_reference import _get_sector, _sector_resolution_status_for
 
         new_sector = _get_sector(decision.symbol)
-        if new_sector:
+        if new_sector == "Unknown":
             side = decision_side(decision.action)
             held_by_side = sector_side_gross(positions, include_unknown=True)
             sector_value = held_by_side.get((new_sector, side), 0.0)
@@ -1013,70 +981,6 @@ class RiskRuleEngine:
             sector_value += gross_new
             sector_pct = sector_value / total_value * 100
             side_label = "long" if side == SECTOR_SIDE_LONG else "short"
-            sector_display = new_sector
-            if new_sector == "Unknown":
-                sector_display = "Unknown (pooled — unresolved symbols are constrained, not exempt)"
-            # Spec §10.3. `max_sector_pct` is now the concentration TARGET,
-            # and breaching it is ADVISORY — it is reported to the AI Risk
-            # Manager and the audit trail, but it no longer drops the trade.
-            # The constructor has already shrunk the order for crowding
-            # (`sector_size_scale`); a sector over its target is information
-            # about the book, not a verdict on this idea.
-            if sector_pct > self.config.max_sector_pct:
-                violations.append(
-                    RiskViolation(
-                        rule="max_sector_pct",
-                        message=(
-                            f"Sector '{sector_display}' {side_label} exposure would be "
-                            f"{sector_pct:.1f}%, over the "
-                            f"{self.config.max_sector_pct}% concentration target "
-                            f"(advisory — size was scaled for crowding, not refused; "
-                            f"the hard ceiling is {self.config.sector_hard_ceiling_pct:.0f}%). "
-                            f"Long and short budgets are separate (§12.2) — the "
-                            f"other side of this sector is not netted against it"
-                        ),
-                        value=sector_pct,
-                        limit=self.config.max_sector_pct,
-                    )
-                )
-            # The HARD BLOCK. Same allowance function the constructor sized
-            # against, so an order built by the constructor never trips this
-            # — exactly the relationship `max_position_pct` already has with
-            # its constructor clamp. What this catches is an order that
-            # reached the engine WITHOUT that sizing (a legacy notional
-            # target, an agent-authored modification, any future caller), and
-            # the absolute ceiling past which no conviction buys more
-            # concentration. Post-fix this is also what actually stops an
-            # unresolved-sector order from concentrating without limit — the
-            # constructor's sizing pass does not shrink for "Unknown"
-            # (unchanged, out of scope here), so this hard wall is the only
-            # thing standing between a lookup failure and an unbounded add.
-            prior_sector_pct = (sector_value - gross_new) / total_value * 100
-            gross_new_pct = gross_new / total_value * 100
-            allowance_pct = sector_allowance_pct(
-                prior_sector_pct,
-                soft_cap_pct=self.config.max_sector_pct,
-                hard_cap_pct=self.config.sector_hard_ceiling_pct,
-            )
-            # Tolerance: the constructor rounds `allocation_pct` to 2dp, so an
-            # order sized to exactly the allowance can land a hair above it
-            # here. Blocking on float dust would resurrect the veto this
-            # section exists to remove.
-            if gross_new_pct > allowance_pct + 1e-6:
-                violations.append(
-                    RiskViolation(
-                        rule="max_sector_hard_pct",
-                        message=(
-                            f"{decision.symbol} would add {gross_new_pct:.1f}% gross to "
-                            f"the {side_label} side of sector '{sector_display}', already at "
-                            f"{prior_sector_pct:.1f}%. Crowding permits at most "
-                            f"{allowance_pct:.2f}% more "
-                            f"(hard ceiling {self.config.sector_hard_ceiling_pct:.0f}%)"
-                        ),
-                        value=gross_new_pct,
-                        limit=allowance_pct,
-                    )
-                )
 
             # Loud-failure requirement (2026-09-01): a symbol resolving to
             # "Unknown" must never pass silently. Advisory (never in
@@ -1116,13 +1020,12 @@ class RiskRuleEngine:
                         rule=alert_rule,
                         message=(
                             f"{reason} Treated as constrained in the pooled 'Unknown' "
-                            f"sector bucket ({sector_pct:.1f}% {side_label} of book) and "
-                            f"checked against both max_sector_pct and "
-                            f"max_sector_hard_pct — NOT exempt. This is the failure "
-                            f"mode that used to switch the sector cap off silently."
+                            f"sector bucket ({sector_pct:.1f}% {side_label} of book). Its "
+                            f"size is still bounded by the single-name, gross, net "
+                            f"and risk-budget caps, none of which reads the sector."
                         ),
                         value=sector_pct,
-                        limit=self.config.max_sector_pct,
+                        limit=0.0,
                     )
                 )
 
@@ -1147,8 +1050,6 @@ from src.risk.sector_budget import (  # noqa: E402,F401
     sector_side_gross,
     accumulate_pending_sector,
     sector_side_weights,
-    sector_size_scale,
-    sector_allowance_pct,
 )
 from src.risk.seat_agreement import (  # noqa: E402,F401
     _BULLISH_STANCES,

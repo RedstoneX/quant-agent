@@ -30,7 +30,6 @@ def test_patching_broker_get_sector_reaches_the_risk_gate(monkeypatch):
         RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
         )
     )

@@ -129,21 +129,6 @@ class AlpacaConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
     max_total_position_pct: float = Field(gt=0)
-    max_sector_pct: float = Field(gt=0, le=100)
-    # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
-    # longer a veto — it is the diversification TARGET, past which further
-    # trades in that sector are progressively SHRUNK rather than refused
-    # (`src/risk/rules.py::sector_size_scale`). This is the absolute ceiling
-    # the shrinking runs into, past which the answer is still no. Without it
-    # a sector could grow without limit through ever-smaller additions.
-    #
-    # Default is 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90,
-    # spec §12.3), deriving from `max_sector_pct` rather than hard-coding a
-    # number so that an operator who tightens or loosens the target moves the
-    # ceiling with it instead of silently leaving the two inconsistent. The
-    # cap exists because 1.5x an already-permissive target stops being a
-    # ceiling: at the §12.3 target of 75 it would give 112.5.
-    max_sector_hard_pct: float | None = Field(default=None, gt=0, le=100)
     require_stop_loss: bool
     # Owner-ratified total at-risk ceiling (2026-08-27): the sum of every
     # position's loss-if-stopped, measured against cost basis, may not exceed
@@ -426,57 +411,6 @@ class RiskConfig(BaseModel):
     # broker from before the halt is untouched and keeps protecting the
     # position.
     kill_switch_path: str = Field(default="data/KILL_SWITCH")
-
-    #: Spec §10.3. Multiple of `max_sector_pct` used as the absolute sector
-    #: ceiling when `max_sector_hard_pct` is not set explicitly. ClassVar, so
-    #: pydantic treats it as a constant rather than a settable field.
-    SECTOR_HARD_MULTIPLE: ClassVar[float] = 1.5
-
-    #: Spec §12.3. The terminal bound on the DERIVED ceiling. With the target
-    #: at 75 (§12.3) the 1.5x multiple gives 112.5, which is not a ceiling at
-    #: all — a dial with no terminal bound bounds nothing. 90 keeps a real
-    #: ceiling while leaving 15 points of scaling range above the target.
-    #:
-    #: NOT IN THE RATIFIED §12.3 TEXT: the spec set the target and left the
-    #: terminal bound unstated. 90 was chosen when §12.3 was built and is open
-    #: for the owner to move. `risk.max_sector_hard_pct` in settings.yaml sets
-    #: it explicitly and overrides this derivation entirely.
-    SECTOR_HARD_CEILING_MAX: ClassVar[float] = 90.0
-
-    @property
-    def sector_hard_ceiling_pct(self) -> float:
-        """The absolute sector ceiling, explicit or derived.
-
-        Every consumer reads this rather than `max_sector_hard_pct` directly,
-        so the derivation rule lives in exactly one place.
-
-        Derived = 1.5x the target, capped at `SECTOR_HARD_CEILING_MAX` (90),
-        and never below the target itself — a ceiling under the target it
-        backstops would make the scaling band run backwards.
-        """
-        if self.max_sector_hard_pct is not None:
-            return self.max_sector_hard_pct
-        derived = min(
-            self.SECTOR_HARD_CEILING_MAX,
-            self.max_sector_pct * self.SECTOR_HARD_MULTIPLE,
-        )
-        return min(100.0, max(self.max_sector_pct, derived))
-
-    @model_validator(mode="after")
-    def _sector_hard_ceiling_is_above_the_target(self):
-        # A hard ceiling below the diversification target would mean the
-        # scaling band runs backwards, and `sector_size_scale` would fall
-        # back to gate behaviour silently. That is a config error worth
-        # failing on rather than absorbing: the operator asked for something
-        # incoherent and would otherwise never find out.
-        if self.max_sector_hard_pct is not None and self.max_sector_hard_pct < self.max_sector_pct:
-            raise ValueError(
-                "risk.max_sector_hard_pct "
-                f"({self.max_sector_hard_pct}) must be >= risk.max_sector_pct "
-                f"({self.max_sector_pct}) — the absolute ceiling cannot sit "
-                "below the diversification target it backstops"
-            )
-        return self
 
     @model_validator(mode="before")
     @classmethod

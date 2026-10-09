@@ -285,12 +285,7 @@ def test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk():
     hit the (also real, unchanged) sector hard cap. That is correct
     behaviour, not this test's concern, so the sector dial is loosened here
     to isolate the risk-budget gate this test is actually about."""
-    constructor = PortfolioConstructor(
-        ConstructorConfig(
-            max_sector_pct=400.0,
-            max_sector_hard_pct=400.0,
-        )
-    )
+    constructor = PortfolioConstructor(ConstructorConfig())
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
         targets=targets,
@@ -510,12 +505,7 @@ def test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters():
 
     Sector dial loosened here for the same reason as that sibling test —
     it is a separate, unrelated ceiling this test is not about."""
-    constructor = PortfolioConstructor(
-        ConstructorConfig(
-            max_sector_pct=400.0,
-            max_sector_hard_pct=400.0,
-        )
-    )
+    constructor = PortfolioConstructor(ConstructorConfig())
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
         targets=targets,
@@ -577,7 +567,6 @@ def test_risk_envelope_reaches_the_constructor_from_config():
     defaults = RiskConfig(
         max_position_pct=20,
         max_total_position_pct=90,
-        max_sector_pct=40,
         require_stop_loss=True,
     )
     assert defaults.max_position_risk_pct == 5.0
@@ -666,7 +655,6 @@ def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
         RiskConfig(
             max_position_pct=20,
             max_total_position_pct=100,
-            max_sector_pct=40,
             require_stop_loss=True,
         )
     )
@@ -909,7 +897,6 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
         RiskConfig(
             max_position_pct=65,
             max_total_position_pct=200,
-            max_sector_pct=75,
             require_stop_loss=True,
         )
     )

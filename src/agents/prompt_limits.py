@@ -123,11 +123,8 @@ RESOLVED_HERE = frozenset({RISK_NAMESPACE, FLAGS_NAMESPACE})
 #: `src/config.py`), not an independently chosen number, so rendering one is
 #: still rendering the single source of truth. Anything not a declared field
 #: and not on this list is refused, so a typo cannot silently reach a method.
-RISK_COMPUTED_PROPERTIES = frozenset(
-    {
-        "sector_hard_ceiling_pct",
-    }
-)
+#: Empty since the sector ceiling property was deleted 2026-10-09.
+RISK_COMPUTED_PROPERTIES: frozenset[str] = frozenset()
 
 
 class PromptPlaceholderError(RuntimeError):
@@ -200,8 +197,8 @@ def resolve_placeholder(key: str, risk_config: Any) -> str:
     if value is None:
         raise PromptPlaceholderError(
             f"placeholder {{{{{key}}}}} resolved to None. An unset optional "
-            f"setting must be rendered through its derived property (e.g. "
-            f"`sector_hard_ceiling_pct`), not left blank in the prompt.",
+            f"setting must be rendered through a derived property, not left "
+            f"blank in the prompt.",
         )
     if not isinstance(value, (int, float)):
         raise PromptPlaceholderError(

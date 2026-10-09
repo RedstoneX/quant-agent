@@ -4720,7 +4720,6 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
             RiskConfig(
                 max_position_pct=40,
                 max_total_position_pct=50,
-                max_sector_pct=90,
                 require_stop_loss=True,
             )
         )

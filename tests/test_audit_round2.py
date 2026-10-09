@@ -90,7 +90,6 @@ def _park_pipeline():
         risk=RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
             allow_margin=False,
         ),
@@ -386,7 +385,6 @@ def test_nonfinite_cash_blocks_instead_of_failing_open():
         RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
             allow_margin=False,
         )
@@ -418,7 +416,6 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
         risk=RiskConfig(
             max_position_pct=20,
             max_total_position_pct=90,
-            max_sector_pct=40,
             require_stop_loss=True,
             allow_margin=False,
         ),

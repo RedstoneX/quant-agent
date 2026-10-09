@@ -28,7 +28,7 @@ _INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV"}
 #
 # WHY (2026-07-16 audit): yfinance's `.info` carries no `sector` key for ETFs,
 # so _get_sector fell through to "Unknown" for every one of them. Two silent
-# failures followed: (1) `max_sector_pct` is gated on `new_sector != "Unknown"`
+# failures followed: (1) the then sector cap (deleted 2026-10-09) skipped "Unknown"
 # (risk/rules.py), so a BUY of XLV/SMH/... skipped the sector cap ENTIRELY;
 # (2) a held ETF carries sector="Unknown", so it contributed $0 to the sector
 # bucket of a same-sector single name — a book that is 30% XLV would let an

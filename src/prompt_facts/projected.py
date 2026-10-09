@@ -204,29 +204,6 @@ class PromptProjected:
             f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
             f"net direction {current_book.net_pct:+.0f}% · sectors: {_sector_line(sector_gross)}",
         ]
-        # Spec §12.2/§12.3 — the concentration target comes from the SAME
-        # `max_sector_pct` the constructor sizes against and the gate
-        # measures against, so the preview cannot warn about a line the rest
-        # of the system does not draw. It is applied to the HELD book, which
-        # is measured; it is no longer applied to a projected book, which
-        # cannot be computed here (see below).
-        target_pct = getattr(
-            getattr(self, "risk_engine", None),
-            "config",
-            None,
-        )
-        target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
-        overweight = [
-            f"{sec} ({side})"
-            for (sec, side), v in sector_gross.items()
-            if v / total_value * 100 > target_pct and sec != "Unknown"
-        ]
-        if overweight:
-            lines.append(
-                f"    ⚠ Held sector sides already over the {target_pct:.0f}% "
-                f"concentration target (each further trade there is scaled "
-                f"down, not refused): {', '.join(sorted(overweight))}"
-            )
         if buy_candidates:
             # Each sector's share OF THE CANDIDATE SET. This is a MEASURED
             # forward fact — "6 of 9 candidates are Technology" is true of

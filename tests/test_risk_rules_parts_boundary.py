@@ -60,9 +60,6 @@ def test_sector_budget_counts_long_and_short_sides_separately_from_stubs():
     sector_budget.accumulate_pending_sector(pending, "Tech", "SHORT", 250.0)
     assert pending == {("Tech", "short"): 250.0}
     # Concentration scales the next size; it never vetoes below the hard cap.
-    assert sector_budget.sector_size_scale(0.0, soft_cap_pct=75.0, hard_cap_pct=90.0) == 1.0
-    assert sector_budget.sector_size_scale(90.0, soft_cap_pct=75.0, hard_cap_pct=90.0) == 0.0
-    assert 0.0 < sector_budget.sector_size_scale(80.0, soft_cap_pct=75.0, hard_cap_pct=90.0) < 1.0
 
 
 def test_seat_agreement_aligns_stances_and_refuses_on_a_non_positive_score():

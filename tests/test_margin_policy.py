@@ -25,7 +25,6 @@ def _risk_config(allow_margin: bool = False) -> RiskConfig:
     return RiskConfig(
         max_position_pct=50.0,
         max_total_position_pct=200.0,  # generous — not what we're testing
-        max_sector_pct=100.0,
         require_stop_loss=True,
         allow_margin=allow_margin,
     )
@@ -238,7 +237,6 @@ def _generous_config() -> RiskConfig:
     return RiskConfig(
         max_position_pct=100.0,
         max_total_position_pct=1000.0,
-        max_sector_pct=100.0,
         require_stop_loss=True,
         allow_margin=False,
     )

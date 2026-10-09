@@ -230,7 +230,6 @@ _CANDIDATE_ENDING_METHODS = frozenset(
         "_widen_stop_past_noise",
         "_build_buy",
         "_build_short",
-        "_apply_sector_dial",
     }
 )
 
@@ -657,67 +656,6 @@ def test_a_stop_on_the_wrong_side_of_entry_is_named(archive):
         suggested_stop=float(analysis.entry_price) + 1.0,
     )
     assert record and record["refusal"] == STOP_REFUSAL_WRONG_SIDE
-
-
-def test_the_sector_dial_refusals_are_named(archive, monkeypatch):
-    """§10.3's two ends. Both logged a sentence the regex happened to match,
-    which is how they survived the first pass — a matched sentence lands as a
-    generic `constructor_dropped` row, not as a code the funnel can count.
-
-    Fixed 2026-09-24: `STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER` is no longer
-    raised by this path (the arbitrary $500 notional floor no longer refuses
-    a sector-crowded trade — see the fix note on
-    `ConstructorConfig.min_order_usd`). At exactly the hard ceiling the scale
-    dial can still round a trade down to a genuine zero, which is refused
-    downstream as `STOP_REFUSAL_SIZED_TO_ZERO` — a real "no shares to buy"
-    refusal, not the old arbitrary-floor one — so that code is accepted here
-    too.
-    """
-    from src.portfolio_constructor import (
-        STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
-        STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
-        STOP_REFUSAL_SIZED_TO_ZERO,
-    )
-
-    # This test IS about sector crowding: NVDA and the crowding MSFT holding
-    # have to share a sector for the dial to fire at all. That shared sector
-    # used to arrive from a LIVE yfinance lookup, so the test passed or failed
-    # on whether Yahoo answered. State it instead -- the conftest default
-    # gives every symbol its own sector precisely so a test that needs them
-    # shared has to say so.
-    monkeypatch.setattr(
-        "src.execution.broker._get_sector",
-        lambda symbol: "Technology",
-    )
-    decision = next(d for d in archive["decisions"] if d["run_id"] == _REAL_ROW)
-    target = TargetPosition.model_validate(next(t for t in decision["targets"] if t["symbol"] == "NVDA"))
-    analysis = TechAnalysisResult.model_validate(next(a for a in decision["analyses"] if a["symbol"] == "NVDA"))
-    constructor = PortfolioConstructor()
-    equity = decision["equity"]
-    # A book already past the sector hard ceiling in NVDA's own sector, built
-    # from a position the archive really holds (MSFT, Technology) scaled to
-    # the ceiling rather than from an invented holding.
-    crowded = Position.model_validate(
-        dict(
-            next(p for p in archive["positions"] if p["symbol"] == "MSFT"),
-            qty=1.0,
-            market_value=equity * constructor.cfg.max_sector_hard_pct / 100,
-        )
-    )
-    orders = constructor.construct_orders(
-        [target],
-        [crowded],
-        [analysis],
-        equity,
-        price_map={"NVDA": analysis.entry_price},
-        existing_risk_pct={},
-    )
-    assert [o.symbol for o in orders] == []
-    assert constructor.last_refusals["NVDA"]["refusal"] in (
-        STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
-        STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
-        STOP_REFUSAL_SIZED_TO_ZERO,
-    )
 
 
 def test_the_guard_bites_on_a_lifted_function_with_a_silent_drop():

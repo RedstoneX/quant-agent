@@ -25,7 +25,6 @@ def _cfg(**kw):
     base = dict(
         max_position_pct=20.0,
         max_total_position_pct=90.0,
-        max_sector_pct=40.0,
         require_stop_loss=True,
         allow_margin=False,
     )
@@ -253,31 +252,6 @@ def test_sector_etfs_resolve_to_a_real_sector_not_unknown():
         assert _get_sector("SPY") == "Broad"  # pre-existing index fast path
     finally:
         _sector_cache.clear()
-
-
-def test_held_sector_etf_counts_toward_the_sector_cap():
-    """A book that is 30% XLV must not let an LLY BUY through as if Healthcare
-    exposure were zero."""
-    eng = RiskRuleEngine(_cfg(max_sector_pct=40.0))
-    positions = [
-        Position(
-            symbol="XLV",
-            qty=200,
-            avg_entry=150,
-            current_price=150,
-            market_value=30_000,
-            unrealized_pnl=0.0,
-            sector="Healthcare",
-        )
-    ]
-    with patch("src.execution.broker._get_sector", return_value="Healthcare"):
-        violations = eng.check(
-            decision=_buy("LLY", alloc=15.0),
-            positions=positions,
-            total_value=100_000.0,
-            cash=100_000.0,
-        )
-    assert any(v.rule == "max_sector_pct" for v in violations)
 
 
 # ---------- ex-dividend: next TRADING day, not calendar tomorrow ----------

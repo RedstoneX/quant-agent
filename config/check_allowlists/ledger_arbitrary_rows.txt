@@ -38,7 +38,6 @@ src.config.ExecutionConfig.max_entry_slippage_bps
 src.config.IntradayScanConfig.cooldown_hours
 src.config.NominationConfig.max_per_seat_per_run
 src.config.NominationConfig.max_total_per_run
-src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
 src.config.RiskConfig.absolute_min_stop_atr_multiple
 src.config.RiskConfig.max_cluster_risk_share_pct
 src.config.RiskConfig.max_portfolio_risk_pct
@@ -86,7 +85,6 @@ src.models.analysis.RATING_MAGNITUDE['buy']
 src.models.analysis.RATING_MAGNITUDE['strong_buy']
 src.pipeline_intraday._NAMES_PER_PAID_CALL
 src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]
-src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
 src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct
 src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)
 src.prompt_facts.decisions.PromptDecisions._build_pm_recent_decisions(limit)

@@ -58,8 +58,7 @@ def _format_engine_findings(rule_violations: list[RiskViolation]) -> str:
     whole plan citing an advisory as "the hard risk rule".
 
     The class is read from `HARD_BLOCK_RULES` membership, NEVER from the rule
-    name: `max_sector_pct` (guideline) and `max_sector_hard_pct` (enforced)
-    differ by one word and sit on opposite sides.
+    name.
 
     Hard entries are listed FIRST and unconditionally, so the more serious
     class can never rank below the less serious one however many advisories

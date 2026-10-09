@@ -100,7 +100,6 @@ from src.portfolio_constructor.config import (
     STOP_REFUSAL_NO_STRUCTURAL_TARGET,
     STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY,
     STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY,
-    STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
     STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
     CONSTRUCTOR_REFUSED_EVENT_REASON,
     STOP_REFUSAL_GEOMETRY_AT_BAND,
@@ -608,7 +607,6 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
-                        sector_weights=sector_weights,
                     )
                     if short_decision is not None:
                         self._accrue_sector(sector_weights, short_decision)
@@ -639,7 +637,6 @@ class PortfolioConstructor:
                         total_value=total_value,
                         market_price=price_map.get(sym),
                         regime=regime,
-                        sector_weights=sector_weights,
                     )
                     if buy_decision is not None:
                         self._accrue_sector(sector_weights, buy_decision)
@@ -1239,26 +1236,6 @@ class PortfolioConstructor:
     ) -> dict[str, float]:
         """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
         return sector_dial._current_weights(positions, total_value)
-
-    def _apply_sector_dial(
-        self,
-        symbol: str,
-        allocation_pct: float,
-        *,
-        sector_weights: dict[tuple[str, str], float],
-        total_value: float,
-        action: str = "BUY",
-    ) -> tuple[float, str]:
-        """Thin shim: body lives in src/portfolio_constructor/sector_dial.py."""
-        return sector_dial._apply_sector_dial(
-            self.cfg,
-            self._note_refusal,
-            symbol,
-            allocation_pct,
-            sector_weights=sector_weights,
-            total_value=total_value,
-            action=action,
-        )
 
     def _accrue_sector(
         self,

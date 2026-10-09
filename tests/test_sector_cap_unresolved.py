@@ -1,5 +1,9 @@
 """Regression suite for the 2026-09-01 sector-cap-exemption defect.
 
+The two sector ceilings named below were deleted 2026-10-09 (they counted
+sector labels on notional). What this file still guards is the loud
+unresolved-sector alert and the lookup classification.
+
 THE DEFECT: a symbol's sector comes from a live network lookup
 (`src.execution.broker._get_sector`); only ~21 ETFs have an offline static
 fallback (`_ETF_SECTORS`). When the lookup fails or times out, the symbol
@@ -45,8 +49,6 @@ def _engine(**overrides) -> RiskRuleEngine:
     kwargs = dict(
         max_position_pct=50.0,
         max_total_position_pct=300.0,
-        max_sector_pct=40.0,
-        max_sector_hard_pct=60.0,
         require_stop_loss=True,
         allow_margin=True,
     )
@@ -98,53 +100,6 @@ def _use_the_real_sector_lookup(monkeypatch):
     real = getattr(_broker._get_sector, "real_get_sector", None)
     if real is not None:
         monkeypatch.setattr(_broker, "_get_sector", real)
-
-
-def test_unresolved_sector_is_not_exempt_from_the_hard_ceiling():
-    """Pre-fix: `_get_sector` returning "Unknown" skipped rule 5 entirely
-    (both the soft target AND the hard ceiling), so this BUY into an
-    already-50%-Unknown-sector book sailed through with zero violations.
-    Post-fix it is pooled and must hit the same 60% hard ceiling a real
-    sector would.
-    """
-    eng = _engine(max_sector_pct=40.0, max_sector_hard_pct=60.0)
-    positions = [_held("XYZ1", 50_000.0, sector="Unknown")]  # 50% of book
-    decision = _buy("XYZ2", allocation_pct=15.0)  # would push pool to 65%
-
-    with patch("src.execution.broker._get_sector", return_value="Unknown"):
-        violations = eng.check(
-            decision=decision,
-            positions=positions,
-            total_value=100_000.0,
-            cash=100_000.0,
-        )
-
-    hard = [v for v in violations if v.rule in HARD_BLOCK_RULES]
-    assert [v.rule for v in hard] == ["max_sector_hard_pct"], (
-        f"an unresolved sector must be constrained by the hard ceiling, "
-        f"not exempt from it; got {[v.rule for v in violations]}"
-    )
-
-
-def test_resolved_sector_book_would_not_have_tripped_the_same_ceiling():
-    """Sanity check for the test above: with the SAME numbers but a real,
-    DISTINCT resolved sector for the held position, the new BUY's own
-    (different, resolved) sector does not breach the ceiling — proving the
-    prior test's block came from pooling "Unknown", not an unrelated
-    coincidence."""
-    eng = _engine(max_sector_pct=40.0, max_sector_hard_pct=60.0)
-    positions = [_held("XYZ1", 50_000.0, sector="Healthcare")]
-    decision = _buy("XYZ2", allocation_pct=15.0)
-
-    with patch("src.execution.broker._get_sector", return_value="Technology"):
-        violations = eng.check(
-            decision=decision,
-            positions=positions,
-            total_value=100_000.0,
-            cash=100_000.0,
-        )
-
-    assert not [v for v in violations if v.rule in HARD_BLOCK_RULES]
 
 
 # ===========================================================================
@@ -216,29 +171,6 @@ def test_no_alert_when_nothing_unresolved():
 # 3. A held position with an unresolvable sector still counts conservatively
 #    toward exposure rather than vanishing.
 # ===========================================================================
-
-
-def test_held_unresolved_sector_position_counts_not_vanishes():
-    """A book that is 35% "Unknown" (e.g. a held position whose sector never
-    resolved) must not let a new "Unknown"-sector BUY through as if that
-    35% weren't there."""
-    eng = _engine(max_sector_pct=40.0, max_sector_hard_pct=95.0)
-    positions = [
-        _held("HELD1", 35_000.0, sector="Unknown"),
-    ]  # $35,000 of $100,000 = 35%, stamped Unknown by a prior failed lookup
-    decision = _buy("NEWSYM", allocation_pct=10.0)  # would push pool to 45%
-
-    with patch("src.execution.broker._get_sector", return_value="Unknown"):
-        violations = eng.check(
-            decision=decision,
-            positions=positions,
-            total_value=100_000.0,
-            cash=100_000.0,
-        )
-
-    soft = next((v for v in violations if v.rule == "max_sector_pct"), None)
-    assert soft is not None, "the held Unknown position must not have vanished from exposure"
-    assert soft.value == pytest.approx(45.0), f"expected the held 35% + new 10% pooled together, got {soft.value}"
 
 
 # ===========================================================================
@@ -331,7 +263,6 @@ def test_normal_resolution_unaffected_no_extra_advisory():
             total_value=10_000.0,
         )
 
-    assert any(v.rule == "max_sector_pct" for v in violations)
     assert not any(v.rule.startswith("sector_unresolved") for v in violations), (
         "a resolved sector must never raise the unresolved-sector advisory"
     )
@@ -357,33 +288,3 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 # "Unknown" across decisions in the same run via `accumulate_pending_sector`,
 # not just within one check().
 # ===========================================================================
-
-
-def test_pending_sector_investment_pools_unknown_across_the_batch():
-    from src.pipeline import TradingPipeline
-
-    pipeline = build_pipeline(risk_engine=_engine(max_sector_pct=10.0, max_sector_hard_pct=15.0))
-    decisions = [
-        _buy("FIRST", allocation_pct=8.0),
-        _buy("SECOND", allocation_pct=8.0),
-    ]
-
-    with (
-        patch("src.pipeline_admission._get_sector", return_value="Unknown"),
-        patch("src.execution.broker._get_sector", return_value="Unknown"),
-    ):
-        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
-            decisions,
-            positions=[],
-            total_value=100_000,
-        )
-
-    # FIRST alone (8%, prior 0%) is under the 15% hard ceiling's allowance
-    # and passes; SECOND then sees FIRST's 8% already pooled under
-    # ("Unknown", "long") — prior=8%, allowance=15-8=7%, but SECOND asks
-    # for 8% > 7% -> hard-blocked. Pre-fix, `accumulate_pending_sector`
-    # excluded "Unknown" entirely, so SECOND would never have seen FIRST's
-    # contribution and both would have been allowed.
-    assert len(allowed) == 1 and allowed[0].symbol == "FIRST"
-    assert blocked, "SECOND should have been hard-blocked by the pooled Unknown bucket"
-    assert any("SECOND" in b for b in blocked)
