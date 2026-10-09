@@ -462,7 +462,6 @@ class ExitEngineMixin:
             owner=self, positions=positions, run_id=run_id,
             metric_deltas=metric_deltas,
             risk_vetoed_symbols=risk_vetoed_symbols,
-            position_facts=position_facts,
             already_trimmed=already_trimmed, acted_today=acted_today,
         )
 

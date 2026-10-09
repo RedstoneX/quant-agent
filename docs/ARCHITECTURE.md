@@ -76,8 +76,15 @@ one-line shim on `ExitEngineMixin`. The risk review is advisory only since PR 15
 its objections to a sell are recorded, never used to block it. Still on the mixin, on purpose:
 `_alignment_exit_cached` and `_voice_structural_protection_break` hold per-run
 memos on the host (a part rebuilt per call would lose them), and
-`_midday_execute_llm_actions` is one ~1,030-line function that cannot land under
-the 400-line new-file maximum without being rewritten.
+`_midday_execute_llm_actions` stays the executor. Three phases of its per-symbol
+loop were lifted verbatim on 2026-10-09 into `src/exits_parts/midday_gates.py`
+(metric-contradiction and AI Risk vetoes), `midday_holding_discipline.py` (the
+named-trigger fact-check) and `midday_spent_trigger.py` (the same-trigger dedup).
+Each returns `SKIP` where the loop used to `continue`; the loop invariants
+travel in `MiddayLoop` (`midday_state.py`). The noise band, the trigger
+classification and the order submission stay in the method: the factor
+literals the number ledger cites by method, and a test that patches
+`_reason_cites_hard_trigger` on `src.pipeline_exits`, are pinned there.
 
 **The portfolio constructor's order builders ARE a boundary (2026-10-02, first constructor instalment).** `src/portfolio_constructor/order_build/` holds one standalone piece per leg, each under the 400-line new-file floor: `long_entry.py` (`LongEntryBuilder._build_buy`), `short_entry.py` (`ShortEntryBuilder._build_short`) and `exits.py` (`ExitOrderBuilders._build_sell`, `_build_cover`, `_hold_decision` — pure functions of their arguments, no collaborators), all lifted verbatim. Each entry builder's collaborator (`cfg`, `_derive_target`, `_resolve_entry_and_stop`, `_apply_sector_dial`, `_note_refusal`, `shipped_stop_rule`, `shipped_stop_level_basis`, `_target_note`) is a keyword-only constructor argument; the held `OrderBuilders` part (`src/portfolio_constructor/orders.py`; since 2026-10-04 HELD by `PortfolioConstructor`, which inherits from nothing, with the shims installed by `src/portfolio_constructor/assembly.py`) builds the entry builder per call from live collaborators, and no collaborator is itself a lifted method so the shim cannot recurse. Witness: `tests/test_portfolio_constructor_boundary.py`; the drop-path guard skips thin shims so it scans the moved bodies, not the shims. The stop methods were lifted separately into `entry_stop/resolver.py` (`EntryStopResolver`); still inline on `_StopMixin`: `_stop_atr_multiple`, `_level_backing_stop`, `_derive_structural_stop_no_atr`, `_reward_risk_at`, `shipped_stop_rule`, `shipped_stop_level_basis`, `_resolve_stop`, plus the risk-plan / sector-dial / weights methods on `PortfolioConstructor` itself.
 
@@ -95,8 +102,8 @@ followed on 2026-10-04: `ProtectedSell` and `ReprotectRecords` joined `src/prote
 (`tests/test_protection_parts_boundary.py` is the witness). `CoverageRepair`,
 `ExitRelief`, `RestoreDrain` and `ExDividends` import the broker seam
 (`src.execution`, a frozen importer list the layering guard enforces) so they are
-standalone classes built the same way but kept in `src/pipeline_protection.py`,
-as is `ReprotectResidual` (537 lines, over the 400-line ceiling for a new file).
+standalone classes built the same way but kept in `src/pipeline_protection.py`.
+`ReprotectResidual` moved to `src/protection_parts/reprotect_residual.py` (PR 1593).
 `_reconcile_stop_coverage` (600 lines) is still a mixin body: PR 1223 uncrams one
 of its lines, and the statement-cram ratchet keys by class.method, so it keeps its
 original identity until that lands. Host attributes a body assigns or reads with a

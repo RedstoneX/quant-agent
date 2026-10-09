@@ -29,7 +29,6 @@ class MiddayLoop:
     run_id: str
     metric_deltas: dict | None
     risk_vetoed_symbols: set | None
-    position_facts: dict | None
     already_trimmed: set
     #: Today's acted triggers, or None when the read failed. The SAME list
     #: object the method holds: cuts submitted later in the pass append to
