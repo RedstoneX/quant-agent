@@ -248,7 +248,7 @@ def test_unverifiable_regime_claim_still_passes_through(run_id):
     an exit on a claim we cannot check would trap the desk in the position."""
     pipeline = _pipeline(macro_state=None, protected=True)
 
-    _execute(pipeline, _review(), run_id)
+    _execute(pipeline, _review(reason="regime shift to risk-off; thesis invalidated"), run_id)
 
     statuses = _statuses(pipeline)
     assert "holding_discipline_claim_unverified" in statuses
@@ -262,7 +262,7 @@ def test_a_stale_macro_read_is_unverifiable_not_false(run_id):
     it, and the claim lands as unverifiable rather than contradicted."""
     pipeline = _pipeline(macro_state=_MACRO_STALE, protected=True)
 
-    _execute(pipeline, _review(), run_id)
+    _execute(pipeline, _review(reason="regime shift to risk-off; thesis invalidated"), run_id)
 
     statuses = _statuses(pipeline)
     assert "holding_discipline_claim_unverified" in statuses
@@ -310,11 +310,22 @@ def test_a_confirmed_regime_flip_executes_normally(run_id):
     CONFIRMED, the checker says "ok", and neither audit row is written."""
     pipeline = _pipeline(macro_state=_macro_today("risk-off"), protected=True)
 
-    _execute(pipeline, _review(), run_id)
+    _execute(pipeline, _review(reason="regime shift to risk-off; thesis invalidated"), run_id)
 
     statuses = _statuses(pipeline)
     assert "exit_blocked_holding_discipline_claim_false" not in statuses
     assert "holding_discipline_claim_unverified" not in statuses
+
+
+@pytest.mark.parametrize("run_id", ["midday-2026-09-11", "close-2026-09-11"])
+def test_a_confirmed_regime_flip_on_market_mood_alone_is_refused(run_id):
+    """Owner mandate 2026-10-09: even a confirmed risk-off read cannot decide
+    the exit of a name whose own level is intact."""
+    pipeline = _pipeline(macro_state=_macro_today("risk-off"), protected=True)
+
+    _execute(pipeline, _review(), run_id)
+
+    assert "exit_blocked_holding_discipline_claim_false" in _statuses(pipeline)
 
 
 def test_a_confirmed_bearish_state_change_executes_normally():

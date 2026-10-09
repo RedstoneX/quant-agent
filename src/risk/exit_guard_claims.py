@@ -366,7 +366,21 @@ def holding_discipline_claim_check(
         ExitTrigger.ADVERSE_NEWS,
     )
 
-    if _claims_regime:
+    if _claims_regime and not (_claims_bearish or claims_thesis_invalidation(reason)):
+        # Owner mandate 2026-10-09 (docs/OUTCOME.md): each stock's own
+        # behaviour decides; market mood is one input, never the decider.
+        # Control only reaches here when `protected` is True — the existing
+        # per-name check says this name's own thesis-backing level has NOT
+        # broken. A sell resting on the regime alone, with no claim about the
+        # name itself, therefore rests on market mood alone and is refused
+        # whatever today's macro read says. It can be re-proposed citing the
+        # name's own evidence (a bearish state change or thesis invalidation).
+        contradictions.append(
+            "rests on a regime shift to risk-off alone, but market mood cannot "
+            "decide an exit by itself and this name's own structural level is "
+            "intact (position still protected); no name-level evidence was cited"
+        )
+    elif _claims_regime:
         if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
             if macro_regime_today != "risk-off":
                 contradictions.append(
