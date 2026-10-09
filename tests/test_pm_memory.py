@@ -864,26 +864,38 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
 
     # Large winner: buy 100 @ 100 (entry = $10k), sell 100 @ 115 → +15%
     db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-15 days') WHERE symbol='NVDA' AND action='BUY'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-15 days') WHERE symbol='NVDA' AND action='BUY'"
+    )
     db.conn.commit()
     db.insert_trade("NVDA", "SELL", 100, 115, "exit", "r2")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-5 days') WHERE symbol='NVDA' AND action='SELL'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-5 days') WHERE symbol='NVDA' AND action='SELL'"
+    )
     db.conn.commit()
 
     # Medium loser: buy 100 @ 60 (entry = $6k), sell 100 @ 54 → -10%
     db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-20 days') WHERE symbol='XOM' AND action='BUY'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-20 days') WHERE symbol='XOM' AND action='BUY'"
+    )
     db.conn.commit()
     db.insert_trade("XOM", "SELL", 100, 54, "stop", "r4")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-10 days') WHERE symbol='XOM' AND action='SELL'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-10 days') WHERE symbol='XOM' AND action='SELL'"
+    )
     db.conn.commit()
 
     # Small winner: buy 10 @ 200 (entry = $2k), sell 10 @ 220 → +10%
     db.insert_trade("JPM", "BUY", 10, 200, "small", "r5", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-8 days') WHERE symbol='JPM' AND action='BUY'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-8 days') WHERE symbol='JPM' AND action='BUY'"
+    )
     db.conn.commit()
     db.insert_trade("JPM", "SELL", 10, 220, "target", "r6")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-1 day') WHERE symbol='JPM' AND action='SELL'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-11-05 14:00:00', '-1 day') WHERE symbol='JPM' AND action='SELL'"
+    )
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=45)

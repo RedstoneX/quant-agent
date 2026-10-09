@@ -24,7 +24,6 @@ import pytest
 from src.storage.db import Database
 
 
-
 def _insert(
     db: Database, symbol: str, action: str, qty: float, price: float, timestamp: str, fill_status: str = "filled"
 ):

@@ -82,9 +82,14 @@ def test_pmfacts_render_produces_structured_block():
     assert "stale(≥8d)=2" in rendered
 
 
-def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
+def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path, monkeypatch):
     """_build_pm_facts reads calibration + positions + RM verdicts into PMFacts."""
     import json
+
+    from src.storage.analytics import calibration
+
+    # Trades are seeded relative to now; this test is about plumbing, not the clean-record cut-off.
+    monkeypatch.setattr(calibration, "CLEAN_RECORD_START_UTC", "2000-01-01T00:00:00")
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()

@@ -893,7 +893,11 @@ class TradeAnalytics:
         positions = [p for p in all_positions if not _opened_before_clean_record(p["open_ts"])]
         excluded_before_clean_record_n = len(all_positions) - len(positions)
         if len(closed) < 3:
-            return {"excluded_before_clean_record_n": excluded_before_clean_record_n} if excluded_before_clean_record_n else {}
+            return (
+                {"excluded_before_clean_record_n": excluded_before_clean_record_n}
+                if excluded_before_clean_record_n
+                else {}
+            )
 
         def _bucket_stats(bucket: list[dict]) -> dict:
             if not bucket:

@@ -502,10 +502,14 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
 
     # Filled pair: won + lost (FIFO)
     db.insert_trade("NVDA", "BUY", 10, 100.0, "x", "r1", broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='buy-1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='buy-1'"
+    )
     db.conn.commit()
     db.insert_trade("NVDA", "SELL", 10, 110.0, "x", "r2", broker_order_id="sell-1", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-5 days') WHERE broker_order_id='sell-1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-5 days') WHERE broker_order_id='sell-1'"
+    )
     db.conn.commit()
 
     # Another pair, but canceled - should NOT appear in stats
@@ -516,18 +520,26 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
 
     # Third pair with legacy NULL fill_status — treated as filled
     db.insert_trade("JPM", "BUY", 5, 180.0, "x", "r1", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE symbol='JPM' AND action='BUY'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE symbol='JPM' AND action='BUY'"
+    )
     db.conn.commit()
     db.insert_trade("JPM", "SELL", 5, 195.0, "x", "r2")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-2 days') WHERE symbol='JPM' AND action='SELL'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-2 days') WHERE symbol='JPM' AND action='SELL'"
+    )
     db.conn.commit()
 
     # Fourth pair filled — calibration needs ≥3 closed trades to report.
     db.insert_trade("MSFT", "BUY", 10, 300.0, "x", "r1", broker_order_id="buy-3", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-12 days') WHERE broker_order_id='buy-3'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-12 days') WHERE broker_order_id='buy-3'"
+    )
     db.conn.commit()
     db.insert_trade("MSFT", "SELL", 10, 310.0, "x", "r2", broker_order_id="sell-3", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-3 days') WHERE broker_order_id='sell-3'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-3 days') WHERE broker_order_id='sell-3'"
+    )
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=30)
@@ -545,21 +557,33 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
 
     # BUY 10 @ 100, then partial TAKE_PROFIT 3 @ 110 (+10% on 3 shares)
     db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='b1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='b1'"
+    )
     db.insert_trade("AAPL", "TAKE_PROFIT", 3, 110.0, "x", "r2", broker_order_id="tp1", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-3 days') WHERE broker_order_id='tp1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-3 days') WHERE broker_order_id='tp1'"
+    )
 
     # BUY 5 @ 200, then midday REDUCE 5 @ 220 (full trim, +10%)
     db.insert_trade("MSFT", "BUY", 5, 200.0, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-8 days') WHERE broker_order_id='b2'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-8 days') WHERE broker_order_id='b2'"
+    )
     db.insert_trade("MSFT", "REDUCE", 5, 220.0, "x", "r2", broker_order_id="red1", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-2 days') WHERE broker_order_id='red1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-2 days') WHERE broker_order_id='red1'"
+    )
 
     # BUY 4 @ 50, full SELL at 55 — third pair to cross the n>=3 threshold
     db.insert_trade("JPM", "BUY", 4, 50.0, "x", "r1", broker_order_id="b3", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE broker_order_id='b3'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE broker_order_id='b3'"
+    )
     db.insert_trade("JPM", "SELL", 4, 55.0, "x", "r2", broker_order_id="s3", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-1 days') WHERE broker_order_id='s3'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-1 days') WHERE broker_order_id='s3'"
+    )
     db.conn.commit()
 
     stats = db.compute_trade_calibration(lookback_days=30)

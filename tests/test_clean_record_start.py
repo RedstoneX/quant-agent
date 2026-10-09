@@ -7,8 +7,15 @@ from src.storage.db import Database
 def _round_trip(db, sym, opened_at):
     for action, price in (("BUY", 100.0), ("SELL", 110.0)):
         tid = db.insert_trade(
-            symbol=sym, action=action, qty=10, price=price, reasoning="t", run_id="r1",
-            conviction="high", fill_status="filled", stop_loss=90.0 if action == "BUY" else None,
+            symbol=sym,
+            action=action,
+            qty=10,
+            price=price,
+            reasoning="t",
+            run_id="r1",
+            conviction="high",
+            fill_status="filled",
+            stop_loss=90.0 if action == "BUY" else None,
         )
         ts = opened_at if action == "BUY" else opened_at.replace(":00:00", ":05:00")
         db.conn.execute("UPDATE trades SET timestamp = ? WHERE id = ?", (ts, tid))
@@ -49,10 +56,21 @@ def _mixed_db(tmp_path):
     db.initialize()
     for i in range(3):
         _round_trip(db, f"NEW{i}", "2026-10-12 14:00:00")
-    tid = db.insert_trade(symbol="OLDS", action="SHORT", qty=1000, price=100.0, reasoning="t", run_id="r1",
-                          conviction="low", allocated_risk_pct=0.5, fill_status="filled", stop_loss=110.0)
-    cid = db.insert_trade(symbol="OLDS", action="COVER", qty=1000, price=90.0, reasoning="t", run_id="r1",
-                          fill_status="filled")
+    tid = db.insert_trade(
+        symbol="OLDS",
+        action="SHORT",
+        qty=1000,
+        price=100.0,
+        reasoning="t",
+        run_id="r1",
+        conviction="low",
+        allocated_risk_pct=0.5,
+        fill_status="filled",
+        stop_loss=110.0,
+    )
+    cid = db.insert_trade(
+        symbol="OLDS", action="COVER", qty=1000, price=90.0, reasoning="t", run_id="r1", fill_status="filled"
+    )
     db.conn.execute("UPDATE trades SET timestamp = '2026-10-09 14:00:00' WHERE id = ?", (tid,))
     db.conn.execute("UPDATE trades SET timestamp = '2026-10-09 15:00:00', realized_pnl = 1 WHERE id = ?", (cid,))
     db.conn.execute("UPDATE trades SET allocated_risk_pct = 0.5 WHERE id = ?", (tid,))

@@ -660,14 +660,22 @@ def test_compute_trade_calibration_counts_stop_out_as_a_closed_trade(tmp_path):
     # Three closed pairs needed to cross compute_trade_calibration's n>=3
     # reporting threshold. Two ordinary SELLs plus one STOP_OUT loss.
     db.insert_trade("AAA", "BUY", 10, 100.0, "x", "r1", broker_order_id="b1", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='b1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-10 days') WHERE broker_order_id='b1'"
+    )
     db.insert_trade("AAA", "SELL", 10, 110.0, "x", "r2", broker_order_id="s1", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-9 days') WHERE broker_order_id='s1'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-9 days') WHERE broker_order_id='s1'"
+    )
 
     db.insert_trade("BBB", "BUY", 10, 100.0, "x", "r1", broker_order_id="b2", fill_status="filled", stop_loss=90.0)
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-8 days') WHERE broker_order_id='b2'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-8 days') WHERE broker_order_id='b2'"
+    )
     db.insert_trade("BBB", "SELL", 10, 110.0, "x", "r2", broker_order_id="s2", fill_status="filled")
-    db.conn.execute("UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE broker_order_id='s2'")
+    db.conn.execute(
+        "UPDATE trades SET timestamp = datetime('2026-10-25 14:00:00', '-7 days') WHERE broker_order_id='s2'"
+    )
 
     db.insert_trade(
         "ONDS", "BUY", 17, 8.53, "x", "r1", broker_order_id="entry-onds", fill_status="filled", stop_loss=90.0
