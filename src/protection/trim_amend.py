@@ -71,6 +71,35 @@ def trim_keeps_shares(label: str, position_qty_before_sell: float, qty: float) -
     return label in TRIM_LABELS and kept > _FRACTIONAL_QTY_EPSILON
 
 
+def refusal_reason(refusal: str, side: str) -> str:
+    """Why the desk declined the exit, in the words the owner alert carries.
+    Only states what the recorded refusal establishes (see protected_sell)."""
+    order = side.upper()
+    return {
+        "cancel_rolled_back": (
+            "its protective stop could not be cancelled and was rolled back, so the stop is "
+            f"still resting and the broker would reject the {order} on held_for_orders"
+        ),
+        "unreadable": (
+            "the broker's open-order listing failed after retries, so whether a protective "
+            "stop is resting on these shares is UNKNOWN — the desk will not submit an exit "
+            "against a picture of the broker it could not read"
+        ),
+        "stop_fired": "its protective stop FILLED while the stop was being shrunk, so the position is already exiting",
+        "amend_unknown": (
+            "the broker gave no answer to the stop-quantity change, so how many shares the "
+            "stop holds is UNKNOWN and nothing was cancelled"
+        ),
+        "held_changed": (
+            "the broker refused the stop-quantity change and the held quantity had changed, so a stop may have fired"
+        ),
+        "market_closed": (
+            "the broker refused the stop-quantity change and the market is closed, so "
+            "cancelling the stop could leave the kept shares naked at the open"
+        ),
+    }.get(refusal, "the protective-stop clear failed for a reason it did not record")
+
+
 def _held_now(broker, symbol: str) -> float | None:
     """|held| re-read from the broker; None when the read failed."""
     try:
@@ -243,25 +272,40 @@ class TrimAmend:
         return ok, cancelled, wal_row_id, None
 
 
-def finalize_trim_amend(finalizer, prot: dict) -> bool:
-    """After the trim's fill: re-read the position and the live book and let
-    the stop quantity invariant settle both legs (grow the GTC leg back on a
-    zero fill, re-place the sliver the kept position needs, nothing on an
-    exact fill). Returns True iff the book ends covered."""
-    broker, symbol = finalizer.broker, prot["symbol"]
-    side = prot.get("side") or "sell"
+def settle_book(broker, symbol: str, side: str = "sell") -> str:
+    """Re-read the position and the live book and let the stop quantity
+    invariant settle both legs: grow the GTC leg back when the sell did not
+    fill (rejected, raised, expired), re-place the sliver the kept position
+    needs, nothing on an exact fill. Returns the invariant's status, or
+    "unreadable" / "flat" / "no_stop"."""
     held = _held_now(broker, symbol)
     if held is None:
-        logger.error("%s: %s position unreadable after the trim; the WAL row stays", PATH, symbol)
-        return False
+        logger.error("%s: %s position unreadable after the trim", PATH, symbol)
+        return "unreadable"
     snapshot_kwargs = {} if side == "sell" else {"side": side}
     ok, specs = broker.snapshot_protective_stops(symbol, **snapshot_kwargs)
     if not ok:
-        return False
+        return "unreadable"
     if held <= _FRACTIONAL_QTY_EPSILON:
-        finalizer._cancel_stray_stops_on_flat(symbol, **snapshot_kwargs)
-        return _discharge(finalizer, prot)
+        return "flat"
     if not specs:
+        return "no_stop"
+    status = str(_Invariant(broker, symbol, specs, held, side, {}).run().get("amend_status"))
+    if status != "accepted":
+        logger.error("%s: %s book not settled after the trim (%s)", PATH, symbol, status)
+    return status
+
+
+def finalize_trim_amend(finalizer, prot: dict) -> bool:
+    """After the trim's wait: settle the book (see `settle_book`) and
+    discharge the WAL row. Returns True iff the book ends covered."""
+    broker, symbol = finalizer.broker, prot["symbol"]
+    side = prot.get("side") or "sell"
+    status = settle_book(broker, symbol, side)
+    if status == "flat":
+        finalizer._cancel_stray_stops_on_flat(symbol, **({} if side == "sell" else {"side": side}))
+        return _discharge(finalizer, prot)
+    if status == "no_stop":
         # The kept leg is gone (fired or cancelled elsewhere): the ordinary
         # finalize restores/reprotects from the cancelled specs.
         done, _ = finalizer._finalize_protection_after_sell(
@@ -273,11 +317,8 @@ def finalize_trim_amend(finalizer, prot: dict) -> bool:
             side=side,
         )
         return bool(done)
-    result = _Invariant(broker, symbol, specs, held, side, {}).run()
-    if result.get("amend_status") != "accepted":
-        logger.error(
-            "%s: %s book not settled after the trim (%s); the WAL row stays", PATH, symbol, result.get("amend_status")
-        )
+    if status != "accepted":
+        logger.error("%s: %s WAL row stays (%s)", PATH, symbol, status)
         return False
     return _discharge(finalizer, prot)
 

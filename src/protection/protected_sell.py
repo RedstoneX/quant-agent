@@ -9,7 +9,7 @@ Host attributes a body reads with a defaulted getattr or ASSIGNS go through `sta
 """
 
 import logging
-from src.protection.trim_amend import TrimAmend, trim_keeps_shares
+from src.protection.trim_amend import TrimAmend, refusal_reason, settle_book, trim_keeps_shares
 from src.sentinel.guarded import record_guarded_pass
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -122,23 +122,7 @@ class ProtectedSell:
                 )
                 logger.warning("%s: entry-order cancel failed for %s: %s", label, symbol, exc)
         stop_side_kwargs = {} if side == "sell" else {"side": side}
-        kept_leg = None
-        if trim_keeps_shares(label, position_qty_before_sell, qty):
-            # A trim KEEPS shares, so its stop is shrunk in place (whole-share
-            # PATCH, confirmed) rather than cancelled; only a DAY sliver the
-            # sell needs is cancelled. See src/protection/trim_amend.py.
-            ok, stop_specs, wal_row_id, kept_leg = TrimAmend(
-                broker=self.broker,
-                db=self.db,
-                cancel_specs_with_write_ahead=self._cancel_specs_with_write_ahead,
-                state=self._state,
-            ).clear_for_trim(symbol, position_qty_before_sell, qty, side=side)
-        else:
-            ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
-                symbol,
-                position_qty_before_sell,
-                **stop_side_kwargs,
-            )
+        ok, stop_specs, wal_row_id, kept_leg = self._clear_stops_for(label, symbol, qty, position_qty_before_sell, side)
         if not ok:
             # WHY THE DESK STILL DECLINES THE EXIT, and why it is no longer
             # silent about it.
@@ -162,37 +146,7 @@ class ProtectedSell:
             # knows whether a stop is resting; the cancel rolling back
             # means one verifiably is. Only the second supports the
             # held_for_orders claim, and this said it for both.
-            refusal = getattr(self, "_last_stop_clear_refusal", "") or "unknown"
-            if refusal == "cancel_rolled_back":
-                why = (
-                    "its protective stop could not be cancelled and was "
-                    "rolled back, so the stop is still resting and the "
-                    "broker would reject the "
-                    f"{side.upper()} on held_for_orders"
-                )
-            elif refusal == "unreadable":
-                why = (
-                    "the broker's open-order listing failed after retries, "
-                    "so whether a protective stop is resting on these "
-                    "shares is UNKNOWN — the desk will not submit an exit "
-                    "against a picture of the broker it could not read"
-                )
-            elif refusal == "stop_fired":
-                why = "its protective stop FILLED while the stop was being shrunk, so the position is already exiting"
-            elif refusal == "amend_unknown":
-                why = (
-                    "the broker gave no answer to the stop-quantity change, so how "
-                    "many shares the stop holds is UNKNOWN and nothing was cancelled"
-                )
-            elif refusal == "held_changed":
-                why = "the broker refused the stop-quantity change and the held quantity had changed, so a stop may have fired"
-            elif refusal == "market_closed":
-                why = (
-                    "the broker refused the stop-quantity change and the market is "
-                    "closed, so cancelling the stop could leave the kept shares naked at the open"
-                )
-            else:
-                why = "the protective-stop clear failed for a reason it did not record"
+            why = refusal_reason(getattr(self, "_last_stop_clear_refusal", "") or "unknown", side)
             logger.warning("%s: skipping %s — %s", label, symbol, why)
             # A skipped exit reaches the owner BY SYMBOL, on the same path
             # and the same once-per-symbol-per-day claim as the unreadable
@@ -203,6 +157,20 @@ class ProtectedSell:
             # ladder, which would then trim less than it reports.
             self._alert_owner_exit_declined(symbol, side=side, why=why)
             return None
+
+        def _put_back_protection() -> None:
+            # Cancelled legs are restored; a stop shrunk in place for a trim
+            # is grown back by the quantity invariant (nothing was sold).
+            if stop_specs:
+                self.broker._restore_stop_orders(
+                    symbol,
+                    stop_specs,
+                    check_idempotency=False,
+                    **stop_side_kwargs,
+                )
+            if kept_leg is not None:
+                settle_book(self.broker, symbol, side)
+
         try:
             order = self.broker.submit_order(
                 symbol=symbol,
@@ -219,13 +187,7 @@ class ProtectedSell:
             # next drain (this used to vary by site — only the since-deleted
             # auto take-profit restored; the others rode naked until drain).
             logger.error("%s: submit failed for %s: %s", label, symbol, exc)
-            if stop_specs:
-                self.broker._restore_stop_orders(
-                    symbol,
-                    stop_specs,
-                    check_idempotency=False,
-                    **stop_side_kwargs,
-                )
+            _put_back_protection()
             return None
         if not self._order_accepted(order, symbol, side):
             # A MUST-FILL emergency de-lever cannot afford to skip a name here.
@@ -274,24 +236,12 @@ class ProtectedSell:
                         symbol,
                         exc,
                     )
-                    if stop_specs:
-                        self.broker._restore_stop_orders(
-                            symbol,
-                            stop_specs,
-                            check_idempotency=False,
-                            **stop_side_kwargs,
-                        )
+                    _put_back_protection()
                     return None
             if not self._order_accepted(order, symbol, side):
                 # Broker rejected (no escalation, or the market order itself was
                 # not accepted) — restore the stops we just cancelled.
-                if stop_specs:
-                    self.broker._restore_stop_orders(
-                        symbol,
-                        stop_specs,
-                        check_idempotency=False,
-                        **stop_side_kwargs,
-                    )
+                _put_back_protection()
                 return None
         # audit F5: tag the order dict so the notifier's intervention banner +
         # inline action labels fire (broker.submit_order returns no 'action').
@@ -318,6 +268,24 @@ class ProtectedSell:
             # of restoring a stop over it.
             prot["kept_leg"] = kept_leg
         return order, prot
+
+    def _clear_stops_for(self, label, symbol, qty, position_qty_before_sell, side):
+        """A trim KEEPS shares, so its stop is shrunk in place (whole-share
+        PATCH, confirmed) rather than cancelled; only a DAY sliver the sell
+        needs is cancelled (src/protection/trim_amend.py). Every full exit
+        keeps cancel-all. Returns ``(ok, cancelled_specs, wal_row_id, kept_leg)``."""
+        if trim_keeps_shares(label, position_qty_before_sell, qty):
+            return TrimAmend(
+                broker=self.broker,
+                db=self.db,
+                cancel_specs_with_write_ahead=self._cancel_specs_with_write_ahead,
+                state=self._state,
+            ).clear_for_trim(symbol, position_qty_before_sell, qty, side=side)
+        stop_side_kwargs = {} if side == "sell" else {"side": side}
+        ok, specs, wal_row_id = self._cancel_stops_with_write_ahead(
+            symbol, position_qty_before_sell, **stop_side_kwargs
+        )
+        return ok, specs, wal_row_id, None
 
     def _cancel_stops_with_write_ahead(
         self,

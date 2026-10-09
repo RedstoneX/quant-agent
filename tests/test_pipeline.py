@@ -83,6 +83,57 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     )
 
 
+def _mock_amend_seam(broker, *, specs, kept_qty, held_after, sell_status, fill_info, sell_id):
+    """Wire a MagicMock broker for a TRIM: the whole-share stop is PATCHED
+    down to `kept_qty` (new id, old order confirmed `replaced`), never
+    cancelled; after the sell the position reads `held_after` and the live
+    book is the shrunk leg, so the quantity invariant can grow it back."""
+    old = specs[0]
+    new_id = f"{old['id']}-replaced"
+    broker.snapshot_protective_stops.side_effect = [
+        (True, list(specs)),
+        (True, [{**old, "id": new_id, "qty": float(kept_qty)}]),
+        (True, [{**old, "id": new_id, "qty": float(held_after)}]),
+    ]
+    broker._amend_one_stop_price.side_effect = lambda **kw: {
+        "outcome": "amended",
+        "new_id": new_id,
+        "new_qty": kw.get("new_qty"),
+        "detail": "",
+    }
+    broker.wait_for_order_terminal.side_effect = lambda oid, **kw: "replaced" if oid == old["id"] else sell_status
+    broker.get_order_fill_info.side_effect = lambda oid: {"status": "new"} if oid == new_id else fill_info
+    broker.get_positions.return_value = [
+        Position(
+            symbol="NVDA",
+            qty=held_after,
+            avg_entry=100,
+            current_price=135,
+            market_value=1,
+            unrealized_pnl=0,
+            sector="Technology",
+        )
+    ]
+    broker.submit_order.return_value = {
+        "id": sell_id,
+        "status": "rejected" if sell_status == "rejected" else "accepted",
+        "symbol": "NVDA",
+    }
+
+
+def _qty_amends(broker):
+    return [c.kwargs["new_qty"] for c in broker._amend_one_stop_price.call_args_list]
+
+
+def _assert_trim_never_naked(broker, amends):
+    """What every trim test protects: the stop is never cancelled, never
+    restored from nothing, and no PATCH ever takes its quantity to zero."""
+    broker.cancel_snapshotted_stops.assert_not_called()
+    broker.cancel_protective_stops.assert_not_called()
+    broker._restore_stop_orders.assert_not_called()
+    assert _qty_amends(broker) == amends and min(amends) > 0
+
+
 def _partial_trim(pipeline, position, *, qty, run_id, label="REDUCE"):
     """Drive the shared partial-exit path exactly as a reviewer trim does:
     protected SELL, then finalize protection on the ACTUAL residual.
@@ -1258,10 +1309,11 @@ def test_reprotect_residual_swallows_submit_failure_with_loud_warning(caplog):
 
 
 def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
-    """If the partial-trim SELL is rejected by the broker, we already
-    cancelled the protective stops to clear held_for_orders — and now
-    we have NO sell going through AND no protection. Restore the
-    cancelled stops so the position reverts to its pre-cancel state."""
+    """A trim shrinks its stop in place (100 -> 85) and the broker then
+    REJECTS the sell: nothing was sold, so the shrunk stop is grown back to
+    the full 100 by the quantity invariant. The stop is never cancelled, so
+    the kept shares are covered at every broker call; a restore from a
+    cancelled set is never needed."""
     from src.storage.db import Database
 
     db = Database(str(tmp_path / "t.db"))
@@ -1269,16 +1321,18 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
-    # SELL is rejected by broker
-    pipeline.broker.submit_order.return_value = {
-        "id": "tp-rejected",
-        "status": "rejected",
-        "symbol": "NVDA",
-    }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
     ]
-    _mock_stop_seam(pipeline.broker, specs=cancelled)
+    _mock_amend_seam(
+        pipeline.broker,
+        specs=cancelled,
+        kept_qty=85,
+        held_after=100,
+        sell_status="rejected",
+        fill_info={"status": "rejected", "filled_qty": "0", "filled_avg_price": None},
+        sell_id="tp-rejected",
+    )
 
     winner = Position(
         symbol="NVDA",
@@ -1293,17 +1347,7 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert orders == [], "rejected SELL should not be in orders list"
-    # Critical: the cancelled stop must be restored (not re-protected on
-    # residual — there's no successful sell, so nothing changed about
-    # the position size, only the stops). Non-drain path → idempotency
-    # check is OFF (we just cancelled these specs ourselves; checking
-    # would just race against Alpaca's eventual-consistency window).
-    pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA",
-        cancelled,
-        check_idempotency=False,
-    )
-    # And no new residual-stop submission, since the SELL didn't fire.
+    _assert_trim_never_naked(pipeline.broker, [85, 100])
     pipeline.broker._submit_stop_limit_order.assert_not_called()
     db.close()
 
@@ -1453,12 +1497,10 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
 
 def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
     """The bug PR J was filed for: an accepted partial limit can later
-    cancel/expire without filling. If we'd reprotected on residual at
-    accept-time, the stop would cover only 85 shares of an unchanged
-    100-share position — the 15-share would-be-trim slice is naked.
-
-    With the deferred finalize: post-wait, fill_qty=0 → restore the
-    original 100-share stops, not the residual-shaped one."""
+    cancel/expire without filling. The stop was shrunk to 85 for the sell;
+    post-wait, fill_qty=0 and the position is still 100, so the finalizer
+    grows the SAME stop back to 100 — not a residual-shaped 85, and never a
+    cancel-and-restore that leaves the kept shares naked in between."""
     from src.storage.db import Database
 
     db = Database(str(tmp_path / "t.db"))
@@ -1466,22 +1508,18 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
     db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
-    pipeline.broker.submit_order.return_value = {
-        "id": "tp-pending",
-        "status": "accepted",
-        "symbol": "NVDA",
-    }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
     ]
-    _mock_stop_seam(pipeline.broker, specs=cancelled)
-    # Limit accepted, but later expired with zero fill.
-    pipeline.broker.wait_for_order_terminal.return_value = "expired"
-    pipeline.broker.get_order_fill_info.return_value = {
-        "status": "expired",
-        "filled_qty": "0",
-        "filled_avg_price": None,
-    }
+    _mock_amend_seam(
+        pipeline.broker,
+        specs=cancelled,
+        kept_qty=85,
+        held_after=100,
+        sell_status="expired",
+        fill_info={"status": "expired", "filled_qty": "0", "filled_avg_price": None},
+        sell_id="tp-pending",
+    )
 
     winner = Position(
         symbol="NVDA",
@@ -1495,14 +1533,7 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
 
     _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
-    # Original full-position stops restored — NOT a 67-share residual stop.
-    # Non-drain finalize → check_idempotency=False (recent self-cancel).
-    pipeline.broker._restore_stop_orders.assert_called_once_with(
-        "NVDA",
-        cancelled,
-        check_idempotency=False,
-    )
-    # And no residual-shaped stop was submitted.
+    _assert_trim_never_naked(pipeline.broker, [85, 100])
     pipeline.broker._submit_stop_limit_order.assert_not_called()
     db.close()
 
@@ -2417,9 +2448,10 @@ def test_finalize_protection_bails_when_lingering_cancel_fails():
 
 
 def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
-    """If the limit only partially fills (e.g., 12 of 15), the residual is
-    100 - 12 = 88, NOT 100 - 15 = 85. Pin the broker.fill_qty as the
-    source of truth, not the originally-submitted qty."""
+    """If the limit only partially fills (12 of 15), the position is
+    100 - 12 = 88, NOT 100 - 15 = 85. The stop was shrunk to 85 for the
+    sell; the finalizer reads the broker's position (the source of truth,
+    not the submitted qty) and grows the same stop to 88 in place."""
     from src.storage.db import Database
 
     db = Database(str(tmp_path / "t.db"))
@@ -2427,21 +2459,18 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
     db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
-    pipeline.broker.submit_order.return_value = {
-        "id": "tp-partial",
-        "status": "accepted",
-        "symbol": "NVDA",
-    }
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
     ]
-    _mock_stop_seam(pipeline.broker, specs=cancelled)
-    pipeline.broker.wait_for_order_terminal.return_value = "canceled"
-    pipeline.broker.get_order_fill_info.return_value = {
-        "status": "canceled",
-        "filled_qty": "12",
-        "filled_avg_price": "117.5",
-    }
+    _mock_amend_seam(
+        pipeline.broker,
+        specs=cancelled,
+        kept_qty=85,
+        held_after=88,
+        sell_status="canceled",
+        fill_info={"status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5"},
+        sell_id="tp-partial",
+    )
 
     winner = Position(
         symbol="NVDA",
@@ -2455,15 +2484,8 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
 
     _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
-    # Actual residual = 100 - 12 = 88 (NOT 100 - 15 = 85).
-    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
-        symbol="NVDA",
-        qty=88.0,
-        stop_price=95.0,
-        limit_price=None,
-        side="sell",
-    )
-    pipeline.broker._restore_stop_orders.assert_not_called()
+    _assert_trim_never_naked(pipeline.broker, [85, 88])
+    pipeline.broker._submit_protective_stop_retrying.assert_not_called()
     db.close()
 
 
