@@ -27,6 +27,7 @@ class EntryRun:
     deferred_far_through: set
     original_entry_count: int
     budget_is_gross: bool
+    total_value: Any
 
 
 @dataclass(frozen=True)

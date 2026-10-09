@@ -17,6 +17,9 @@ MODULES = [
     ("src.stage_execution_parts.sell_loop", "sell_qty_and_label"),
     ("src.stage_execution_parts.sell_loop", "record_rotation_close"),
     ("src.stage_execution_parts.sell_loop", "await_sell_and_finalize"),
+    ("src.stage_execution_parts.entry_quote", "entry_limit_from_quote"),
+    ("src.stage_execution_parts.entry_geometry", "entry_stop_price"),
+    ("src.stage_execution_parts.entry_sizing", "entry_qty"),
 ]
 
 

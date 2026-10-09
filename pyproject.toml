@@ -328,6 +328,7 @@ max-branches = 12
 "src/sessions/quarterly_meta_session.py" = ["C901", "PLR0912", "PLR0915"]
 "src/stage_decision.py" = ["C901", "PLR0912", "PLR0915"]
 "src/stage_execution.py" = ["C901", "E501", "PLR0912", "PLR0915"]
+"src/stage_execution_parts/entry_quote.py" = ["C901"]
 "src/stage_execution_parts/protect_entry_stops.py" = ["C901", "PLR0912", "PLR0915"]
 "src/stage_morning_research.py" = ["C901", "E501", "PLR0912", "PLR0915"]
 "src/stage_risk.py" = ["C901", "PLR0912", "PLR0915"]
