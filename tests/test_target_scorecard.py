@@ -61,7 +61,12 @@ def test_scorecard_counts(db):
     _position(db, "NOMFE", "long", 100, 110, None, NEW)
     s = ts.target_scorecard(db.conn)
     assert (s["closed_reached"], s["closed_not_reached"], s["still_open"]) == (2, 1, 1)
-    assert s["excluded"] == {"opened_before_clean_record": 1, "no_entry_target": 1, "no_best_move_figure": 1}
+    assert s["excluded"] == {
+        "opened_before_clean_record": 1,
+        "no_entry_target": 1,
+        "no_best_move_figure": 1,
+        "trade_rows_without_position": 0,
+    }
     frac = {p["symbol"]: p["fraction_of_target_reached_lower_bound"] for p in s["positions"]}
     assert frac["MISS"] == pytest.approx(0.4)
     assert frac["SREACH"] == pytest.approx(1.2)
@@ -75,3 +80,12 @@ def test_pre_clean_record_excluded_and_would_count_without_exclusion(db, monkeyp
     assert s["closed_reached"] == 0
     monkeypatch.setattr(ts, "_opened_before_clean_record", lambda _t: False)
     assert ts.target_scorecard(db.conn)["closed_reached"] == 1  # the exclusion is what keeps it out
+
+
+def test_trade_rows_without_a_position_are_counted_not_dropped(db):
+    _position(db, "ORPHAN", "long", 100, 110, 10, NEW)
+    db.conn.execute("UPDATE trades SET position_id = NULL WHERE symbol = 'ORPHAN'")
+    db.conn.commit()
+    s = ts.target_scorecard(db.conn)
+    assert s["excluded"]["trade_rows_without_position"] == 2
+    assert (s["closed_reached"], s["closed_not_reached"], s["still_open"]) == (0, 0, 0)

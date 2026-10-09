@@ -81,14 +81,22 @@ def _score_position(pid: str, prows: list) -> tuple[str, dict | None]:
 def compute_target_scorecard(rows) -> dict:
     """`rows`: trade rows (mapping access), chronological, with position_id."""
     by_pos: dict[str, list] = {}
+    rows_without_position = 0
     for row in rows:
         if row["position_id"]:
             by_pos.setdefault(row["position_id"], []).append(row)
+        else:
+            rows_without_position += 1
     out: dict = {
         "closed_reached": 0,
         "closed_not_reached": 0,
         "still_open": 0,
-        "excluded": {"opened_before_clean_record": 0, "no_entry_target": 0, "no_best_move_figure": 0},
+        "excluded": {
+            "opened_before_clean_record": 0,
+            "no_entry_target": 0,
+            "no_best_move_figure": 0,
+            "trade_rows_without_position": rows_without_position,
+        },
         "positions": [],
         "best_move_is_lower_bound": True,
     }
@@ -97,8 +105,8 @@ def compute_target_scorecard(rows) -> dict:
         if record is not None:
             out[outcome] += 1
             out["positions"].append(record)
-        elif outcome in out["excluded"]:
-            out["excluded"][outcome] += 1
+        else:
+            out["excluded"][outcome] += 1  # an unknown outcome raises KeyError rather than vanishing
     return out
 
 
